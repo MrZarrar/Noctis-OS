@@ -3,5 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Noctis Tauri 2 shell; blocked until the pinned Rust toolchain is installed"
+  "description": "Noctis Tauri 2 shell",
+  "scripts": {
+    "build": "tauri build --no-bundle",
+    "dev": "tauri dev",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
 }
