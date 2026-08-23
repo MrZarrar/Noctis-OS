@@ -1,0 +1,13 @@
+{
+  "name": "@noctis/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@noctis/contracts": "0.0.0",
+    "@noctis/domain": "0.0.0"
+  }
+}

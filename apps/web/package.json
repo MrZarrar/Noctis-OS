@@ -1,0 +1,7 @@
+{
+  "name": "@noctis/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Noctis Adaptive Depth Workbench; implemented in later vertical slices"
+}

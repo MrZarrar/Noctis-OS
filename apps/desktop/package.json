@@ -1,0 +1,7 @@
+{
+  "name": "@noctis/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Noctis Tauri 2 shell; blocked until the pinned Rust toolchain is installed"
+}

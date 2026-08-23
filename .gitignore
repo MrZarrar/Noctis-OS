@@ -1,0 +1,15 @@
+node_modules/
+.npm-cache/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+target/
+src-tauri/target/
+.noctis/
+test-results/
+playwright-report/

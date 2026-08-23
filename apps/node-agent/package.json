@@ -1,0 +1,7 @@
+{
+  "name": "@noctis/node-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Outbound Noctis worker; implemented after the core contracts"
+}

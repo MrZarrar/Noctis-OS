@@ -1,0 +1,36 @@
+{
+  "name": "noctis-os",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first orchestration operating environment",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc -b --pretty false",
+    "test:boundary": "node --test scripts/donor-port/verify-read-only.test.mjs",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run --passWithNoTests apps/core/tests/integration",
+    "test:e2e": "node --test --test-reporter=spec apps/web/e2e/*.test.mjs",
+    "test:security": "vitest run --passWithNoTests tests/security",
+    "test:performance": "vitest run --passWithNoTests tests/performance"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.1",
+    "eslint": "10.9.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.11"
+  }
+}
