@@ -4,16 +4,16 @@
 
 Status: accepted (2026-08-23)
 
-| Check                              | State                    | Evidence                                                        |
-| ---------------------------------- | ------------------------ | --------------------------------------------------------------- |
-| Independent sibling Git repository | implemented              | repository root; merged to `main` at `bf6660c`                  |
-| Donor boundary guard               | red-green implemented    | `npm run test:boundary`                                         |
-| Exact JavaScript dependency lock   | implemented              | `package-lock.json`; install audit reports zero vulnerabilities |
-| Source and mockup manifest         | implemented              | `MOCKUP-MANIFEST.md`                                            |
+| Check                              | State                    | Evidence                                                         |
+| ---------------------------------- | ------------------------ | ---------------------------------------------------------------- |
+| Independent sibling Git repository | implemented              | repository root; merged to `main` at `bf6660c`                   |
+| Donor boundary guard               | red-green implemented    | `npm run test:boundary`                                          |
+| Exact JavaScript dependency lock   | implemented              | `package-lock.json`; install audit reports zero vulnerabilities  |
+| Source and mockup manifest         | implemented              | `MOCKUP-MANIFEST.md`                                             |
 | Donor baseline                     | implemented              | `DONOR-BASELINE.json`; reconfirmed unchanged post-merge          |
-| Rust 1.98.0 toolchain              | implemented              | `rustc`, `cargo`, `rustfmt`, and Clippy verified locally        |
+| Rust 1.98.0 toolchain              | implemented              | `rustc`, `cargo`, `rustfmt`, and Clippy verified locally         |
 | Minimal Tauri 2 desktop scaffold   | implemented              | GitHub Actions `verify` run 32664703461: rust + javascript green |
-| Production deployment/activation   | deliberately not started | requires later explicit approval                                |
+| Production deployment/activation   | deliberately not started | requires later explicit approval                                 |
 
 ## Verification log
 
@@ -63,18 +63,18 @@ Tauri-build verification; that evidence remains pending until this commit is pus
 
 ### 2026-08-23 icon fix, CI evidence, and Phase 0 acceptance
 
-| Command                                              | Result                                                              |
-| ----------------------------------------------------- | -------------------------------------------------------------------- |
-| `git push` (commit `bf6660c`, `icons/icon.ico` added) | added the Windows exe icon resource `tauri-build` requires unconditionally |
-| GitHub Actions `verify` run `32664703461`             | exit 0; `rust` job green (fmt, clippy, cargo test, unbundled Tauri build); `javascript` job green |
-| `npm run test:boundary`                               | exit 0; 6 tests passed                                              |
-| `npm run format:check`                                | exit 0                                                              |
-| `npm run lint`                                        | exit 0                                                              |
-| `npm run typecheck`                                   | exit 0                                                              |
-| `npm run test:unit`                                   | exit 0; 3 files and 30 tests passed                                 |
-| `npm run build`                                       | exit 0                                                              |
+| Command                                               | Result                                                                                                                     |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `git push` (commit `bf6660c`, `icons/icon.ico` added) | added the Windows exe icon resource `tauri-build` requires unconditionally                                                 |
+| GitHub Actions `verify` run `32664703461`             | exit 0; `rust` job green (fmt, clippy, cargo test, unbundled Tauri build); `javascript` job green                          |
+| `npm run test:boundary`                               | exit 0; 6 tests passed                                                                                                     |
+| `npm run format:check`                                | exit 0                                                                                                                     |
+| `npm run lint`                                        | exit 0                                                                                                                     |
+| `npm run typecheck`                                   | exit 0                                                                                                                     |
+| `npm run test:unit`                                   | exit 0; 3 files and 30 tests passed                                                                                        |
+| `npm run build`                                       | exit 0                                                                                                                     |
 | Donor repository reconfirmation                       | HEAD `ee7b4527`, branch `dev/personal-pc`, and the single untracked v5 spec file all match `DONOR-BASELINE.json` unchanged |
-| `git merge feat/bootstrap-foundation` into `main`     | fast-forward `2ce90b8..bf6660c`; merged-tree checks re-run and green; pushed to `origin/main` |
+| `git merge feat/bootstrap-foundation` into `main`     | fast-forward `2ce90b8..bf6660c`; merged-tree checks re-run and green; pushed to `origin/main`                              |
 
 `test:desktop-bootstrap` and `rust:test` were not re-run locally on this machine because no local Rust
 toolchain is installed here; the GitHub Actions `rust` job is the authoritative check for those and it
