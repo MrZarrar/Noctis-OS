@@ -19,16 +19,16 @@ Status: accepted (2026-08-23)
 
 Status: accepted (2026-09-01)
 
-| Check                                                 | State                    | Evidence                                                                                                                                                                                                                                                                                    |
-| ----------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Migrations idempotent on empty and populated fixtures | implemented              | `apps/core/src/db/migrate.test.ts` — "applies a migration to an empty database", "is idempotent when re-run against a populated database"                                                                                                                                                   |
-| Malformed model/worker/API data rejected              | implemented              | `packages/contracts/src/contracts.malformed.test.ts` — 63 hostile-input cases (9 schemas × 7 hostile inputs); `packages/contracts/src/events.test.ts` — "rejects an unregistered name", "rejects an unknown version of a registered name"                                                   |
-| All transition matrices pass                          | implemented              | the five domain matrix files, each enumerating its full state cross-product with `it.each`: `mission-status.test.ts`, `node-job-status.test.ts`, `noir-case-status.test.ts`, `objective-status.test.ts`, `surface-lifecycle.test.ts` (all under `packages/domain/src/state/`)               |
-| Rollback leaves no partial rows or events             | implemented              | `apps/core/src/db/transactions.test.ts` — three tests marked THE GATE: "THE GATE: a refusal writes neither state nor event", "THE GATE: a refusal after mutate self-committed throws instead of hiding the write", "THE GATE: a thrown failure between the writes leaves both tables empty" |
-| SQLite driver seam, no flag required on pinned Node   | implemented              | `apps/core/src/db/connection.ts` wraps `node:sqlite`; Node 22.23.2 runs it unflagged, confirmed empirically in CI run `33453626520`; no `NODE_OPTIONS` is set anywhere                                                                                                                      |
-| CI verifies migrations on the pinned runtime          | implemented              | `.github/workflows/verify.yml` `javascript` job runs `npm run test:migrations`; GitHub Actions `verify` run `33505602165`: both jobs green                                                                                                                                                  |
-| Donor repository unchanged                            | implemented              | HEAD, branch, and untracked-file status reconfirmed against `DONOR-BASELINE.json`                                                                                                                                                                                                           |
-| Production deployment/activation                      | deliberately not started | requires later explicit approval                                                                                                                                                                                                                                                            |
+| Check                                                                 | State                    | Evidence                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Migrations idempotent on an empty database and a toy populated schema | implemented              | `apps/core/src/db/migrate.test.ts` — "applies a migration to an empty database"; "is idempotent when re-run against a populated database" re-runs the ledger against a toy single-table schema, proving the ledger itself is idempotent, not a re-run of the real 25-table foundation migration                                                                                                    |
+| Malformed model/worker/API data rejected                              | implemented              | `packages/contracts/src/contracts.malformed.test.ts` — 196 hostile-input cases (28 schemas × 7 hostile inputs) plus a `.strict()` unknown-field matrix over all 28 schemas, including a nested-object case for `CompositionPlan`'s slots; `packages/contracts/src/events.test.ts` — "rejects an unregistered name", "rejects an unknown version of a registered name"                              |
+| All transition matrices pass                                          | implemented              | the five domain matrix files, each enumerating its full state cross-product with `it.each`: `mission-status.test.ts`, `node-job-status.test.ts`, `noir-case-status.test.ts`, `objective-status.test.ts`, `surface-lifecycle.test.ts` (all under `packages/domain/src/state/`)                                                                                                                      |
+| Rollback leaves no partial rows or events                             | implemented              | `apps/core/src/db/transactions.test.ts` — three tests marked THE GATE: "THE GATE: a refusal writes neither state nor event", "THE GATE: a refusal after mutate self-committed throws instead of hiding the write", "THE GATE: a thrown failure between the writes leaves both tables empty"                                                                                                        |
+| SQLite driver seam, no flag required on pinned Node                   | implemented              | `apps/core/src/db/connection.ts` wraps `node:sqlite`; Node 22.23.2 runs it unflagged, confirmed empirically in CI run `33453626520`; no `NODE_OPTIONS` is set anywhere                                                                                                                                                                                                                             |
+| CI verifies migrations on the pinned runtime                          | implemented              | `apps/core/src/db` is covered by `npm run test:unit`, which the `javascript` job in `.github/workflows/verify.yml` runs on the pinned Node runtime; the separate `npm run test:migrations` CI step was removed as a strict subset of `test:unit` (the script itself is kept for local use) — GitHub Actions `verify` run `33505602165` predates that removal and evidences the prior two-step form |
+| Donor repository unchanged                                            | implemented              | HEAD, branch, and untracked-file status reconfirmed against `DONOR-BASELINE.json`                                                                                                                                                                                                                                                                                                                  |
+| Production deployment/activation                                      | deliberately not started | requires later explicit approval                                                                                                                                                                                                                                                                                                                                                                   |
 
 Notes on the gate table above: the foundation migration file declares 25 tables; `migrate()` creates the
 `schema_migrations` ledger table itself as part of applying it, so a freshly migrated database has 26
@@ -152,3 +152,33 @@ local suite green, CI green on both jobs on pinned Node 22.23.2, the `node:sqlit
 answered with evidence rather than left open, and the donor repository is confirmed byte-for-byte
 unchanged. Production deployment/activation remains deliberately not started pending later explicit
 approval.
+
+### 2026-09-01 final fix wave before merge
+
+Nine review findings fixed prior to proposing Phase 1 for merge: the global `UNIQUE (idempotency_key)`
+constraints on `approvals` and `node_jobs` were removed in favour of `idempotency_keys` (scoped by
+`PRIMARY KEY (scope, key)`) as the sole enforcement point; `objective-status.test.ts` was rewritten to
+the same full state cross-product shape as the other four machines; `apps/core/src/db/events.test.ts`
+was added, asserting the payload round-trip and the `isTransaction` guard; the malformed-input and
+`.strict()` matrices in `contracts.malformed.test.ts` were extended from 9 to all 28 object/union
+schemas in `packages/contracts/src`, including a nested-slot case for `CompositionPlan`; WebSocket frame
+and payload-required coverage was added; the `isTransaction` driver-specific name was centralised behind
+a new `inTransaction()` helper in `connection.ts` at its six call sites; the `no-restricted-imports`
+guard on `node:sqlite` was extended to `packages/**`; the redundant `test:migrations` CI step was
+removed (the npm script itself is kept); and ADR-0006 plus this document were corrected to match.
+
+| Command                | Result                                            |
+| ---------------------- | ------------------------------------------------- |
+| `npm run format`       | exit 0                                            |
+| `npm run format:check` | exit 0; all matched files use Prettier code style |
+| `npm run lint`         | exit 0; 0 errors                                  |
+| `npm run typecheck`    | exit 0                                            |
+| `npm run test:unit`    | exit 0; 24 files, 573 tests passed                |
+| `npm run build`        | exit 0                                            |
+
+A scratch script (not retained) opened an in-memory database, applied `0001_foundation.sql` alone, and
+counted 25 tables excluding SQLite's own `sqlite_sequence`; running `migrate()` against the same
+migrations directory brings the total to 26 with `schema_migrations` added, matching
+`apps/core/src/db/migrate.test.ts` — "applies the real foundation migration and creates all 26 tables".
+Table and test counts throughout the gate table above and the malformed-input row were updated to match
+this run.

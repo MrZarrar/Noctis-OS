@@ -39,3 +39,7 @@ only and are superseded by those edge lists for implementation purposes.
 **Reason:** The Section 4.2 diagrams are sketches, not exhaustive edge lists. The NOIR sketch draws zero
 outgoing edges from `blocked`, which would make `blocked` a permanent trap state — a design no phase
 intends. A diagram demonstrably incomplete in one machine cannot be read as exhaustive for the others.
+Eight edges go beyond the sketches; they are named, with their individual justification, in
+`docs/superpowers/specs/2026-09-01-noctis-phase-1-foundation-design.md`, Section 4, "Edges added beyond
+the Section 4.2 sketches." This decision was taken over a reviewer's Critical findings on the added
+edges and is recorded here so it is not silently reopened.
