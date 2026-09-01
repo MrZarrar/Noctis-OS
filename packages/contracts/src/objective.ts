@@ -24,3 +24,15 @@ export const ObjectiveRecordSchema = z
   .strict();
 
 export type ObjectiveRecord = z.infer<typeof ObjectiveRecordSchema>;
+
+export const ObjectiveLinkSchema = z
+  .object({
+    objectiveId: UuidSchema,
+    relatedType: z.enum(["mission", "surface", "artifact", "source", "noir_case"]),
+    relatedId: UuidSchema,
+    relation: z.string().trim().min(1),
+    createdAt: UtcTimestampSchema,
+  })
+  .strict();
+
+export type ObjectiveLink = z.infer<typeof ObjectiveLinkSchema>;
