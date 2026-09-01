@@ -38,11 +38,20 @@ export function commitStateAndEvent<T>(
 
     const committedEvents = outcome.value.events.map((draft) => appendEvent(db, draft));
 
+    if (!db.isTransaction) {
+      throw new Error("mutate closed the transaction it was given");
+    }
+
     db.exec("COMMIT");
 
     return ok({ value: outcome.value.value, committedEvents });
   } catch (error) {
-    db.exec("ROLLBACK");
+    // SQLite already auto-rolls-back on some errors (e.g. SQLITE_FULL), which
+    // leaves no transaction open. Swallow only that rollback failure so the
+    // original error still reaches the caller instead of being replaced by it.
+    if (db.isTransaction) {
+      db.exec("ROLLBACK");
+    }
     throw error;
   }
 }

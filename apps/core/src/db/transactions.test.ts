@@ -118,21 +118,46 @@ describe("commitStateAndEvent", () => {
   });
 
   it("rolls back a violating event without leaving the state row", () => {
+    expect(
+      () =>
+        commitStateAndEvent(db, (tx) => {
+          insertObjective(tx, OBJECTIVE_ID);
+          return ok({
+            value: null,
+            events: [
+              {
+                ...draftEvent("01941f29-7c00-7000-8000-000000000050", OBJECTIVE_ID),
+                type: "not.a.registered.event" as never,
+              },
+            ],
+          });
+        }),
+      // Tied to the actual cause: OrchestrationEventSchema rejects the unregistered
+      // event name. A bare .toThrow() would pass for any error, including a stub.
+    ).toThrow(/invalid_value/);
+
+    expect(db.prepare("SELECT COUNT(*) c FROM objectives").get()).toEqual({ c: 0 });
+    expect(db.prepare("SELECT COUNT(*) c FROM orchestration_events").get()).toEqual({ c: 0 });
+  });
+
+  it("rolls back an earlier valid event when a later event in the same commit is invalid", () => {
     expect(() =>
       commitStateAndEvent(db, (tx) => {
         insertObjective(tx, OBJECTIVE_ID);
         return ok({
           value: null,
           events: [
+            draftEvent("01941f29-7c00-7000-8000-000000000060", OBJECTIVE_ID),
             {
-              ...draftEvent("01941f29-7c00-7000-8000-000000000050", OBJECTIVE_ID),
+              ...draftEvent("01941f29-7c00-7000-8000-000000000061", OBJECTIVE_ID),
               type: "not.a.registered.event" as never,
             },
           ],
         });
       }),
-    ).toThrow();
+    ).toThrow(/invalid_value/);
 
     expect(db.prepare("SELECT COUNT(*) c FROM objectives").get()).toEqual({ c: 0 });
+    expect(db.prepare("SELECT COUNT(*) c FROM orchestration_events").get()).toEqual({ c: 0 });
   });
 });

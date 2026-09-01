@@ -11,6 +11,12 @@ export type EventDraft = Omit<OrchestrationEvent, "sequence">;
  * inside an open transaction so the event and its state change commit together.
  */
 export function appendEvent(db: NoctisDatabase, draft: EventDraft): OrchestrationEvent {
+  if (!db.isTransaction) {
+    throw new Error("appendEvent must run inside an open transaction");
+  }
+
+  const payloadJson = JSON.stringify(draft.payload ?? null);
+
   const inserted = db
     .prepare(
       `INSERT INTO orchestration_events
@@ -27,12 +33,17 @@ export function appendEvent(db: NoctisDatabase, draft: EventDraft): Orchestratio
       draft.actorType,
       draft.actorId,
       draft.payloadVersion,
-      JSON.stringify(draft.payload ?? null),
+      payloadJson,
       draft.correlationId,
       draft.causationId ?? null,
       draft.occurredAt,
     ) as { sequence: number };
 
-  // Parsing after insert proves the row we committed matches the contract.
-  return OrchestrationEventSchema.parse({ ...draft, sequence: inserted.sequence });
+  // Validates the event and normalises the payload to what a replay will read back
+  // (the same JSON string just written), so live delivery and replay never disagree.
+  return OrchestrationEventSchema.parse({
+    ...draft,
+    payload: JSON.parse(payloadJson) as unknown,
+    sequence: inserted.sequence,
+  });
 }
