@@ -2,7 +2,8 @@
 export type DomainConflict =
   | { kind: "forbidden_transition"; machine: string; from: string; to: string }
   | { kind: "revision_conflict"; expected: number; actual: number }
-  | { kind: "idempotent_replay"; key: string; existingId: string };
+  | { kind: "idempotent_replay"; key: string; existingId: string }
+  | { kind: "not_found"; entity: string; id: string };
 
 export type Result<T> = { ok: true; value: T } | { ok: false; conflict: DomainConflict };
 

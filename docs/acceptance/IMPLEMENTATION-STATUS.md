@@ -182,3 +182,56 @@ migrations directory brings the total to 26 with `schema_migrations` added, matc
 `apps/core/src/db/migrate.test.ts` — "applies the real foundation migration and creates all 26 tables".
 Table and test counts throughout the gate table above and the malformed-input row were updated to match
 this run.
+
+### 2026-09-01 Phase 2 kernel implementation
+
+Implemented: fail-closed core configuration (`config/server.ts`), redacting structured logger
+(`logging.ts`), the `runCommand` transaction/idempotency/publish seam (`kernel.ts`), the in-process
+event broker (`events/broker.ts`), event replay reads (`db/events.ts`), Objective and Mission command
+services, the pure baseline authority policy (`packages/domain/src/authority/evaluate.ts`) and its
+append-only recorder (`authority/service.ts`), the provider registry that refuses metered classes, the
+REST command realm and `/ws/clients` with sequence resume (`api/`), and the process entry point
+(`main.ts`).
+
+| Command                    | Result                                                         |
+| -------------------------- | -------------------------------------------------------------- |
+| `npm run format:check`     | exit 0; all matched files use Prettier code style              |
+| `npm run lint`             | exit 0; 0 errors                                               |
+| `npm run typecheck`        | exit 0                                                         |
+| `npm run test:unit`        | exit 0; 31 files, 704 tests passed (573 at Phase 1 acceptance) |
+| `npm run test:integration` | exit 0; 42 tests passed in `api/headless.integration.test.ts`  |
+| `npm run test:migrations`  | exit 0; 26 tests passed (a subset of the 704 above)            |
+| `npm run test:boundary`    | exit 0; 6 tests passed; donor unchanged                        |
+| `npm run build`            | exit 0                                                         |
+
+The built artefact was smoke-run, not only tested: `node apps/core/dist/main.js` bound 127.0.0.1:7719,
+answered `/health` unauthenticated, refused `/ready` with 401, accepted `objective.create`, and returned
+the resulting `objective.created.v1` event at sequence 1 from `/events`. This exercises the
+`MIGRATIONS_DIRECTORY` resolution from `dist/`, which no unit test covers.
+
+Gate evidence, each verified by sabotage rather than by a passing run alone. Every sabotage below was
+applied locally, observed to fail the named tests, and reverted:
+
+| Gate clause                                    | Sabotage applied                                         | Tests that failed |
+| ---------------------------------------------- | -------------------------------------------------------- | ----------------- |
+| Complete headless loop and sequence resume     | `startStream` ignores `afterSequence` and replays from 0 | 2                 |
+| Hostile token fixtures fail                    | REST bearer check short-circuited to pass                | 5                 |
+| Hostile token fixtures fail (socket realm)     | `/ws/clients` upgrade skips the bearer check             | 1                 |
+| Hostile origin fixtures fail                   | REST origin check short-circuited to pass                | 1                 |
+| Hostile frame fixtures fail                    | `ClientFrameSchema` result ignored                       | 4                 |
+| Idempotent retry returns the original result   | replay branch in `defineCommand` disabled                | 1                 |
+| Writes cannot bypass the idempotency claim     | one `tx.prepare` write moved to `kernel.db.prepare`      | 1                 |
+| Events publish only after a durable commit     | `COMMIT` replaced with `ROLLBACK` in `transactions.ts`   | 3                 |
+| Standing permission cannot cover spend et al.  | `"spend"` removed from `PERMISSION_INELIGIBLE`           | 1                 |
+| Consequence classes require typed confirmation | `destructive` softened to `require_confirmation`         | 2                 |
+
+`metered fallback is impossible` is enforced at registration, not at routing:
+`apps/core/src/providers/registry.ts` throws on `providerClass: "metered_api"`, and
+`registry.test.ts` pins `ProviderClassSchema.options` so a future class cannot become registrable by
+omission. The registry is empty in Phase 2 — no provider adapter is registered yet.
+
+No donor code was ported in this batch, so `DONOR-PORT-LEDGER.md` is unchanged. `sources/` and
+`artifacts/` were deliberately not created (ADR-0010), as was request rate limiting.
+
+The socket tests were run three consecutive times with no flakiness. `estimated_cost_gbp` remains a
+SQLite `REAL`, now carrying a `ponytail:` comment in `authority/service.ts` naming the conversion point.

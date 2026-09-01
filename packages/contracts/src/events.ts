@@ -13,6 +13,7 @@ export const EVENT_NAMES = [
   "mission.created.v1",
   "mission.approval_requested.v1",
   "mission.dispatched.v1",
+  "mission.status_changed.v1",
   "mission.verified.v1",
   "surface.intent_upserted.v1",
   "surface.composition_changed.v1",
@@ -40,6 +41,7 @@ export const StreamTypeSchema = z.enum([
   "surface",
   "node",
   "noir",
+  "authority",
 ]);
 
 export const ActorTypeSchema = z.enum(["user", "identity", "system", "node", "adapter"]);
