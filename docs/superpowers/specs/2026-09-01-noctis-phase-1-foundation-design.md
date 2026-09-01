@@ -300,16 +300,17 @@ Table-driven tests, matching the existing `objective-status.test.ts` style.
 The atomicity and migration tests are the direct evidence for gate conditions 1 and 4 and are not
 optional.
 
-## 8. Open question to resolve first
+## 8. Open question to resolve first — RESOLVED
 
-`node:sqlite` requires `--experimental-sqlite` on Node 22 but not on Node 24. The repository pins Node
-22.23.2 in `engines` and CI; the development machine runs Node 24.19.0. Whether 22.23.2 still requires
-the flag is unconfirmed — the module was unflagged during the 23.x line and may or may not have been
-backported to 22 LTS.
+**Node 22.23.2 has `node:sqlite` unflagged; no flag is required.**
 
-The first implementation task confirms this in CI and, only if the flag is required, sets `NODE_OPTIONS`
-in the workflow and the affected scripts. This is verified rather than assumed because it decides
-whether every test and run script carries a flag.
+Confirmed in CI on the `javascript` job of run
+[33453626520](https://github.com/MrZarrar/Noctis-OS/actions/runs/33453626520) (job
+`99688791844`), running `node: v22.23.2`. `apps/core/src/db/sqlite-availability.test.ts` opened an
+in-memory `DatabaseSync`, round-tripped a row, and passed; the only output was a
+`(node:8) ExperimentalWarning: SQLite is an experimental feature and might change at any time`, not an
+error. No `NODE_OPTIONS` / `--experimental-sqlite` flag is needed in CI, in local shells, or in any later
+task's scripts.
 
 A second, non-blocking observation: local Node 24.19.0 does not exercise the pinned 22.x runtime, so
 local green results do not prove the pinned runtime. CI remains the authority for Node 22 behaviour.
