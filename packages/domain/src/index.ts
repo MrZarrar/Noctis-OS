@@ -1,6 +1,7 @@
 export * from "./clock.js";
 export * from "./ids.js";
 export * from "./result.js";
+export * from "./revision.js";
 export * from "./state/mission-status.js";
 export * from "./state/node-job-status.js";
 export * from "./state/noir-case-status.js";
