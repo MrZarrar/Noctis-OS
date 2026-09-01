@@ -11,6 +11,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@noctis/contracts": "0.0.0"
+    "@noctis/contracts": "0.0.0",
+    "uuid": "^14.0.2"
   }
 }
