@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { ObjectiveStatusSchema } from "./enums.js";
 import * as objective from "./objective.js";
 
 describe("ObjectiveStatusSchema", () => {
   it.each(["suggested", "draft", "active", "paused", "completed", "abandoned"])(
     "accepts the canonical %s status",
     (status) => {
-      expect(objective.ObjectiveStatusSchema?.safeParse(status).success).toBe(true);
+      expect(ObjectiveStatusSchema.safeParse(status).success).toBe(true);
     },
   );
 
   it("rejects an unknown status instead of defaulting it", () => {
-    expect(objective.ObjectiveStatusSchema?.safeParse("running").success).toBe(false);
+    expect(ObjectiveStatusSchema.safeParse("running").success).toBe(false);
   });
 });
 
