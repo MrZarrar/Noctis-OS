@@ -14,7 +14,20 @@ import {
   IdentityProfileSchema,
 } from "./identity.js";
 import { MissionEvidenceSchema, MissionRecordSchema, MissionStepSchema } from "./mission.js";
-import { CapabilityGrantSchema, NodeDescriptorSchema, NodeJobSchema } from "./node.js";
+import {
+  CapabilityGrantSchema,
+  EnvironmentInspectEvidenceSchema,
+  FileSearchConstraintsSchema,
+  FileSearchEvidenceSchema,
+  FileSearchPayloadSchema,
+  NodeCredentialSchema,
+  NodeDescriptorSchema,
+  NodeFrameSchema,
+  NodeJobAssignmentSchema,
+  NodeJobSchema,
+  NodeServerFrameSchema,
+  VerificationNoopEvidenceSchema,
+} from "./node.js";
 import {
   EvidenceItemSchema,
   FalsifierSchema,
@@ -56,6 +69,15 @@ const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["OrchestrationEvent", OrchestrationEventSchema],
   ["ClientFrame", ClientFrameSchema],
   ["ServerFrame", ServerFrameSchema],
+  ["NodeFrame", NodeFrameSchema],
+  ["NodeServerFrame", NodeServerFrameSchema],
+  ["NodeJobAssignment", NodeJobAssignmentSchema],
+  ["NodeCredential", NodeCredentialSchema],
+  ["FileSearchPayload", FileSearchPayloadSchema],
+  ["FileSearchEvidence", FileSearchEvidenceSchema],
+  ["FileSearchConstraints", FileSearchConstraintsSchema],
+  ["EnvironmentInspectEvidence", EnvironmentInspectEvidenceSchema],
+  ["VerificationNoopEvidence", VerificationNoopEvidenceSchema],
 ];
 
 const HOSTILE_INPUTS: ReadonlyArray<readonly [string, unknown]> = [
@@ -447,6 +469,68 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
       toSequence: 1,
     },
   ],
+  [
+    "NodeFrame",
+    NodeFrameSchema,
+    {
+      kind: "result",
+      envelopeVersion: 1,
+      jobId: "01941f29-7c00-7000-8000-000000000030",
+      outcome: "succeeded",
+      evidence: { verified: true },
+    },
+  ],
+  [
+    "NodeServerFrame",
+    NodeServerFrameSchema,
+    {
+      kind: "job",
+      envelopeVersion: 1,
+      assignment: '{"jobId":"01941f29-7c00-7000-8000-000000000031"}',
+      signature: "a".repeat(64),
+    },
+  ],
+  [
+    "NodeJobAssignment",
+    NodeJobAssignmentSchema,
+    {
+      jobId: "01941f29-7c00-7000-8000-000000000032",
+      nodeId: "01941f29-7c00-7000-8000-000000000033",
+      capability: "verification.noop",
+      payloadVersion: 1,
+      payload: {},
+      idempotencyKey: "idem-key-node-1",
+      leaseExpiresAt: "2026-09-01T12:00:30.000Z",
+      attempt: 1,
+    },
+  ],
+  [
+    "NodeCredential",
+    NodeCredentialSchema,
+    {
+      coreUrl: "http://127.0.0.1:7717",
+      nodeId: "01941f29-7c00-7000-8000-000000000034",
+      generation: 0,
+      credential: "b".repeat(64),
+    },
+  ],
+  ["FileSearchPayload", FileSearchPayloadSchema, { rootGrantId: "root-a", nameContains: "report" }],
+  [
+    "FileSearchEvidence",
+    FileSearchEvidenceSchema,
+    { matches: [{ relativePath: "notes/findings.md", sizeBytes: 8 }], truncated: false },
+  ],
+  [
+    "FileSearchConstraints",
+    FileSearchConstraintsSchema,
+    { roots: [{ grantId: "root-a", path: "/granted/root" }] },
+  ],
+  [
+    "EnvironmentInspectEvidence",
+    EnvironmentInspectEvidenceSchema,
+    { platform: "win32", arch: "x64", nodeVersion: "v22.23.2", cpuCount: 8, totalMemoryBytes: 1 },
+  ],
+  ["VerificationNoopEvidence", VerificationNoopEvidenceSchema, { verified: true }],
 ];
 
 describe("every schema enforces .strict() against unknown fields", () => {

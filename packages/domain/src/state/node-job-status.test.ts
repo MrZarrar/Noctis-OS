@@ -18,6 +18,8 @@ const ALLOWED = new Set([
   "queued->leased",
   "queued->cancelled",
   "leased->running",
+  "leased->succeeded",
+  "leased->failed",
   "leased->expired",
   "leased->cancelled",
   "running->succeeded",

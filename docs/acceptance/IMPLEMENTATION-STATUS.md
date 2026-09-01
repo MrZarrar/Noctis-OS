@@ -235,3 +235,114 @@ No donor code was ported in this batch, so `DONOR-PORT-LEDGER.md` is unchanged. 
 
 The socket tests were run three consecutive times with no flakiness. `estimated_cost_gbp` remains a
 SQLite `REAL`, now carrying a `ponytail:` comment in `authority/service.ts` naming the conversion point.
+
+### 2026-09-02 Phase 3 distributed nodes and deterministic local execution
+
+Implemented: derived node credentials with a two-generation rotation window
+(`nodes/credentials.ts`), one-time pairing codes and the node registry
+(`nodes/registry.ts`), the pure host router with explicit reason codes (`nodes/router.ts`), job
+enqueue/lease/result/expire/cancel (`nodes/jobs.ts`), the connection map, lease sweep, and signed job
+dispatch (`nodes/dispatch.ts`), the `/ws/nodes` realm (`nodes/ws.ts`), migration `0002_nodes.sql`, and
+the outbound node agent with its three deterministic adapters (`apps/node-agent/src/`).
+
+| Command                         | Result                                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `npm run format:check`          | exit 0; all matched files use Prettier code style                                                     |
+| `npm run lint`                  | exit 0; 0 errors                                                                                      |
+| `npm run typecheck`             | exit 0                                                                                                |
+| `npm run test:unit`             | exit 0; 40 files, 901 tests passed (704 at Phase 2 acceptance)                                        |
+| `npm run test:integration`      | exit 0; 94 tests across three integration suites                                                      |
+| `npm run test:migrations`       | exit 0; a subset of the 901 above                                                                     |
+| `npm run test:boundary`         | exit 0; 6 tests passed                                                                                |
+| `npm run build`                 | exit 0                                                                                                |
+| Donor repository reconfirmation | HEAD `ee7b4527`, branch `dev/personal-pc`, single untracked v5 spec — all match `DONOR-BASELINE.json` |
+
+No new dependency. `ws` 8.21.3, added in Phase 2, is the node agent's only runtime dependency besides
+the workspace contracts package.
+
+Gate evidence, each clause verified by sabotage rather than by a passing run alone. Every sabotage was
+applied locally, observed to fail the named tests, and reverted:
+
+| Gate clause                                  | Sabotage applied                                               | Tests that failed |
+| -------------------------------------------- | -------------------------------------------------------------- | ----------------- |
+| Revoked node is refused                      | revoked check removed from the `/ws/nodes` upgrade             | 1                 |
+| Revoked node loses what it was allowed to do | grant revocation removed from `revokeNode`                     | 1                 |
+| Node/client realms are not interchangeable   | node credential verification short-circuited to pass           | 2                 |
+| Credential rotation is real                  | `connectNode` stopped incrementing the generation              | 2                 |
+| Rotation window is exactly two generations   | window widened to three                                        | 1                 |
+| Rotation window does not lock an agent out   | previous-generation acceptance removed                         | 1                 |
+| A browser cannot become a worker             | Origin refusal removed from the `/ws/nodes` upgrade            | 1                 |
+| Malicious payloads fail closed               | `NodeFrameSchema` result ignored                               | 4                 |
+| Bounded progress                             | per-job progress budget removed                                | 1                 |
+| Wrong host                                   | named-host filter removed from the router                      | 4                 |
+| Wrong host (offline node starvation)         | router scored every candidate as connected                     | 1 and 2           |
+| Expired lease refuses a late result          | lease-expiry check removed from `completeJob`                  | 1                 |
+| Expired lease requeues, then gives up        | attempt ceiling removed from the sweep                         | 1                 |
+| Duplicate job                                | node-ownership check removed from `completeJob`                | 1                 |
+| Evidence is verified against its capability  | evidence parse replaced with a passthrough                     | 1                 |
+| Enqueue validates the payload                | capability payload parse replaced with a passthrough           | 1                 |
+| A grant cannot understate its consequence    | derived operation class replaced with a caller-supplied one    | 1                 |
+| Pairing code is single-use                   | `consumed_at` check removed                                    | 1                 |
+| Pairing code expires                         | expiry check removed                                           | 1                 |
+| Job assignments are signed                   | `signAssignment` replaced with a constant (core and agent)     | 1 and 5           |
+| The agent verifies the signature             | agent-side signature verification skipped                      | 2                 |
+| Writes cannot bypass the idempotency claim   | one `tx.prepare` write in `nodes/jobs.ts` moved to `kernel.db` | 1                 |
+| Symlink escape                               | reparse-point skip removed from `file.search`                  | 0 — see below     |
+
+Three sabotages initially survived, and each one was a finding rather than a formality:
+
+1. **A circular signature assertion.** The first version of the end-to-end test verified the job
+   signature with the core's own `verifyAssignment`, so replacing `signAssignment` with a constant
+   satisfied it — the function merely agreed with itself. The assertion now recomputes the HMAC with
+   `node:crypto` and pins the domain separator, and the sabotage fails it. The agent-side check is
+   independent by construction: the agent computes its own HMAC, and the same sabotage fails five of its
+   tests once the core is rebuilt.
+2. **A missing test, not a missing guard.** Nothing exercised a _known_ node presenting a _wrong_
+   credential — the unknown-node case is refused before any credential is derived, so the credential
+   comparison itself had no test. Two were added ("refuses a paired node presenting a credential it
+   never held", "refuses a credential that is two generations stale"), and both catch the sabotage.
+3. **An unreachable guard.** Removing the `isSymbolicLink()` skip in `file.search` changes no test,
+   because `readdir(..., { withFileTypes: true })` uses lstat and a reparse point already reports as
+   neither file nor directory, so the walk never queues it. The line is kept and its comment now says
+   so plainly rather than implying it is what holds. The guard that does hold for a symlinked _file_ is
+   the `realpath` containment check, and it has direct unit tests — Windows refuses to create a file
+   symlink without Developer Mode, so it cannot be exercised end to end on this machine. The
+   filesystem-level escape test uses a junction and asserts that nothing outside the root is reported.
+
+Two things found by probing rather than by a failing test:
+
+- `readdir(root, { recursive: true })` **traverses a junction on Windows** even though the `Dirent`
+  reports `isDirectory() === false` and `isSymbolicLink() === true`. A junction pointing at its own
+  ancestor makes the walk repeat indefinitely. `file.search` therefore does an explicit bounded walk
+  (20,000 entries, 12 levels) instead of using recursive `readdir`.
+- A node socket closing during core shutdown wrote its offline transition against an already-closed
+  database. `dispatcher.stop()` now records those transitions itself, while the database is open, and
+  the socket close handlers skip when `isStopping()` is true.
+
+Method note for future batches: `@noctis/core`, `@noctis/contracts`, and `@noctis/domain` resolve to
+`dist/`, so a cross-package test does not see a source-only edit. Sabotaging core source and running an
+`apps/node-agent` test proves nothing without `npm run build` in between — the first attempt at the
+signature sabotage reported a false pass for exactly this reason.
+
+Deliberately not built, with reasons recorded in ADR-0014: request rate limiting (still deferred to
+Phase 4 with the Tailscale Serve path), and `better-sqlite3` qualification (the repository uses
+`node:sqlite` behind the Phase 1 driver seam, and the node agent has no database at all). No grant-level
+revocation command exists; revoking the node revokes its grants, and a grant may carry an `expiresAt`.
+
+The port-scan clause of the gate is asserted as a property of the shipped source rather than of one
+machine: `apps/node-agent/src/no-listener.test.ts` scans every non-test file in the agent for server,
+listener, datagram, and child-process constructs, requires that `ws` is imported only as a client, and
+fails if the scan finds fewer than three files to read. No donor code was ported in this batch, so
+`DONOR-PORT-LEDGER.md` is unchanged.
+
+The built artefacts were smoke-run as real processes, not only tested. `node apps/core/dist/main.js`
+bound 127.0.0.1:7719; `node apps/node-agent/dist/main.js pair --core ... --code ... --host smoke-host`
+redeemed a code and wrote a credential file; the agent connected; a `file.search` job over a granted
+root returned `{"matches":[{"relativePath":"quarterly-findings.md","sizeBytes":9}],"truncated":false}`
+against a real directory. The observed event sequence was `node.paired.v1`,
+`node.capability_granted.v1`, `node.connected.v1`, `node.job_queued.v1`, `node.job_leased.v1`,
+`node.job_result.v1`. The credential file's generation moved 0 -> 1 on connect, and the `nodes` table's
+columns are `id, host_id, status, fingerprint, agent_version, last_seen_at, revoked_at, created_at,
+updated_at, credential_generation` — no secret column, which is the point of ADR-0011. Three hostile
+requests against the running processes answered 401 (the client bearer token upgrading `/ws/nodes`), 401
+(`/ready` with no bearer), and 404 (a reused pairing code presented by a different fingerprint).

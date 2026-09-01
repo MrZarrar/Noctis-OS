@@ -224,26 +224,43 @@ describe("write discipline", () => {
    * The mechanical half of "commands never touch tables directly". Phase 1 left
    * this as prose; a service that writes without going through `runCommand`
    * would skip the idempotency claim entirely, and nothing but this would say so.
+   *
+   * Both delimiters are matched, and every `.prepare(` in the file has to be one
+   * of the matches. Phase 2 matched template literals only, which meant a write
+   * written as `tx.prepare("UPDATE ...")` was invisible to the guard rather than
+   * caught by it — a hole in the check, not in the code it checks.
    */
-  it.each(["objectives/service.ts", "missions/service.ts", "authority/service.ts"])(
-    "issues every write in %s on the transaction handle runCommand supplies",
-    (file) => {
-      const source = readFileSync(join(import.meta.dirname, file), "utf8");
-      const writes = [...source.matchAll(/(\w+)\.prepare\(\s*`([\s\S]*?)`/g)].filter(([, , sql]) =>
-        /INSERT INTO|UPDATE \w+\s+SET|DELETE FROM/i.test(sql ?? ""),
+  const PREPARE = /([\w.]+)\s*\.prepare\(\s*(["`])([\s\S]*?)\2/g;
+
+  it.each([
+    "objectives/service.ts",
+    "missions/service.ts",
+    "authority/service.ts",
+    "nodes/registry.ts",
+    "nodes/jobs.ts",
+  ])("issues every write in %s on the transaction handle runCommand supplies", (file) => {
+    const source = readFileSync(join(import.meta.dirname, file), "utf8");
+    const prepared = [...source.matchAll(PREPARE)];
+    const writes = prepared.filter(([, , , sql]) =>
+      /INSERT INTO|UPDATE \w+\s+SET|DELETE FROM/i.test(sql ?? ""),
+    );
+
+    expect(source).toMatch(/\brunCommand\b/);
+    expect(writes.length).toBeGreaterThan(0);
+
+    // Nothing may reach `.prepare(` in a form the pattern above cannot read,
+    // because a statement the pattern cannot read is a statement it cannot check.
+    expect(prepared.length, "a .prepare( call was written in an unrecognised form").toBe(
+      source.split(".prepare(").length - 1,
+    );
+
+    // `tx` is only reachable inside the callback runCommand passes it to, and
+    // that callback runs after the idempotency claim. A write on any other
+    // handle — `db`, `kernel.db` — is a write outside that guarantee.
+    for (const [, receiver, , sql] of writes) {
+      expect(receiver, `write is not on the transaction handle: ${sql?.slice(0, 60) ?? ""}`).toBe(
+        "tx",
       );
-
-      expect(source).toMatch(/\brunCommand\b/);
-      expect(writes.length).toBeGreaterThan(0);
-
-      // `tx` is only reachable inside the callback runCommand passes it to, and
-      // that callback runs after the idempotency claim. A write on any other
-      // handle — `db`, `kernel.db` — is a write outside that guarantee.
-      for (const [, receiver, sql] of writes) {
-        expect(receiver, `write is not on the transaction handle: ${sql?.slice(0, 60) ?? ""}`).toBe(
-          "tx",
-        );
-      }
-    },
-  );
+    }
+  });
 });

@@ -3,8 +3,10 @@ import { z } from "zod";
 import { SchemaVersionSchema, UtcTimestampSchema, UuidSchema } from "./primitives.js";
 
 /**
- * The complete set of event names Phase 1 reserves. An unregistered name or an
- * unknown version fails to parse, satisfying the fail-closed contract rule.
+ * The complete set of registered event names. An unregistered name or an unknown
+ * version fails to parse, satisfying the fail-closed contract rule. Phase 2 and
+ * Phase 3 only appended to it, so every Phase 1 event still parses.
+ * See ADR-0009 and ADR-0011.
  */
 export const EVENT_NAMES = [
   "objective.created.v1",
@@ -22,8 +24,13 @@ export const EVENT_NAMES = [
   "identity.message_added.v1",
   "authority.decision_recorded.v1",
   "permission.revoked.v1",
+  "node.paired.v1",
   "node.connected.v1",
+  "node.status_changed.v1",
+  "node.capability_granted.v1",
+  "node.job_queued.v1",
   "node.job_leased.v1",
+  "node.job_status_changed.v1",
   "node.job_result.v1",
   "source.observed.v1",
   "artifact.recorded.v1",
@@ -40,6 +47,12 @@ export const StreamTypeSchema = z.enum([
   "identity",
   "surface",
   "node",
+  /**
+   * A job's own stream. Deliberately not folded into `node`: a queued job has no
+   * node yet, and keying job events by a job id under the `node` stream type would
+   * make "read the stream for node X" return rows that are not about node X.
+   */
+  "node_job",
   "noir",
   "authority",
 ]);

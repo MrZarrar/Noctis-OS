@@ -6,12 +6,15 @@ import { createIdFactory, systemClock } from "@noctis/domain";
 
 import type { ApiDeps } from "./api/http.js";
 import { handleRequest } from "./api/http.js";
-import { attachClientSocket } from "./api/ws.js";
+import { attachClientSocket, refuseUpgrade } from "./api/ws.js";
 import type { CoreConfig } from "./config/server.js";
 import type { NoctisDatabase } from "./db/connection.js";
 import { openDatabase } from "./db/connection.js";
 import { migrate } from "./db/migrate.js";
 import { createEventBroker } from "./events/broker.js";
+import type { Dispatcher } from "./nodes/dispatch.js";
+import { createDispatcher } from "./nodes/dispatch.js";
+import { attachNodeSocket } from "./nodes/ws.js";
 import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
 import { createLogger } from "./logging.js";
@@ -27,6 +30,8 @@ export interface StartCoreOptions {
   clock?: Clock;
   logger?: Logger;
   migrationsDirectory?: string;
+  /** Overridden by tests that would rather call `dispatcher.pass()` themselves. */
+  dispatchIntervalMs?: number;
 }
 
 export interface RunningCore {
@@ -34,6 +39,8 @@ export interface RunningCore {
   port: number;
   kernel: Kernel;
   schemaVersion: number;
+  /** Exposed so a test can drive a sweep instead of waiting for the interval. */
+  dispatcher: Dispatcher;
   close: () => Promise<void>;
 }
 
@@ -74,18 +81,37 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     logger,
   };
 
+  const dispatcher = createDispatcher({
+    kernel,
+    ...(options.dispatchIntervalMs === undefined ? {} : { intervalMs: options.dispatchIntervalMs }),
+  });
+
   const deps: ApiDeps = {
     kernel,
     config,
     schemaVersion: currentSchemaVersion(db),
     startedAt: clock.now(),
+    dispatcher,
   };
 
   const server: Server = createServer((req, res) => {
     void handleRequest(deps, req, res);
   });
 
-  const sockets = attachClientSocket(server, deps);
+  const clients = attachClientSocket(deps);
+  const nodes = attachNodeSocket({ kernel, config, dispatcher });
+
+  // One listener, offering the request to each realm in turn. Two listeners each
+  // writing their own 404 would race to answer the other realm's paths.
+  server.on("upgrade", (req, socket, head) => {
+    if (clients.tryUpgrade(req, socket, head) || nodes.tryUpgrade(req, socket, head)) {
+      return;
+    }
+
+    refuseUpgrade(socket, 404, "Not Found");
+  });
+
+  dispatcher.start();
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -112,12 +138,18 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     port: listening.port,
     kernel,
     schemaVersion: deps.schemaVersion,
+    dispatcher,
     async close() {
-      for (const client of sockets.clients) {
-        client.terminate();
+      dispatcher.stop();
+
+      for (const realm of [clients, nodes]) {
+        for (const socket of realm.sockets.clients) {
+          socket.terminate();
+        }
+
+        realm.sockets.close();
       }
 
-      sockets.close();
       server.closeAllConnections();
 
       await new Promise<void>((resolve, reject) => {

@@ -3,5 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Outbound Noctis worker; implemented after the core contracts"
+  "description": "Outbound Noctis worker; dials the core and never listens",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@noctis/contracts": "0.0.0",
+    "ws": "8.21.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@noctis/core": "0.0.0"
+  }
 }

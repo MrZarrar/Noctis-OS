@@ -1,4 +1,4 @@
-import type { Server as HttpServer, IncomingMessage } from "node:http";
+import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 
 import type { OrchestrationEvent, ServerFrame } from "@noctis/contracts";
@@ -9,20 +9,20 @@ import { latestSequence, readEventsAfter } from "../db/events.js";
 import type { ApiDeps } from "./http.js";
 import { isAuthorized, isOriginAllowed } from "./auth.js";
 
-/** The client realm. `/ws/nodes` is a separate realm and is not served here. */
+/** The client realm. `/ws/nodes` is a separate realm, served by `nodes/ws.ts`. */
 export const CLIENT_SOCKET_PATH = "/ws/clients";
 
 const MAX_FRAME_BYTES = 64 * 1024;
 const REPLAY_PAGE_SIZE = 500;
-const HEARTBEAT_MS = 30_000;
+export const HEARTBEAT_MS = 30_000;
 /** A client this far behind is not reading. Close it; it can resume by sequence. */
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 
 /** RFC 6455 close codes used here. */
-const CLOSE_POLICY = 1008;
+export const CLOSE_POLICY = 1008;
 const CLOSE_OVERLOADED = 1011;
 
-function refuseUpgrade(socket: Duplex, status: number, reason: string): void {
+export function refuseUpgrade(socket: Duplex, status: number, reason: string): void {
   socket.write(`HTTP/1.1 ${String(status)} ${reason}\r\nConnection: close\r\n\r\n`);
   socket.destroy();
 }
@@ -32,37 +32,25 @@ function frame(payload: ServerFrame): string {
 }
 
 /**
+ * A realm's share of the HTTP upgrade path. `tryUpgrade` returns false when the
+ * request is not for this realm, so one listener can offer the request to each
+ * realm in turn and refuse it once, at the end, if nobody claims it. Two
+ * listeners each writing their own 404 would race to answer the other's paths.
+ */
+export interface SocketRealm {
+  sockets: WebSocketServer;
+  tryUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): boolean;
+}
+
+/**
  * Serves `/ws/clients`: authenticated, resumable delivery of committed events.
  *
  * Resume is by global sequence, not by an offset the client invents. Anything a
  * client missed while disconnected is still in `orchestration_events`, so a
  * reconnect is a read, not a replay buffer the core has to keep.
  */
-export function attachClientSocket(server: HttpServer, deps: ApiDeps): WebSocketServer {
+export function attachClientSocket(deps: ApiDeps): SocketRealm {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
-
-  server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = new URL(req.url ?? "/", `http://${deps.config.bindAddress}`);
-
-    if (url.pathname !== CLIENT_SOCKET_PATH) {
-      refuseUpgrade(socket, 404, "Not Found");
-      return;
-    }
-
-    if (!isOriginAllowed(req.headers.origin, deps.config.allowedOrigins)) {
-      refuseUpgrade(socket, 403, "Forbidden");
-      return;
-    }
-
-    if (!isAuthorized(req.headers.authorization, deps.config.token)) {
-      refuseUpgrade(socket, 401, "Unauthorized");
-      return;
-    }
-
-    sockets.handleUpgrade(req, socket, head, (ws) => {
-      sockets.emit("connection", ws, req);
-    });
-  });
 
   sockets.on("connection", (ws: WebSocket) => {
     const connectionId = deps.kernel.ids.nextId();
@@ -219,5 +207,30 @@ export function attachClientSocket(server: HttpServer, deps: ApiDeps): WebSocket
     });
   });
 
-  return sockets;
+  return {
+    sockets,
+    tryUpgrade(req, socket, head) {
+      const url = new URL(req.url ?? "/", `http://${deps.config.bindAddress}`);
+
+      if (url.pathname !== CLIENT_SOCKET_PATH) {
+        return false;
+      }
+
+      if (!isOriginAllowed(req.headers.origin, deps.config.allowedOrigins)) {
+        refuseUpgrade(socket, 403, "Forbidden");
+        return true;
+      }
+
+      if (!isAuthorized(req.headers.authorization, deps.config.token)) {
+        refuseUpgrade(socket, 401, "Unauthorized");
+        return true;
+      }
+
+      sockets.handleUpgrade(req, socket, head, (ws) => {
+        sockets.emit("connection", ws, req);
+      });
+
+      return true;
+    },
+  };
 }

@@ -1,11 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  CancelNodeJobCommandSchema,
   ChangeMissionStatusCommandSchema,
   ChangeObjectiveStatusCommandSchema,
   CreateMissionCommandSchema,
   CreateObjectiveCommandSchema,
+  EnqueueNodeJobCommandSchema,
+  GrantNodeCapabilityCommandSchema,
+  IssueNodePairingCodeCommandSchema,
+  PairNodeRequestSchema,
   RequestAuthorityCommandSchema,
+  RevokeNodeCommandSchema,
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
@@ -21,6 +27,21 @@ import {
   getMission,
   listMissionsForObjective,
 } from "../missions/service.js";
+import type { Dispatcher } from "../nodes/dispatch.js";
+import { explainQueued } from "../nodes/dispatch.js";
+import { cancelJob, enqueueJob, getJob } from "../nodes/jobs.js";
+import {
+  currentCredential,
+  getGrant,
+  getNode,
+  getPairingCode,
+  grantCapability,
+  issuePairingCode,
+  listGrants,
+  listNodes,
+  pairNode,
+  revokeNode,
+} from "../nodes/registry.js";
 import {
   changeObjectiveStatus,
   createObjective,
@@ -34,12 +55,16 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_PAGE_SIZE = 500;
 const DEFAULT_PAGE_SIZE = 100;
 
+/** The one path that does not require the core bearer token. See `pairNode`. */
+export const PAIR_PATH = "/node/pair";
+
 export interface ApiDeps {
   kernel: Kernel;
   config: CoreConfig;
   /** Set once at startup; reported by /ready and /diagnostics. */
   schemaVersion: number;
   startedAt: number;
+  dispatcher: Dispatcher;
 }
 
 interface ErrorBody {
@@ -200,6 +225,25 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   "authority.request": defineCommand(RequestAuthorityCommandSchema, requestAuthority, (db, id) =>
     getAuthorityDecision(db, id),
   ),
+  "node.issue_pairing_code": defineCommand(
+    IssueNodePairingCodeCommandSchema,
+    issuePairingCode,
+    // Deliberately not the code: the core kept only its digest, so a replay can
+    // say the code exists and when it expires but can never repeat it.
+    (db, id) => getPairingCode(db, id),
+  ),
+  "node.revoke": defineCommand(RevokeNodeCommandSchema, revokeNode, (db, id) => getNode(db, id)),
+  "node.grant_capability": defineCommand(
+    GrantNodeCapabilityCommandSchema,
+    grantCapability,
+    (db, id) => getGrant(db, id),
+  ),
+  "node.job_enqueue": defineCommand(EnqueueNodeJobCommandSchema, enqueueJob, (db, id) =>
+    getJob(db, id),
+  ),
+  "node.job_cancel": defineCommand(CancelNodeJobCommandSchema, cancelJob, (db, id) =>
+    getJob(db, id),
+  ),
 };
 
 function parseLimit(raw: string | null): number | undefined {
@@ -228,6 +272,18 @@ function handleRead(
 
   if (segments.length === 1 && segments[0] === "objectives") {
     return { status: 200, body: { objectives: listObjectives(deps.kernel.db, limit) } };
+  }
+
+  if (segments.length === 1 && segments[0] === "nodes") {
+    return {
+      status: 200,
+      body: {
+        nodes: listNodes(deps.kernel.db, limit).map((node) => ({
+          ...node,
+          connected: deps.dispatcher.isConnected(node.id),
+        })),
+      },
+    };
   }
 
   if (segments.length === 1 && segments[0] === "events") {
@@ -279,13 +335,106 @@ function handleRead(
       : { status: 200, body: mission };
   }
 
+  if (collection === "nodes" && sub === undefined) {
+    const node = getNode(deps.kernel.db, id);
+
+    return node === undefined
+      ? { status: 404, body: errorBody("not_found", "node not found") }
+      : {
+          status: 200,
+          body: {
+            ...node,
+            connected: deps.dispatcher.isConnected(node.id),
+            grants: listGrants(deps.kernel.db, node.id),
+          },
+        };
+  }
+
+  if (collection === "jobs" && sub === undefined) {
+    const record = getJob(deps.kernel.db, id);
+
+    if (record === undefined) {
+      return { status: 404, body: errorBody("not_found", "node_job not found") };
+    }
+
+    // Computed on read rather than stored, so it is the reason right now — see
+    // the note in migration 0002.
+    const routingReason =
+      record.job.status === "queued"
+        ? explainQueued(deps.kernel, deps.dispatcher, {
+            capability: record.job.capability,
+            ...(record.job.missionId === undefined ? {} : { missionId: record.job.missionId }),
+          })
+        : undefined;
+
+    return {
+      status: 200,
+      body: {
+        ...record,
+        ...(routingReason === undefined ? {} : { routingReason }),
+      },
+    };
+  }
+
   return { status: 404, body: errorBody("not_found", "No such resource") };
 }
 
 /**
- * Single entry point for the client REST realm. Order matters: origin, then
- * token, then routing. A caller that fails either check learns nothing about
- * which paths exist.
+ * Redeems a pairing code.
+ *
+ * The only unauthenticated write in the core. A node agent has no core token by
+ * construction — it is being introduced to the core for the first time — so the
+ * one-time code is the whole credential, and it is single-use, expiring, bound
+ * to a host, and stored only as a digest.
+ */
+function handlePair(
+  deps: ApiDeps,
+  context: CommandContext,
+  body: unknown,
+): { status: number; body: unknown } {
+  const parsed = PairNodeRequestSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return {
+      status: 400,
+      body: errorBody("invalid_request", "The pairing request did not match its schema"),
+    };
+  }
+
+  const outcome = pairNode(deps.kernel, context, parsed.data, deps.config.token);
+
+  if (outcome.ok) {
+    return { status: 200, body: outcome.value };
+  }
+
+  if (outcome.conflict.kind === "idempotent_replay") {
+    // A retried pair request must answer with the same credential, or a lost
+    // response would leave an agent that cannot connect and cannot pair again.
+    // The core kept no copy — it re-derives it.
+    const existing = currentCredential(
+      deps.kernel.db,
+      outcome.conflict.existingId,
+      deps.config.token,
+      parsed.data,
+    );
+
+    if (existing !== undefined) {
+      return { status: 200, body: existing };
+    }
+
+    // A spent code presented by a different machine. Answered exactly as a wrong
+    // code is, so this is not an oracle for codes that once existed.
+    return { status: 404, body: errorBody("not_found", "pairing_code not found") };
+  }
+
+  return conflictResponse(outcome.conflict);
+}
+
+/**
+ * Single entry point for the REST realm. Order matters: origin, then token, then
+ * routing. A caller that fails either check learns nothing about which paths
+ * exist. `/node/pair` sits between the two on purpose, and is the only path that
+ * does.
  */
 export async function handleRequest(
   deps: ApiDeps,
@@ -320,7 +469,9 @@ export async function handleRequest(
       return;
     }
 
-    if (!isAuthorized(req.headers.authorization, deps.config.token)) {
+    const isPair = req.method === "POST" && url.pathname === PAIR_PATH;
+
+    if (!isPair && !isAuthorized(req.headers.authorization, deps.config.token)) {
       logger.log("warn", "rejected unauthenticated request");
       send(res, 401, errorBody("unauthorized", "A valid bearer token is required"), correlationId);
       return;
@@ -339,6 +490,7 @@ export async function handleRequest(
           schemaVersion: deps.schemaVersion,
           latestSequence: latestSequence(deps.kernel.db),
           connectedClients: deps.kernel.broker.listenerCount,
+          connectedNodes: deps.dispatcher.connectedCount,
           uptimeMs: deps.kernel.clock.now() - deps.startedAt,
         },
         correlationId,
@@ -352,16 +504,17 @@ export async function handleRequest(
       return;
     }
 
-    if (req.method !== "POST" || segments[0] !== "commands" || segments.length !== 2) {
+    const isCommand = req.method === "POST" && segments[0] === "commands" && segments.length === 2;
+
+    if (!isCommand && !isPair) {
       send(res, 404, errorBody("not_found", "No such resource"), correlationId);
       return;
     }
 
-    const route = Object.hasOwn(COMMANDS, segments[1] ?? "")
-      ? COMMANDS[segments[1] ?? ""]
-      : undefined;
+    const name = segments[1] ?? "";
+    const route = isPair ? undefined : Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
 
-    if (route === undefined) {
+    if (!isPair && route === undefined) {
       send(res, 404, errorBody("not_found", "No such command"), correlationId);
       return;
     }
@@ -394,10 +547,48 @@ export async function handleRequest(
       return;
     }
 
+    if (isPair) {
+      const context: CommandContext = { correlationId, actorType: "system", actorId: "pairing" };
+      const result = handlePair(deps, context, body);
+
+      logger.log("info", "pairing request handled", { status: result.status });
+      send(res, result.status, result.body, correlationId);
+      return;
+    }
+
+    if (route === undefined) {
+      send(res, 404, errorBody("not_found", "No such command"), correlationId);
+      return;
+    }
+
     const context: CommandContext = { correlationId, actorType: "user", actorId: "local" };
     const result = route.handle(deps.kernel, context, body);
 
-    logger.log("info", "command handled", { command: segments[1], status: result.status });
+    if (result.status === 200) {
+      // The two commands whose effect reaches beyond the database. Both run after
+      // the commit, never inside it: a job frame that describes state a rollback
+      // erased is worse than one that arrives a millisecond late.
+      if (name === "node.job_enqueue") {
+        deps.dispatcher.pass();
+      } else if (name === "node.revoke") {
+        const revoked = RevokeNodeCommandSchema.safeParse(body);
+
+        if (revoked.success) {
+          // A revoked node that keeps its socket is only revoked on paper: it
+          // could still answer for work it already holds.
+          deps.dispatcher.disconnect(revoked.data.nodeId, 1008, "node revoked");
+        }
+      } else if (name === "node.job_cancel") {
+        const cancelled = CancelNodeJobCommandSchema.safeParse(body);
+        const record = cancelled.success ? getJob(deps.kernel.db, cancelled.data.jobId) : undefined;
+
+        if (record?.job.nodeId !== undefined) {
+          deps.dispatcher.sendCancel(record.job.nodeId, record.job.id);
+        }
+      }
+    }
+
+    logger.log("info", "command handled", { command: name, status: result.status });
     send(res, result.status, result.body, correlationId);
   } catch (error) {
     logger.log("error", "unhandled request failure", {

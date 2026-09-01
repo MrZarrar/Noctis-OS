@@ -1,0 +1,1153 @@
+import { createHmac } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { NodeServerFrame } from "@noctis/contracts";
+import { NODE_ENVELOPE_VERSION, NodeJobAssignmentSchema } from "@noctis/contracts";
+import { afterEach, describe, expect, it } from "vitest";
+import { WebSocket } from "ws";
+
+import type { CoreConfig } from "../config/server.js";
+import { createLogger } from "../logging.js";
+import type { RunningCore } from "../server.js";
+import { startCore } from "../server.js";
+import { LEASE_MS, MAX_ATTEMPTS } from "./jobs.js";
+
+const TOKEN = "0123456789abcdef0123456789abcdef";
+const START = Date.parse("2026-09-01T12:00:00.000Z");
+
+/** Long enough that only an explicit `dispatcher.pass()` ever runs a sweep. */
+const NO_AUTOMATIC_SWEEP_MS = 3_600_000;
+
+interface TestCore {
+  core: RunningCore;
+  base: string;
+  socketUrl: string;
+  advance: (ms: number) => void;
+}
+
+const started: Array<{ core: RunningCore; directory: string }> = [];
+const openSockets: WebSocket[] = [];
+
+async function startTestCore(overrides: Partial<CoreConfig> = {}): Promise<TestCore> {
+  const directory = mkdtempSync(join(tmpdir(), "noctis-nodes-"));
+  const config: CoreConfig = {
+    bindAddress: "127.0.0.1",
+    port: 0,
+    token: TOKEN,
+    databasePath: join(directory, "core.db"),
+    allowedOrigins: [],
+    logLevel: "error",
+    ...overrides,
+  };
+
+  // A movable clock, so lease expiry is a fact the test states rather than waits for.
+  let now = START;
+
+  const core = await startCore({
+    config,
+    clock: { now: () => now },
+    logger: createLogger({ sink: () => undefined, level: "error" }),
+    dispatchIntervalMs: NO_AUTOMATIC_SWEEP_MS,
+  });
+
+  started.push({ core, directory });
+
+  return {
+    core,
+    base: `http://127.0.0.1:${String(core.port)}`,
+    socketUrl: `ws://127.0.0.1:${String(core.port)}`,
+    advance: (ms) => {
+      now += ms;
+    },
+  };
+}
+
+afterEach(async () => {
+  while (openSockets.length > 0) {
+    openSockets.pop()?.terminate();
+  }
+
+  while (started.length > 0) {
+    const entry = started.pop();
+
+    if (entry !== undefined) {
+      await entry.core.close();
+      rmSync(entry.directory, { recursive: true, force: true });
+    }
+  }
+});
+
+function authorized(extra: Record<string, string> = {}): Record<string, string> {
+  return { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...extra };
+}
+
+async function command(
+  core: TestCore,
+  name: string,
+  body: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${core.base}/commands/${name}`, {
+    method: "POST",
+    headers: authorized(),
+    body: JSON.stringify(body),
+  });
+
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+async function read(
+  core: TestCore,
+  path: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${core.base}${path}`, { headers: authorized() });
+
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+async function waitForAsync(
+  predicate: () => Promise<boolean>,
+  label: string,
+  timeoutMs = 4000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (!(await predicate())) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${label}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${label}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+interface PairedFake {
+  nodeId: string;
+  credential: string;
+}
+
+async function issueCode(core: TestCore, hostId: string, key = `code-${hostId}`): Promise<string> {
+  const issued = await command(core, "node.issue_pairing_code", {
+    idempotencyKey: key,
+    hostId,
+  });
+
+  expect(issued.status).toBe(200);
+
+  return issued.body.code as string;
+}
+
+async function pairFake(
+  core: TestCore,
+  options: { hostId?: string; fingerprint?: string; code?: string } = {},
+): Promise<PairedFake> {
+  const hostId = options.hostId ?? "workstation";
+  const code = options.code ?? (await issueCode(core, hostId));
+  const response = await fetch(`${core.base}/node/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code,
+      hostId,
+      fingerprint: options.fingerprint ?? "fingerprint-a",
+      agentVersion: "0.0.0-test",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+
+  const paired = (await response.json()) as PairedFake;
+
+  return paired;
+}
+
+interface FakeNode {
+  frames: NodeServerFrame[];
+  jobs: () => Array<{ assignment: string; signature: string }>;
+  welcome: () => Extract<NodeServerFrame, { kind: "welcome" }> | undefined;
+  sendRaw: (payload: string | Buffer) => void;
+  result: (jobId: string, evidence: unknown, outcome?: "succeeded" | "failed") => void;
+  progress: (jobId: string, percent: number) => void;
+  closed: () => { code: number } | undefined;
+  close: () => void;
+  socket: WebSocket;
+}
+
+/**
+ * A node that speaks the protocol and nothing else. It never runs an adapter, so
+ * every assertion here is about the core's half of the contract.
+ */
+async function openFake(
+  core: TestCore,
+  paired: PairedFake,
+  options: { hello?: boolean; headers?: Record<string, string>; path?: string } = {},
+): Promise<FakeNode> {
+  const socket = new WebSocket(`${core.socketUrl}${options.path ?? "/ws/nodes"}`, {
+    headers: options.headers ?? {
+      authorization: `Bearer ${paired.nodeId}.${paired.credential}`,
+    },
+  });
+
+  openSockets.push(socket);
+
+  const frames: NodeServerFrame[] = [];
+  let closed: { code: number } | undefined;
+
+  socket.on("message", (data: Buffer) => {
+    frames.push(JSON.parse(data.toString("utf8")) as NodeServerFrame);
+  });
+  socket.on("close", (code: number) => {
+    closed = { code };
+  });
+  socket.on("error", () => undefined);
+
+  const fake: FakeNode = {
+    frames,
+    jobs: () => frames.filter((frame) => frame.kind === "job"),
+    welcome: () => frames.find((frame) => frame.kind === "welcome"),
+    sendRaw: (payload) => socket.send(payload),
+    result: (jobId, evidence, outcome = "succeeded") => {
+      socket.send(
+        JSON.stringify({
+          kind: "result",
+          envelopeVersion: NODE_ENVELOPE_VERSION,
+          jobId,
+          outcome,
+          evidence,
+        }),
+      );
+    },
+    progress: (jobId, percent) => {
+      socket.send(
+        JSON.stringify({
+          kind: "progress",
+          envelopeVersion: NODE_ENVELOPE_VERSION,
+          jobId,
+          percent,
+          note: "working",
+        }),
+      );
+    },
+    closed: () => closed,
+    close: () => socket.close(),
+    socket,
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("close", () => {
+      reject(new Error(`refused before opening (close code ${String(closed?.code ?? 0)})`));
+    });
+    socket.once("error", reject);
+  });
+
+  if (options.hello !== false) {
+    socket.send(
+      JSON.stringify({
+        kind: "hello",
+        envelopeVersion: NODE_ENVELOPE_VERSION,
+        agentVersion: "0.0.0-test",
+        capabilities: ["environment.inspect", "file.search", "verification.noop"],
+      }),
+    );
+
+    await waitFor(() => fake.welcome() !== undefined, "welcome frame");
+  }
+
+  return fake;
+}
+
+async function grant(
+  core: TestCore,
+  nodeId: string,
+  capability: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const granted = await command(core, "node.grant_capability", {
+    idempotencyKey: `grant-${nodeId}-${capability}-${JSON.stringify(extra)}`,
+    nodeId,
+    capability,
+    constraints: {},
+    ...extra,
+  });
+
+  expect(granted.status).toBe(200);
+}
+
+async function enqueue(
+  core: TestCore,
+  capability: string,
+  extra: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const enqueued = await command(core, "node.job_enqueue", {
+    idempotencyKey: `job-${capability}-${JSON.stringify(extra)}`,
+    capability,
+    payload: {},
+    ...extra,
+  });
+
+  expect(enqueued.status).toBe(200);
+
+  return enqueued.body;
+}
+
+async function eventTypes(core: TestCore): Promise<string[]> {
+  const events = await read(core, "/events?limit=500");
+
+  return (events.body.events as Array<{ type: string }>).map((event) => event.type);
+}
+
+function jobId(record: Record<string, unknown>): string {
+  return (record.job as { id: string }).id;
+}
+
+describe("the paired node loop", () => {
+  it("pairs, grants, dispatches a signed job, and records verified evidence", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "verification.noop");
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    const frame = node.jobs()[0];
+
+    if (frame === undefined) {
+      throw new Error("no job frame");
+    }
+
+    // Recomputed here with node:crypto rather than with the core's own
+    // `verifyAssignment`, because verifying a signature with the function that
+    // produced it proves only that the function agrees with itself: replacing
+    // `signAssignment` with a constant satisfies that check and fails this one.
+    // It also pins the domain separator, which is part of the wire contract.
+    const welcome = node.welcome();
+    expect(welcome).toBeDefined();
+    expect(frame.signature).toBe(
+      createHmac("sha256", welcome?.credential ?? "")
+        .update(`noctis.node.assignment.v1:${frame.assignment}`)
+        .digest("hex"),
+    );
+
+    const assignment = NodeJobAssignmentSchema.parse(JSON.parse(frame.assignment));
+    expect(assignment).toMatchObject({
+      jobId: jobId(enqueued),
+      nodeId: paired.nodeId,
+      capability: "verification.noop",
+      attempt: 1,
+    });
+
+    node.result(assignment.jobId, { verified: true });
+
+    await waitForAsync(async () => {
+      const current = await read(core, `/jobs/${assignment.jobId}`);
+      return (current.body.job as { status: string }).status === "succeeded";
+    }, "the job to succeed");
+
+    const job = await read(core, `/jobs/${assignment.jobId}`);
+
+    expect(job.body.job).toMatchObject({ status: "succeeded", nodeId: paired.nodeId });
+    expect(job.body.result).toEqual({ verified: true });
+
+    expect(await eventTypes(core)).toEqual([
+      "node.paired.v1",
+      "node.capability_granted.v1",
+      "node.connected.v1",
+      "node.job_queued.v1",
+      "node.job_leased.v1",
+      "node.job_result.v1",
+    ]);
+  });
+
+  it("reports a connected node and its grants over REST", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "environment.inspect");
+    await openFake(core, paired);
+
+    const one = await read(core, `/nodes/${paired.nodeId}`);
+
+    expect(one.body).toMatchObject({ id: paired.nodeId, status: "online", connected: true });
+    expect(
+      (one.body.grants as Array<{ capability: string; operationClass: string }>)[0],
+    ).toMatchObject({ capability: "environment.inspect", operationClass: "read_inspect" });
+
+    const all = await read(core, "/nodes");
+
+    expect((all.body.nodes as unknown[]).length).toBe(1);
+  });
+
+  it("records mission evidence when the job names a Mission", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const objective = await command(core, "objective.create", {
+      idempotencyKey: "o1",
+      title: "Objective",
+      intent: "Prove the node loop",
+      status: "draft",
+      identityId: "vesper",
+    });
+    const mission = await command(core, "mission.create", {
+      idempotencyKey: "m1",
+      objectiveId: (objective.body as { id: string }).id,
+      title: "Mission",
+      operationClass: "read_inspect",
+      hostPolicy: "any_granted_host",
+    });
+
+    const node = await openFake(core, paired);
+    const missionId = (mission.body as { id: string }).id;
+
+    await enqueue(core, "verification.noop", { missionId });
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    const frame = node.jobs()[0];
+    const assignment = NodeJobAssignmentSchema.parse(JSON.parse(frame?.assignment ?? "{}"));
+
+    node.result(assignment.jobId, { verified: true });
+
+    await waitForAsync(async () => {
+      const job = await read(core, `/jobs/${assignment.jobId}`);
+      return (job.body.job as { status: string }).status === "succeeded";
+    }, "the job to succeed");
+
+    const evidence = core.core.kernel.db
+      .prepare("SELECT mission_id, kind, host_id FROM mission_evidence")
+      .all() as Array<{ mission_id: string; kind: string; host_id: string }>;
+
+    expect(evidence).toEqual([{ mission_id: missionId, kind: "result", host_id: paired.nodeId }]);
+  });
+});
+
+describe("the two socket realms are not interchangeable", () => {
+  it("refuses the core token on the node socket", async () => {
+    const core = await startTestCore();
+
+    await expect(
+      openFake(
+        core,
+        { nodeId: "", credential: "" },
+        { headers: { authorization: `Bearer ${TOKEN}` } },
+      ),
+    ).rejects.toThrow(/server response: 401/);
+  });
+
+  it("refuses a node credential on the client socket", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await expect(
+      openFake(core, paired, {
+        path: "/ws/clients",
+        headers: { authorization: `Bearer ${paired.nodeId}.${paired.credential}` },
+      }),
+    ).rejects.toThrow(/server response: 401/);
+  });
+
+  /** A browser page must never be able to become a worker. */
+  it("refuses a node upgrade that carries an Origin header", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await expect(
+      openFake(core, paired, {
+        headers: {
+          authorization: `Bearer ${paired.nodeId}.${paired.credential}`,
+          origin: "http://localhost:5173",
+        },
+      }),
+    ).rejects.toThrow(/server response: 403/);
+  });
+
+  it("refuses an unknown node id exactly as it refuses a wrong credential", async () => {
+    const core = await startTestCore();
+
+    await expect(
+      openFake(core, {
+        nodeId: "0199a000-0000-7000-8000-0000000000ff",
+        credential: "a".repeat(64),
+      }),
+    ).rejects.toThrow(/server response: 401/);
+  });
+
+  /**
+   * The node exists; the credential does not. Distinct from the unknown-node
+   * case above, and the one that actually exercises the credential check —
+   * an unknown node is refused before any credential is derived.
+   */
+  it("refuses a paired node presenting a credential it never held", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await expect(
+      openFake(core, { nodeId: paired.nodeId, credential: "0".repeat(64) }),
+    ).rejects.toThrow(/server response: 401/);
+  });
+
+  /** The far edge of the rotation window: one behind is fine, two is not. */
+  it("refuses a credential that is two generations stale", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    const first = await openFake(core, paired);
+    first.close();
+    await waitFor(() => first.closed() !== undefined, "the first socket to close");
+
+    const second = await openFake(core, {
+      nodeId: paired.nodeId,
+      credential: first.welcome()?.credential ?? "",
+    });
+    second.close();
+    await waitFor(() => second.closed() !== undefined, "the second socket to close");
+
+    // The credential from pairing is now two rotations behind.
+    await expect(openFake(core, paired)).rejects.toThrow(/server response: 401/);
+  });
+
+  it("closes a node socket that sends a client frame", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const node = await openFake(core, paired);
+
+    node.sendRaw(JSON.stringify({ kind: "subscribe", envelopeVersion: 1, afterSequence: 0 }));
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+  });
+
+  it.each([
+    ["not JSON", "{"],
+    ["an unregistered frame kind", '{"kind":"execute","envelopeVersion":1}'],
+    [
+      "an unknown envelope version",
+      '{"kind":"hello","envelopeVersion":2,"agentVersion":"1","capabilities":[]}',
+    ],
+    [
+      "an unknown capability",
+      '{"kind":"hello","envelopeVersion":1,"agentVersion":"1","capabilities":["shell.exec"]}',
+    ],
+  ])("closes a node socket that sends %s", async (_label, payload) => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const node = await openFake(core, paired, { hello: false });
+
+    node.sendRaw(payload);
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+  });
+
+  it("closes a node socket that sends a binary frame", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const node = await openFake(core, paired, { hello: false });
+
+    node.sendRaw(Buffer.from([1, 2, 3]));
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+  });
+});
+
+describe("pairing", () => {
+  it("spends a code exactly once", async () => {
+    const core = await startTestCore();
+    const code = await issueCode(core, "workstation");
+
+    await pairFake(core, { code });
+
+    const second = await fetch(`${core.base}/node/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        hostId: "workstation",
+        fingerprint: "fingerprint-b",
+        agentVersion: "0.0.0-test",
+      }),
+    });
+
+    expect(second.status).toBe(404);
+  });
+
+  /**
+   * Two things stop a code being spent twice: the `consumed_at` marker, and the
+   * idempotency claim keyed on the code's digest. The claim fires first, which
+   * means the test above passes whether or not `consumed_at` is ever checked.
+   *
+   * So this deletes the claim — the state a retention sweep over
+   * `idempotency_keys` would eventually leave behind — and requires the marker
+   * to hold the line on its own.
+   */
+  it("refuses a spent code even when its idempotency claim has been pruned", async () => {
+    const core = await startTestCore();
+    const code = await issueCode(core, "workstation");
+
+    await pairFake(core, { code });
+
+    expect(
+      core.core.kernel.db.prepare("SELECT consumed_at FROM node_pairing_codes").get(),
+    ).not.toEqual({ consumed_at: null });
+
+    core.core.kernel.db.prepare("DELETE FROM idempotency_keys WHERE scope = 'node.pair'").run();
+
+    const response = await fetch(`${core.base}/node/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        hostId: "workstation",
+        fingerprint: "fingerprint-a",
+        agentVersion: "0.0.0-test",
+      }),
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  /** A lost response must not cost the pairing: the credential is re-derived. */
+  it("answers a retried pair request with the same credential", async () => {
+    const core = await startTestCore();
+    const code = await issueCode(core, "workstation");
+    const first = await pairFake(core, { code });
+
+    const retry = await fetch(`${core.base}/node/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        hostId: "workstation",
+        fingerprint: "fingerprint-a",
+        agentVersion: "0.0.0-test",
+      }),
+    });
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(first);
+  });
+
+  it("refuses a code that has expired", async () => {
+    const core = await startTestCore();
+    const code = await issueCode(core, "workstation");
+
+    core.advance(16 * 60 * 1000);
+
+    const response = await fetch(`${core.base}/node/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        hostId: "workstation",
+        fingerprint: "fingerprint-a",
+        agentVersion: "0.0.0-test",
+      }),
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("refuses a code redeemed for a different host", async () => {
+    const core = await startTestCore();
+    const code = await issueCode(core, "workstation");
+
+    const response = await fetch(`${core.base}/node/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        hostId: "somewhere-else",
+        fingerprint: "fingerprint-a",
+        agentVersion: "0.0.0-test",
+      }),
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("never repeats the code on an idempotent replay of the issue command", async () => {
+    const core = await startTestCore();
+    const first = await command(core, "node.issue_pairing_code", {
+      idempotencyKey: "same",
+      hostId: "workstation",
+    });
+    const replay = await command(core, "node.issue_pairing_code", {
+      idempotencyKey: "same",
+      hostId: "workstation",
+    });
+
+    expect(first.body.code).toMatch(/^[0-9a-f]{32}$/);
+    expect(replay.status).toBe(200);
+    expect(replay.body.code).toBeUndefined();
+    expect(replay.body).toMatchObject({ pairingCodeId: first.body.pairingCodeId, consumed: false });
+  });
+
+  it("rotates the credential on every connection and still accepts the previous one", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const first = await openFake(core, paired);
+    const rotated = first.welcome()?.credential;
+
+    expect(rotated).toBeDefined();
+    expect(rotated).not.toBe(paired.credential);
+
+    first.close();
+    await waitFor(() => first.closed() !== undefined, "the first socket to close");
+
+    // Reconnecting on the credential from pairing, which is now two behind the
+    // row but one behind what the agent was last told.
+    const second = await openFake(core, { nodeId: paired.nodeId, credential: rotated ?? "" });
+
+    expect(second.welcome()?.generation).toBe((first.welcome()?.generation ?? 0) + 1);
+  });
+
+  it("renews rather than duplicates a node that re-pairs on the same fingerprint", async () => {
+    const core = await startTestCore();
+    const first = await pairFake(core, { code: await issueCode(core, "workstation", "c1") });
+    const second = await pairFake(core, { code: await issueCode(core, "workstation", "c2") });
+
+    expect(second.nodeId).toBe(first.nodeId);
+    expect(second.credential).not.toBe(first.credential);
+
+    const all = await read(core, "/nodes");
+    expect((all.body.nodes as unknown[]).length).toBe(1);
+  });
+});
+
+describe("revocation", () => {
+  it("drops the socket, revokes the grants, and refuses the credential afterwards", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const credential = node.welcome()?.credential ?? "";
+
+    const revoked = await command(core, "node.revoke", {
+      idempotencyKey: "r1",
+      nodeId: paired.nodeId,
+    });
+
+    expect(revoked.status).toBe(200);
+    expect(revoked.body).toMatchObject({ status: "revoked" });
+
+    await waitFor(() => node.closed() !== undefined, "the socket to be dropped");
+
+    await expect(openFake(core, { nodeId: paired.nodeId, credential })).rejects.toThrow(
+      /server response: 403/,
+    );
+
+    const after = await read(core, `/nodes/${paired.nodeId}`);
+    expect((after.body.grants as Array<{ revokedAt?: string }>)[0]?.revokedAt).toBeDefined();
+  });
+
+  it("will not grant a capability to a revoked node", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await command(core, "node.revoke", { idempotencyKey: "r1", nodeId: paired.nodeId });
+
+    const granted = await command(core, "node.grant_capability", {
+      idempotencyKey: "g1",
+      nodeId: paired.nodeId,
+      capability: "verification.noop",
+      constraints: {},
+    });
+
+    expect(granted.status).toBe(404);
+  });
+
+  it("stops routing work to a revoked node", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+
+    await command(core, "node.revoke", { idempotencyKey: "r1", nodeId: paired.nodeId });
+    await waitFor(() => node.closed() !== undefined, "the socket to be dropped");
+
+    const enqueued = await enqueue(core, "verification.noop");
+    const job = await read(core, `/jobs/${jobId(enqueued)}`);
+
+    expect(job.body.job).toMatchObject({ status: "queued" });
+    expect(job.body.routingReason).toBe("no_paired_node");
+  });
+});
+
+describe("routing refusals are legible", () => {
+  it("names the missing capability", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "environment.inspect");
+    await openFake(core, paired);
+
+    const enqueued = await enqueue(core, "verification.noop");
+    const job = await read(core, `/jobs/${jobId(enqueued)}`);
+
+    expect(job.body.routingReason).toBe("no_node_with_capability");
+  });
+
+  /** The "wrong host" gate: a capable node on another machine is not a fallback. */
+  it("names the host when a named_host Mission has no node there", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core, { hostId: "workstation" });
+
+    await grant(core, paired.nodeId, "verification.noop");
+    await openFake(core, paired);
+
+    const objective = await command(core, "objective.create", {
+      idempotencyKey: "o1",
+      title: "Objective",
+      intent: "Prove host routing",
+      status: "draft",
+      identityId: "vesper",
+    });
+    const mission = await command(core, "mission.create", {
+      idempotencyKey: "m1",
+      objectiveId: (objective.body as { id: string }).id,
+      title: "Mission",
+      operationClass: "read_inspect",
+      hostPolicy: "named_host",
+      hostId: "a-machine-that-is-not-paired",
+    });
+
+    const enqueued = await enqueue(core, "verification.noop", {
+      missionId: (mission.body as { id: string }).id,
+    });
+    const job = await read(core, `/jobs/${jobId(enqueued)}`);
+
+    expect(job.body.job).toMatchObject({ status: "queued" });
+    expect(job.body.routingReason).toBe("no_node_for_host");
+  });
+
+  it("names the offline node when nothing is connected", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const enqueued = await enqueue(core, "verification.noop");
+    const job = await read(core, `/jobs/${jobId(enqueued)}`);
+
+    expect(job.body.routingReason).toBe("no_online_node");
+  });
+
+  it("reports no reason at all once the job is no longer queued", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+    await openFake(core, paired);
+
+    const enqueued = await enqueue(core, "verification.noop");
+    const job = await read(core, `/jobs/${jobId(enqueued)}`);
+
+    expect(job.body.job).toMatchObject({ status: "leased" });
+    expect(job.body.routingReason).toBeUndefined();
+  });
+
+  /**
+   * Two capable nodes, only one connected, and the offline one sorts first — so
+   * a router that scored it as available would pick it, the dispatcher would
+   * find no socket, and the job would sit queued while a node that could have
+   * run it did nothing. The observable symptom is starvation, not an error,
+   * which is why it needs its own test rather than being left to the
+   * dispatcher's own second look at the connection map.
+   */
+  it("places a job on the connected node even when an offline one sorts first", async () => {
+    const core = await startTestCore();
+    const offline = await pairFake(core, { hostId: "offline-host", fingerprint: "f-offline" });
+    const online = await pairFake(core, {
+      hostId: "online-host",
+      fingerprint: "f-online",
+      code: await issueCode(core, "online-host", "code-online"),
+    });
+
+    // Paired first, so its UUIDv7 sorts lower and wins the router's tie-break.
+    expect(offline.nodeId < online.nodeId).toBe(true);
+
+    await grant(core, offline.nodeId, "verification.noop");
+    await grant(core, online.nodeId, "verification.noop");
+
+    const node = await openFake(core, online);
+    const enqueued = await enqueue(core, "verification.noop");
+
+    await waitFor(() => node.jobs().length === 1, "a job frame on the connected node");
+
+    const job = await read(core, `/jobs/${jobId(enqueued)}`);
+    expect(job.body.job).toMatchObject({ status: "leased", nodeId: online.nodeId });
+  });
+});
+
+describe("leases", () => {
+  it("requeues an idempotent job whose lease lapsed, then abandons it after the last attempt", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "verification.noop");
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "the first job frame");
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      core.advance(LEASE_MS + 1);
+      core.core.dispatcher.pass();
+
+      const job = await read(core, `/jobs/${id}`);
+      const status = job.body.job as { status: string; attempts: number };
+
+      if (attempt < MAX_ATTEMPTS) {
+        // Requeued and immediately re-leased by the same pass.
+        expect(status.status).toBe("leased");
+        expect(status.attempts).toBe(attempt + 1);
+      } else {
+        expect(status.status).toBe("cancelled");
+      }
+    }
+
+    const types = await eventTypes(core);
+
+    expect(types.filter((type) => type === "node.job_status_changed.v1").length).toBeGreaterThan(0);
+    expect(types.filter((type) => type === "node.job_leased.v1").length).toBe(MAX_ATTEMPTS);
+  });
+
+  it("refuses a result that arrives after the lease has lapsed", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "verification.noop");
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    core.advance(LEASE_MS + 1);
+    node.result(id, { verified: true });
+
+    // Nothing to wait for but the absence of a change, so give the frame a
+    // round trip and then assert the job never moved.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const job = await read(core, `/jobs/${id}`);
+    expect(job.body.job).toMatchObject({ status: "leased" });
+    expect(job.body.result).toBeUndefined();
+  });
+
+  it("refuses a result for a job leased to a different node", async () => {
+    const core = await startTestCore();
+    const first = await pairFake(core, { hostId: "one", fingerprint: "f1" });
+    const second = await pairFake(core, {
+      hostId: "two",
+      fingerprint: "f2",
+      code: await issueCode(core, "two", "code-two"),
+    });
+
+    await grant(core, first.nodeId, "verification.noop");
+    await grant(core, second.nodeId, "verification.noop");
+
+    const nodeOne = await openFake(core, first);
+    const enqueued = await enqueue(core, "verification.noop");
+    const id = jobId(enqueued);
+
+    await waitFor(() => nodeOne.jobs().length === 1, "a job frame");
+
+    const nodeTwo = await openFake(core, second);
+    nodeTwo.result(id, { verified: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const job = await read(core, `/jobs/${id}`);
+    expect(job.body.job).toMatchObject({ status: "leased", nodeId: first.nodeId });
+  });
+});
+
+describe("duplicate work", () => {
+  it("returns the same job for a replayed enqueue, and queues it once", async () => {
+    const core = await startTestCore();
+    const first = await command(core, "node.job_enqueue", {
+      idempotencyKey: "same-job",
+      capability: "verification.noop",
+      payload: {},
+    });
+    const replay = await command(core, "node.job_enqueue", {
+      idempotencyKey: "same-job",
+      capability: "verification.noop",
+      payload: {},
+    });
+
+    expect(replay.status).toBe(200);
+    expect(jobId(replay.body)).toBe(jobId(first.body));
+
+    const rows = core.core.kernel.db.prepare("SELECT COUNT(*) AS n FROM node_jobs").get() as {
+      n: number;
+    };
+
+    expect(rows.n).toBe(1);
+    expect((await eventTypes(core)).filter((type) => type === "node.job_queued.v1").length).toBe(1);
+  });
+
+  it("records one result however many times the node reports it", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "verification.noop");
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    node.result(id, { verified: true });
+    node.result(id, { verified: true });
+    node.result(id, { verified: true });
+
+    await waitForAsync(async () => {
+      const job = await read(core, `/jobs/${id}`);
+      return (job.body.job as { status: string }).status === "succeeded";
+    }, "the job to succeed");
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect((await eventTypes(core)).filter((type) => type === "node.job_result.v1").length).toBe(1);
+  });
+});
+
+describe("hostile node behaviour", () => {
+  it("closes the socket and records nothing when evidence does not match the capability", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "environment.inspect");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "environment.inspect");
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    // A plausible-looking object that the capability's evidence schema does not
+    // describe. Recording it would put something in the audit log that no reader
+    // could interpret.
+    node.result(id, { platform: "win32", unexpected: "field" });
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+
+    const job = await read(core, `/jobs/${id}`);
+    expect(job.body.job).toMatchObject({ status: "leased" });
+    expect(job.body.result).toBeUndefined();
+  });
+
+  it("closes a socket that exhausts its progress budget for one job", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "verification.noop");
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    for (let sent = 0; sent < 250; sent += 1) {
+      node.progress(id, 50);
+    }
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+  });
+
+  it("closes a second hello on the same socket", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const node = await openFake(core, paired);
+
+    node.sendRaw(
+      JSON.stringify({
+        kind: "hello",
+        envelopeVersion: NODE_ENVELOPE_VERSION,
+        agentVersion: "0.0.0-test",
+        capabilities: [],
+      }),
+    );
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+  });
+
+  it("closes a socket that reports a result before saying hello", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const node = await openFake(core, paired, { hello: false });
+
+    node.result("0199a000-0000-7000-8000-0000000000aa", { verified: true });
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
+  });
+
+  it("refuses a job payload the capability does not accept", async () => {
+    const core = await startTestCore();
+    const enqueued = await command(core, "node.job_enqueue", {
+      idempotencyKey: "bad-payload",
+      capability: "file.search",
+      payload: { rootGrantId: "root", nameContains: "" },
+    });
+
+    expect(enqueued.status).toBe(500);
+  });
+});
+
+describe("cancellation", () => {
+  it("tells the node and moves the job to cancelled", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "verification.noop");
+
+    const node = await openFake(core, paired);
+    const enqueued = await enqueue(core, "verification.noop");
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    const cancelled = await command(core, "node.job_cancel", { idempotencyKey: "c1", jobId: id });
+
+    expect(cancelled.status).toBe(200);
+
+    await waitFor(() => node.frames.some((frame) => frame.kind === "cancel"), "a cancel frame");
+
+    const job = await read(core, `/jobs/${id}`);
+    expect(job.body.job).toMatchObject({ status: "cancelled" });
+  });
+});

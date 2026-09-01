@@ -91,3 +91,60 @@ Phase 8. Request rate limiting is deferred to Phase 4.
 for a phase that will redesign them. Rate limiting mitigates token brute-force, which against a loopback
 bind, a 256-bit token, and a constant-time comparison is not a live risk; Phase 4 introduces the Tauri
 proxy and Tailscale Serve path where it becomes one.
+
+## ADR-0011: Node credentials are derived, not stored
+
+**Decision:** A node's connection credential is `HMAC-SHA256(NOCTIS_CORE_TOKEN, "noctis.node.credential.v1:<nodeId>:<generation>")`.
+The database stores only `nodes.credential_generation`, an integer. The core recomputes the credential
+whenever it needs to verify a connection or sign a job, accepts the current generation and the one
+before it, and rotates by incrementing the counter on every connection. The same derived value is the
+HMAC key for job assignment signatures.
+
+**Reason:** `migrations/0001_foundation.sql` states "No secrets are stored in this database", which rules
+out a random per-node secret. A digest satisfies the rule but cannot sign anything, and Section 10 step 4
+requires the node to validate a job's signature — so the core needs a value it can reproduce, not merely
+compare. Deriving it gives verification, signing, and rotation from one integer, and the only copy at
+rest lives in the node agent's own credential file on its own machine. The two-generation window exists
+because the core commits a rotation before the agent has persisted it: without it, an agent that died in
+that gap could never reconnect and would need an operator to cut a fresh pairing code. The coupling this
+introduces is recorded in the source: rotating `NOCTIS_CORE_TOKEN` invalidates every node credential at
+once and every node must re-pair.
+
+## ADR-0012: `leased -> succeeded` and `leased -> failed` are node-job edges
+
+**Decision:** Add both edges to `transitionNodeJobStatus`. `running` stays in the machine.
+
+**Reason:** `running` is a state only the node can observe. Phase 3's three adapters are single
+round-trip and report no start, so requiring `running` before an outcome would make the core write a
+transition it never witnessed — the same objection ADR-0009 raised against forcing a failed Mission
+transition into `mission.verified.v1`. `running` remains for the long-running jobs of later phases,
+which do stream a start. This is an edit to a Phase 1 matrix, so it is recorded here rather than made
+quietly; `packages/domain/src/state/node-job-status.test.ts` enumerates the full cross-product against a
+hand-written edge list, and that list was updated alongside the table rather than derived from it.
+
+## ADR-0013: Phase 3 additions to the contract vocabulary
+
+**Decision:** Reserve the event names `node.paired.v1`, `node.status_changed.v1`,
+`node.capability_granted.v1`, `node.job_queued.v1`, and `node.job_status_changed.v1`; the stream type
+`node_job`; and a node envelope version (`NODE_ENVELOPE_VERSION`) separate from the client envelope.
+
+**Reason:** All additive, so every Phase 1 and Phase 2 event still parses. `node.status_changed.v1`
+follows the `mission.status_changed.v1` precedent rather than inventing a name per status.
+`node_job` exists because a queued job has no node yet: keying job events by a job id under the `node`
+stream type would make "read the stream for node X" return rows that are not about node X, which is the
+same argument that gave authority decisions their own stream in ADR-0009. The envelope versions are
+separate because `/ws/clients` and `/ws/nodes` are not one protocol, and bumping one must not force a
+lockstep change in the other.
+
+## ADR-0014: Phase 3 scope boundary
+
+**Decision:** Phase 3 delivers pairing, credentials, the node realm, capability grants, job leases,
+routing, three deterministic adapters, and the node agent. Two named items are not built as written:
+request rate limiting stays deferred (ADR-0010), and `better-sqlite3` is not qualified.
+
+**Reason:** The Phase 3 task "Qualify Node 22 and `better-sqlite3` on each supported Windows
+environment" is moot as written. Phase 1 chose the built-in `node:sqlite` behind the driver seam in
+`apps/core/src/db/connection.ts`, `better-sqlite3` is not a dependency of this repository, and the node
+agent needs no database at all — its only persistent state is a credential file. The task reduces to
+qualifying Node 22, which CI does on the pinned runtime. If a later phase adopts `better-sqlite3`, the
+seam and `inTransaction` already exist for it and the qualification belongs to that phase.
