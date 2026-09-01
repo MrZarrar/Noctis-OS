@@ -24,7 +24,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/**/*.ts"],
+    files: ["apps/**/*.ts", "packages/**/*.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
