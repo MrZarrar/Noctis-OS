@@ -54,6 +54,9 @@ construction, and an ESLint rule (`no-restricted-imports` on `node:sqlite`) prev
 under `apps/**` from importing the driver directly — but consumers still call the driver's own API
 surface, so adopting better-sqlite3 later requires verifying that its `exec` / `prepare` →
 `run`/`get`/`all` / `close` behaviour matches `node:sqlite`'s, not merely editing one file.
+`connection.ts` also exports `inTransaction(db)`, the one name the two drivers spell differently
+(`DatabaseSync.isTransaction` vs. better-sqlite3's `Database.inTransaction`); all six call sites use the
+helper instead of naming the property directly, so the Phase 3 swap only has to change this one file.
 
 Verified against `node:sqlite` before this spec was written (throwaway probe, not retained):
 
@@ -290,6 +293,13 @@ A single `idempotency_keys` table is consulted and written inside the same trans
 it guards. A hit returns an `idempotent_replay` conflict carrying the existing record's ID so the
 caller can return the original result rather than performing the work twice.
 
+`idempotency_keys`, claimed through `claimIdempotencyKey` and scoped by `PRIMARY KEY (scope, key)`, is
+the **only** idempotency enforcement mechanism. The per-table `UNIQUE (idempotency_key)` constraints
+originally on `approvals` and `node_jobs` were deliberately removed: an unscoped table-level uniqueness
+constraint collides across unrelated records that happen to receive the same model-generated key, the
+same collision class already fixed on `idempotency_keys` itself. Phase 2 and Phase 3 must claim through
+`claimIdempotencyKey` when creating approvals and node jobs, respectively.
+
 ## 6. Tables
 
 Twenty-six tables once `migrate()` has run: the 25 Section 4.1 tables remaining in scope after D1's
@@ -309,7 +319,8 @@ The 25 above other than `schema_migrations` arrive in one migration, `0001_found
 Required constraints and indexes:
 
 - Foreign keys between every child and its parent aggregate.
-- A unique constraint on the idempotency key.
+- A scoped unique constraint on the idempotency key, held solely by `idempotency_keys` (see Section 5);
+  `approvals.idempotency_key` and `node_jobs.idempotency_key` carry a plain index only.
 - Indexes on active objectives, pending approvals, node leases, the global event sequence, source
   freshness, and NOIR case membership.
 

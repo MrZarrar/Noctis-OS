@@ -91,11 +91,11 @@ CREATE TABLE approvals (
   permission_id       TEXT REFERENCES standing_permissions (id) ON DELETE SET NULL,
   requested_at        TEXT NOT NULL,
   decided_at          TEXT,
-  expires_at          TEXT,
-  UNIQUE (idempotency_key)
+  expires_at          TEXT
 );
 
 CREATE INDEX idx_approvals_pending ON approvals (outcome) WHERE outcome IS NULL;
+CREATE INDEX idx_approvals_idempotency_key ON approvals (idempotency_key);
 
 CREATE TABLE standing_permissions (
   id               TEXT PRIMARY KEY,
@@ -231,11 +231,11 @@ CREATE TABLE node_jobs (
   payload_json     TEXT NOT NULL,
   revision         INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL,
-  UNIQUE (idempotency_key)
+  updated_at       TEXT NOT NULL
 );
 
 CREATE INDEX idx_node_jobs_lease ON node_jobs (status, lease_expires_at);
+CREATE INDEX idx_node_jobs_idempotency_key ON node_jobs (idempotency_key);
 
 CREATE TABLE artifacts (
   id                 TEXT PRIMARY KEY,
