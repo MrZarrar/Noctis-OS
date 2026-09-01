@@ -49,8 +49,11 @@ enforces Smart App Control, which already blocked an unsigned generated build-sc
 Phase 0 (OS error 4551). A native SQLite binding is the same class of risk.
 
 The plan names better-sqlite3 in Phase 3 and requires it to be _qualified on each supported Windows
-environment_. That task is unchanged and stays in Phase 3. Because the driver sits behind
-`connection.ts`, adopting better-sqlite3 later is a single-file change.
+environment_. That task is unchanged and stays in Phase 3. `connection.ts` centralises driver
+construction, and an ESLint rule (`no-restricted-imports` on `node:sqlite`) prevents any other module
+under `apps/**` from importing the driver directly — but consumers still call the driver's own API
+surface, so adopting better-sqlite3 later requires verifying that its `exec` / `prepare` →
+`run`/`get`/`all` / `close` behaviour matches `node:sqlite`'s, not merely editing one file.
 
 Verified against `node:sqlite` before this spec was written (throwaway probe, not retained):
 
@@ -228,8 +231,10 @@ listed below with its reason.
 ### `connection.ts`
 
 Opens a `DatabaseSync` handle and applies the pragmas the design depends on: `foreign_keys = ON`,
-`journal_mode = WAL`, and a `busy_timeout`. This is the only file that names the driver, which is what
-keeps D2 reversible.
+`journal_mode = WAL`, and a `busy_timeout`. This is the only file allowed to construct the driver — an
+ESLint rule blocks `node:sqlite` imports elsewhere under `apps/**` — but consumers still use the
+driver's own API surface, so D2's reversibility depends on that surface matching, not just on imports
+being centralised.
 
 ### `migrate.ts`
 

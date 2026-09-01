@@ -94,7 +94,7 @@ CREATE TABLE approvals (
   outcome             TEXT,
   policy_id           TEXT,
   reason_codes_json   TEXT NOT NULL DEFAULT '[]',
-  permission_id       TEXT,
+  permission_id       TEXT REFERENCES standing_permissions (id) ON DELETE SET NULL,
   requested_at        TEXT NOT NULL,
   decided_at          TEXT,
   expires_at          TEXT,
@@ -251,7 +251,7 @@ CREATE TABLE artifacts (
   media_type         TEXT,
   objective_id       TEXT REFERENCES objectives (id) ON DELETE SET NULL,
   mission_id         TEXT REFERENCES missions (id) ON DELETE SET NULL,
-  source_id          TEXT,
+  source_id          TEXT REFERENCES sources (id) ON DELETE SET NULL,
   host_id            TEXT,
   checksum           TEXT,
   provenance_version INTEGER NOT NULL,
@@ -332,6 +332,9 @@ CREATE TABLE noir_falsifiers (
   created_at    TEXT NOT NULL,
   resolved_at   TEXT
 );
+
+CREATE INDEX idx_noir_falsifiers_case ON noir_falsifiers (case_id);
+CREATE INDEX idx_noir_falsifiers_hypothesis ON noir_falsifiers (hypothesis_id);
 
 CREATE TABLE runtime_kv (
   key            TEXT PRIMARY KEY,

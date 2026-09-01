@@ -1,8 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
 
 /**
- * The only module that names the SQLite driver. Phase 1 uses the built-in
- * node:sqlite; Phase 3 may qualify better-sqlite3 and swap it here alone.
+ * The only module that may construct the SQLite driver. Phase 1 uses the
+ * built-in node:sqlite; Phase 3 may qualify better-sqlite3 and swap it here.
+ * (sqlite-availability.test.ts is a deliberate exception that probes the
+ * built-in module directly.) An ESLint rule (no-restricted-imports on
+ * "node:sqlite") enforces that nothing else under apps/** imports it.
  */
 export type NoctisDatabase = DatabaseSync;
 

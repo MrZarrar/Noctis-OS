@@ -23,4 +23,27 @@ export default tseslint.config(
       "@typescript-eslint/no-import-type-side-effects": "error",
     },
   },
+  {
+    files: ["apps/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "node:sqlite",
+              message:
+                "Import the database through apps/core/src/db/connection.ts — it is the only module that may name the driver.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/core/src/db/connection.ts", "apps/core/src/db/sqlite-availability.test.ts"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
 );
