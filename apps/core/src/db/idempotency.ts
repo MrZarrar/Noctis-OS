@@ -15,11 +15,13 @@ export interface ClaimOptions {
  * claim and the work it guards commit together.
  */
 export function claimIdempotencyKey(db: NoctisDatabase, options: ClaimOptions): Result<string> {
-  const scopedKey = `${options.scope}:${options.key}`;
+  if (!db.isTransaction) {
+    throw new Error("claimIdempotencyKey must run inside an open transaction");
+  }
 
   const existing = db
-    .prepare("SELECT result_id FROM idempotency_keys WHERE key = ?")
-    .get(scopedKey) as { result_id: string } | undefined;
+    .prepare("SELECT result_id FROM idempotency_keys WHERE scope = ? AND key = ?")
+    .get(options.scope, options.key) as { result_id: string } | undefined;
 
   if (existing !== undefined) {
     return conflict<string>({
@@ -31,7 +33,7 @@ export function claimIdempotencyKey(db: NoctisDatabase, options: ClaimOptions): 
 
   db.prepare(
     "INSERT INTO idempotency_keys (key, scope, result_id, created_at) VALUES (?, ?, ?, ?)",
-  ).run(scopedKey, options.scope, options.resultId, new Date(options.clock.now()).toISOString());
+  ).run(options.key, options.scope, options.resultId, new Date(options.clock.now()).toISOString());
 
   return ok(options.resultId);
 }

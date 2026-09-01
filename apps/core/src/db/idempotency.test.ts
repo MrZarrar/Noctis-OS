@@ -15,12 +15,14 @@ beforeEach(() => {
 
 describe("claimIdempotencyKey", () => {
   it("claims an unused key", () => {
+    db.exec("BEGIN IMMEDIATE");
     const result = claimIdempotencyKey(db, {
       key: "k1",
       scope: "objective.create",
       resultId: "01941f29-7c00-7000-8000-000000000002",
       clock,
     });
+    db.exec("COMMIT");
 
     expect(result).toEqual({ ok: true, value: "01941f29-7c00-7000-8000-000000000002" });
   });
@@ -32,12 +34,16 @@ describe("claimIdempotencyKey", () => {
       resultId: "01941f29-7c00-7000-8000-000000000002",
       clock,
     };
+    db.exec("BEGIN IMMEDIATE");
     claimIdempotencyKey(db, options);
+    db.exec("COMMIT");
 
+    db.exec("BEGIN IMMEDIATE");
     const replay = claimIdempotencyKey(db, {
       ...options,
       resultId: "01941f29-7c00-7000-8000-00000000000f",
     });
+    db.exec("COMMIT");
 
     expect(replay).toEqual({
       ok: false,
@@ -51,8 +57,50 @@ describe("claimIdempotencyKey", () => {
 
   it("treats the same key in a different scope as distinct", () => {
     const base = { key: "k1", resultId: "01941f29-7c00-7000-8000-000000000002", clock };
+    db.exec("BEGIN IMMEDIATE");
     claimIdempotencyKey(db, { ...base, scope: "objective.create" });
+    db.exec("COMMIT");
 
-    expect(claimIdempotencyKey(db, { ...base, scope: "mission.create" }).ok).toBe(true);
+    db.exec("BEGIN IMMEDIATE");
+    const result = claimIdempotencyKey(db, { ...base, scope: "mission.create" });
+    db.exec("COMMIT");
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not collide when one scope is a colon-prefix of another key", () => {
+    // Regression: a `${scope}:${key}` concatenation would map scope="a", key="b:c"
+    // and scope="a:b", key="c" to the same string. The composite primary key
+    // (scope, key) keeps them distinct.
+    db.exec("BEGIN IMMEDIATE");
+    claimIdempotencyKey(db, {
+      key: "b:c",
+      scope: "a",
+      resultId: "01941f29-7c00-7000-8000-000000000002",
+      clock,
+    });
+    db.exec("COMMIT");
+
+    db.exec("BEGIN IMMEDIATE");
+    const result = claimIdempotencyKey(db, {
+      key: "c",
+      scope: "a:b",
+      resultId: "01941f29-7c00-7000-8000-00000000000f",
+      clock,
+    });
+    db.exec("COMMIT");
+
+    expect(result).toEqual({ ok: true, value: "01941f29-7c00-7000-8000-00000000000f" });
+  });
+
+  it("throws when called outside an open transaction", () => {
+    expect(() =>
+      claimIdempotencyKey(db, {
+        key: "k1",
+        scope: "objective.create",
+        resultId: "01941f29-7c00-7000-8000-000000000002",
+        clock,
+      }),
+    ).toThrow("claimIdempotencyKey must run inside an open transaction");
   });
 });

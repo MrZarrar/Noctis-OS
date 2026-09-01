@@ -338,8 +338,9 @@ CREATE TABLE runtime_kv (
 );
 
 CREATE TABLE idempotency_keys (
-  key         TEXT PRIMARY KEY,
+  key         TEXT NOT NULL,
   scope       TEXT NOT NULL,
   result_id   TEXT NOT NULL,
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (scope, key)
 );
