@@ -21,3 +21,13 @@ export function openDatabase(path: string): NoctisDatabase {
 
   return database;
 }
+
+/**
+ * Whether `db` currently has an open transaction. The one name node:sqlite's
+ * `DatabaseSync` spells differently from better-sqlite3 (`isTransaction` vs.
+ * `inTransaction`) — centralised here so the Phase 3 driver swap is a
+ * one-file change instead of six call-site edits.
+ */
+export function inTransaction(db: NoctisDatabase): boolean {
+  return db.isTransaction;
+}

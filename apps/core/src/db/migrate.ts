@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { Clock } from "@noctis/domain";
 
-import type { NoctisDatabase } from "./connection.js";
+import { inTransaction, type NoctisDatabase } from "./connection.js";
 
 export class MigrationError extends Error {}
 
@@ -98,7 +98,7 @@ export function migrate(db: NoctisDatabase, options: MigrateOptions): MigrationO
       // SQLite already auto-rolls-back on some errors (e.g. SQLITE_FULL), which
       // leaves no transaction open. Swallow only that rollback failure so the
       // original error still reaches the caller instead of being replaced by it.
-      if (db.isTransaction) {
+      if (inTransaction(db)) {
         db.exec("ROLLBACK");
       }
       throw error;

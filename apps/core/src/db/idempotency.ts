@@ -1,7 +1,7 @@
 import type { Clock, Result } from "@noctis/domain";
 import { conflict, ok } from "@noctis/domain";
 
-import type { NoctisDatabase } from "./connection.js";
+import { inTransaction, type NoctisDatabase } from "./connection.js";
 
 export interface ClaimOptions {
   key: string;
@@ -15,7 +15,7 @@ export interface ClaimOptions {
  * claim and the work it guards commit together.
  */
 export function claimIdempotencyKey(db: NoctisDatabase, options: ClaimOptions): Result<string> {
-  if (!db.isTransaction) {
+  if (!inTransaction(db)) {
     throw new Error("claimIdempotencyKey must run inside an open transaction");
   }
 

@@ -2,7 +2,7 @@ import type { OrchestrationEvent } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
 import { ok } from "@noctis/domain";
 
-import type { NoctisDatabase } from "./connection.js";
+import { inTransaction, type NoctisDatabase } from "./connection.js";
 import { appendEvent, type EventDraft } from "./events.js";
 
 export interface Mutation<T> {
@@ -39,7 +39,7 @@ export function commitStateAndEvent<T>(
       // back, and the state it wrote is permanent. Returning the refusal here
       // would lie to the caller by implying the write never happened, so the only
       // honest outcome is a loud error naming the real problem.
-      if (!db.isTransaction) {
+      if (!inTransaction(db)) {
         throw new Error(MUTATE_CLOSED_TRANSACTION);
       }
       db.exec("ROLLBACK");
@@ -48,7 +48,7 @@ export function commitStateAndEvent<T>(
 
     const committedEvents = outcome.value.events.map((draft) => appendEvent(db, draft));
 
-    if (!db.isTransaction) {
+    if (!inTransaction(db)) {
       throw new Error(MUTATE_CLOSED_TRANSACTION);
     }
 
@@ -59,7 +59,7 @@ export function commitStateAndEvent<T>(
     // SQLite already auto-rolls-back on some errors (e.g. SQLITE_FULL), which
     // leaves no transaction open. Swallow only that rollback failure so the
     // original error still reaches the caller instead of being replaced by it.
-    if (db.isTransaction) {
+    if (inTransaction(db)) {
       db.exec("ROLLBACK");
     }
     throw error;

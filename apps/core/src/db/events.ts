@@ -1,7 +1,7 @@
 import type { OrchestrationEvent } from "@noctis/contracts";
 import { OrchestrationEventSchema } from "@noctis/contracts";
 
-import type { NoctisDatabase } from "./connection.js";
+import { inTransaction, type NoctisDatabase } from "./connection.js";
 
 /** An event before the core assigns its global sequence. */
 export type EventDraft = Omit<OrchestrationEvent, "sequence">;
@@ -11,7 +11,7 @@ export type EventDraft = Omit<OrchestrationEvent, "sequence">;
  * inside an open transaction so the event and its state change commit together.
  */
 export function appendEvent(db: NoctisDatabase, draft: EventDraft): OrchestrationEvent {
-  if (!db.isTransaction) {
+  if (!inTransaction(db)) {
     throw new Error("appendEvent must run inside an open transaction");
   }
 
