@@ -2,12 +2,6 @@
 -- Phase 1 foundation schema. All timestamps are UTC ISO 8601 text.
 -- All ids are UUIDv7 text. No secrets are stored in this database.
 
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version    INTEGER PRIMARY KEY,
-  checksum   TEXT NOT NULL,
-  applied_at TEXT NOT NULL
-);
-
 CREATE TABLE objectives (
   id                TEXT PRIMARY KEY,
   title             TEXT NOT NULL,

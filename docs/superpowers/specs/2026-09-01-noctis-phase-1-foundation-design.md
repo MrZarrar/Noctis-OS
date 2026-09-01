@@ -239,6 +239,8 @@ being centralised.
 ### `migrate.ts`
 
 Migrations are `apps/core/migrations/NNNN_name.sql`, read at startup and SHA-256 checksummed.
+`migrate.ts` creates `schema_migrations` itself (`CREATE TABLE IF NOT EXISTS`, run on every call) —
+the ledger must exist before any migration file can be recorded, so no migration file declares it.
 
 - Each unapplied version and its `schema_migrations` row commit inside **one** transaction.
 - Re-running applies nothing.
@@ -290,9 +292,11 @@ caller can return the original result rather than performing the work twice.
 
 ## 6. Tables
 
-Twenty-six tables: the 25 Section 4.1 tables remaining in scope after D1's deferrals, plus
-`idempotency_keys`, which Section 4.1 does not list but which the plan's requirement for "unique
-idempotency constraints" needs.
+Twenty-six tables once `migrate()` has run: the 25 Section 4.1 tables remaining in scope after D1's
+deferrals, plus `idempotency_keys`, which Section 4.1 does not list but which the plan's requirement
+for "unique idempotency constraints" needs. `0001_foundation.sql` declares 25 of those; the 26th,
+`schema_migrations`, is created by `migrate.ts` itself (Section 5), since the ledger must exist
+before any migration can be recorded.
 
 `schema_migrations`, `objectives`, `objective_links`, `missions`, `mission_steps`, `mission_evidence`,
 `approvals`, `standing_permissions`, `surface_intents`, `surface_overrides`, `composition_snapshots`,
@@ -300,7 +304,7 @@ idempotency constraints" needs.
 `node_jobs`, `artifacts`, `sources`, `source_observations`, `noir_cases`, `noir_hypotheses`,
 `noir_evidence`, `noir_falsifiers`, `runtime_kv`, `idempotency_keys`.
 
-All arrive in one migration, `0001_foundation.sql`.
+The 25 above other than `schema_migrations` arrive in one migration, `0001_foundation.sql`.
 
 Required constraints and indexes:
 
