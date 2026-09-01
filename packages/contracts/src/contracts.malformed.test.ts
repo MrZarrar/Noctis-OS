@@ -2,14 +2,30 @@ import { describe, expect, it } from "vitest";
 import type { ZodType } from "zod";
 
 import { ArtifactRecordSchema } from "./artifact.js";
-import { AuthorityRequestSchema } from "./authority.js";
-import { ConversationThreadSchema } from "./identity.js";
-import { MissionRecordSchema } from "./mission.js";
-import { NodeJobSchema } from "./node.js";
-import { NoirCaseSchema } from "./noir.js";
-import { ObjectiveRecordSchema } from "./objective.js";
-import { SourceObservationSchema } from "./source.js";
-import { SurfaceIntentSchema } from "./surface.js";
+import {
+  AuthorityDecisionSchema,
+  AuthorityRequestSchema,
+  StandingPermissionSchema,
+} from "./authority.js";
+import { OrchestrationEventSchema } from "./events.js";
+import {
+  ConversationThreadSchema,
+  IdentityMessageSchema,
+  IdentityProfileSchema,
+} from "./identity.js";
+import { MissionEvidenceSchema, MissionRecordSchema, MissionStepSchema } from "./mission.js";
+import { CapabilityGrantSchema, NodeDescriptorSchema, NodeJobSchema } from "./node.js";
+import {
+  EvidenceItemSchema,
+  FalsifierSchema,
+  HypothesisSchema,
+  NoirCaseSchema,
+  UncertaintySchema,
+} from "./noir.js";
+import { ObjectiveLinkSchema, ObjectiveRecordSchema } from "./objective.js";
+import { SourceObservationSchema, SourceRecordSchema } from "./source.js";
+import { CompositionPlanSchema, SurfaceIntentSchema, SurfaceOverrideSchema } from "./surface.js";
+import { ClientFrameSchema, ServerFrameSchema } from "./ws.js";
 
 const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["ArtifactRecord", ArtifactRecordSchema],
@@ -21,6 +37,25 @@ const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["ObjectiveRecord", ObjectiveRecordSchema],
   ["SourceObservation", SourceObservationSchema],
   ["SurfaceIntent", SurfaceIntentSchema],
+  ["ObjectiveLink", ObjectiveLinkSchema],
+  ["MissionStep", MissionStepSchema],
+  ["MissionEvidence", MissionEvidenceSchema],
+  ["SurfaceOverride", SurfaceOverrideSchema],
+  ["CompositionPlan", CompositionPlanSchema],
+  ["NodeDescriptor", NodeDescriptorSchema],
+  ["CapabilityGrant", CapabilityGrantSchema],
+  ["Hypothesis", HypothesisSchema],
+  ["EvidenceItem", EvidenceItemSchema],
+  ["Falsifier", FalsifierSchema],
+  ["Uncertainty", UncertaintySchema],
+  ["AuthorityDecision", AuthorityDecisionSchema],
+  ["StandingPermission", StandingPermissionSchema],
+  ["IdentityProfile", IdentityProfileSchema],
+  ["IdentityMessage", IdentityMessageSchema],
+  ["SourceRecord", SourceRecordSchema],
+  ["OrchestrationEvent", OrchestrationEventSchema],
+  ["ClientFrame", ClientFrameSchema],
+  ["ServerFrame", ServerFrameSchema],
 ];
 
 const HOSTILE_INPUTS: ReadonlyArray<readonly [string, unknown]> = [
@@ -171,6 +206,247 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
       requestedAt: "2026-09-01T12:00:00.000Z",
     },
   ],
+  [
+    "ObjectiveLink",
+    ObjectiveLinkSchema,
+    {
+      objectiveId: "01941f29-7c00-7000-8000-00000000001d",
+      relatedType: "mission",
+      relatedId: "01941f29-7c00-7000-8000-00000000001e",
+      relation: "depends_on",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "MissionStep",
+    MissionStepSchema,
+    {
+      id: "01941f29-7c00-7000-8000-00000000001f",
+      missionId: "01941f29-7c00-7000-8000-000000000020",
+      ordinal: 0,
+      kind: "deterministic",
+      operationClass: "read_inspect",
+      status: "draft",
+      payloadVersion: 1,
+      payload: {},
+      createdAt: "2026-09-01T12:00:00.000Z",
+      updatedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "MissionEvidence",
+    MissionEvidenceSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000021",
+      missionId: "01941f29-7c00-7000-8000-000000000022",
+      kind: "result",
+      hostId: "host-1",
+      summary: "Verified the node agent responded",
+      payloadVersion: 1,
+      payload: {},
+      observedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "SurfaceOverride",
+    SurfaceOverrideSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000023",
+      surfaceId: "01941f29-7c00-7000-8000-000000000024",
+      clientId: "client-1",
+      displayFingerprint: "fp-1",
+      region: "left",
+      size: "standard",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "CompositionPlan",
+    CompositionPlanSchema,
+    {
+      objectiveId: "01941f29-7c00-7000-8000-000000000025",
+      layoutId: "layout-1",
+      displayFingerprint: "fp-1",
+      slots: [
+        {
+          surfaceId: "01941f29-7c00-7000-8000-000000000026",
+          region: "left",
+          order: 0,
+          size: "standard",
+          layer: 0,
+        },
+      ],
+      overflowSurfaceIds: [],
+      reasonCodes: [],
+      generatedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "NodeDescriptor",
+    NodeDescriptorSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000027",
+      hostId: "host-1",
+      status: "pending",
+      fingerprint: "fp-1",
+      agentVersion: "1.0.0",
+      createdAt: "2026-09-01T12:00:00.000Z",
+      updatedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "CapabilityGrant",
+    CapabilityGrantSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000028",
+      nodeId: "01941f29-7c00-7000-8000-000000000029",
+      capability: "fs.read",
+      operationClass: "read_inspect",
+      constraintsVersion: 1,
+      constraints: {},
+      grantedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "Hypothesis",
+    HypothesisSchema,
+    {
+      id: "01941f29-7c00-7000-8000-00000000002a",
+      caseId: "01941f29-7c00-7000-8000-00000000002b",
+      statement: "The build failed because of a flaky test",
+      rank: 0,
+      status: "open",
+      confidenceRationale: "One recent failure, no repro yet",
+      createdAt: "2026-09-01T12:00:00.000Z",
+      updatedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "EvidenceItem",
+    EvidenceItemSchema,
+    {
+      id: "01941f29-7c00-7000-8000-00000000002c",
+      caseId: "01941f29-7c00-7000-8000-00000000002d",
+      stance: "supports",
+      verification: "unverified",
+      summary: "Log shows a timeout",
+      observedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "Falsifier",
+    FalsifierSchema,
+    {
+      id: "01941f29-7c00-7000-8000-00000000002e",
+      caseId: "01941f29-7c00-7000-8000-00000000002f",
+      hypothesisId: "01941f29-7c00-7000-8000-000000000030",
+      check: "Re-run the test in isolation ten times",
+      result: "pending",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "Uncertainty",
+    UncertaintySchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000031",
+      caseId: "01941f29-7c00-7000-8000-000000000032",
+      statement: "No evidence yet on the network path",
+      reason: "missing_evidence",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "AuthorityDecision",
+    AuthorityDecisionSchema,
+    {
+      requestId: "01941f29-7c00-7000-8000-000000000033",
+      outcome: "allow",
+      policyId: "policy-1",
+      reasonCodes: [],
+      decidedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "StandingPermission",
+    StandingPermissionSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000034",
+      actorId: "vesper",
+      capability: "fs.read",
+      operationClass: "read_inspect",
+      constraints: {},
+      grantedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "IdentityProfile",
+    IdentityProfileSchema,
+    {
+      id: "vesper",
+      displayName: "Vesper",
+      activationCommand: "/vesper",
+    },
+  ],
+  [
+    "IdentityMessage",
+    IdentityMessageSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000035",
+      threadId: "01941f29-7c00-7000-8000-000000000036",
+      role: "user",
+      contentRef: "blob://message-1",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "SourceRecord",
+    SourceRecordSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000037",
+      sourceType: "rss",
+      externalId: "feed-1",
+      freshnessSeconds: 300,
+      createdAt: "2026-09-01T12:00:00.000Z",
+      updatedAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "OrchestrationEvent",
+    OrchestrationEventSchema,
+    {
+      id: "01941f29-7c00-7000-8000-000000000038",
+      sequence: 1,
+      streamType: "objective",
+      streamId: "01941f29-7c00-7000-8000-000000000039",
+      type: "objective.created.v1",
+      actorType: "user",
+      actorId: "mushaf",
+      payloadVersion: 1,
+      payload: {},
+      correlationId: "01941f29-7c00-7000-8000-00000000003a",
+      occurredAt: "2026-09-01T12:00:00.000Z",
+    },
+  ],
+  [
+    "ClientFrame",
+    ClientFrameSchema,
+    {
+      kind: "subscribe",
+      envelopeVersion: 1,
+      afterSequence: 0,
+    },
+  ],
+  [
+    "ServerFrame",
+    ServerFrameSchema,
+    {
+      kind: "gap",
+      envelopeVersion: 1,
+      fromSequence: 0,
+      toSequence: 1,
+    },
+  ],
 ];
 
 describe("every schema enforces .strict() against unknown fields", () => {
@@ -183,4 +459,27 @@ describe("every schema enforces .strict() against unknown fields", () => {
       expect(schema.safeParse({ ...fixture, unexpectedField: true }).success).toBe(false);
     });
   }
+
+  it("CompositionPlan rejects an unknown key nested inside a slot", () => {
+    const fixture = {
+      objectiveId: "01941f29-7c00-7000-8000-000000000025",
+      layoutId: "layout-1",
+      displayFingerprint: "fp-1",
+      slots: [
+        {
+          surfaceId: "01941f29-7c00-7000-8000-000000000026",
+          region: "left",
+          order: 0,
+          size: "standard",
+          layer: 0,
+          unexpectedField: true,
+        },
+      ],
+      overflowSurfaceIds: [],
+      reasonCodes: [],
+      generatedAt: "2026-09-01T12:00:00.000Z",
+    };
+
+    expect(CompositionPlanSchema.safeParse(fixture).success).toBe(false);
+  });
 });
