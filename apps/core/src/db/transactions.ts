@@ -16,6 +16,8 @@ export interface CommittedOutcome<T> {
   committedEvents: readonly OrchestrationEvent[];
 }
 
+const MUTATE_CLOSED_TRANSACTION = "mutate closed the transaction it was given";
+
 /**
  * Commits relational state and its audit events in one transaction.
  *
@@ -32,6 +34,14 @@ export function commitStateAndEvent<T>(
     const outcome = mutate(db);
 
     if (!outcome.ok) {
+      // A refusal after mutate already committed (e.g. it called db.exec("COMMIT")
+      // itself) cannot be undone by rolling back — there is nothing left to roll
+      // back, and the state it wrote is permanent. Returning the refusal here
+      // would lie to the caller by implying the write never happened, so the only
+      // honest outcome is a loud error naming the real problem.
+      if (!db.isTransaction) {
+        throw new Error(MUTATE_CLOSED_TRANSACTION);
+      }
       db.exec("ROLLBACK");
       return outcome;
     }
@@ -39,7 +49,7 @@ export function commitStateAndEvent<T>(
     const committedEvents = outcome.value.events.map((draft) => appendEvent(db, draft));
 
     if (!db.isTransaction) {
-      throw new Error("mutate closed the transaction it was given");
+      throw new Error(MUTATE_CLOSED_TRANSACTION);
     }
 
     db.exec("COMMIT");

@@ -93,6 +93,29 @@ describe("commitStateAndEvent", () => {
     expect(db.prepare("SELECT COUNT(*) c FROM orchestration_events").get()).toEqual({ c: 0 });
   });
 
+  it("THE GATE: a refusal after mutate self-committed throws instead of hiding the write", () => {
+    expect(
+      () =>
+        commitStateAndEvent(db, (tx) => {
+          insertObjective(tx, OBJECTIVE_ID);
+          tx.exec("COMMIT");
+          return conflict<Mutation<string>>({
+            kind: "forbidden_transition",
+            machine: "objective",
+            from: "completed",
+            to: "active",
+          });
+        }),
+      // The insert is already permanently committed and cannot be un-done, so
+      // returning a Result here would falsely tell the caller nothing happened.
+      // Must throw naming the real contract violation, not "cannot rollback".
+    ).toThrow("mutate closed the transaction it was given");
+
+    // Not asserting objectives count is 0: it is 1, because that write genuinely
+    // committed and is unrecoverable. That is the point of throwing.
+    expect(db.prepare("SELECT COUNT(*) c FROM objectives").get()).toEqual({ c: 1 });
+  });
+
   it("THE GATE: a thrown failure between the writes leaves both tables empty", () => {
     expect(() =>
       commitStateAndEvent(db, (tx) => {
