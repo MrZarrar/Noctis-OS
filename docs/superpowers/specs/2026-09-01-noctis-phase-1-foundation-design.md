@@ -164,38 +164,64 @@ versions fail closed.
 the same conflict construction repeated five times, and it makes every machine a declarative table that
 tests can enumerate exhaustively.
 
-Transition tables come directly from Section 4.2:
+Transition edges for all five machines, transcribed directly from `packages/domain/src/state/*.ts` so
+this table and the code cannot drift. The node-job machine has no Section 4.2 sketch at all — Phase 1
+defines it from the lease, cancellation, and expiry behaviour the plan requires of Phase 3 ("job leases,
+cancellation, bounded progress", and tests for "expired lease, duplicate job, revoked node").
 
-```text
-Objective:  suggested -> draft -> active <-> paused -> completed
-                                    |             \-> abandoned
-                                    \----------------> abandoned
+| Machine   | From              | Allowed to                            |
+| --------- | ----------------- | ------------------------------------- |
+| Objective | suggested         | draft, abandoned                      |
+| Objective | draft             | active, abandoned                     |
+| Objective | active            | paused, completed, abandoned          |
+| Objective | paused            | active, completed, abandoned          |
+| Objective | completed         | (terminal)                            |
+| Objective | abandoned         | (terminal)                            |
+| Mission   | draft             | awaiting_approval, cancelled          |
+| Mission   | awaiting_approval | queued, cancelled                     |
+| Mission   | queued            | running, cancelled                    |
+| Mission   | running           | succeeded, failed, blocked, cancelled |
+| Mission   | blocked           | running, cancelled                    |
+| Mission   | succeeded         | (terminal)                            |
+| Mission   | failed            | (terminal)                            |
+| Mission   | cancelled         | (terminal)                            |
+| Surface   | proposed          | entering, dismissed                   |
+| Surface   | entering          | active, dismissed                     |
+| Surface   | active            | background, exiting                   |
+| Surface   | background        | active, exiting                       |
+| Surface   | exiting           | dismissed                             |
+| Surface   | dismissed         | (terminal)                            |
+| node-job  | queued            | leased, cancelled                     |
+| node-job  | leased            | running, expired, cancelled           |
+| node-job  | running           | succeeded, failed, expired, cancelled |
+| node-job  | expired           | queued, cancelled                     |
+| node-job  | succeeded         | (terminal)                            |
+| node-job  | failed            | (terminal)                            |
+| node-job  | cancelled         | (terminal)                            |
+| NOIR case | forming           | investigating, abandoned              |
+| NOIR case | investigating     | synthesising, blocked, abandoned      |
+| NOIR case | synthesising      | resolved, blocked, abandoned          |
+| NOIR case | blocked           | investigating, abandoned              |
+| NOIR case | resolved          | (terminal)                            |
+| NOIR case | abandoned         | (terminal)                            |
 
-Mission:    draft -> awaiting_approval -> queued -> running -> succeeded
-               |             |              |         |  \-> blocked -> running
-               |             |              |         \----> failed
-               \-------------\--------------\--------------> cancelled
+These edge lists are authoritative for Phase 1 and supersede the sketch diagrams in the master
+implementation plan's Section 4.2 for the purpose of implementation. Those diagrams are illustrative: the
+NOIR sketch draws no outgoing edge from `blocked`, which would make it a permanent trap state, so they
+cannot be read as exhaustive. Where an edge appears here but not in the sketch, it is deliberate and
+listed below with its reason.
 
-Surface:    proposed -> entering -> active <-> background -> exiting -> dismissed
+### Edges added beyond the Section 4.2 sketches
 
-NOIR case:  forming -> investigating -> synthesising -> resolved
-                             |                \-> blocked
-                             \-------------------> abandoned
-```
-
-Section 4.2 gives no diagram for the node-job machine, so this phase defines it. The states follow the
-lease, cancellation, and expiry behaviour the plan requires of Phase 3 ("job leases, cancellation,
-bounded progress", and tests for "expired lease, duplicate job, revoked node"):
-
-```text
-node-job:   queued -> leased -> running -> succeeded
-               |         |         \-> failed
-               |         \-> expired -> queued
-               \---------\---------\-> cancelled
-```
-
-`expired` returns a job to `queued` so a lost lease is retryable; `cancelled` is reachable from any
-non-terminal state. `succeeded`, `failed`, and `cancelled` are terminal.
+- Objective `active -> completed` — active work must be completable without first pausing.
+- Surface `active -> exiting` — closing a focused surface is the normal path, not an exception.
+- Mission `running -> cancelled` — in-flight work must be cancellable.
+- Mission `blocked -> cancelled` — a stuck mission must be abandonable.
+- node-job `running -> expired` — a lease is most often lost during execution; without this a job whose
+  worker dies is stranded in `running` forever.
+- NOIR `investigating -> blocked` — an investigation can block on missing evidence.
+- NOIR `synthesising -> abandoned` — synthesis can be abandoned.
+- NOIR `blocked -> abandoned` — without it a blocked case is near-trapped.
 
 ## 5. Persistence — `apps/core/src/db/`
 

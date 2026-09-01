@@ -29,3 +29,13 @@ full event sourcing.
 
 **Decision:** Models may propose schema-validated semantic intent. Deterministic code controls
 authority, layout, routing, lifecycle, restore, and physical window placement.
+
+## ADR-0006: Transition edge lists are explicit, not diagram-derived
+
+**Decision:** Phase 1 defines a complete, explicit edge list for each of the five transition machines in
+the domain design spec. The master implementation plan's Section 4.2 ASCII diagrams are illustrative
+only and are superseded by those edge lists for implementation purposes.
+
+**Reason:** The Section 4.2 diagrams are sketches, not exhaustive edge lists. The NOIR sketch draws zero
+outgoing edges from `blocked`, which would make `blocked` a permanent trap state — a design no phase
+intends. A diagram demonstrably incomplete in one machine cannot be read as exhaustive for the others.
