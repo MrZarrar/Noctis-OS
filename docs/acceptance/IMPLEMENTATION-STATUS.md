@@ -754,8 +754,12 @@ the launch block that actually prevents the bundled browser from running here.
 `NOCTIS_E2E_BROWSER_CHANNEL` is an explicit opt-in and never a silent fallback: with it unset, the
 suite uses the Chromium this Playwright version pins, which is what CI does and therefore what the gate
 is proven against there. GitHub's hosted runners do not enable Smart App Control, so the pinned browser
-launches there. **CI has not yet run this step** — that evidence is pending the push, and the CI run is
-the authority for the pinned-browser result.
+launches there.
+
+Confirmed after the push: GitHub Actions `verify` run `34045341594`, `javascript` job green in 2m35s
+on commit `80e4488`, with `npx playwright install chromium` and `npm run test:e2e` both passing. The
+keyboard gate is proven against the pinned Chromium, not only against this machine's Edge. The same
+run also covers Phase 7's unit suite on the pinned Node runtime.
 
 ### 2026-09-06 Phase 7 Vault port, stable sphere, and focused recall
 
