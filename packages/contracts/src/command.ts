@@ -73,6 +73,18 @@ export const ChangeMissionStatusCommandSchema = z
   })
   .strict();
 
+/**
+ * The exact activation commands named in the master plan: `VESPER` and
+ * `JESTER` switch the active identity. There is no implicit switch — every
+ * change to which identity is active goes through this one command.
+ */
+export const ActivateIdentityCommandSchema = z
+  .object({
+    ...CommandBase,
+    identityId: ConversationalIdentityIdSchema,
+  })
+  .strict();
+
 export const RequestAuthorityCommandSchema = z
   .object({
     ...CommandBase,
@@ -93,6 +105,7 @@ export const COMMAND_NAMES = [
   "objective.change_status",
   "mission.create",
   "mission.change_status",
+  "identity.activate",
   "authority.request",
   "node.issue_pairing_code",
   "node.revoke",
@@ -108,6 +121,7 @@ export type CreateObjectiveCommand = z.infer<typeof CreateObjectiveCommandSchema
 export type ChangeObjectiveStatusCommand = z.infer<typeof ChangeObjectiveStatusCommandSchema>;
 export type CreateMissionCommand = z.infer<typeof CreateMissionCommandSchema>;
 export type ChangeMissionStatusCommand = z.infer<typeof ChangeMissionStatusCommandSchema>;
+export type ActivateIdentityCommand = z.infer<typeof ActivateIdentityCommandSchema>;
 export type RequestAuthorityCommand = z.infer<typeof RequestAuthorityCommandSchema>;
 export type CommandName = z.infer<typeof CommandNameSchema>;
 

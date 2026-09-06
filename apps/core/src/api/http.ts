@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  ActivateIdentityCommandSchema,
   CancelNodeJobCommandSchema,
   ChangeMissionStatusCommandSchema,
   ChangeObjectiveStatusCommandSchema,
@@ -20,6 +21,12 @@ import type { z } from "zod";
 import { requestAuthority, getAuthorityDecision } from "../authority/service.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
+import {
+  activateIdentity,
+  getActiveIdentity,
+  getThreadForIdentity,
+  replayActivation,
+} from "../identities/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import {
   changeMissionStatus,
@@ -222,6 +229,9 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     changeMissionStatus,
     (db, id) => getMission(db, id),
   ),
+  "identity.activate": defineCommand(ActivateIdentityCommandSchema, activateIdentity, (db, id) =>
+    replayActivation(db, id),
+  ),
   "authority.request": defineCommand(RequestAuthorityCommandSchema, requestAuthority, (db, id) =>
     getAuthorityDecision(db, id),
   ),
@@ -272,6 +282,20 @@ function handleRead(
 
   if (segments.length === 1 && segments[0] === "objectives") {
     return { status: 200, body: { objectives: listObjectives(deps.kernel.db, limit) } };
+  }
+
+  if (segments.length === 1 && segments[0] === "identities") {
+    const activeIdentityId = getActiveIdentity(deps.kernel.db);
+
+    return {
+      status: 200,
+      body: {
+        activeIdentityId: activeIdentityId ?? null,
+        threads: (["vesper", "jester"] as const)
+          .map((identityId) => getThreadForIdentity(deps.kernel.db, identityId))
+          .filter((thread) => thread !== undefined),
+      },
+    };
   }
 
   if (segments.length === 1 && segments[0] === "nodes") {

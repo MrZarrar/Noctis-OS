@@ -4,13 +4,10 @@
     "outDir": "dist",
     "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "jsx": "react-jsx",
     "lib": ["ES2024", "DOM"],
-    "types": []
+    "types": ["react", "react-dom"]
   },
-  "include": ["src/**/*.ts"],
-  "references": [
-    {
-      "path": "../../packages/contracts"
-    }
-  ]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [{ "path": "../../packages/contracts" }, { "path": "../../packages/ui" }]
 }

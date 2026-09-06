@@ -3,11 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Noctis Adaptive Depth Workbench; Phase 4 ships the core transports and the shell page",
+  "description": "Noctis Adaptive Depth Workbench: the permanent rail, Presence, and the identity runtime client",
   "scripts": {
-    "build": "tsc -b && node build.mjs"
+    "build": "tsc -b && vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@noctis/contracts": "0.0.0",
+    "@noctis/ui": "0.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "@noctis/contracts": "0.0.0"
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.2.2"
   }
 }

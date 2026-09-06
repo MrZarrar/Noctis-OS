@@ -1,4 +1,5 @@
 import type { OrchestrationEvent, ServerFrame } from "@noctis/contracts";
+import { ServerFrameSchema } from "@noctis/contracts";
 
 /**
  * The one interface the workbench sees. Everything below it is a delivery
@@ -69,15 +70,9 @@ export function resolveCoreUrl(baseUrl: string, path: string): URL {
 }
 
 /**
- * Structural, not schema, validation.
- *
- * `@noctis/contracts` owns the authoritative Zod schemas and the core validates
- * against them before an event is ever committed. Importing them here would put
- * a bare specifier — and Zod — into a page that Phase 4 deliberately serves as
- * plain ES modules with no bundler.
- *
- * ponytail: replace with the real schema parse when Phase 5 introduces a
- * bundler; until then this only has to notice that the shape changed.
+ * The real Zod parse. Phase 4 used a structural check here because it served
+ * the page as plain ES modules with no bundler; Phase 5 introduces Vite, so
+ * the authoritative schema can be imported directly instead of re-approximated.
  */
 export function readServerFrame(raw: string): ServerFrame | undefined {
   let parsed: unknown;
@@ -88,25 +83,9 @@ export function readServerFrame(raw: string): ServerFrame | undefined {
     return undefined;
   }
 
-  if (typeof parsed !== "object" || parsed === null) {
-    return undefined;
-  }
+  const result = ServerFrameSchema.safeParse(parsed);
 
-  const frame = parsed as Partial<ServerFrame>;
-
-  if (frame.kind === "event" && isEvent(frame.event)) {
-    return frame as ServerFrame;
-  }
-
-  if (
-    frame.kind === "gap" &&
-    typeof frame.fromSequence === "number" &&
-    typeof frame.toSequence === "number"
-  ) {
-    return frame as ServerFrame;
-  }
-
-  return undefined;
+  return result.success ? result.data : undefined;
 }
 
 /**

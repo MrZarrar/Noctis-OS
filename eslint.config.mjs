@@ -3,15 +3,18 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "**/target/**"],
+    // vite.config.ts is Vite's own loader config, not part of the apps/web
+    // TypeScript project (its "include" is src/** only) — nothing else under
+    // apps/** sits outside its project's include, so this is the one exception.
+    ignores: ["**/dist/**", "**/node_modules/**", "**/target/**", "apps/web/vite.config.ts"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked.map((config) => ({
     ...config,
-    files: ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"],
+    files: ["apps/**/*.{ts,tsx}", "packages/**/*.{ts,tsx}", "tests/**/*.ts"],
   })),
   {
-    files: ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"],
+    files: ["apps/**/*.{ts,tsx}", "packages/**/*.{ts,tsx}", "tests/**/*.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -24,7 +27,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/**/*.ts", "packages/**/*.ts"],
+    files: ["apps/**/*.{ts,tsx}", "packages/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",

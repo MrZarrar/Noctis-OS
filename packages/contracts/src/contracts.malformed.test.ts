@@ -7,6 +7,7 @@ import {
   AuthorityRequestSchema,
   StandingPermissionSchema,
 } from "./authority.js";
+import { ActivateIdentityCommandSchema } from "./command.js";
 import { OrchestrationEventSchema } from "./events.js";
 import {
   ConversationThreadSchema,
@@ -65,6 +66,7 @@ const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["StandingPermission", StandingPermissionSchema],
   ["IdentityProfile", IdentityProfileSchema],
   ["IdentityMessage", IdentityMessageSchema],
+  ["ActivateIdentityCommand", ActivateIdentityCommandSchema],
   ["SourceRecord", SourceRecordSchema],
   ["OrchestrationEvent", OrchestrationEventSchema],
   ["ClientFrame", ClientFrameSchema],
@@ -420,6 +422,11 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
       contentRef: "blob://message-1",
       createdAt: "2026-09-01T12:00:00.000Z",
     },
+  ],
+  [
+    "ActivateIdentityCommand",
+    ActivateIdentityCommandSchema,
+    { idempotencyKey: "idem-key-identity-1", identityId: "vesper" },
   ],
   [
     "SourceRecord",

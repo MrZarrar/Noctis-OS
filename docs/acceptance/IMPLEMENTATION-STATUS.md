@@ -488,3 +488,81 @@ The donor Electron/browser system is unaffected by construction rather than by i
 uses the identifier `uk.co.noctis.os`, port 7717, `%APPDATA%\uk.co.noctis.os` for its configuration,
 and the `noctis` scheme, and `apps/desktop/tests/shell-boundary.test.mjs` fails if the word "jarvis"
 appears in either the Tauri configuration or the crate manifest.
+
+### 2026-09-06 Phase 5 design system, Presence, and identity runtime (partial)
+
+Implemented: the Section 5.2 design tokens (`packages/ui/src/tokens/*`), the permanent eight-item
+rail (`packages/ui/src/primitives/Rail.tsx`), the identity-activation command and its persisted,
+per-identity thread (`apps/core/src/identities/service.ts`, wired into `api/http.ts` as
+`identity.activate` and `GET /identities`), and the Presence page (`apps/web/src/pages/Presence.tsx`)
+that switches between them. `apps/web` gained its first bundler: React 18.3.1 and Vite 8.2.2 replace
+the Phase 4 plain-ES-modules build, which is what makes a permanent nav, JSX, and a design-tokens
+package importable at all. The Phase 4 canary page (`shell.ts`, `public/index.html`) is retired —
+Presence is now the page the shell serves — and `CoreTransport.readServerFrame` was upgraded from a
+structural check to a real `ServerFrameSchema.safeParse`, exactly as its Phase 4 `ponytail:` comment
+said to once a bundler existed.
+
+Fidelity decision, made before writing any renderer code: the Section 6 "one optimized intelligence
+renderer" is a real generative-art build (Three.js, canonical Vesper/Jester/NOIR profiles, idle-RAF
+and reduced-motion budgets) large enough to be its own pass, and the visual direction is something to
+react to rather than have guessed. `packages/ui/src/intelligence/IntelligenceRenderer.tsx` is a
+placeholder behind the exact `identityId`/`protocolIds` props the real renderer will take — a CSS
+radial-gradient blob per identity, with a NOIR overlay — so replacing its body later touches no
+caller. Being CSS rather than a `requestAnimationFrame` loop, it has no per-frame budget to police and
+nothing to leak on unmount; the idle-RAF budget in `tokens/motion.ts` (`rendererBudget`) is declared
+for the real renderer to honour, not exercised by the placeholder.
+
+NOIR activation is local React state in `Presence.tsx`, not a command — it never calls
+`identity.activate` and never touches `identity_threads`. That is what makes "NOIR preserves the
+active identity" true by construction rather than by a check: there is no code path from toggling it
+to any identity mutation. Likewise "all authority fixtures produce identical decisions across
+identities" holds because `packages/domain/src/authority/evaluate.ts` has no `identityId`-conditioned
+branch at all — it decides on `actorId`, operation class, and scope, so Phase 5 added nothing to keep
+identical here; it verified there was nothing to add.
+
+| Command                         | Result                                                                                                                                                                                                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run format`                | exit 0                                                                                                                                                                                                                              |
+| `npm run format:check`          | exit 0; all matched files use Prettier code style                                                                                                                                                                                   |
+| `npm run lint`                  | exit 0; 0 errors (globs extended to `.tsx`)                                                                                                                                                                                         |
+| `npm run typecheck`             | exit 0; clean after a full `tsc -b` cache clear                                                                                                                                                                                     |
+| `npm run test:unit`             | exit 0; 44 files, 963 tests passed (939 before this batch)                                                                                                                                                                          |
+| `npm run test:boundary`         | exit 0; 6 tests passed                                                                                                                                                                                                              |
+| `npm run test:desktop`          | exit 0; 6 tests — the pinned crate compiles against the new Vite `dist`                                                                                                                                                             |
+| `npm run rust:fmt:check`        | exit 0                                                                                                                                                                                                                              |
+| `npm run rust:clippy`           | exit 0; 0 warnings with `-D warnings`                                                                                                                                                                                               |
+| `npm run rust:test`             | 37/37 library tests passed; the separate binary-target test could not run — Smart App Control blocked the freshly built test executable (os error 4551), the same intermittent condition Phase 4 recorded, not a Phase 5 regression |
+| `npm run build`                 | exit 0                                                                                                                                                                                                                              |
+| `npm run build:web`             | exit 0; Vite build, 129 modules, `dist/index.html` + one JS bundle                                                                                                                                                                  |
+| `npm run build:desktop`         | exit 0; unbundled release binary, built through the real `beforeBuildCommand` (not a stale `dist/`)                                                                                                                                 |
+| Donor repository reconfirmation | HEAD, branch, and untracked file all match `DONOR-BASELINE.json`                                                                                                                                                                    |
+
+New dependencies, all pinned exactly: `react` and `react-dom` 18.3.1 (the master plan names React 18,
+not the current 19.x, so the latest 18.x patch was chosen over latest-overall — the same reasoning as
+ADR-0003's TypeScript pin), `vite` 8.2.2, `@vitejs/plugin-react` 6.1.1, and their `@types/*` packages.
+`@noctis/contracts` moved from a devDependency to a runtime dependency of `@noctis/web`, since
+`CoreTransport` now imports `ServerFrameSchema` for real. No new Rust dependency.
+
+The built shell was smoke-run as a real process against a real core, not only tested. `node
+apps/core/dist/main.js` bound 127.0.0.1:7717; three direct `identity.activate` calls (`vesper`,
+`jester`, `vesper` again) returned distinct thread ids for `vesper` and `jester` and the _same_ thread
+id on the repeated `vesper` call, and `GET /identities` listed both threads with `vesper` as
+`activeIdentityId` — the "JESTER never mutates a Vesper thread" and "VESPER restores Vesper" gate
+clauses, exercised against a live database rather than only asserted in-process. The built
+`noctis-desktop.exe` was then launched against that core with only `NOCTIS_CORE_TOKEN` set, and its
+log showed `proxied GET /identities -> 200` — proof that the real WebView loaded the real Presence
+page, the page's identity-state effect fired on mount, and the request crossed the Rust proxy to the
+running core, matching the core's own log of a `200` on `/commands/identity.activate` and the
+`/identities` read. Both processes were stopped and their temporary directories removed afterward. An
+unrelated orphaned `node apps/core/dist/main.js` process was found already holding port 7717 from an
+earlier, unrelated run before this smoke test began; it was inspected (confirmed to be exactly that
+command, no other arguments) and stopped so the smoke test could bind the port.
+
+Deliberately not built this batch, carried forward rather than hidden: the canonical Three.js
+renderer (placeholder documented above), visual snapshot tests at canonical desktop aspect ratios,
+a full accessibility audit beyond native keyboard/focus affordances and `aria-label`/`aria-pressed`
+(no contrast or screen-reader pass), and the seven rail destinations other than Command (Chat,
+Missions, Artifacts, Vault, Nodes, Automations, Settings render an explicit "not built yet" placeholder
+rather than fake content). Phase 5 is not yet proposed as accepted against the full gate in the master
+plan pending that renderer and audit work; the identity-runtime and design-token slice above is
+verified and safe to build on.

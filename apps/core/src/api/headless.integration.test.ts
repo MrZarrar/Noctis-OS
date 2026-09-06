@@ -309,6 +309,74 @@ describe("headless kernel loop", () => {
   });
 });
 
+describe("identity activation", () => {
+  it("creates a thread on first activation and reuses it on the second", async () => {
+    const core = await startTestCore();
+
+    const first = await command(core, "identity.activate", {
+      idempotencyKey: "activate-vesper-1",
+      identityId: "vesper",
+    });
+
+    expect(first.status).toBe(200);
+    expect(first.body.activeIdentityId).toBe("vesper");
+    const thread = first.body.thread as { id: string; revision: number };
+    expect(thread.revision).toBe(0);
+
+    const second = await command(core, "identity.activate", {
+      idempotencyKey: "activate-vesper-2",
+      identityId: "vesper",
+    });
+
+    expect(second.status).toBe(200);
+    expect((second.body.thread as { id: string }).id).toBe(thread.id);
+
+    const list = await read(core, "/identities");
+    expect(list.body.activeIdentityId).toBe("vesper");
+    expect(list.body.threads).toHaveLength(1);
+  });
+
+  it("keeps Vesper's and Jester's threads separate across switches", async () => {
+    const core = await startTestCore();
+
+    const vesper = await command(core, "identity.activate", {
+      idempotencyKey: "switch-vesper",
+      identityId: "vesper",
+    });
+    const jester = await command(core, "identity.activate", {
+      idempotencyKey: "switch-jester",
+      identityId: "jester",
+    });
+    const backToVesper = await command(core, "identity.activate", {
+      idempotencyKey: "switch-vesper-again",
+      identityId: "vesper",
+    });
+
+    const vesperThread = vesper.body.thread as { id: string };
+    const jesterThread = jester.body.thread as { id: string };
+    const restoredThread = backToVesper.body.thread as { id: string };
+
+    expect(jesterThread.id).not.toBe(vesperThread.id);
+    expect(restoredThread.id).toBe(vesperThread.id);
+    expect(backToVesper.body.activeIdentityId).toBe("vesper");
+
+    const list = await read(core, "/identities");
+    expect(list.body.activeIdentityId).toBe("vesper");
+    expect(list.body.threads).toHaveLength(2);
+  });
+
+  it("replays the original activation for a repeated idempotency key", async () => {
+    const core = await startTestCore();
+    const body = { idempotencyKey: "replay-me", identityId: "jester" };
+
+    const first = await command(core, "identity.activate", body);
+    const second = await command(core, "identity.activate", body);
+
+    expect(second.status).toBe(200);
+    expect(second.body).toEqual(first.body);
+  });
+});
+
 describe("client replay over /ws/clients", () => {
   it("replays from the requested sequence and then streams live", async () => {
     const core = await startTestCore();
