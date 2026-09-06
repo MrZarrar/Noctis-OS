@@ -23,13 +23,14 @@
     "rust:test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
     "typecheck": "tsc -b --pretty false",
     "test:boundary": "node --test scripts/donor-port/verify-read-only.test.mjs",
-    "test:desktop-bootstrap": "node --test apps/desktop/tests/bootstrap.test.mjs",
+    "test:desktop": "node --test apps/desktop/tests/*.test.mjs",
     "test:unit": "vitest run",
     "test:migrations": "vitest run apps/core/src/db",
     "test:integration": "vitest run --passWithNoTests integration.test",
     "test:e2e": "node --test --test-reporter=spec apps/web/e2e/*.test.mjs",
     "test:security": "vitest run --passWithNoTests tests/security",
-    "test:performance": "vitest run --passWithNoTests tests/performance"
+    "test:performance": "vitest run --passWithNoTests tests/performance",
+    "build:web": "npm --workspace @noctis/web run build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

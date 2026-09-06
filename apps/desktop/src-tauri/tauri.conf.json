@@ -4,9 +4,12 @@
   "version": "0.0.0",
   "identifier": "uk.co.noctis.os",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../../web/dist",
+    "beforeBuildCommand": "npm --workspace @noctis/web run build",
+    "beforeDevCommand": "npm --workspace @noctis/web run build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
@@ -20,7 +23,14 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self'; img-src 'self' data:"
+      "csp": "default-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["noctis"]
+      }
     }
   },
   "bundle": {

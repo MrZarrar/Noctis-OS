@@ -346,3 +346,137 @@ columns are `id, host_id, status, fingerprint, agent_version, last_seen_at, revo
 updated_at, credential_generation` — no secret column, which is the point of ADR-0011. Three hostile
 requests against the running processes answered 401 (the client bearer token upgrading `/ws/nodes`), 401
 (`/ready` with no bearer), and 404 (a reused pairing code presented by a different fingerprint).
+
+### 2026-09-06 Phase 4 Tauri 2 shell and secure transport
+
+Implemented: the typed core transport and its two implementations
+(`apps/web/src/transport/{CoreTransport,BrowserTransport,TauriTransport}.ts`), the Rust request proxy
+and its path guard (`proxy.rs`), the shell-held `/ws/clients` client with resume and backoff
+(`stream.rs`), core configuration with a redacting `Debug` (`config.rs`), monitor-driven window
+placement restore (`placement.rs`), the fail-closed `noctis://` reader (`deeplink.rs`), and the shell
+itself — single instance, tray, global shortcut, deep links, notifications, and crash-safe placement
+persistence (`lib.rs`). The Phase 4 canary page (`apps/web/{public,src/shell.ts}`) is served from
+`apps/web/dist`, built by `tsc` with no bundler, and is the first thing the desktop actually loads.
+
+| Command                         | Result                                                           |
+| ------------------------------- | ---------------------------------------------------------------- |
+| `npm run format:check`          | exit 0; all matched files use Prettier code style                |
+| `npm run lint`                  | exit 0; 0 errors                                                 |
+| `npm run typecheck`             | exit 0                                                           |
+| `npm run test:unit`             | exit 0; 40 files, 927 tests passed (901 at Phase 3 acceptance)   |
+| `npm run test:integration`      | exit 0; 94 tests, unchanged                                      |
+| `npm run test:boundary`         | exit 0; 6 tests passed                                           |
+| `npm run test:desktop`          | exit 0; 6 tests (the pinned crate compiles, plus the shell gate) |
+| `npm run rust:fmt:check`        | exit 0                                                           |
+| `npm run rust:clippy`           | exit 0; 0 warnings with `-D warnings`                            |
+| `npm run rust:test`             | exit 0; 37 tests passed                                          |
+| `npm run build`                 | exit 0                                                           |
+| `npm run build:desktop`         | exit 0; unbundled release binary produced                        |
+| Donor repository reconfirmation | HEAD, branch, and untracked file all match `DONOR-BASELINE.json` |
+
+Nine new Rust dependencies, all pinned exactly: the four Tauri plugins this phase names
+(`single-instance`, `deep-link`, `global-shortcut`, `notification`), `reqwest` and
+`tokio-tungstenite` as the two core clients, and `tokio`, `futures-util`, and `url` beneath them.
+Both clients are built with `default-features = false` and therefore have no TLS backend at all,
+which is deliberate: the core is a loopback HTTP listener, so a base URL that is not plain HTTP fails
+to connect rather than quietly carrying the bearer token somewhere over the internet. No new
+JavaScript dependency: the page is plain ES modules and does not import `@tauri-apps/api`.
+
+Gate evidence. Every sabotage below was applied locally, observed to fail the named test, and
+reverted.
+
+| Gate clause                                  | Sabotage applied                                  | Caught by |
+| -------------------------------------------- | ------------------------------------------------- | --------- |
+| The WebView cannot reach another host        | both host guards removed from `core_url` together | 1         |
+| A proxied request is signed                  | the `authorization` header replaced               | 1         |
+| The proxy serves only what the core serves   | the method allowlist removed                      | 1         |
+| The token is not a printable field           | the redacting `Debug` replaced with the token     | 1         |
+| A short token is not a credential            | the length check disabled                         | 1         |
+| The core URL is an origin                    | the path check removed                            | 1         |
+| The socket realm is authenticated            | the client socket dialled with a wrong bearer     | 1         |
+| A reconnect resumes                          | resubscribed from zero instead of the cursor      | 1         |
+| A replay cannot rewind the cursor            | the monotonic filter removed                      | 1         |
+| A gap rewinds the cursor to the ledger       | the gap branch ignored                            | 1         |
+| A refused handshake is reported              | the connect error swallowed                       | 1         |
+| A secure core implies a secure socket        | `wss` left as `https`                             | 1         |
+| Restore honours the monitors that exist      | the saved position returned unclamped             | 4         |
+| Restore picks the right monitor              | the first monitor always chosen                   | 1         |
+| Negative coordinates are valid               | the position clamped to non-negative              | 1         |
+| Nothing restores below the minimum size      | the minimum removed                               | 1         |
+| Deep links are `noctis://` only              | the scheme check removed                          | 1         |
+| Deep link routes are an allowlist            | the route check removed                           | 1         |
+| A deep link target is an identifier          | the identifier rule removed                       | 1         |
+| The transport refuses a host-naming path     | the authority-relative check removed (TypeScript) | 1         |
+| A failed poll does not advance the cursor    | the cursor advanced on a refusal                  | 1         |
+| A closed subscription stops polling          | the stop flag ignored                             | 1         |
+| The listener exists before the stream starts | subscribed before listening                       | 1         |
+| A replayed frame is not redelivered          | the delivered-sequence check removed              | 1         |
+| An unreadable frame is reported              | the malformed-frame branch silenced               | 1         |
+| The WebView cannot invoke ungranted plugins  | `fs:default` added to the capability file         | 1         |
+
+Three sabotages passed on the first attempt and should not have. Each was a test that held for the
+wrong reason, and each is recorded here rather than quietly repaired:
+
+- Removing the scheme check from `deeplink::parse` failed nothing, because every case in
+  `refuses_another_scheme` was also refused by the route allowlist. The test now includes
+  `https://objective/<identifier>` — valid in every respect but its scheme.
+- Removing the route allowlist failed nothing, because `noctis://shell/cmd.exe` was refused by the
+  target rule instead. The test now includes `noctis://shell` and `noctis://shell/<identifier>`,
+  which differ from an accepted link only in the route.
+- Removing the identifier rule did not apply cleanly and was re-run; it is caught.
+
+Two things survive sabotage by design, and neither is claimed as tested:
+
+- `core_url`'s authority-relative check and its origin comparison are mutually redundant. Removing
+  either alone fails nothing, because whichever remains catches every input; removing both fails
+  `refuses_a_path_that_names_another_host`, which is the row in the table above. Both stay — the
+  comparison is the general truth, the prefix check is the one that reads as the rule — and the
+  comment in the source says exactly this rather than implying two independent guards.
+- `placement::save` writes through a temporary file and renames. Replacing that with a direct write
+  fails nothing, because the round-trip test cannot observe a crash mid-write. The rename stays for
+  the reason the comment gives; it is untested.
+
+Sabotage also deleted code rather than only defending it. `placement::restore` had a separate branch
+centring a window whose monitor was gone. No test could tell that branch from ordinary clamping —
+because clamping a position that is nowhere near a monitor already slides the window fully onto it —
+so the branch was removed, not given a test to justify it.
+
+Two bugs found by probing rather than by a failing test. The window placement was saved from
+`outer_size` and restored with `set_size`, which sets the _inner_ size, so the window grew by the
+width of its own frame on every restart; it now saves `inner_size`. And a deep link arriving on a
+second launch was delivered to the page twice, because `tauri-plugin-single-instance`'s `deep-link`
+feature already forwards the URL to the deep-link plugin while the single-instance callback was
+parsing `argv` as well; the callback now only focuses the window, and `deeplink::from_args` was
+deleted as the dead half of that pair. A third gap was found the same way: `on_open_url` does not
+fire for the instance that was launched _with_ a link on Windows, so a cold start dropped it
+silently; `get_current()` now covers that path.
+
+The shell was smoke-run as a real process against a real core, not only tested. `node
+apps/core/dist/main.js` bound 127.0.0.1:7717; the built shell launched with only `NOCTIS_CORE_TOKEN`
+in its environment and logged `proxied GET /ready -> 200`, and the core logged `client stream
+started` with `connectedClients: 1` — so the page reached the core through the Rust proxy and Rust
+opened the authenticated client socket on its behalf. An objective created over the REST API moved
+`latestSequence` to 1 with the socket still open. Neither the page sources nor the built
+`apps/web/dist` contains the token or names its variable.
+
+Duplicate launch: with one instance running, a second launch carrying
+`noctis://objective/<identifier>` exited with code 0 after 75 ms, left exactly one process, and the
+running instance logged one forwarded deep link. A cold start carrying `noctis://mission/<identifier>`
+forwarded it once. `noctis://shell/cmd.exe` was refused and logged as refused.
+
+Restart: `%APPDATA%\uk.co.noctis.os\window.json` was set to 1000×700 at (300,200) and the shell
+launched twice in succession. The file read back identically both times, where a shell that ignored it
+would have overwritten it with the 1280×800 default — and identically the second time, which is what
+proves the inner/outer size fix, since the earlier code grew the window on every restart.
+
+Deliberately not built, with reasons recorded in ADR-0017: autostart, the update channel and
+signature verification, a display-inventory command for the page (Phase 9 is what would consume it),
+and OS-protected token storage (ADR-0016 — the token comes from the environment, is never in the
+WebView or the page bundle, and is not in Windows Credential Manager). `noctis://` registration writes
+to `HKCU\Software\Classes` and is off unless `NOCTIS_REGISTER_SCHEME=true`. No donor code was ported
+in this batch, so `DONOR-PORT-LEDGER.md` is unchanged.
+
+The donor Electron/browser system is unaffected by construction rather than by inspection: this shell
+uses the identifier `uk.co.noctis.os`, port 7717, `%APPDATA%\uk.co.noctis.os` for its configuration,
+and the `noctis` scheme, and `apps/desktop/tests/shell-boundary.test.mjs` fails if the word "jarvis"
+appears in either the Tauri configuration or the crate manifest.

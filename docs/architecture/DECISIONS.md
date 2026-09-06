@@ -148,3 +148,63 @@ environment" is moot as written. Phase 1 chose the built-in `node:sqlite` behind
 agent needs no database at all — its only persistent state is a credential file. The task reduces to
 qualifying Node 22, which CI does on the pinned runtime. If a later phase adopts `better-sqlite3`, the
 seam and `inTransaction` already exist for it and the qualification belongs to that phase.
+
+## ADR-0015: The shell holds the client socket; the browser transport polls
+
+**Decision:** `TauriTransport` receives events pushed from Rust, which holds `/ws/clients` itself.
+`BrowserTransport` receives the same events by polling `GET /events?after=` behind the same interface.
+
+**Reason:** The client realm authenticates with an `Authorization` header, and a browser `WebSocket`
+cannot send one. That leaves three options: poll in both transports, change the core to accept a
+credential a browser can present, or let the two transports differ. Adding a second
+credential-presentation path to the client realm for a development-only page is the worst of the
+three: it widens the surface Phase 3 spent its sabotage budget hardening, and puts the token in a
+subprotocol value, which is a place proxies log. Polling in both would leave the product surface —
+the packaged shell — on a mechanism nobody intends to ship.
+
+So the transports differ where the platform differs, and are identical where it does not: both resume
+by global sequence, both surface a gap frame rather than swallowing it, and both refuse a path that
+could name another host before anything is sent. `BrowserTransport` carries a token in page memory
+and is development-only for exactly that reason.
+
+## ADR-0016: The Phase 4 core token comes from the environment
+
+**Decision:** The shell reads `NOCTIS_CORE_TOKEN` from its process environment. The Phase 4 task
+"keep the core token in Rust/OS protected storage, not JavaScript local storage" is met in its
+load-bearing half — the token is never in the WebView, in `localStorage`, or in the page bundle — and
+deferred in its other half: it is not in Windows Credential Manager.
+
+**Reason:** The gate is that the WebView cannot read the token, and that holds either way: the token
+lives in `CoreConfig`, which is Rust process state with a hand-written redacting `Debug`, and the
+three commands the page can invoke never return it. What the environment does not give is protection
+at rest for an unattended machine, which is a property of a shipped install rather than of a canary.
+Adopting the `keyring` crate now would add a dependency and a seeding path to protect a development
+token that is already only as durable as the terminal that set it.
+
+**Cost of being wrong:** a shell packaged for real use before this is revisited would leave the token
+wherever the launching environment put it. The Phase 14 production-qualification gate must not pass
+while that is true.
+
+## ADR-0017: Phase 4 scope boundary
+
+**Decision:** Phase 4 delivers the two transports, the Rust request proxy, the Rust-held client
+socket, single instance, `noctis://` deep links, the global shortcut, the tray, native notifications,
+and crash-safe window placement restore. Four named items in Sections 11.1 and 14 are deliberately
+not built:
+
+- **Autostart.** A production activation. The plugin is not a dependency, and
+  `apps/desktop/tests/shell-boundary.test.mjs` asserts it is not.
+- **Update channel and signature verification.** Section 11.1 already conditions these on release
+  infrastructure existing, and none does.
+- **Monitor and display inventory as a command.** The shell reads the monitor arrangement to place
+  its own window; exposing an inventory to the page belongs with the native window orchestration in
+  Phase 9, which is what would consume it.
+- **OS-protected token storage.** ADR-0016.
+
+**Also recorded:** `noctis://` scheme registration writes to `HKCU\Software\Classes` and is therefore
+default-off behind `NOCTIS_REGISTER_SCHEME=true`, in line with the rule that production capabilities
+stay off until asked for by name.
+
+**No contract changed.** The transports speak the Phase 1 client envelope and the Phase 2 REST
+surface as they already are. `core:frame`, `core:status`, and `core:deep-link` are Tauri event names
+inside one process, not additions to the event registry in `@noctis/contracts`.

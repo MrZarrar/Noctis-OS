@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Minimum capability for the Noctis main window",
+  "description": "The whole of what the Noctis WebView may reach. Deep links, the global shortcut, the tray, and the core socket are driven from Rust and appear nowhere here, because the page has no business invoking them.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "notification:default"]
 }

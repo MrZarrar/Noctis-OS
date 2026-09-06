@@ -3,5 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Noctis Adaptive Depth Workbench; implemented in later vertical slices"
+  "description": "Noctis Adaptive Depth Workbench; Phase 4 ships the core transports and the shell page",
+  "scripts": {
+    "build": "tsc -b && node build.mjs"
+  },
+  "devDependencies": {
+    "@noctis/contracts": "0.0.0"
+  }
 }

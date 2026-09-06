@@ -5,6 +5,7 @@
     { "path": "./packages/domain" },
     { "path": "./packages/test-kit" },
     { "path": "./apps/core" },
-    { "path": "./apps/node-agent" }
+    { "path": "./apps/node-agent" },
+    { "path": "./apps/web" }
   ]
 }

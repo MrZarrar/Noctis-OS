@@ -1,0 +1,91 @@
+:root {
+  color-scheme: dark;
+  --ink: #e8e6e3;
+  --ink-dim: #8b8b8b;
+  --ground: #0f1113;
+  --line: #24282c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2.5rem;
+  background: var(--ground);
+  color: var(--ink);
+  font:
+    14px/1.6 "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+h2 {
+  margin: 2rem 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.note {
+  margin: 0 0 2rem;
+  max-width: 60ch;
+  color: var(--ink-dim);
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  gap: 0.5rem 1rem;
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+dt {
+  color: var(--ink-dim);
+}
+
+dd {
+  margin: 0;
+  font-family: "Cascadia Mono", ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--ink-dim);
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: "Cascadia Mono", ui-monospace, monospace;
+}
+
+li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-dim);
+}

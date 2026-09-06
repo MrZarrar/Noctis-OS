@@ -37,7 +37,7 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - run: npm ci
-      - run: npm run test:desktop-bootstrap
+      - run: npm run test:desktop
       - run: npm run rust:fmt:check
       - run: npm run rust:clippy
       - run: npm run rust:test
