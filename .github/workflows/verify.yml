@@ -37,6 +37,10 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - run: npm ci
+      # Every cargo command on the desktop crate needs this: `generate_context!`
+      # reads the frontend assets at compile time, and `apps/web/dist` is built,
+      # not committed.
+      - run: npm run build:web
       - run: npm run test:desktop
       - run: npm run rust:fmt:check
       - run: npm run rust:clippy

@@ -382,6 +382,14 @@ which is deliberate: the core is a loopback HTTP listener, so a base URL that is
 to connect rather than quietly carrying the bearer token somewhere over the internet. No new
 JavaScript dependency: the page is plain ES modules and does not import `@tauri-apps/api`.
 
+The first CI run of this branch failed, and the local Rust results above were a false pass until it
+did. `tauri::generate_context!` reads the frontend assets at compile time and `apps/web/dist` is
+built rather than committed, so every cargo command on the desktop crate fails on a clean checkout
+with "The `frontendDist` configuration is set to `"../../web/dist"` but this path doesn't exist".
+It passed here only because the directory was already present from an earlier build. The `rust` job
+now runs `npm run build:web` before the cargo steps, and the failure was reproduced locally by
+moving `apps/web/dist` aside — red, then green once it was rebuilt.
+
 Gate evidence. Every sabotage below was applied locally, observed to fail the named test, and
 reverted.
 
