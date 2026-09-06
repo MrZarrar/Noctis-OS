@@ -2,17 +2,26 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   ActivateIdentityCommandSchema,
+  AttentionStateSchema,
   CancelNodeJobCommandSchema,
   ChangeMissionStatusCommandSchema,
   ChangeObjectiveStatusCommandSchema,
+  ChangeSurfaceLifecycleCommandSchema,
+  ComposeSurfacesCommandSchema,
   CreateMissionCommandSchema,
   CreateObjectiveCommandSchema,
   EnqueueNodeJobCommandSchema,
   GrantNodeCapabilityCommandSchema,
   IssueNodePairingCodeCommandSchema,
   PairNodeRequestSchema,
+  RecallVaultCommandSchema,
+  ReindexVaultCommandSchema,
+  ReleaseSurfaceOverrideCommandSchema,
   RequestAuthorityCommandSchema,
   RevokeNodeCommandSchema,
+  SetSurfaceOverrideCommandSchema,
+  SurfaceDisplaySchema,
+  UpsertSurfaceIntentCommandSchema,
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
@@ -55,6 +64,24 @@ import {
   getObjective,
   listObjectives,
 } from "../objectives/service.js";
+import {
+  changeSurfaceLifecycle,
+  composeSurfaces,
+  getSnapshotForDisplay,
+  getSurfaceIntent,
+  getSurfaceOverride,
+  listSurfaceIntents,
+  listSurfaceOverrides,
+  planFor,
+  releaseSurfaceOverride,
+  replayComposition,
+  setSurfaceOverride,
+  upsertSurfaceIntent,
+} from "../objectives/surface-intents.js";
+import { indexVault, listVaultItems } from "../vault/indexer.js";
+import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
+import type { VaultRoot } from "../vault/root.js";
+import { writesEnabled } from "../vault/writes.js";
 import type { CoreConfig } from "../config/server.js";
 import { isAuthorized, isOriginAllowed } from "./auth.js";
 
@@ -72,6 +99,10 @@ export interface ApiDeps {
   schemaVersion: number;
   startedAt: number;
   dispatcher: Dispatcher;
+  /** Absent when no Vault is configured, which is the default. */
+  vaultRoot?: VaultRoot;
+  /** The environment the Vault write switch is read from. */
+  vaultEnv?: Readonly<Record<string, string | undefined>>;
 }
 
 interface ErrorBody {
@@ -162,19 +193,24 @@ type Replay = (db: NoctisDatabase, id: string) => unknown;
 
 interface CommandRoute {
   handle: (
-    kernel: Kernel,
+    deps: ApiDeps,
     context: CommandContext,
     body: unknown,
   ) => { status: number; body: unknown };
 }
 
-function defineCommand<S extends z.ZodType>(
+/**
+ * A command that needs more than the kernel — the Vault root, say, which is
+ * resolved once at startup and deliberately not reachable from a command body.
+ */
+function defineDepsCommand<S extends z.ZodType>(
   schema: S,
-  run: (kernel: Kernel, context: CommandContext, command: z.infer<S>) => Result<unknown>,
+  run: (deps: ApiDeps, context: CommandContext, command: z.infer<S>) => Result<unknown>,
   replay: Replay,
 ): CommandRoute {
   return {
-    handle(kernel, context, body) {
+    handle(deps, context, body) {
+      const kernel = deps.kernel;
       const parsed = schema.safeParse(body);
 
       if (!parsed.success) {
@@ -191,7 +227,7 @@ function defineCommand<S extends z.ZodType>(
         };
       }
 
-      const outcome = run(kernel, context, parsed.data);
+      const outcome = run(deps, context, parsed.data);
 
       if (outcome.ok) {
         return { status: 200, body: outcome.value };
@@ -209,6 +245,27 @@ function defineCommand<S extends z.ZodType>(
 
       return conflictResponse(outcome.conflict);
     },
+  };
+}
+
+/** The common case: a command that needs only the kernel. */
+function defineCommand<S extends z.ZodType>(
+  schema: S,
+  run: (kernel: Kernel, context: CommandContext, command: z.infer<S>) => Result<unknown>,
+  replay: Replay,
+): CommandRoute {
+  return defineDepsCommand(
+    schema,
+    (deps, context, command) => run(deps.kernel, context, command),
+    replay,
+  );
+}
+
+/** Refusal for a Vault command when no Vault is configured. Off is the default. */
+function vaultNotConfigured(): Result<never> {
+  return {
+    ok: false,
+    conflict: { kind: "not_found", entity: "vault_root", id: "NOCTIS_VAULT_ROOT" },
   };
 }
 
@@ -234,6 +291,44 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   ),
   "authority.request": defineCommand(RequestAuthorityCommandSchema, requestAuthority, (db, id) =>
     getAuthorityDecision(db, id),
+  ),
+  "surface.upsert_intent": defineCommand(
+    UpsertSurfaceIntentCommandSchema,
+    upsertSurfaceIntent,
+    (db, id) => getSurfaceIntent(db, id),
+  ),
+  "surface.change_lifecycle": defineCommand(
+    ChangeSurfaceLifecycleCommandSchema,
+    changeSurfaceLifecycle,
+    (db, id) => getSurfaceIntent(db, id),
+  ),
+  "surface.set_override": defineCommand(
+    SetSurfaceOverrideCommandSchema,
+    setSurfaceOverride,
+    (db, id) => getSurfaceOverride(db, id),
+  ),
+  "surface.release_override": defineCommand(
+    ReleaseSurfaceOverrideCommandSchema,
+    releaseSurfaceOverride,
+    (db, id) => getSurfaceOverride(db, id),
+  ),
+  "surface.compose": defineCommand(ComposeSurfacesCommandSchema, composeSurfaces, (db, id) =>
+    replayComposition(db, id),
+  ),
+  "vault.reindex": defineDepsCommand(
+    ReindexVaultCommandSchema,
+    (deps, context, command) =>
+      deps.vaultRoot === undefined
+        ? vaultNotConfigured()
+        : indexVault(deps.kernel, context, deps.vaultRoot, command.idempotencyKey),
+    // Reindexing has no stored result to replay; a retried key is answered by
+    // the conflict path, which is honest about the work not being repeated.
+    () => undefined,
+  ),
+  "vault.recall": defineDepsCommand(
+    RecallVaultCommandSchema,
+    (deps, context, command) => recordRecall(deps.kernel, context, command, deps.vaultRoot),
+    (db, id) => getRecall(db, id),
   ),
   "node.issue_pairing_code": defineCommand(
     IssueNodePairingCodeCommandSchema,
@@ -266,6 +361,101 @@ function parseLimit(raw: string | null): number | undefined {
   return Number.isInteger(limit) && limit > 0 && limit <= MAX_PAGE_SIZE ? limit : undefined;
 }
 
+/**
+ * The workbench's read of an Objective's Surfaces, including the composition it
+ * should render.
+ *
+ * A GET writes nothing, and this one is no exception — it recomputes the plan
+ * rather than returning the stored one. That is only safe because the
+ * compositor is pure: the plan a client renders after a restart is identical to
+ * the one `surface.compose` committed before it, and `snapshot` is returned
+ * alongside so a caller can see whether anything has drifted since.
+ */
+function handleSurfaceRead(
+  deps: ApiDeps,
+  objectiveId: string,
+  url: URL,
+): { status: number; body: unknown } {
+  if (getObjective(deps.kernel.db, objectiveId) === undefined) {
+    return { status: 404, body: errorBody("not_found", "objective not found") };
+  }
+
+  const clientId = url.searchParams.get("clientId") ?? "";
+  const display = SurfaceDisplaySchema.safeParse({
+    fingerprint: url.searchParams.get("fingerprint") ?? "",
+    widthPx: Number(url.searchParams.get("widthPx") ?? Number.NaN),
+  });
+  const attentionState = AttentionStateSchema.safeParse(url.searchParams.get("attentionState"));
+  const focusedSurfaceId = url.searchParams.get("focusedSurfaceId");
+
+  if (clientId === "" || !display.success || !attentionState.success) {
+    return {
+      status: 400,
+      body: errorBody(
+        "invalid_request",
+        "clientId, fingerprint, widthPx, and attentionState are required",
+      ),
+    };
+  }
+
+  if (focusedSurfaceId !== null && !UuidSchema.safeParse(focusedSurfaceId).success) {
+    return { status: 400, body: errorBody("invalid_request", "focusedSurfaceId must be a UUID") };
+  }
+
+  const request = {
+    objectiveId,
+    clientId,
+    display: display.data,
+    attentionState: attentionState.data,
+    ...(focusedSurfaceId === null ? {} : { focusedSurfaceId }),
+    generatedAt: new Date(deps.kernel.clock.now()).toISOString(),
+  };
+
+  return {
+    status: 200,
+    body: {
+      intents: listSurfaceIntents(deps.kernel.db, objectiveId),
+      overrides: listSurfaceOverrides(
+        deps.kernel.db,
+        objectiveId,
+        clientId,
+        display.data.fingerprint,
+      ),
+      snapshot:
+        getSnapshotForDisplay(deps.kernel.db, objectiveId, display.data.fingerprint)?.plan ?? null,
+      plan: planFor(deps.kernel.db, request),
+    },
+  };
+}
+
+/**
+ * The graph the Vault view draws: entities, their edges, and their persisted
+ * coordinates. Coordinates come from `vault_layout`, never recomputed here, so
+ * every client draws the same sphere and a reload does not rearrange it.
+ */
+function readGraph(db: NoctisDatabase, limit: number): { nodes: unknown[]; edges: unknown[] } {
+  const nodes = db
+    .prepare(
+      `SELECT e.id, e.key, e.name, e.type, e.item_id AS itemId, i.path,
+              l.x, l.y, l.z
+         FROM vault_entities e
+         LEFT JOIN vault_items i ON i.id = e.item_id
+         LEFT JOIN vault_layout l ON l.entity_id = e.id
+        ORDER BY e.key
+        LIMIT ?`,
+    )
+    .all(limit) as unknown[];
+
+  const edges = db
+    .prepare(
+      `SELECT id, src_entity_id AS source, dst_entity_id AS target, type, lifecycle
+         FROM vault_edges ORDER BY id LIMIT ?`,
+    )
+    .all(limit * 4) as unknown[];
+
+  return { nodes, edges };
+}
+
 function handleRead(
   deps: ApiDeps,
   segments: readonly string[],
@@ -295,6 +485,38 @@ function handleRead(
           .map((identityId) => getThreadForIdentity(deps.kernel.db, identityId))
           .filter((thread) => thread !== undefined),
       },
+    };
+  }
+
+  if (segments.length === 1 && segments[0] === "vault") {
+    return {
+      status: 200,
+      body: {
+        // The path itself is never returned. A client has no use for it and the
+        // shell should not be able to learn where the notes live.
+        configured: deps.vaultRoot !== undefined,
+        live: deps.vaultRoot?.live ?? false,
+        writesEnabled: writesEnabled(deps.vaultEnv ?? {}),
+        items: deps.vaultRoot === undefined ? [] : listVaultItems(deps.kernel.db).slice(0, limit),
+      },
+    };
+  }
+
+  if (segments.length === 2 && segments[0] === "vault" && segments[1] === "graph") {
+    return { status: 200, body: readGraph(deps.kernel.db, limit) };
+  }
+
+  if (segments.length === 2 && segments[0] === "vault" && segments[1] === "recall") {
+    const query = url.searchParams.get("query") ?? "";
+
+    if (query.trim() === "") {
+      return { status: 400, body: errorBody("invalid_request", "query is required") };
+    }
+
+    // A read, so nothing is recorded. `vault.recall` is the command that audits.
+    return {
+      status: 200,
+      body: recallFor(deps.kernel.db, query, { root: deps.vaultRoot, limit }),
     };
   }
 
@@ -349,6 +571,10 @@ function handleRead(
       status: 200,
       body: { missions: listMissionsForObjective(deps.kernel.db, id, limit) },
     };
+  }
+
+  if (collection === "objectives" && sub === "surfaces") {
+    return handleSurfaceRead(deps, id, url);
   }
 
   if (collection === "missions" && sub === undefined) {
@@ -586,7 +812,7 @@ export async function handleRequest(
     }
 
     const context: CommandContext = { correlationId, actorType: "user", actorId: "local" };
-    const result = route.handle(deps.kernel, context, body);
+    const result = route.handle(deps, context, body);
 
     if (result.status === 200) {
       // The two commands whose effect reaches beyond the database. Both run after

@@ -103,7 +103,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 27 tables", () => {
+  it("applies every migration and creates all 33 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -114,6 +114,6 @@ describe("migrate", () => {
       .get() as { c: number };
     db.close();
 
-    expect(row.c).toBe(27);
+    expect(row.c).toBe(33);
   });
 });

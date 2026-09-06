@@ -566,3 +566,340 @@ Missions, Artifacts, Vault, Nodes, Automations, Settings render an explicit "not
 rather than fake content). Phase 5 is not yet proposed as accepted against the full gate in the master
 plan pending that renderer and audit work; the identity-runtime and design-token slice above is
 verified and safe to build on.
+
+### 2026-09-06 Phase 6 Objective and Adaptive Surface vertical slice
+
+Implemented: the deterministic compositor (`packages/domain/src/compositor/{compose,layouts}.ts`), the
+Surface services and their five commands (`apps/core/src/objectives/surface-intents.ts`, wired into
+`api/http.ts` as `surface.upsert_intent`, `surface.change_lifecycle`, `surface.set_override`,
+`surface.release_override`, `surface.compose`, plus `GET /objectives/:id/surfaces`), the generic
+Surface primitives and frame (`packages/ui/src/surfaces/*`), the registry and its renderer table
+(`apps/web/src/surfaces/{registry.ts,renderers.tsx}`), the workbench (`apps/web/src/workbench/*`), and
+the Command page (`apps/web/src/pages/Command.tsx`), which renders Presence when no Objective is
+active and Active Canvas when one is — Objective is state, not a route.
+
+Migration `0003_surfaces.sql` adds no tables. 0001 already declared all three; what was missing was the
+uniqueness each relies on, which until now lived only in the service that happened to be the sole
+writer. It adds three indexes: Surface identity (`objective_id, kind, source_ids_json`), one live
+override per surface/client/display (partial, `WHERE released_at IS NULL`), and one snapshot per
+objective/display.
+
+| Gate clause                                              | State                    | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identical inputs yield identical composition, 1,000 runs | implemented              | `packages/domain/src/compositor/compose.test.ts` — "THE GATE: identical inputs yield identical compositions across 1,000 randomized runs". Each run composes twice **and** once more with the intent array reversed, so it also fails if the plan depended on input order rather than on the input set                                                                                                                                                                 |
+| Invalid Surface payloads fall back safely                | implemented              | `compose.test.ts` — "THE GATE: invalid Surface payloads fall back safely"; `apps/web/src/surfaces/registry.test.ts` — "THE GATE: a malformed payload degrades to the fallback instead of throwing"; observed live in the smoke run below                                                                                                                                                                                                                               |
+| No model field can set physical geometry                 | implemented              | Structural, not a check: `SurfaceIntentSchema` and `UpsertSurfaceIntentCommandSchema` are `.strict()` and contain no x/y/width/height/z/monitor/duration field, so a payload carrying one fails to parse rather than being stripped and honoured. Covered by `compose.test.ts`, `surfaces.integration.test.ts` (400), and the `.strict()` matrix                                                                                                                       |
+| Restore Objective, composition, focus, pinned context    | implemented              | `apps/core/src/objectives/surfaces.integration.test.ts` — "THE GATE: restores the Objective, composition, and pinned context after a restart" closes the core and starts a second one on the same database file. The restored `plan.slots` match exactly while `plan.generatedAt` differs, proving the plan is recomputed rather than replayed                                                                                                                         |
+| Keyboard-only activate, arrange, dismiss, restore        | implemented              | `apps/web/e2e/workbench.keyboard.test.mjs` — "THE GATE: activates, arranges, dismisses, and restores without a pointer" drives a real browser against a real core with `Tab`, typing, `Enter`, and `ArrowDown` only. `tabTo` is itself the accessibility assertion: it presses Tab until the focused element's accessible name matches and fails if it never does, so a control that cannot be reached by keyboard fails the gate rather than being clicked into focus |
+| Suggested/draft/active transitions separated             | implemented              | Phase 1's `transitionObjectiveStatus` table is the only path and `InitialObjectiveStatusSchema` restricts birth to suggested/draft. `Command.tsx` offers Accept (suggested→draft) then Activate (draft→active) as distinct actions with no shortcut between them                                                                                                                                                                                                       |
+| Registry, primitives, layouts, overflow, fallbacks       | partial                  | Five of the fifteen primitives Section 5.3 names are registered — the ones this slice composes. See the deferral list below                                                                                                                                                                                                                                                                                                                                            |
+| Production deployment/activation                         | deliberately not started | requires later explicit approval                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+Design decisions worth recording:
+
+- **`compositionSignature` is the canonical serialization, not a digest.** Section 5.4 step 8 asks for
+  a composition hash. Its only consumer asks one question — "is this the same composition as the one
+  already committed" — and comparing the canonical form answers that exactly rather than probably,
+  with no crypto primitive in a package that must also run in a browser bundle.
+- **No attention-state column.** `LAYOUTS` is a total one-to-one map from attention state to layout id,
+  so `attentionStateForLayout` reads the state back out of a persisted `layoutId`. Restore needs no
+  schema change to know which of the four states it is restoring into.
+- **The snapshot is corroboration, not the restore mechanism.** Because the compositor is pure, the
+  `GET` recomputes the plan and a client restores identically without trusting a stored one;
+  `composition_snapshots` earns its place as the audit record and as the change detector that gates
+  `surface.composition_changed.v1`.
+- **The restore point lives on `identity_threads.active_objective_id`**, a column 0001 declared and
+  nothing had yet written. Per-identity by construction, so Jester cannot resume into Vesper's work.
+- **`ensureThread` was extracted** because two callers could be the first to need a thread — activating
+  an identity, and activating an Objective belonging to one — but only one could create it, which
+  silently lost the restore pointer in the second case. One shared path fixes every caller.
+
+Two event names were appended: `surface.override_released.v1` and `surface.lifecycle_changed.v1`.
+Section 4.3 reserves names "such as" the list it gives, so that list is a floor; a release folded into
+`override_set` would make every listener filtering for a set override act on its removal.
+
+| Command                    | Result                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run format:check`     | exit 0; all matched files use Prettier code style                                                                                                       |
+| `npm run lint`             | exit 0; 0 errors                                                                                                                                        |
+| `npm run typecheck`        | exit 0                                                                                                                                                  |
+| `npm run test:unit`        | exit 0; 48 files, 1021 tests passed (963 before this batch)                                                                                             |
+| `npm run test:integration` | exit 0; 4 files, 108 tests passed                                                                                                                       |
+| `npm run test:boundary`    | exit 0; 6 tests passed                                                                                                                                  |
+| `npm run test:e2e`         | exit 0; 1 test passed in ~2.4s — the keyboard gate, run here against Edge (see the E2E note below)                                                      |
+| `npm run test:security`    | exit 0; no dedicated security tests exist yet                                                                                                           |
+| `npm run test:performance` | exit 0; no dedicated performance tests exist yet                                                                                                        |
+| `npm run test:desktop`     | exit 0; 6 tests                                                                                                                                         |
+| `npm run build`            | exit 0                                                                                                                                                  |
+| `npm run build:web`        | exit 0; Vite build, `dist/index.html` plus one JS bundle                                                                                                |
+| `npm run rust:fmt:check`   | exit 0                                                                                                                                                  |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`                                                                                                                   |
+| `npm run rust:test`        | exit 0; 37/37 library tests passed and the binary target compiled and ran this time — the Smart App Control block Phases 4 and 5 recorded did not recur |
+
+One new declared dependency and no new resolved package: `zod` 4.4.3 was added to `@noctis/web`, which
+now imports it directly to validate core responses. It was already in the tree through
+`@noctis/contracts`; the lock diff is two lines and adds no download.
+
+**Smoke run — the slice driven keyboard-only in a real browser against a real core.** `node
+apps/core/dist/main.js` on 127.0.0.1:8787 with a temporary database, the built Vite bundle served on
+localhost:4173. Typing a title and pressing Enter created a `suggested` Objective; Tab to **Accept**
+and Enter moved it to `draft`; Enter again on **Activate** moved it to `active` and composed three
+Surfaces into `canvas.split` (`display.wide`) with Choices in `left`, Conversation in `centre`, and
+Detail in `right`. Choosing "Control (bottom)" in Detail's **Place** select moved it and added
+`override.honoured` and a **Release placement** control. A full page reload returned straight to the
+active Objective with all three Surfaces in their arranged regions — no Presence screen, no
+re-activation. Narrowing the window to 1000px produced `display.compact`, one placed Surface, and
+"2 Surfaces did not fit" in the `<details>` overflow stack with `overflow.capacity`; widening restored
+the override exactly, and the intermediate state also demonstrated per-display scoping, since the
+narrower window reported a different `screen` and its fingerprint correctly put the override out of
+scope. Focusing **Dismiss Choices** and pressing Enter removed it and added `lifecycle.excluded`.
+Finally, upserting an intent of kind `native_application` — which nothing registers — rendered the
+fallback in place ("no renderer is registered for this kind") while the other two Surfaces continued to
+render, which is the "falls back safely" gate observed rather than asserted.
+
+Two real defects were found by that smoke run and fixed, neither visible to the unit tests:
+
+1. **The dev/preview proxy missed any path carrying a query string.** `apps/web/vite.config.ts` gained
+   a proxy at all this batch, because Section 9.2's "CORS is not treated as CSRF protection" means the
+   core deliberately emits no permissive CORS headers — so a cross-origin browser request cannot
+   succeed, and `BrowserTransport`, which `core-client.ts` says exists for local iteration, was
+   unusable without one. The first pattern anchored on `/` or end-of-string, so `/objectives?limit=25`
+   fell through to the SPA and was answered with `index.html` and a 200.
+2. **The workbench trusted the shape of a 200 response.** Reading `.objectives` off that HTML crashed
+   the page. `Command.tsx` and `useComposition.ts` now parse every core read through the contract
+   schemas, so a body that is not what it claims degrades to a stated error instead of a blank screen —
+   the same fail-closed rule the core already applies to its own input.
+
+Both servers were stopped and the temporary database removed afterward. No browser artifacts remain in
+the repository.
+
+Deliberately not built this batch, carried forward rather than hidden:
+
+- **Ten of the fifteen Section 5.3 primitives.** Conversation, List/Choice, Detail, Evidence, and
+  Attention are registered because this slice composes them. Approval belongs to Phase 8, Native
+  Application to Phase 9, External Tool to Phase 10, and Vault Recall to Phase 7; registering empty
+  components for them now would be scaffolding pretending to be a registry, and the fallback already
+  renders an unregistered kind safely, as demonstrated above.
+- **The registry's capability/authority requirements and source-refresh action.** Both are named in
+  Section 5.3 and both are omitted until the phase that can enforce them: a `requires` array that
+  nothing checks is false comfort, not a safety property. Adding them is additive.
+- **Model-proposed Surfaces.** `Command.tsx` seeds three intents from the Objective record itself on
+  activation — every field comes from the record and nothing is invented to fill a frame. Phase 8 gives
+  the identities a provider and they propose through the same `surface.upsert_intent` command, at which
+  point the seeding function goes away; the upsert is keyed by Surface identity, so proposing the same
+  Surfaces twice updates rather than duplicates them.
+- **Visual snapshots and a full accessibility audit.** Controls are native `<button>`, `<select>`,
+  `<input>`, `<details>`, and `<form>` throughout, so focus, activation, and announcement come from the
+  platform rather than from hand-rolled handlers, and the E2E suite now proves Tab-reachability for the
+  controls the gate names. `typography.color` was added, paying down Phase 5's four hard-coded
+  `#E7E6EE` call sites; both of its values clear 4.5:1 against every `depth` layer. No systematic
+  contrast sweep, screen-reader pass, or canonical-aspect-ratio visual snapshot has been run.
+- **The canonical Three.js intelligence renderer**, unchanged from Phase 5.
+
+Phase 6 is not proposed as accepted against the full gate: the registry carries five of the fifteen
+primitives Section 5.3 names. Every gate clause in the table above is implemented and evidenced, and
+the compositor, Surface services, restore path, and workbench are safe to build on.
+
+#### Browser E2E infrastructure
+
+`playwright` 1.63.0 is now a pinned dev dependency and `test:e2e` runs a real browser. It is the
+driver library, not `@playwright/test`: the `test:e2e` script already runs `node --test`, and a second
+test runner alongside Vitest and `node:test` would have bought auto-waiting assertions the Playwright
+`Locator` API already provides. Playwright installs no browser on `npm ci`, so the install stays fast;
+CI gained an explicit `npx playwright install chromium` step between `npm run build` and
+`npm run test:e2e`, and `build` must come first because the suite serves the built workspace packages
+and runs the core from `apps/core/dist` (the suite asserts this with a named message rather than
+failing opaquely).
+
+The suite starts its own core on a temporary database and its own `vite` dev server, then stops both.
+Dev rather than a preview of `dist`, because `VITE_CORE_URL` is inlined at build time and previewing
+would mean building a bundle carrying a test token; dev serves the same source and leaves no such
+artifact.
+
+Two things this cost, both worth recording because neither was obvious:
+
+- **`shell: true` orphans a server on Windows.** With a shell the direct child is `cmd.exe`, so
+  `kill()` stopped the shell and left the core and Vite running with their stdio pipes still attached
+  — and `node --test` then never exited, which looked like a hung test rather than a cleanup bug. The
+  suite spawns both binaries directly through `process.execPath`.
+- **The gate's first selector was wrong in a way that mattered.** `input[aria-label='New Objective']`
+  matched nothing: the field is named by its wrapping `<label>`, not by an `aria-label`. `tabTo` now
+  resolves the accessible name the way a screen reader would — `aria-label`, then `element.labels`,
+  then text content — which is both what made the test pass and a better assertion than the attribute
+  check would have been.
+
+Red-green was verified by sabotage, not by assuming: replacing
+`setActiveObjectiveId(thread?.activeObjectiveId)` with `undefined` in `useIdentityRuntime.ts` made the
+suite fail on the restore leg with "the workbench did not restore the active Objective after a
+reload", naming the canvas it actually saw. The sabotage was reverted and the suite re-run green.
+
+Locally the run recorded above used `NOCTIS_E2E_BROWSER_CHANNEL=msedge` against the installed Edge 152,
+because the bundled Chromium cannot launch on this machine. The cause is Smart App Control, the same
+condition Phases 4 and 5 recorded against the Rust test executables (`os error 4551`), now identified
+precisely: `HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy\VerifiedAndReputablePolicyState` is `1`,
+and both `chromium-1243\chrome-win64\chrome.exe` and
+`chromium_headless_shell-1243\...\chrome-headless-shell.exe` report `Get-AuthenticodeSignature`
+`NotSigned`. Running either directly gives "An Application Control policy has blocked this file", and
+Playwright surfaces it as `browserType.launch: spawn UNKNOWN`. Smart App Control admits no per-file
+exception — it permits signed and reputable binaries only — so an unsigned browser build is refused
+whatever else is configured. The installed Edge and Chrome are both `Valid`-signed and therefore run,
+which is why the channel override works.
+
+An earlier revision of this entry attributed the same symptom to
+`playwright.download.prss.microsoft.com` being unreachable. That was wrong: `npx playwright install
+chromium` later succeeded on the first attempt with the full 114.6 MiB transferred, DNS resolves, and
+TCP 443 connects on both IPv4 and IPv6. The initial download failures were transient and unrelated to
+the launch block that actually prevents the bundled browser from running here.
+
+`NOCTIS_E2E_BROWSER_CHANNEL` is an explicit opt-in and never a silent fallback: with it unset, the
+suite uses the Chromium this Playwright version pins, which is what CI does and therefore what the gate
+is proven against there. GitHub's hosted runners do not enable Smart App Control, so the pinned browser
+launches there. **CI has not yet run this step** — that evidence is pending the push, and the CI run is
+the authority for the pinned-browser result.
+
+### 2026-09-06 Phase 7 Vault port, stable sphere, and focused recall
+
+Implemented: Markdown reading and the deterministic sphere layout
+(`packages/domain/src/vault/{markdown,layout,view}.ts`), the Vault root guard,
+indexer, recall, and atomic write primitives (`apps/core/src/vault/*`, wired into
+`api/http.ts` as `vault.reindex` and `vault.recall` plus `GET /vault`,
+`GET /vault/graph`, and `GET /vault/recall`), the recall Surface and the dedicated
+sphere view (`packages/ui/src/vault/*`), the `vault_recall` registry kind, the Vault
+page (`apps/web/src/pages/Vault.tsx`) with the Open-in-Vault and return handoff, and
+the fixture Vault generator (`packages/test-kit/src/vault.ts`, run through
+`scripts/fixtures/create-test-vault.mjs`).
+
+Migration `0004_vault.sql` adds the six tables Section 4.1 lists and migration 0001
+deliberately left for this phase: `vault_items`, `vault_entities`, `vault_edges`,
+`vault_mentions`, `vault_layout`, `vault_recalls`. Everything in them is disposable —
+Markdown in the configured root is the memory authority, and no note body is ever
+stored, only a hash.
+
+| Gate clause                                           | State                    | Evidence                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repeated indexing is stable                           | implemented              | `apps/core/src/vault/vault.integration.test.ts` — "THE GATE: repeated indexing is stable" compares item rows, ids, layout coordinates, and every table count across two runs, not just the summary counts. Confirmed live: a second reindex reported `added 0, unchanged 7` with entity and edge counts unchanged                 |
+| Changed notes invalidate only affected derivations    | implemented              | "THE GATE: a changed note invalidates only its own derivations" edits one note and asserts the untouched note's mention rows are identical _by id_, while the edited note gains its new edge. Unchanged notes are skipped on hash, so their derived rows are never dropped and rebuilt                                            |
+| Provenance is navigable                               | implemented              | "returns provenance that points back at real prose" re-reads each cited note and asserts `contents.slice(span.start, span.end) === quote`. Every mention carries note, span, and the content hash at derivation time                                                                                                              |
+| current/stale/unknown language is correct             | implemented              | Three separate tests: current, "THE GATE: calls evidence stale once the note behind it changes", and "THE GATE: calls evidence unavailable when the note is gone", plus "says unknown when nothing matched rather than claiming nothing exists". `unknown` and `unavailable` never stand in for each other                        |
+| No live Vault path is touched                         | implemented              | `apps/core/src/vault/root.test.ts` — four THE GATE cases; the core refuses to start at all when the configured root looks live. Verified end to end against a decoy `.../OneDrive/MindVault`: refused by default, and only `NOCTIS_VAULT_ALLOW_LIVE=true` started it, logging `live: true`. The real Vault was never read         |
+| Markdown parsed without changing prose                | implemented              | "THE GATE: indexes every note and leaves the prose byte-identical" reads all seven fixture notes before and after indexing. The module has no serializer at all — every function takes a string and returns data                                                                                                                  |
+| Deterministic seeded coordinates, bounded settlement  | implemented              | `packages/domain/src/vault/layout.test.ts` — "THE GATE: never moves a node that is already placed" and "THE GATE: a settled graph is a fixed point, so nothing wanders at rest". Order-independence and the iteration ceiling are covered too                                                                                     |
+| Pan, zoom, rotation, labels, relationships, focus     | implemented              | `packages/domain/src/vault/view.test.ts` — 16 tests over the camera and `focusSubgraph`, including "THE GATE: opens only the focused subgraph, not the whole Vault". The renderer reads those functions; it does not reimplement them                                                                                             |
+| Focused recall Surface, Open in Vault, return context | implemented              | `vault_recall` is a registered Surface kind with its own payload schema and fallback. Activating an Objective runs one recall and proposes the Surface only when there is evidence; `App.tsx` holds the return destination so the jump is a round trip                                                                            |
+| Atomic writes and conflict detection, writes disabled | implemented              | `writeNoteAtomically` is temp-file, fsync, rename with a pre-rename hash check. "THE GATE: are disabled by default" plus path-escape and conflict tests. `NOCTIS_VAULT_ALLOW_WRITES` is separate from `NOCTIS_VAULT_ALLOW_LIVE`: reading a real Vault and writing to one are different consequences and neither implies the other |
+| Production deployment/activation                      | deliberately not started | requires later explicit approval                                                                                                                                                                                                                                                                                                  |
+
+Design decisions worth recording:
+
+- **Entities are derived deterministically, not by a model.** The donor's entity
+  engine extracts named entities through a model router. Phase 7 derives an entity
+  from note identity and wikilink targets instead, because "repeated indexing is
+  stable" forbids a non-reproducible index. Model-proposed entities need Phase 8's
+  provider work and are additive.
+- **A note's type comes from its PARA folder**, exactly as the donor did it, so
+  typing needs no inference either.
+- **`keys_index` on `vault_entities`.** A wikilink written through an alias must
+  reach the note it names, and giving each alias its own entity row would put two
+  nodes in the graph for one note. Keys are stored pipe-wrapped and matched with
+  `LIKE`; normalized keys can never contain a pipe, because the wikilink grammar
+  treats it as the alias separator.
+- **A link to an unwritten note is a real, unresolved edge.** The placeholder entity
+  is adopted when the note finally appears, so the graph connects without anything
+  being rewritten — verified by a test that writes the missing note and re-indexes.
+- **The SVG sphere is an interim view, and it is here because of a mistake.** It was
+  built on the claim that the donor's Three.js component is `REPLACE` in the Section
+  13.1 matrix. That is wrong: line 765 reads `Existing Vault sphere interactions |
+KEEP + REFACTOR | Preserve pan/zoom/rotation/labels/focus and visual familiarity`,
+  and Phase 7 asks for the sphere interaction to be ported. The donor component is a
+  finished, already-approved system, not a mockup. Porting it is folded into the
+  Phase 7 acceptance work; `DONOR-PORT-LEDGER.md` records what the port involves and
+  why the refactor is narrower than it looks. `packages/ui/src/vault/VaultSphere.tsx`
+  and `packages/domain/src/vault/view.ts` should be deleted when the real one lands.
+
+  What the mistake did not cost: `packages/domain/src/vault/layout.ts` is the exact
+  refactor the matrix asks for. The donor has the renderer and no stable coordinates;
+  this phase built stable, persisted coordinates and a lesser renderer. They are the
+  two halves of one job, and only the renderer half needs redoing.
+
+Donor ports are recorded in `docs/architecture/DONOR-PORT-LEDGER.md` with commit
+`ee7b4527`, MIT licence and attribution in each ported file: `parseWikilinks` and
+`normalizeKey` from `server/lib/vault.js`, and the Fibonacci type anchor `anchorFor`
+from `client/src/components/VaultSphere.tsx`. The ledger also records what was
+deliberately not ported and why. The donor repository was confirmed unchanged: HEAD
+`ee7b4527`, branch `dev/personal-pc`, and the single untracked v5 spec, all matching
+`DONOR-BASELINE.json`.
+
+| Command                    | Result                                                                  |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `npm run format:check`     | exit 0; all matched files use Prettier code style                       |
+| `npm run lint`             | exit 0; 0 errors                                                        |
+| `npm run typecheck`        | exit 0                                                                  |
+| `npm run test:unit`        | exit 0; 53 files, 1098 tests passed (1021 before this batch)            |
+| `npm run test:integration` | exit 0; 5 files, 128 tests passed                                       |
+| `npm run test:e2e`         | exit 0; 1 test passed, run here against Edge (see the Phase 6 E2E note) |
+| `npm run test:boundary`    | exit 0; 6 tests passed                                                  |
+| `npm run test:desktop`     | exit 0; 6 tests passed                                                  |
+| `npm run test:security`    | exit 0; no dedicated security tests exist yet                           |
+| `npm run test:performance` | exit 0; no dedicated performance tests exist yet                        |
+| `npm run build`            | exit 0                                                                  |
+| `npm run build:web`        | exit 0                                                                  |
+| `npm run rust:fmt:check`   | exit 0                                                                  |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`                                   |
+| `npm run rust:test`        | exit 0; 37/37 library tests passed                                      |
+
+Three existing assertions moved with the schema rather than being worked around:
+the migration table count 27 to 33, the reported schema version 3 to 4, and
+`events.test.ts`'s "rejects an unknown stream type", which had been using `"vault"` —
+a name the enum now genuinely has, so the test needed a name it genuinely does not.
+
+**Smoke run — the fixture Vault indexed by a real core.**
+`node scripts/fixtures/create-test-vault.mjs` wrote seven notes; a core started with
+`NOCTIS_VAULT_ROOT` pointed at them reported `configured: true, live: false,
+writesEnabled: false`. The first `vault.reindex` returned
+`scanned 7, added 7, entities 8, edges 8`, and the second returned
+`scanned 7, added 0, unchanged 7` with identical entity and edge counts — the
+stability gate observed rather than only asserted. The eight entities are the seven
+notes plus one placeholder for `[[Future Retrospective]]`, which nothing has written;
+the eight edges exclude the `[[Not A Real Link]]` inside `runbook.md`'s code fence.
+`GET /vault/recall?query=Alex%20Kerr` returned evidence quoting `[[Alex]]` from
+`people/sam-oyelaran.md` — an alias resolving to the Alex Kerr note in a live core —
+with correct spans and `freshness: current`. `GET /vault/graph` returned persisted
+coordinates rather than recomputed ones.
+
+Two real defects were found while building this and fixed:
+
+1. **`freshnessFor` compared two database rows.** It read the file and then ignored
+   its contents, so a note edited outside Noctis could never be reported as stale —
+   the exact case the word exists for. It now hashes the bytes on disk, because the
+   note is the authority and the index is the thing that can be out of date.
+2. **`fsync` on a read-only handle is `EPERM` on Windows.** The atomic write opened
+   the temp file a second time to flush it; it now writes and flushes through one
+   descriptor.
+
+Deliberately not built this batch, carried forward rather than hidden:
+
+- **Model-extracted entities.** Deterministic derivation is what makes repeated
+  indexing stable; a model-proposed entity layer belongs with Phase 8's providers and
+  would ride the same tables.
+- **A file watcher.** Reindexing is an explicit command. Section 7 asks for a
+  rebuildable index, not a live one, and a watcher is a behaviour worth designing
+  once sources exist in Phase 8.
+- **Full-text recall.** Matching is `LIKE` over entity keys and names — the same
+  vocabulary a wikilink uses. FTS5 when a real corpus proves it too slow, not before.
+- **The donor Three.js sphere port**, folded into the Phase 7 acceptance work rather
+  than deferred to a later phase. This is not the Phase 5 intelligence-renderer
+  deferral, which is a genuinely unbuilt design: the Vault sphere exists, is
+  approved, and needs porting and refactoring, not inventing.
+- **Any contact with the live Vault**, which is Phase 14's gated copy, hash
+  verification, backup, rollback, and explicit approval.
+
+Phase 7 is not proposed as accepted against the full gate. Three things remain,
+and they are one batch of work: porting the donor sphere, giving it the keyboard
+and screen-reader layer the donor never had, and the visual snapshots still
+outstanding from Phases 5 and 6. `GET /vault/graph` also truncates silently at
+`MAX_PAGE_SIZE` (500) — a defect rather than a trade-off, and one the ported
+renderer makes newly relevant, since it can draw far more than 500 nodes.
+
+Every gate clause in the table above is implemented and evidenced. The indexer,
+provenance, freshness, stable layout, recall path, and the live-Vault guard are
+verified and safe to build on; only the renderer is interim.

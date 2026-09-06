@@ -16,5 +16,8 @@
     "@noctis/domain": "0.0.0",
     "ws": "8.21.3",
     "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@noctis/test-kit": "0.0.0"
   }
 }

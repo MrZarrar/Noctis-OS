@@ -10,6 +10,7 @@ import type { Result } from "@noctis/domain";
 import { checkRevision, conflict, ok, transitionObjectiveStatus } from "@noctis/domain";
 
 import type { NoctisDatabase } from "../db/connection.js";
+import { ensureThread } from "../identities/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
 
@@ -190,6 +191,29 @@ export function changeObjectiveStatus(
 
       if (updated === undefined) {
         throw new Error(`Objective ${command.objectiveId} vanished mid-transaction`);
+      }
+
+      // What the workbench restores to after a restart. It lives on the
+      // identity's own thread rather than in a global runtime key, so Vesper
+      // and Jester cannot restore into each other's work — the same structural
+      // isolation that keeps their threads apart.
+      if (command.status === "active") {
+        // The identity may never have been activated in this database — a
+        // Jester Objective activated while Vesper is present, say. Creating the
+        // thread here rather than skipping the write is what stops the pointer
+        // being silently lost in exactly that case.
+        ensureThread(tx, kernel, updated.identityId, now);
+        tx.prepare(
+          `UPDATE identity_threads SET active_objective_id = ?, updated_at = ?
+            WHERE identity_id = ?`,
+        ).run(updated.id, now, updated.identityId);
+      } else if (command.status === "completed" || command.status === "abandoned") {
+        // Paused deliberately keeps its pointer: a paused Objective is still
+        // the one the user was working on.
+        tx.prepare(
+          `UPDATE identity_threads SET active_objective_id = NULL, updated_at = ?
+            WHERE identity_id = ? AND active_objective_id = ?`,
+        ).run(now, updated.identityId, updated.id);
       }
 
       return ok({

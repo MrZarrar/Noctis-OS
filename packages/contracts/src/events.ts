@@ -20,6 +20,14 @@ export const EVENT_NAMES = [
   "surface.intent_upserted.v1",
   "surface.composition_changed.v1",
   "surface.override_set.v1",
+  /**
+   * Phase 6 appended these two. Section 4.3 reserves names "such as" the list
+   * it gives, so it is a floor rather than a ceiling — but a release folded
+   * into `override_set` would make every listener filtering for a set override
+   * act on its removal, so the two stay distinguishable.
+   */
+  "surface.override_released.v1",
+  "surface.lifecycle_changed.v1",
   "identity.activated.v1",
   "identity.message_added.v1",
   "authority.decision_recorded.v1",
@@ -34,6 +42,8 @@ export const EVENT_NAMES = [
   "node.job_result.v1",
   "source.observed.v1",
   "artifact.recorded.v1",
+  "vault.indexed.v1",
+  "vault.recall_recorded.v1",
   "noir.hypothesis_added.v1",
   "noir.evidence_linked.v1",
   "noir.synthesis_updated.v1",
@@ -55,6 +65,7 @@ export const StreamTypeSchema = z.enum([
   "node_job",
   "noir",
   "authority",
+  "vault",
 ]);
 
 export const ActorTypeSchema = z.enum(["user", "identity", "system", "node", "adapter"]);

@@ -9,17 +9,22 @@ import {
   typography,
 } from "@noctis/ui";
 
+import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
-import { useIdentityRuntime } from "../identities/useIdentityRuntime.js";
 
 export interface PresenceProps {
+  /**
+   * Owned by Command, not created here. Two `useIdentityRuntime` calls would be
+   * two fetches and two copies of "which identity is active" that could
+   * disagree — and the one that lost would be the one steering the canvas.
+   */
+  identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
 }
 
 /** Phase 5's outcome: "Presence renders Vesper" and switches to Jester on command. */
-export function Presence({ transport }: PresenceProps): JSX.Element {
-  const { activeIdentityId, protocolIds, activate, toggleNoir, error } =
-    useIdentityRuntime(transport);
+export function Presence({ identity, transport }: PresenceProps): JSX.Element {
+  const { activeIdentityId, protocolIds, activate, toggleNoir, error } = identity;
   const identityId = activeIdentityId ?? "vesper";
 
   return (

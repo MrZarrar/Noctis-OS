@@ -61,6 +61,44 @@ export function getActiveIdentity(db: NoctisDatabase): ConversationalIdentityId 
   return row === undefined ? undefined : (JSON.parse(row.value_json) as ConversationalIdentityId);
 }
 
+/**
+ * Returns the identity's thread, creating it if this is the first time anything
+ * needed one.
+ *
+ * Both callers that can be the first — activating the identity, and activating
+ * an Objective that belongs to it — route through here. A second creation path
+ * would be a second chance to create a second thread for one identity, and the
+ * "at most one thread per identity" fact above is what makes identity isolation
+ * structural.
+ */
+export function ensureThread(
+  tx: NoctisDatabase,
+  kernel: Kernel,
+  identityId: ConversationalIdentityId,
+  now: string,
+): ConversationThread {
+  const existing = getThreadForIdentity(tx, identityId);
+
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const thread = ConversationThreadSchema.parse({
+    id: kernel.ids.nextId(),
+    identityId,
+    revision: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  tx.prepare(
+    `INSERT INTO identity_threads (id, identity_id, revision, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(thread.id, thread.identityId, thread.revision, thread.createdAt, thread.updatedAt);
+
+  return thread;
+}
+
 export interface IdentityActivation {
   activeIdentityId: ConversationalIdentityId;
   thread: ConversationThread;
@@ -88,24 +126,7 @@ export function activateIdentity(
     kernel,
     { scope: "identity.activate", key: command.idempotencyKey, resultId: command.identityId },
     (tx) => {
-      const existing = getThreadForIdentity(tx, command.identityId);
-
-      const thread =
-        existing ??
-        ConversationThreadSchema.parse({
-          id: kernel.ids.nextId(),
-          identityId: command.identityId,
-          revision: 0,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-      if (existing === undefined) {
-        tx.prepare(
-          `INSERT INTO identity_threads (id, identity_id, revision, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)`,
-        ).run(thread.id, thread.identityId, thread.revision, thread.createdAt, thread.updatedAt);
-      }
+      const thread = ensureThread(tx, kernel, command.identityId, now);
 
       tx.prepare(
         `INSERT INTO runtime_kv (key, value_version, value_json, updated_at)

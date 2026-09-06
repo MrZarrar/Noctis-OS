@@ -5,8 +5,16 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 
 export interface IdentityRuntimeState {
   activeIdentityId: ConversationalIdentityId | undefined;
+  /**
+   * The Objective this identity was last working on, read back from its own
+   * thread. This is what the workbench restores to after a restart, and it is
+   * per-identity for the same reason threads are: Jester must not resume into
+   * Vesper's work.
+   */
+  activeObjectiveId: string | undefined;
   protocolIds: readonly ProtocolId[];
   activate: (identityId: ConversationalIdentityId) => Promise<void>;
+  setActiveObjectiveId: (objectiveId: string | undefined) => void;
   toggleNoir: () => void;
   error: string | undefined;
 }
@@ -22,6 +30,7 @@ let activationCounter = 0;
  */
 export function useIdentityRuntime(transport: CoreTransport | undefined): IdentityRuntimeState {
   const [activeIdentityId, setActiveIdentityId] = useState<ConversationalIdentityId>();
+  const [activeObjectiveId, setActiveObjectiveId] = useState<string>();
   const [protocolIds, setProtocolIds] = useState<readonly ProtocolId[]>([]);
   const [error, setError] = useState<string>();
 
@@ -39,11 +48,21 @@ export function useIdentityRuntime(transport: CoreTransport | undefined): Identi
           return;
         }
 
-        const body = response.body as { activeIdentityId?: ConversationalIdentityId | null };
+        const body = response.body as {
+          activeIdentityId?: ConversationalIdentityId | null;
+          threads?: Array<{ identityId: ConversationalIdentityId; activeObjectiveId?: string }>;
+        };
 
         if (body.activeIdentityId !== null && body.activeIdentityId !== undefined) {
           setActiveIdentityId(body.activeIdentityId);
         }
+
+        // The restore point. Falling back to whichever identity is active means
+        // a first run with no persisted identity still finds its Objective.
+        const identityId = body.activeIdentityId ?? "vesper";
+        const thread = body.threads?.find((candidate) => candidate.identityId === identityId);
+
+        setActiveObjectiveId(thread?.activeObjectiveId);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
@@ -83,5 +102,13 @@ export function useIdentityRuntime(transport: CoreTransport | undefined): Identi
     setProtocolIds((current) => (current.includes("noir") ? [] : ["noir"]));
   }, []);
 
-  return { activeIdentityId, protocolIds, activate, toggleNoir, error };
+  return {
+    activeIdentityId,
+    activeObjectiveId,
+    protocolIds,
+    activate,
+    setActiveObjectiveId,
+    toggleNoir,
+    error,
+  };
 }

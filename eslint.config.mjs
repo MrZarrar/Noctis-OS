@@ -49,4 +49,22 @@ export default tseslint.config(
       "no-restricted-imports": "off",
     },
   },
+  {
+    // The E2E suite is plain Node ESM driving a browser. `document` belongs to
+    // neither environment exactly: those callbacks are written here but execute
+    // inside the page, so the file legitimately names both sets of globals.
+    files: ["apps/web/e2e/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        setTimeout: "readonly",
+        fetch: "readonly",
+        document: "readonly",
+      },
+    },
+  },
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: { process: "readonly" } },
+  },
 );

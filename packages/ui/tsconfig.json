@@ -9,5 +9,12 @@
     "types": ["react"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "references": [{ "path": "../contracts" }]
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../domain"
+    }
+  ]
 }

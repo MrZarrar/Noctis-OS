@@ -18,6 +18,7 @@ import { attachNodeSocket } from "./nodes/ws.js";
 import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
 import { createLogger } from "./logging.js";
+import { resolveVaultRoot } from "./vault/root.js";
 
 /**
  * Resolves the same directory whether this module is running from `src` under
@@ -32,6 +33,12 @@ export interface StartCoreOptions {
   migrationsDirectory?: string;
   /** Overridden by tests that would rather call `dispatcher.pass()` themselves. */
   dispatchIntervalMs?: number;
+  /**
+   * Where the Vault environment is read from. Defaults to the real process
+   * environment; a test passes its own so it can never pick up a developer's
+   * `NOCTIS_VAULT_ROOT` and index real notes.
+   */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface RunningCore {
@@ -86,12 +93,23 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     ...(options.dispatchIntervalMs === undefined ? {} : { intervalMs: options.dispatchIntervalMs }),
   });
 
+  // Resolved once at startup and refused loudly: a core that would have indexed
+  // a live Vault must not get as far as listening.
+  const env = options.env ?? process.env;
+  const vaultRoot = resolveVaultRoot(env);
+
+  if (vaultRoot !== undefined) {
+    logger.log("info", "vault root resolved", { live: vaultRoot.live });
+  }
+
   const deps: ApiDeps = {
     kernel,
     config,
     schemaVersion: currentSchemaVersion(db),
     startedAt: clock.now(),
     dispatcher,
+    ...(vaultRoot === undefined ? {} : { vaultRoot }),
+    vaultEnv: env,
   };
 
   const server: Server = createServer((req, res) => {

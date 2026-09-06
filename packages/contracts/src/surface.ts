@@ -6,6 +6,19 @@ import { SchemaVersionSchema, UtcTimestampSchema, UuidSchema } from "./primitive
 export const SurfaceSizeSchema = z.enum(["compact", "standard", "wide", "stage"]);
 export const SurfaceRegionSchema = z.enum(["left", "centre", "right", "bottom", "overlay"]);
 
+/**
+ * The whole of what composition may know about a display: which one, and how
+ * wide. There is deliberately no rectangle, origin, or device pixel ratio here
+ * — a field that could carry geometry is a field a model could eventually fill,
+ * and Section 5.4 forbids that outright.
+ */
+export const SurfaceDisplaySchema = z
+  .object({
+    fingerprint: z.string().trim().min(1).max(200),
+    widthPx: z.int().positive().max(100_000),
+  })
+  .strict();
+
 export const SurfaceIntentSchema = z
   .object({
     id: UuidSchema,
@@ -62,6 +75,7 @@ export const CompositionPlanSchema = z
 
 export type SurfaceSize = z.infer<typeof SurfaceSizeSchema>;
 export type SurfaceRegion = z.infer<typeof SurfaceRegionSchema>;
+export type SurfaceDisplay = z.infer<typeof SurfaceDisplaySchema>;
 export type SurfaceIntent = z.infer<typeof SurfaceIntentSchema>;
 export type SurfaceOverride = z.infer<typeof SurfaceOverrideSchema>;
 export type CompositionPlan = z.infer<typeof CompositionPlanSchema>;

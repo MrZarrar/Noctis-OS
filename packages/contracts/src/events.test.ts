@@ -53,7 +53,9 @@ describe("OrchestrationEventSchema", () => {
   });
 
   it("rejects an unknown stream type", () => {
-    expect(OrchestrationEventSchema.safeParse({ ...valid, streamType: "vault" }).success).toBe(
+    // Was "vault" until Phase 7 registered it. A name the enum genuinely does
+    // not have is the only thing this test can be about.
+    expect(OrchestrationEventSchema.safeParse({ ...valid, streamType: "telemetry" }).success).toBe(
       false,
     );
   });

@@ -7,7 +7,11 @@ import {
   AuthorityRequestSchema,
   StandingPermissionSchema,
 } from "./authority.js";
-import { ActivateIdentityCommandSchema } from "./command.js";
+import {
+  ActivateIdentityCommandSchema,
+  ComposeSurfacesCommandSchema,
+  UpsertSurfaceIntentCommandSchema,
+} from "./command.js";
 import { OrchestrationEventSchema } from "./events.js";
 import {
   ConversationThreadSchema,
@@ -67,6 +71,8 @@ const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["IdentityProfile", IdentityProfileSchema],
   ["IdentityMessage", IdentityMessageSchema],
   ["ActivateIdentityCommand", ActivateIdentityCommandSchema],
+  ["UpsertSurfaceIntentCommand", UpsertSurfaceIntentCommandSchema],
+  ["ComposeSurfacesCommand", ComposeSurfacesCommandSchema],
   ["SourceRecord", SourceRecordSchema],
   ["OrchestrationEvent", OrchestrationEventSchema],
   ["ClientFrame", ClientFrameSchema],
@@ -538,6 +544,32 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
     { platform: "win32", arch: "x64", nodeVersion: "v22.23.2", cpuCount: 8, totalMemoryBytes: 1 },
   ],
   ["VerificationNoopEvidence", VerificationNoopEvidenceSchema, { verified: true }],
+  [
+    "UpsertSurfaceIntentCommand",
+    UpsertSurfaceIntentCommandSchema,
+    {
+      idempotencyKey: "upsert-1",
+      objectiveId: "01941f29-7c00-7000-8000-000000000040",
+      kind: "detail",
+      role: "primary",
+      persistence: "objective",
+      priority: 0,
+      minSize: "compact",
+      payloadVersion: 1,
+      payload: {},
+    },
+  ],
+  [
+    "ComposeSurfacesCommand",
+    ComposeSurfacesCommandSchema,
+    {
+      idempotencyKey: "compose-1",
+      objectiveId: "01941f29-7c00-7000-8000-000000000041",
+      clientId: "workbench-1",
+      display: { fingerprint: "fp-1", widthPx: 3440 },
+      attentionState: "active_canvas",
+    },
+  ],
 ];
 
 describe("every schema enforces .strict() against unknown fields", () => {

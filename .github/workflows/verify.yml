@@ -22,7 +22,14 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
+      # Before the E2E suite, not after: it serves the built workspace packages
+      # and runs the core from `apps/core/dist`.
       - run: npm run build
+      # No `NOCTIS_E2E_BROWSER_CHANNEL` here on purpose — CI proves the gate
+      # against the Chromium this Playwright version pins, not against whatever
+      # browser a developer machine happens to have installed.
+      - run: npx playwright install chromium
+      - run: npm run test:e2e
 
   rust:
     runs-on: windows-latest

@@ -9,3 +9,8 @@ export * from "./state/noir-case-status.js";
 export * from "./state/objective-status.js";
 export * from "./state/surface-lifecycle.js";
 export * from "./state/transition.js";
+export * from "./compositor/compose.js";
+export * from "./compositor/layouts.js";
+export * from "./vault/markdown.js";
+export * from "./vault/layout.js";
+export * from "./vault/view.js";

@@ -251,8 +251,9 @@ describe("headless kernel loop", () => {
 
     const diagnostics = await read(core, "/diagnostics");
     expect(diagnostics.body.latestSequence).toBe(4);
-    // Migration 0002 added the node pairing table and the job result columns.
-    expect(diagnostics.body.schemaVersion).toBe(2);
+    // 0002 added node pairing and job results; 0003 the Surface uniqueness;
+    // 0004 the six Vault tables Section 4.1 lists.
+    expect(diagnostics.body.schemaVersion).toBe(4);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
