@@ -1292,3 +1292,24 @@ Noctis starts, `NativeApplicationSurface`, the node native-window adapter, and t
 qualification runbook document. `win32::apply` exists and has no authority-checked
 caller, which is the correct order — the boundary is not something to add to a
 capability that already works without it.
+
+CI evidence for both parts:
+
+| Run           | Commit    | Result                                                |
+| ------------- | --------- | ----------------------------------------------------- |
+| `34158162178` | `db3953e` | both jobs green, part 1                               |
+| `34159032574` | `73fa2f4` | `rust` failed on `rust:fmt:check`; `javascript` green |
+| `34159897052` | `4fcf09c` | both jobs green, parts 1 and 2 together               |
+
+**`npm run build:desktop` passes in CI**, which settles the part 1 note above: the
+Cargo workspace move and the root `target/` directory are sound, and the local
+failure was Smart App Control refusing freshly built unsigned release build
+scripts, nothing about the change. The local block stands as an environment
+limitation on this machine, alongside the pinned Chromium.
+
+`73fa2f4` failed for a reason worth writing down rather than quietly fixing. The
+formatting was verified with `npm run format:check` after the last edit, which is
+Prettier; rustfmt is `npm run rust:fmt:check`, a separate gate that had last run
+before the ignored test was added. Two similarly named scripts covering different
+languages is a trap the naming sets, and the habit that avoids it is running the
+gates the CI job lists rather than the ones the change appears to touch.
