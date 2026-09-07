@@ -46,6 +46,9 @@ const GraphSchema = z.object({
       lifecycle: z.enum(["resolved", "unresolved"]),
     }),
   ),
+  total: z.number(),
+  /** The core says so rather than quietly returning a slice. See MAX_GRAPH_NODES. */
+  truncated: z.boolean(),
 });
 
 const StatusSchema = z.object({
@@ -91,6 +94,7 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
   const [query, setQuery] = useState("");
   const [recall, setRecall] = useState<z.infer<typeof RecallSchema> & { query: string }>();
   const [error, setError] = useState<string>();
+  const [truncated, setTruncated] = useState<{ shown: number; total: number }>();
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -108,7 +112,7 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
       try {
         const [statusResponse, graphResponse] = await Promise.all([
           transport.request("GET", "/vault"),
-          transport.request("GET", "/vault/graph?limit=400"),
+          transport.request("GET", "/vault/graph"),
         ]);
 
         if (cancelled) {
@@ -136,6 +140,11 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
           })),
         );
         setEdges(parsedGraph.data.edges);
+        setTruncated(
+          parsedGraph.data.truncated
+            ? { shown: parsedGraph.data.nodes.length, total: parsedGraph.data.total }
+            : undefined,
+        );
         setError(undefined);
       } catch (failure: unknown) {
         if (!cancelled) {
@@ -271,6 +280,13 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
             }}
           />
         </div>
+      )}
+
+      {truncated !== undefined && (
+        <p style={{ color: semantic.stale, margin: 0 }}>
+          Showing {truncated.shown} of {truncated.total} notes — this Vault is larger than one graph
+          read. Recall searches all of it.
+        </p>
       )}
 
       <VaultSphere

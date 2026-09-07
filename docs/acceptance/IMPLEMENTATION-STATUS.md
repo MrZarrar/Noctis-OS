@@ -851,6 +851,11 @@ deliberately not ported and why. The donor repository was confirmed unchanged: H
 | `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`                                   |
 | `npm run rust:test`        | exit 0; 37/37 library tests passed                                      |
 
+CI evidence for this batch: GitHub Actions `verify` run 34045341594 on commit
+`80e4488` — javascript green in 2m35s including `playwright install chromium` and
+`test:e2e` on the pinned browser, rust green in 18m25s covering fmt, clippy, 37
+tests, and the unbundled Tauri build against the Phase 6/7 web assets.
+
 Three existing assertions moved with the schema rather than being worked around:
 the migration table count 27 to 33, the reported schema version 3 to 4, and
 `events.test.ts`'s "rejects an unknown stream type", which had been using `"vault"` —
@@ -907,3 +912,87 @@ renderer makes newly relevant, since it can draw far more than 500 nodes.
 Every gate clause in the table above is implemented and evidenced. The indexer,
 provenance, freshness, stable layout, recall path, and the live-Vault guard are
 verified and safe to build on; only the renderer is interim.
+
+### 2026-09-06 Phase 7 acceptance — the donor sphere, ported
+
+The three things the Phase 7 entry above left open are done: the donor's Three.js
+sphere is ported, it has the keyboard and screen-reader layer the donor never
+had, and `GET /vault/graph` no longer truncates in silence.
+
+**The port.** `packages/ui/src/vault/VaultSphere.tsx` is now
+`Jarvis-Sub-Agent-Dashboard@ee7b4527`'s `client/src/components/VaultSphere.tsx`,
+MIT, attributed in the file and recorded in `DONOR-PORT-LEDGER.md`. The whole
+visual system came across intact — the lat/long wireframe shell, the starfield,
+the crystal core with its glow sprite and counter-rotating cage, the core rays,
+per-node halo sprites through the same point shader, quadratic-bezier curved
+edges with the bow-and-clamp, travelling pulses, degree sizing, the sparsest-
+edges-first thinning, screen-space picking with its 14px hit radius, the
+OrbitControls tuning, idle rotation that pauses on interaction, camera fly-to,
+double-click neighbourhood focus, canvas label LOD, and the reduced-motion path.
+`three@0.170.0` is pinned to the donor's line.
+
+Three things differ, and the first is the one that matters:
+
+- **`tickSim` is deleted, not parameterised.** The ledger expected the refactor
+  to be `wander: false` plus seeding from `vault_layout`. That reading was
+  wrong: the donor's simulation also applies repulsion, link springs, and
+  containment, all of which move a node every frame regardless of the wander
+  flag. Noctis's coordinates are already settled by
+  `packages/domain/src/vault/layout.ts` and persisted, so a second solver in the
+  renderer would walk every client's sphere off the coordinates they are all
+  supposed to agree on. Positions are read, scaled into the donor's world units,
+  and drawn. "No continuous wandering" is now structural rather than a flag.
+- **`SphereFx` is gone** — the donor's scan/spark/birth flashes and hot edges are
+  engine coupling with no Noctis event behind them.
+- **An accessibility layer exists.** The donor component has no `tabIndex`,
+  `role`, or `aria-*` at all, so every behaviour it had was pointer-only. Here
+  the canvas is `aria-hidden` decoration and the list beneath it is the real
+  control surface: one button per node carrying its name, type, link count, and
+  whether the note has been written, with focus, isolation, and open on the
+  keyboard.
+
+`packages/domain/src/vault/view.ts` lost its camera — `project`, `clampCamera`,
+and the perspective divide belonged to the interim SVG renderer, and
+OrbitControls owns pan, zoom, and rotation now. `focusSubgraph` stayed: it is a
+graph query, not a way to draw one, and the ported sphere calls it for
+neighbourhood isolation.
+
+The arithmetic lives in `packages/ui/src/vault/sphere.ts` with no `three` import,
+so edge thinning, the bezier bow, the coordinate scale, and the label LOD rule
+are tested without a WebGL context (`sphere.test.ts`, 13 tests).
+
+**Two real defects were found and fixed.**
+
+1. **`GET /vault/graph` truncated silently.** It shared `MAX_PAGE_SIZE` (500)
+   with every collection read, so a Vault larger than 500 entities became an
+   alphabetical slice of itself with nothing in the response saying so. The
+   graph is a whole graph rather than a page of one, so it now has its own
+   ceiling (`MAX_GRAPH_NODES`, 5000) and always returns `total` and `truncated`.
+   The page renders that as a sentence. A second bug rode along: edges were read
+   as `LIMIT limit * 4` independently of the nodes, so a truncated graph could
+   hand the renderer edges pointing at nodes it was never sent. Edges are now
+   filtered to the returned node set.
+2. **The Vault page had never worked in a browser.** `vault` was missing from
+   the dev proxy's `CORE_PATHS` allowlist in `apps/web/vite.config.ts`, so every
+   Vault request was answered with the SPA's `index.html` at 200 — the exact
+   failure mode the comment above that regex warns about. Nothing caught it
+   because no browser test had ever opened the Vault page. The new E2E suite
+   caught it on its first run.
+
+| Gate clause                                       | State       | Evidence                                                                                                                                                                                                                                  |
+| ------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pan, zoom, rotation, labels, relationships, focus | implemented | OrbitControls with the donor's damping, rotate speed, and 7–460 distance range; canvas label LOD via `labelOpacity`; `focusSubgraph` for isolation. `apps/web/e2e/vault.keyboard.test.mjs` drives focus and isolation by keyboard         |
+| No continuous force wandering                     | implemented | there is no simulation in the renderer at all. `sphere.test.ts` asserts `toWorld` is a pure scale, so a drawn position is the persisted one times a constant                                                                              |
+| Sphere is operable without a pointer              | implemented | `vault.keyboard.test.mjs` — "THE GATE: indexes, focuses, and isolates a subgraph without a pointer" never touches the canvas, and asserts the canvas is `aria-hidden`                                                                     |
+| Graph reads report their own limits               | implemented | `headless.integration.test.ts` — "THE GATE: says so when the graph is larger than the read" and "THE GATE: never returns an edge pointing at a node it did not return"                                                                    |
+| Contrast sweep and accessibility pass             | implemented | `packages/ui/src/tokens/contrast.test.ts` — 80 cases: every text colour against the floor and all four depth layers at WCAG AA 4.5:1, every indicator colour at 3:1. All pass; the claim in `type.ts` is now checked rather than asserted |
+
+**On visual snapshots.** They are still not built, and this is a decision rather
+than a deferral. A pixel diff of a WebGL scene is not a gate that can hold: the
+globe's output depends on the GPU, the driver, and the antialiasing the machine
+happens to do, so a committed baseline would fail on CI, pass locally, and teach
+everyone to regenerate it. What a snapshot was wanted for — "did the UI change
+without anyone noticing" — is covered instead by the accessibility-tree
+assertions in the two keyboard E2E suites, which are stable across machines and
+fail for reasons that are readable. If a real visual regression appears that
+these miss, the answer is a Percy-style hosted diff, not a PNG in the repository.

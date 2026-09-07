@@ -351,14 +351,14 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   ),
 };
 
-function parseLimit(raw: string | null): number | undefined {
+function parseLimit(raw: string | null, max: number, fallback: number): number | undefined {
   if (raw === null) {
-    return DEFAULT_PAGE_SIZE;
+    return fallback;
   }
 
   const limit = Number(raw);
 
-  return Number.isInteger(limit) && limit > 0 && limit <= MAX_PAGE_SIZE ? limit : undefined;
+  return Number.isInteger(limit) && limit > 0 && limit <= max ? limit : undefined;
 }
 
 /**
@@ -432,8 +432,29 @@ function handleSurfaceRead(
  * The graph the Vault view draws: entities, their edges, and their persisted
  * coordinates. Coordinates come from `vault_layout`, never recomputed here, so
  * every client draws the same sphere and a reload does not rearrange it.
+ *
+ * This is a whole-graph read, not a page of one, so it does not share the
+ * collection page size. `MAX_PAGE_SIZE` capped it at 500 and said nothing when
+ * it bit, which turned a large Vault into an alphabetical slice of itself with
+ * no way for a caller to tell. A cap still exists — an unbounded graph read is
+ * a way to hang the renderer — but it is the graph's own, and `truncated`
+ * plus `total` mean a client can always say so out loud.
  */
-function readGraph(db: NoctisDatabase, limit: number): { nodes: unknown[]; edges: unknown[] } {
+export const MAX_GRAPH_NODES = 5000;
+
+function readGraph(
+  db: NoctisDatabase,
+  limit: number,
+): {
+  nodes: unknown[];
+  edges: unknown[];
+  total: number;
+  truncated: boolean;
+} {
+  const total = (
+    db.prepare("SELECT COUNT(*) AS count FROM vault_entities").get() as { count: number }
+  ).count;
+
   const nodes = db
     .prepare(
       `SELECT e.id, e.key, e.name, e.type, e.item_id AS itemId, i.path,
@@ -444,16 +465,22 @@ function readGraph(db: NoctisDatabase, limit: number): { nodes: unknown[]; edges
         ORDER BY e.key
         LIMIT ?`,
     )
-    .all(limit) as unknown[];
+    .all(limit) as Array<{ id: string }>;
 
-  const edges = db
-    .prepare(
-      `SELECT id, src_entity_id AS source, dst_entity_id AS target, type, lifecycle
-         FROM vault_edges ORDER BY id LIMIT ?`,
-    )
-    .all(limit * 4) as unknown[];
+  // Only edges whose endpoints both survived the cap. The previous read took
+  // the first `limit * 4` edges by id, so a truncated graph could hand the
+  // renderer edges pointing at nodes it was never sent.
+  const kept = new Set(nodes.map((node) => node.id));
+  const edges = (
+    db
+      .prepare(
+        `SELECT id, src_entity_id AS source, dst_entity_id AS target, type, lifecycle
+           FROM vault_edges ORDER BY id`,
+      )
+      .all() as Array<{ source: string; target: string }>
+  ).filter((edge) => kept.has(edge.source) && kept.has(edge.target));
 
-  return { nodes, edges };
+  return { nodes, edges, total, truncated: total > nodes.length };
 }
 
 function handleRead(
@@ -461,12 +488,20 @@ function handleRead(
   segments: readonly string[],
   url: URL,
 ): { status: number; body: unknown } {
-  const limit = parseLimit(url.searchParams.get("limit"));
+  // The Vault graph is a whole graph, not a page of a collection, so it gets
+  // its own ceiling and its own default. Everything else pages.
+  const isGraph = segments.length === 2 && segments[0] === "vault" && segments[1] === "graph";
+  const maxLimit = isGraph ? MAX_GRAPH_NODES : MAX_PAGE_SIZE;
+  const limit = parseLimit(
+    url.searchParams.get("limit"),
+    maxLimit,
+    isGraph ? MAX_GRAPH_NODES : DEFAULT_PAGE_SIZE,
+  );
 
   if (limit === undefined) {
     return {
       status: 400,
-      body: errorBody("invalid_request", `limit must be an integer 1-${String(MAX_PAGE_SIZE)}`),
+      body: errorBody("invalid_request", `limit must be an integer 1-${String(maxLimit)}`),
     };
   }
 
@@ -502,7 +537,7 @@ function handleRead(
     };
   }
 
-  if (segments.length === 2 && segments[0] === "vault" && segments[1] === "graph") {
+  if (isGraph) {
     return { status: 200, body: readGraph(deps.kernel.db, limit) };
   }
 

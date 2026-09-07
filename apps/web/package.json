@@ -16,6 +16,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@noctis/test-kit": "0.0.0",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "6.1.1",

@@ -13,9 +13,11 @@
   "dependencies": {
     "@noctis/contracts": "0.0.0",
     "@noctis/domain": "0.0.0",
-    "react": "18.3.1"
+    "react": "18.3.1",
+    "three": "0.170.0"
   },
   "devDependencies": {
-    "@types/react": "18.3.31"
+    "@types/react": "18.3.31",
+    "@types/three": "0.170.0"
   }
 }

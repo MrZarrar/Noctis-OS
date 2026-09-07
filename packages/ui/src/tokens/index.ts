@@ -5,6 +5,7 @@ export { semantic } from "./semantic.js";
 export { typography } from "./type.js";
 export { spacing, corner, elevation, occlusion } from "./spacing.js";
 export { motion } from "./motion.js";
+export { AA_NON_TEXT, AA_TEXT, contrastRatio, relativeLuminance } from "./contrast.js";
 
 import { corner, elevation, occlusion, spacing } from "./spacing.js";
 import { depth } from "./depth.js";

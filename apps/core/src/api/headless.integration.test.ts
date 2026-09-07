@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { MissionRecord, ObjectiveRecord, ServerFrame } from "@noctis/contracts";
+import { createTestVault } from "@noctis/test-kit";
 import { ENVELOPE_VERSION } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -22,7 +23,10 @@ interface TestCore {
 
 const started: Array<{ core: RunningCore; directory: string }> = [];
 
-async function startTestCore(overrides: Partial<CoreConfig> = {}): Promise<TestCore> {
+async function startTestCore(
+  overrides: Partial<CoreConfig> = {},
+  env: Record<string, string | undefined> = {},
+): Promise<TestCore> {
   const directory = mkdtempSync(join(tmpdir(), "noctis-core-"));
   const config: CoreConfig = {
     bindAddress: "127.0.0.1",
@@ -36,6 +40,7 @@ async function startTestCore(overrides: Partial<CoreConfig> = {}): Promise<TestC
 
   const core = await startCore({
     config,
+    env,
     logger: createLogger({ sink: () => undefined, level: "error" }),
   });
 
@@ -761,5 +766,73 @@ describe("hostile sockets", () => {
     await waitFor(() => client.closed() !== undefined, "socket close");
     expect(client.closed()?.code).toBe(1008);
     expect(client.events()).toHaveLength(2);
+  });
+});
+
+describe("the Vault graph read", () => {
+  const vaults: string[] = [];
+
+  afterEach(() => {
+    while (vaults.length > 0) {
+      rmSync(vaults.pop() as string, { recursive: true, force: true });
+    }
+  });
+
+  async function indexedCore(): Promise<TestCore> {
+    const vault = mkdtempSync(join(tmpdir(), "noctis-graph-vault-"));
+    createTestVault(vault);
+    vaults.push(vault);
+
+    const core = await startTestCore({}, { NOCTIS_VAULT_ROOT: vault });
+    const reindex = await command(core, "vault.reindex", { idempotencyKey: "graph-reindex" });
+
+    expect(reindex.status).toBe(200);
+
+    return core;
+  }
+
+  it("returns every entity, its edges, and how many there are in total", async () => {
+    const graph = await read(await indexedCore(), "/vault/graph");
+    const nodes = graph.body.nodes as Array<{ id: string; x: number | null }>;
+
+    expect(graph.status).toBe(200);
+    expect(nodes.length).toBeGreaterThan(0);
+    expect(graph.body.total).toBe(nodes.length);
+    expect(graph.body.truncated).toBe(false);
+    // Coordinates come from `vault_layout`; a null here means the renderer
+    // would have to invent a position, which is the instability Section 7 bans.
+    expect(nodes.filter((node) => node.x === null)).toHaveLength(0);
+  });
+
+  it("THE GATE: says so when the graph is larger than the read, rather than truncating in silence", async () => {
+    const core = await indexedCore();
+    const full = await read(core, "/vault/graph");
+    const total = full.body.total as number;
+
+    const clipped = await read(core, "/vault/graph?limit=2");
+
+    expect(clipped.status).toBe(200);
+    expect((clipped.body.nodes as unknown[]).length).toBe(2);
+    expect(clipped.body.total).toBe(total);
+    // The defect this replaces: the old read returned the slice and nothing else,
+    // so a client could not tell a small Vault from a clipped large one.
+    expect(clipped.body.truncated).toBe(true);
+  });
+
+  it("THE GATE: never returns an edge pointing at a node it did not return", async () => {
+    const clipped = await read(await indexedCore(), "/vault/graph?limit=3");
+    const ids = new Set((clipped.body.nodes as Array<{ id: string }>).map((node) => node.id));
+
+    for (const edge of clipped.body.edges as Array<{ source: string; target: string }>) {
+      expect(ids.has(edge.source)).toBe(true);
+      expect(ids.has(edge.target)).toBe(true);
+    }
+  });
+
+  it("refuses a limit above the graph ceiling instead of quietly clamping it", async () => {
+    const refused = await read(await indexedCore(), "/vault/graph?limit=5001");
+
+    expect(refused.status).toBe(400);
+    expect((refused.body.error as { message: string }).message).toContain("1-5000");
   });
 });

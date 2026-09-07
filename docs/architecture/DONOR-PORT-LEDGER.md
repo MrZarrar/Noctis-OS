@@ -23,39 +23,26 @@ Not ported, and why:
 - `server/lib/vault-graphify.js` — a bridge that shells out to an external
   `graphify` CLI. An external-tool integration belongs to Phase 10's routing, not to
   Vault indexing.
-- `client/src/components/VaultSphere.tsx` beyond `anchorFor` — **deferred to the
-  Phase 7 acceptance work, not rejected.**
+- `client/src/components/VaultSphere.tsx` beyond `anchorFor` — **now ported. See
+  "Phase 7 acceptance" below.**
 
-  An earlier revision of this ledger recorded the component as `REPLACE` in the
-  Section 13.1 matrix and reimplemented its behaviour in SVG. That citation was
-  wrong. Line 765 of the master plan reads `Existing Vault sphere interactions |
-KEEP + REFACTOR | Preserve pan/zoom/rotation/labels/focus and visual familiarity;
-remove continuous wandering and donor component coupling`, and Phase 7 says
-  "Port selectively: donor Vault indexing/entity/edge logic **and useful sphere
-  interaction**". The REPLACE rows belong to the dashboard shell and the design
-  tokens; attaching one of them to the sphere is what justified building a
-  substitute for a finished, already-approved system.
-
-  What the donor has: 940 lines on `three@0.170` with `OrbitControls` — a lat/long
-  wireframe shell, a crystal core with light rays, a starfield, curved edges with
-  travelling pulses, camera fly-to on select, double-click neighbourhood focus,
-  label level-of-detail on a canvas overlay, and an existing reduced-motion path.
-
-  What the refactor needs, and it is narrower than it looks: `tickSim(nodes, edges,
-alpha, wander, t)` already takes `wander` as a parameter, and the component
-  already preserves positions across data changes, so "remove continuous force
-  wandering" is that flag plus seeding from `vault_layout` instead of simulating
-  from scratch. `packages/domain/src/vault/layout.ts` is the other half of exactly
-  that refactor: the donor has the renderer and no stable coordinates; Phase 7 built
-  stable coordinates and a lesser renderer.
-
-  What is genuinely new work: the donor component has zero `tabIndex`, `aria-*`, or
-  `role` attributes. The keyboard and screen-reader layer has to be written, and is
-  the one thing the interim SVG view does better.
-
-  `packages/ui/src/vault/VaultSphere.tsx` and `packages/domain/src/vault/view.ts`
-  are that interim view. They are deliberately not a port; they should be deleted
-  when the real one lands rather than kept as a second way to draw the same graph.
+  It was deferred once and, before that, wrongly rejected. An earlier revision of
+  this ledger recorded the component as `REPLACE` in the Section 13.1 matrix and
+  reimplemented its behaviour in SVG. That citation was wrong: line 765 of the
+  master plan reads `Existing Vault sphere interactions | KEEP + REFACTOR |
+Preserve pan/zoom/rotation/labels/focus and visual familiarity; remove
+continuous wandering and donor component coupling`. The `REPLACE` rows belong to
+  the dashboard shell and the design tokens, and attaching one of them to the
+  sphere is what justified building a substitute for a finished, already-approved
+  system. The SVG interim view (`packages/ui/src/vault/VaultSphere.tsx` and the
+  camera half of `packages/domain/src/vault/view.ts`) is deleted by that port
+  rather than kept as a second way to draw one graph.
 
 - The donor's `notes`/`db` layer — `REMOVE from implementation dependency` in
   Section 13.1: the donor SQLite schema and runtime data are never shared.
+
+## Phase 7 acceptance — the Vault sphere renderer
+
+| Donor commit | Donor path                              | Licence | Target path                             | Retained behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Changed behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Verification                                                          |
+| ------------ | --------------------------------------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `ee7b4527`   | `client/src/components/VaultSphere.tsx` | MIT     | `packages/ui/src/vault/VaultSphere.tsx` | The whole visual system and its tuning constants: the lat/long wireframe shell, the starfield, the crystal core with its glow sprite and counter-rotating cage, the core rays, per-node halo sprites through the same point shader, quadratic-bezier curved edges with `setEdgeControl`'s bow-and-clamp, travelling pulses, `radiusFor` degree sizing, the `MAX_EDGES_PER_NODE` sparsest-edges-first thinning, screen-space picking with its 14px hit radius, OrbitControls tuning, idle globe rotation that pauses on interaction, camera fly-to on selection, double-click neighbourhood focus, canvas label LOD, and the `REDUCE_MOTION` path | **The force simulation is deleted, not parameterised.** `tickSim` is gone rather than called with `wander: false`: its repulsion, springs, and containment still move nodes every frame, and Noctis's coordinates are already settled by `packages/domain/src/vault/layout.ts` and persisted in `vault_layout`. Running a second solver in the renderer would walk nodes off the coordinates every client is supposed to agree on. Positions are read from the graph and scaled into the donor's world units, so "no continuous wandering" is structural. `SphereFx` — engine scan/spark/birth flashes and hot edges — is dropped with it: it is donor engine coupling with no Noctis event behind it. Neighbourhood focus calls `focusSubgraph` from `@noctis/domain` rather than a private neighbour map. A keyboard and screen-reader layer is added; the donor component has no `tabIndex`, `role`, or `aria-*` at all | `packages/ui/src/vault/sphere.test.ts`, `apps/web/e2e/vault.test.mjs` |
