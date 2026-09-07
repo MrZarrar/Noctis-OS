@@ -3,6 +3,12 @@ pub mod deeplink;
 pub mod placement;
 pub mod proxy;
 pub mod stream;
+pub mod window_authority;
+/// The Tauri commands that place native windows. Empty off Windows, by an inner
+/// `cfg` in the module itself rather than a `cfg` here, so the file states its
+/// own platform.
+pub mod windows_commands;
+pub mod windows_state;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,7 +53,7 @@ const SAVE_THROTTLE: Duration = Duration::from_millis(250);
 pub struct CoreState(pub Result<CoreConfig, String>);
 
 impl CoreState {
-    fn get(&self) -> Result<&CoreConfig, String> {
+    pub fn get(&self) -> Result<&CoreConfig, String> {
         self.0.as_ref().map_err(Clone::clone)
     }
 }
@@ -304,7 +310,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // First, and deliberately: a second launch must be answered before it
         // gets as far as building a window of its own.
         // Focus, and nothing else. This plugin's `deep-link` feature already
@@ -321,12 +327,33 @@ pub fn run() {
         ))
         .manage(reqwest::Client::new())
         .manage(StreamState::default())
-        .manage(LastSave::default())
+        .manage(LastSave::default());
+
+    // The window commands exist only where there are Win32 windows to place.
+    // Registered in a `cfg` branch rather than behind a runtime check, so a
+    // build for another platform simply does not offer them — a command that
+    // exists and always refuses is a capability the page has to learn is a lie.
+    #[cfg(windows)]
+    let builder = builder
+        .manage(windows_state::MovedWindows::default())
+        .manage(windows_state::LaunchCorrelations::default())
         .invoke_handler(tauri::generate_handler![
             core_request,
             core_subscribe,
-            core_unsubscribe
-        ])
+            core_unsubscribe,
+            windows_commands::window_discover,
+            windows_commands::window_place,
+            windows_commands::window_restore
+        ]);
+
+    #[cfg(not(windows))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        core_request,
+        core_subscribe,
+        core_unsubscribe
+    ]);
+
+    builder
         .setup(|app| {
             let handle = app.handle().clone();
 

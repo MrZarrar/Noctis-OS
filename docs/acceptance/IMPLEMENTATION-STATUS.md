@@ -1313,3 +1313,82 @@ Prettier; rustfmt is `npm run rust:fmt:check`, a separate gate that had last run
 before the ignored test was added. Two similarly named scripts covering different
 languages is a trap the naming sets, and the habit that avoids it is running the
 gates the CI job lists rather than the ones the change appears to touch.
+
+### 2026-09-07 Phase 9 (part 3) placement routed through the consequence boundary
+
+`win32::apply` now has an authority-checked caller. `window.place` reaches Win32
+only through the AuthorityService, and the first real execution evidence Phase 8
+deferred is now written by a real external action rather than by the workbench
+recording `{ confirmedInWorkbench: true }`.
+
+Three files in the shell, split the way the crate is:
+
+- `window_authority.rs` — pure, and the security boundary. `authorises` decides
+  whether one approval record permits placing one application's window.
+- `windows_state.rs` — the grant list, per-application minimum sizes, the
+  `PlaceIntent` the WebView sends, and what Noctis moved.
+- `windows_commands.rs` — the three Tauri commands, thin, in the order the two
+  above are asked in.
+
+**The order is the design.** Every Section 11.2 rule is satisfied _before_ the
+core is asked anything: a protected, ungranted, or ambiguous window never becomes
+an authority request. The Approval Surface is therefore never shown a consequence
+Noctis could not have carried out, which is the difference between a boundary and
+a dialog box.
+
+**Asking the core is not enough on its own.** The WebView chooses both which
+approval id to present and which application to name, so the shell compares them:
+`authorises` refuses an approval whose target is another application, another
+target type, another capability, unconfirmed, denied, or already spent. Without
+that comparison the core would answer "that approval is valid" and be telling the
+truth about a different question. `refuses_an_approval_granted_for_a_different_application`
+is the test that holds it.
+
+Three decisions worth recording:
+
+- **The move happens before the execution is recorded.** Phase 8's gate says a
+  status may not claim completion until evidence verifies it, and the only
+  evidence a window moved is the window having moved. The race this leaves — two
+  authorised callers both moving — is harmless for this operation class,
+  because the second writes the same rectangle. It would be the wrong order for a
+  spend, and the comment in `window_place` says so.
+- **Restore needs no approval of its own.** It can only reach a window already in
+  the moved map, which means an approved placement put it there, and it can only
+  put that window back. The approval that authorised the move declared
+  `reversibility: "reversible"`, and reversing is what that word promised. A
+  second consent for the undo would be consent theatre, and worse, it would make
+  the undo the step most likely to be refused. Map membership is the
+  authorisation, which is stronger than an optional check a caller can decline to
+  pass — which is what the first draft had, and it was a bypass rather than a
+  policy.
+- **Placement refuses outright when the process is not per-monitor DPI aware.**
+  Checked before Win32 and before the core. Approximate placement on a scaled
+  display is worse than none, because it looks like a bug in Noctis rather than a
+  missing declaration.
+
+| Command                  | Result                                               |
+| ------------------------ | ---------------------------------------------------- |
+| `npm run test:boundary`  | exit 0                                               |
+| `npm run format:check`   | exit 0                                               |
+| `npm run lint`           | exit 0                                               |
+| `npm run typecheck`      | exit 0                                               |
+| `npm run test:unit`      | exit 0                                               |
+| `npm run build`          | exit 0                                               |
+| `npm run build:web`      | exit 0                                               |
+| `npm run test:desktop`   | exit 0                                               |
+| `npm run rust:fmt:check` | exit 0                                               |
+| `npm run rust:clippy`    | exit 0; 0 warnings with `-D warnings`                |
+| `npm run rust:test`      | exit 0; 131 tests — 62 in the shell, 69 in the crate |
+| `npm run test:e2e`       | exit 0; 4 tests, run here against Edge               |
+| `npm run build:desktop`  | not run here; Smart App Control, see part 1          |
+
+Every gate the CI job lists was run this time, in the order the job lists them,
+rather than the ones this change appeared to touch.
+
+Still not done, and still the reason the gate is open: **no placement has been
+performed through this path.** The commands compile, the boundary is tested, and
+the Win32 layer is proven separately against a real window — but the three have
+not yet run together, because that needs the shell and the core up at once with a
+Surface to drive them from. `NativeApplicationSurface`, launch correlation for a
+process Noctis starts (the map exists; nothing writes to it yet), the node
+native-window adapter, and the qualification runbook document all remain.
