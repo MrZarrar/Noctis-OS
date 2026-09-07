@@ -660,7 +660,10 @@ mod tests {
             };
 
             let applied = apply(handle, target).map_err(|error| format!("{error:?}"))?;
-            println!("applied: {:?} in {}ms", applied.placement, applied.elapsed_ms);
+            println!(
+                "applied: {:?} in {}ms",
+                applied.placement, applied.elapsed_ms
+            );
 
             // Position is the assertion. Size deliberately is not: Character Map
             // is entitled to refuse a size, and an application enforcing its own
@@ -676,7 +679,9 @@ mod tests {
 
             restore(handle, &saved).map_err(|error| format!("{error:?}"))?;
 
-            let after = capture(handle).ok_or("could not re-read the placement")?.placement();
+            let after = capture(handle)
+                .ok_or("could not re-read the placement")?
+                .placement();
             println!("after:   {after:?}");
 
             // THE GATE: Section 11.2 asks for `WINDOWPLACEMENT` to be preserved
