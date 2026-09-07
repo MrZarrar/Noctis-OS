@@ -6,6 +6,7 @@ export type { RailProps } from "./primitives/Rail.js";
 export { SurfaceFrame } from "./surfaces/SurfaceFrame.js";
 export type { SurfaceFrameProps } from "./surfaces/SurfaceFrame.js";
 export * from "./surfaces/primitives.js";
+export * from "./surfaces/consequence.js";
 export { VaultSphere } from "./vault/VaultSphere.js";
 export type { VaultSphereProps, VaultSphereNode, VaultSphereEdge } from "./vault/VaultSphere.js";
 export { RecallSurface } from "./vault/RecallSurface.js";

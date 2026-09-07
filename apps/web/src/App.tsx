@@ -3,7 +3,9 @@ import type { RailItem } from "@noctis/ui";
 import { useState } from "react";
 
 import { resolveCoreTransport } from "./core-client.js";
+import { Artifacts } from "./pages/Artifacts.js";
 import { Command } from "./pages/Command.js";
+import { Settings } from "./pages/Settings.js";
 import { Vault } from "./pages/Vault.js";
 
 const transport = resolveCoreTransport();
@@ -73,18 +75,25 @@ export function App(): JSX.Element {
         />
       )}
 
-      {active !== "Command" && active !== "Vault" && (
-        <section
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          {active} is not built yet — later phases add it behind this same rail.
-        </section>
-      )}
+      {active === "Artifacts" && <Artifacts transport={transport} />}
+
+      {active === "Settings" && <Settings transport={transport} />}
+
+      {active !== "Command" &&
+        active !== "Vault" &&
+        active !== "Artifacts" &&
+        active !== "Settings" && (
+          <section
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {active} is not built yet — later phases add it behind this same rail.
+          </section>
+        )}
     </div>
   );
 }

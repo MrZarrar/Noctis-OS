@@ -1,4 +1,6 @@
 import {
+  ApprovalSurface,
+  ArtifactSurface,
   AttentionSurface,
   ConversationSurface,
   DetailSurface,
@@ -6,6 +8,7 @@ import {
   FallbackSurface,
   ListSurface,
   RecallSurface,
+  SourceStateSurface,
 } from "@noctis/ui";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
@@ -20,6 +23,11 @@ import type { Resolved, SurfaceKind } from "./registry.js";
  */
 export interface SurfaceContext {
   onOpenInVault?: (evidence: RecallEvidenceView) => void;
+  /** Phase 8 handoffs. Each one crosses a boundary the Surface may not cross itself. */
+  onConfirm?: (approvalId: string, typedConfirmation?: string) => void;
+  onExecute?: (approvalId: string) => void;
+  onImport?: (artifactId: string) => void;
+  onRefreshSource?: (sourceId: string) => void;
 }
 
 /**
@@ -45,6 +53,45 @@ const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) =
       {...(context.onOpenInVault === undefined ? {} : { onOpenInVault: context.onOpenInVault })}
     />
   ),
+  approval: (payload: Parameters<typeof ApprovalSurface>[0], context: SurfaceContext) => (
+    <ApprovalSurface
+      {...payload}
+      {...(context.onConfirm === undefined
+        ? {}
+        : {
+            onConfirm: (typedConfirmation?: string) => {
+              context.onConfirm?.(payload.id, typedConfirmation);
+            },
+          })}
+      {...(context.onExecute === undefined
+        ? {}
+        : {
+            onExecute: () => {
+              context.onExecute?.(payload.id);
+            },
+          })}
+    />
+  ),
+  artifact: (payload: Parameters<typeof ArtifactSurface>[0]) => <ArtifactSurface {...payload} />,
+  source_state: (
+    payload: Parameters<typeof SourceStateSurface>[0] & { sourceId: string },
+    context: SurfaceContext,
+  ) => {
+    const { sourceId, ...rest } = payload;
+
+    return (
+      <SourceStateSurface
+        {...rest}
+        {...(context.onRefreshSource === undefined
+          ? {}
+          : {
+              onRefresh: () => {
+                context.onRefreshSource?.(sourceId);
+              },
+            })}
+      />
+    );
+  },
 };
 
 export function renderSurface(resolved: Resolved, context: SurfaceContext = {}): ReactNode {

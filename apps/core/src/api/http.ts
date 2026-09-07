@@ -4,6 +4,7 @@ import {
   ActivateIdentityCommandSchema,
   AttentionStateSchema,
   CancelNodeJobCommandSchema,
+  ConfirmAuthorityCommandSchema,
   ChangeMissionStatusCommandSchema,
   ChangeObjectiveStatusCommandSchema,
   ChangeSurfaceLifecycleCommandSchema,
@@ -11,14 +12,21 @@ import {
   CreateMissionCommandSchema,
   CreateObjectiveCommandSchema,
   EnqueueNodeJobCommandSchema,
+  ExecuteAuthorityCommandSchema,
+  GrantStandingPermissionCommandSchema,
   GrantNodeCapabilityCommandSchema,
+  ImportArtifactCommandSchema,
   IssueNodePairingCodeCommandSchema,
+  ObserveSourceCommandSchema,
   PairNodeRequestSchema,
   RecallVaultCommandSchema,
+  RecordArtifactCommandSchema,
+  RegisterSourceCommandSchema,
   ReindexVaultCommandSchema,
   ReleaseSurfaceOverrideCommandSchema,
   RequestAuthorityCommandSchema,
   RevokeNodeCommandSchema,
+  RevokeStandingPermissionCommandSchema,
   SetSurfaceOverrideCommandSchema,
   SurfaceDisplaySchema,
   UpsertSurfaceIntentCommandSchema,
@@ -27,7 +35,25 @@ import {
 import type { DomainConflict, Result } from "@noctis/domain";
 import type { z } from "zod";
 
-import { requestAuthority, getAuthorityDecision } from "../authority/service.js";
+import {
+  confirmAuthority,
+  executeAuthority,
+  getApproval,
+  getAuthorityDecision,
+  getStandingPermission,
+  grantStandingPermission,
+  listApprovals,
+  listStandingPermissions,
+  requestAuthority,
+  revokeStandingPermission,
+} from "../authority/service.js";
+import {
+  getArtifact,
+  importArtifact,
+  importOf,
+  listArtifacts,
+  recordArtifact,
+} from "../artifacts/service.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
 import {
@@ -78,6 +104,14 @@ import {
   setSurfaceOverride,
   upsertSurfaceIntent,
 } from "../objectives/surface-intents.js";
+import {
+  getSource as getSourceRecord,
+  getSourceState,
+  listSources,
+  observeSource,
+  registerSource,
+  sourceState,
+} from "../sources/service.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
 import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
@@ -177,6 +211,17 @@ function conflictResponse(domainConflict: DomainConflict): { status: number; bod
           machine: domainConflict.machine,
           from: domainConflict.from,
           to: domainConflict.to,
+        }),
+      };
+    case "authority_refused":
+      return {
+        status: 403,
+        body: errorBody("authority_refused", "Authority did not permit that", {
+          requestId: domainConflict.requestId,
+          outcome: domainConflict.outcome,
+          // The reason codes, never the confirmation phrase: the phrase names
+          // the target, and an error body is a poor place to repeat it.
+          reasonCodes: domainConflict.reasonCodes,
         }),
       };
     case "idempotent_replay":
@@ -291,6 +336,39 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   ),
   "authority.request": defineCommand(RequestAuthorityCommandSchema, requestAuthority, (db, id) =>
     getAuthorityDecision(db, id),
+  ),
+  "authority.confirm": defineCommand(ConfirmAuthorityCommandSchema, confirmAuthority, (db, id) =>
+    getApproval(db, id),
+  ),
+  "authority.execute": defineCommand(ExecuteAuthorityCommandSchema, executeAuthority, (db, id) =>
+    getApproval(db, id),
+  ),
+  "authority.grant_permission": defineCommand(
+    GrantStandingPermissionCommandSchema,
+    grantStandingPermission,
+    (db, id) => getStandingPermission(db, id),
+  ),
+  "authority.revoke_permission": defineCommand(
+    RevokeStandingPermissionCommandSchema,
+    revokeStandingPermission,
+    (db, id) => getStandingPermission(db, id),
+  ),
+  "source.register": defineCommand(RegisterSourceCommandSchema, registerSource, (db, id) =>
+    getSourceRecord(db, id),
+  ),
+  "source.observe": defineDepsCommand(
+    ObserveSourceCommandSchema,
+    (deps, context, command) => observeSource(deps.kernel, context, command),
+    // A replay answers with the state as it is now, not as it was: freshness is
+    // a function of the clock, so a cached "current" would be the one thing a
+    // retry must never resurrect.
+    () => undefined,
+  ),
+  "artifact.record": defineCommand(RecordArtifactCommandSchema, recordArtifact, (db, id) =>
+    getArtifact(db, id),
+  ),
+  "artifact.import": defineCommand(ImportArtifactCommandSchema, importArtifact, (db, id) =>
+    getArtifact(db, id),
   ),
   "surface.upsert_intent": defineCommand(
     UpsertSurfaceIntentCommandSchema,
@@ -555,6 +633,44 @@ function handleRead(
     };
   }
 
+  if (segments.length === 1 && segments[0] === "approvals") {
+    return { status: 200, body: { approvals: listApprovals(deps.kernel.db, limit) } };
+  }
+
+  if (segments.length === 1 && segments[0] === "permissions") {
+    // Section 9.1: standing permissions are "visible in Settings". Revoked ones
+    // are returned too, with their reason — a permission that quietly vanished
+    // from the list would leave a past decision unexplainable.
+    return { status: 200, body: { permissions: listStandingPermissions(deps.kernel.db, limit) } };
+  }
+
+  if (segments.length === 1 && segments[0] === "sources") {
+    const now = deps.kernel.clock.now();
+
+    return {
+      status: 200,
+      body: {
+        sources: listSources(deps.kernel.db, limit).map((source) =>
+          sourceState(deps.kernel.db, source, now),
+        ),
+      },
+    };
+  }
+
+  if (segments.length === 1 && segments[0] === "artifacts") {
+    return {
+      status: 200,
+      body: {
+        artifacts: listArtifacts(deps.kernel.db, limit).map((artifact) => ({
+          ...artifact,
+          // Lineage in both directions: an external reference says whether it
+          // has been imported, so the UI never has to infer it from a URI.
+          importedAs: importOf(deps.kernel.db, artifact.id)?.id ?? null,
+        })),
+      },
+    };
+  }
+
   if (segments.length === 1 && segments[0] === "nodes") {
     return {
       status: 200,
@@ -610,6 +726,36 @@ function handleRead(
 
   if (collection === "objectives" && sub === "surfaces") {
     return handleSurfaceRead(deps, id, url);
+  }
+
+  if (collection === "approvals" && sub === undefined) {
+    const approval = getApproval(deps.kernel.db, id);
+
+    return approval === undefined
+      ? { status: 404, body: errorBody("not_found", "approval not found") }
+      : { status: 200, body: approval };
+  }
+
+  if (collection === "sources" && sub === undefined) {
+    const state = getSourceState(deps.kernel.db, id, deps.kernel.clock.now());
+
+    return state === undefined
+      ? { status: 404, body: errorBody("not_found", "source not found") }
+      : { status: 200, body: state };
+  }
+
+  if (collection === "artifacts" && sub === undefined) {
+    const artifact = getArtifact(deps.kernel.db, id);
+
+    return artifact === undefined
+      ? { status: 404, body: errorBody("not_found", "artifact not found") }
+      : {
+          status: 200,
+          body: {
+            ...artifact,
+            importedAs: importOf(deps.kernel.db, artifact.id)?.id ?? null,
+          },
+        };
   }
 
   if (collection === "missions" && sub === undefined) {

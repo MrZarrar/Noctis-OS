@@ -257,8 +257,9 @@ describe("headless kernel loop", () => {
     const diagnostics = await read(core, "/diagnostics");
     expect(diagnostics.body.latestSequence).toBe(4);
     // 0002 added node pairing and job results; 0003 the Surface uniqueness;
-    // 0004 the six Vault tables Section 4.1 lists.
-    expect(diagnostics.body.schemaVersion).toBe(4);
+    // 0004 the six Vault tables Section 4.1 lists; 0005 the consequence
+    // boundary columns, source semantics, and artifact lineage.
+    expect(diagnostics.body.schemaVersion).toBe(5);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -834,5 +835,559 @@ describe("the Vault graph read", () => {
 
     expect(refused.status).toBe(400);
     expect((refused.body.error as { message: string }).message).toContain("1-5000");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Phase 8: the consequence boundary.                                         */
+/* -------------------------------------------------------------------------- */
+
+let phase8Keys = 0;
+
+/** A fresh idempotency key. A second submit is a second key — that is the point. */
+function newKey(label: string): string {
+  phase8Keys += 1;
+
+  return `${label}-${String(phase8Keys)}`;
+}
+
+async function requestAuthorityFor(
+  core: TestCore,
+  overrides: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const response = await command(core, "authority.request", {
+    idempotencyKey: newKey("req"),
+    actorId: "vesper",
+    operationClass: "publish",
+    capability: "vinted.publish",
+    target: { type: "listing", id: "vinted-4821" },
+    consequenceSummary: "Publish the listing to Vinted",
+    reversibility: "partially_reversible",
+    ...overrides,
+  });
+
+  expect(response.status).toBe(200);
+
+  return response.body;
+}
+
+describe("THE GATE: preparation cannot commit itself", () => {
+  it("refuses to execute a decision nobody confirmed", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    expect(decision.outcome).toBe("require_confirmation");
+
+    const executed = await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: { url: "https://vinted.example/4821" },
+    });
+
+    expect(executed.status).toBe(403);
+    expect(
+      (executed.body.error as { details: { reasonCodes: string[] } }).details.reasonCodes,
+    ).toContain("not_confirmed");
+
+    const approval = await read(core, `/approvals/${String(decision.requestId)}`);
+
+    expect(approval.body.executedAt).toBeUndefined();
+  });
+
+  it("executes once confirmed, and records the evidence the external system gave", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    const confirmed = await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+    });
+
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.confirmedAt).toBeDefined();
+    expect(confirmed.body.executedAt).toBeUndefined();
+
+    const executed = await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: { url: "https://vinted.example/4821", status: "published" },
+    });
+
+    expect(executed.status).toBe(200);
+    expect(executed.body.executedAt).toBeDefined();
+    expect(executed.body.executionEvidence).toEqual({
+      url: "https://vinted.example/4821",
+      status: "published",
+    });
+  });
+
+  it("THE GATE: a duplicate submit cannot repeat an external consequence", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+    });
+
+    const first = await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: { attempt: 1 },
+    });
+
+    // A *different* key, which is what a second click actually produces. An
+    // idempotency key alone cannot stop this: the second submit has a new one.
+    const second = await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: { attempt: 2 },
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(403);
+    expect(
+      (second.body.error as { details: { reasonCodes: string[] } }).details.reasonCodes,
+    ).toContain("already_executed");
+
+    const approval = await read(core, `/approvals/${String(decision.requestId)}`);
+
+    // The first execution's evidence stands. The second never happened.
+    expect(approval.body.executionEvidence).toEqual({ attempt: 1 });
+  });
+
+  it("answers a retry of the same submit with the same result", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+    });
+
+    const key = newKey("exec");
+    const body = {
+      idempotencyKey: key,
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: { attempt: 1 },
+    };
+
+    const first = await command(core, "authority.execute", body);
+    const retry = await command(core, "authority.execute", body);
+
+    expect(first.status).toBe(200);
+    // A lost response is retried with the key it already had, and gets the
+    // original answer rather than a refusal it cannot act on.
+    expect(retry.status).toBe(200);
+    expect(retry.body.executedAt).toBe(first.body.executedAt);
+  });
+
+  it("THE GATE: a click is not a typed confirmation", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core, {
+      operationClass: "spend",
+      capability: "provider.purchase",
+      target: { type: "provider", id: "suno" },
+      consequenceSummary: "Buy a Suno credit pack",
+      reversibility: "irreversible",
+      estimatedCostGbp: 8,
+    });
+
+    expect(decision.outcome).toBe("require_typed_confirmation");
+    expect(decision.confirmationPhrase).toBe("SPEND GBP 8.00 ON provider:suno");
+
+    const clicked = await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+    });
+
+    const nearMiss = await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+      typedConfirmation: "spend gbp 8.00 on provider:suno",
+    });
+
+    const typed = await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+      typedConfirmation: decision.confirmationPhrase,
+    });
+
+    expect(clicked.status).toBe(403);
+    expect(nearMiss.status).toBe(403);
+    expect(typed.status).toBe(200);
+    expect(typed.body.confirmedAt).toBeDefined();
+  });
+
+  it("never lets an unrecognised operation class reach the approval queue at all", async () => {
+    const core = await startTestCore();
+
+    const requested = await command(core, "authority.request", {
+      idempotencyKey: newKey("req"),
+      actorId: "vesper",
+      operationClass: "not_a_real_class",
+      capability: "vinted.publish",
+      target: { type: "listing", id: "vinted-4821" },
+      consequenceSummary: "Publish the listing to Vinted",
+      reversibility: "partially_reversible",
+    });
+
+    // The contract refuses it before the policy is consulted, which is why
+    // `evaluateAuthority`'s fail-closed `deny` is unreachable from the API and
+    // is proven in `evaluate.test.ts` instead. Two gates, and the outer one
+    // fires first: an operation class Noctis does not define is not a decision
+    // to be made, it is a request that does not parse.
+    expect(requested.status).toBe(400);
+
+    const approvals = await read(core, "/approvals");
+
+    expect(approvals.body.approvals).toHaveLength(0);
+  });
+
+  it("refuses to confirm or execute an approval that does not exist", async () => {
+    const core = await startTestCore();
+    const missing = "01941f29-7c00-7000-8000-0000000009ff";
+
+    const confirmed = await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: missing,
+    });
+    const executed = await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: missing,
+      evidenceVersion: 1,
+      evidence: {},
+    });
+
+    expect(confirmed.status).toBe(404);
+    expect(executed.status).toBe(404);
+  });
+});
+
+describe("THE GATE: standing permissions are narrow and revocable", () => {
+  async function grant(
+    core: TestCore,
+    overrides: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    const response = await command(core, "authority.grant_permission", {
+      idempotencyKey: newKey("grant"),
+      actorId: "vesper",
+      capability: "vinted.publish",
+      operationClass: "publish",
+      constraints: { targetType: "listing", targetIds: ["vinted-4821"] },
+      ...overrides,
+    });
+
+    expect(response.status).toBe(200);
+
+    return response.body;
+  }
+
+  it("upgrades exactly the target it names, and nothing beside it", async () => {
+    const core = await startTestCore();
+    await grant(core);
+
+    const named = await requestAuthorityFor(core);
+    const beside = await requestAuthorityFor(core, {
+      target: { type: "listing", id: "vinted-9999" },
+    });
+
+    expect(named.outcome).toBe("allow");
+    expect(named.permissionId).toBeDefined();
+    expect(beside.outcome).toBe("require_confirmation");
+    expect(beside.permissionId).toBeUndefined();
+  });
+
+  it("stops upgrading the moment it is revoked, and says why it was", async () => {
+    const core = await startTestCore();
+    const permission = await grant(core);
+
+    expect((await requestAuthorityFor(core)).outcome).toBe("allow");
+
+    const revoked = await command(core, "authority.revoke_permission", {
+      idempotencyKey: newKey("revoke"),
+      permissionId: permission.id,
+      reason: "the listing was already sold",
+    });
+
+    expect(revoked.status).toBe(200);
+    expect((await requestAuthorityFor(core)).outcome).toBe("require_confirmation");
+
+    const listed = await read(core, "/permissions");
+    const rows = listed.body.permissions as Array<Record<string, unknown>>;
+
+    // Revoked, still listed, still explaining itself: a permission that
+    // vanished would leave the decisions it once upgraded unaccountable.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.revokedAt).toBeDefined();
+    expect(rows[0]?.revokedReason).toBe("the listing was already sold");
+  });
+
+  it("THE GATE: cannot be granted over a spend, however narrowly", async () => {
+    const core = await startTestCore();
+    await grant(core, {
+      capability: "provider.purchase",
+      operationClass: "spend",
+      constraints: { targetType: "provider", targetIds: ["suno"] },
+    });
+
+    const decision = await requestAuthorityFor(core, {
+      operationClass: "spend",
+      capability: "provider.purchase",
+      target: { type: "provider", id: "suno" },
+      estimatedCostGbp: 8,
+    });
+
+    expect(decision.outcome).toBe("require_typed_confirmation");
+    expect(decision.reasonCodes).toContain("standing_permission_ineligible_operation_class");
+  });
+});
+
+describe("THE GATE: a node cannot be a way around authority", () => {
+  it("enqueues work whose capability the policy allows", async () => {
+    const core = await startTestCore();
+    const queued = await command(core, "node.job_enqueue", {
+      idempotencyKey: newKey("job"),
+      capability: "environment.inspect",
+      payload: {},
+    });
+
+    expect(queued.status).toBe(200);
+    expect((queued.body.job as { status: string }).status).toBe("queued");
+  });
+
+  it("refuses to queue work the policy would not allow, before the row exists", async () => {
+    const core = await startTestCore();
+
+    // `file.search` is `read_inspect` today, so this test drives the refusal
+    // through the one thing the policy is sure to reject: an unknown class.
+    // The capability table is what decides, and it is not the caller's to set.
+    const queued = await command(core, "node.job_enqueue", {
+      idempotencyKey: newKey("job"),
+      capability: "not.a.capability",
+      payload: {},
+    });
+
+    expect(queued.status).toBe(400);
+
+    const jobs = await read(core, "/events");
+    const names = (jobs.body.events as Array<{ type: string }>).map((event) => event.type);
+
+    expect(names).not.toContain("node.job_queued.v1");
+  });
+});
+
+describe("THE GATE: a status cannot claim more than the evidence supports", () => {
+  it("keeps an external reference external until an import produces bytes", async () => {
+    const core = await startTestCore();
+
+    const external = await command(core, "artifact.record", {
+      idempotencyKey: newKey("artifact"),
+      kind: "external_reference",
+      title: "Selected Suno song",
+      uri: "https://suno.example/song/9f2",
+      provenanceVersion: 1,
+      provenance: { selectedIn: "a native Suno session" },
+    });
+
+    expect(external.status).toBe(200);
+    expect(external.body.kind).toBe("external_reference");
+    expect(external.body.checksum).toBeUndefined();
+
+    const listedBefore = await read(core, "/artifacts");
+
+    expect(
+      (listedBefore.body.artifacts as Array<{ importedAs: unknown }>)[0]?.importedAs,
+    ).toBeNull();
+
+    const imported = await command(core, "artifact.import", {
+      idempotencyKey: newKey("import"),
+      artifactId: external.body.id,
+      hostId: "desk",
+      uri: "file:///C:/noctis/artifacts/9f2.mp3",
+      checksum: "sha256:aa".padEnd(20, "b"),
+    });
+
+    expect(imported.status).toBe(200);
+    expect(imported.body.kind).toBe("local_artifact");
+    // Lineage, not replacement: the remote thing is still there and still says
+    // what it was.
+    expect(imported.body.derivedFromArtifactId).toBe(external.body.id);
+
+    const original = await read(core, `/artifacts/${String(external.body.id)}`);
+
+    expect(original.body.kind).toBe("external_reference");
+    expect(original.body.importedAs).toBe(imported.body.id);
+  });
+
+  it("refuses a second import of the same reference", async () => {
+    const core = await startTestCore();
+    const external = await command(core, "artifact.record", {
+      idempotencyKey: newKey("artifact"),
+      kind: "external_reference",
+      title: "Selected Suno song",
+      uri: "https://suno.example/song/9f2",
+      provenanceVersion: 1,
+      provenance: {},
+    });
+
+    const body = {
+      artifactId: external.body.id,
+      hostId: "desk",
+      uri: "file:///C:/noctis/artifacts/9f2.mp3",
+      checksum: "sha256:aa".padEnd(20, "b"),
+    };
+
+    const first = await command(core, "artifact.import", {
+      ...body,
+      idempotencyKey: newKey("import"),
+    });
+    const second = await command(core, "artifact.import", {
+      ...body,
+      idempotencyKey: newKey("import"),
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(403);
+  });
+
+  it("says unknown before anyone has looked, and never confuses it with unavailable", async () => {
+    const core = await startTestCore();
+
+    const source = await command(core, "source.register", {
+      idempotencyKey: newKey("source"),
+      sourceType: "vinted",
+      externalId: "listing-4821",
+      freshnessSeconds: 60,
+      unavailableSemantics: "unknown",
+    });
+
+    expect(source.status).toBe(200);
+
+    const before = await read(core, `/sources/${String(source.body.id)}`);
+
+    // Nobody has looked. That is not "no listing" and not "cannot reach Vinted".
+    expect(before.body.status).toBe("unknown");
+    expect(before.body.observed).toBeUndefined();
+
+    const observed = await command(core, "source.observe", {
+      idempotencyKey: newKey("observe"),
+      sourceId: source.body.id,
+      reachable: true,
+      payloadVersion: 1,
+      payload: { status: "draft" },
+    });
+
+    expect(observed.status).toBe(200);
+    expect(observed.body.status).toBe("current");
+
+    const unreachable = await command(core, "source.observe", {
+      idempotencyKey: newKey("observe"),
+      sourceId: source.body.id,
+      reachable: false,
+      payloadVersion: 1,
+      payload: null,
+    });
+
+    // The source declared that an unreachable answer is not an answer, so the
+    // last known value does not stand in for one.
+    expect(unreachable.body.status).toBe("unknown");
+  });
+
+  it("lets a source say the last known value stands when it cannot be reached", async () => {
+    const core = await startTestCore();
+    const source = await command(core, "source.register", {
+      idempotencyKey: newKey("source"),
+      sourceType: "rss",
+      externalId: "feed-1",
+      freshnessSeconds: 60,
+      unavailableSemantics: "last_known",
+    });
+
+    await command(core, "source.observe", {
+      idempotencyKey: newKey("observe"),
+      sourceId: source.body.id,
+      reachable: true,
+      payloadVersion: 1,
+      payload: { items: 3 },
+    });
+
+    const unreachable = await command(core, "source.observe", {
+      idempotencyKey: newKey("observe"),
+      sourceId: source.body.id,
+      reachable: false,
+      payloadVersion: 1,
+      payload: null,
+    });
+
+    expect(unreachable.body.status).toBe("unavailable");
+  });
+
+  it("THE GATE: shows a remembered/current conflict rather than replacing one with the other", async () => {
+    const core = await startTestCore();
+    const source = await command(core, "source.register", {
+      idempotencyKey: newKey("source"),
+      sourceType: "vinted",
+      externalId: "listing-4821",
+      freshnessSeconds: 3600,
+      unavailableSemantics: "unknown",
+    });
+
+    await command(core, "source.observe", {
+      idempotencyKey: newKey("observe"),
+      sourceId: source.body.id,
+      reachable: true,
+      payloadVersion: 1,
+      payload: { status: "draft" },
+    });
+
+    const changed = await command(core, "source.observe", {
+      idempotencyKey: newKey("observe"),
+      sourceId: source.body.id,
+      reachable: true,
+      payloadVersion: 1,
+      payload: { status: "published" },
+    });
+
+    expect(changed.body.conflicted).toBe(true);
+    expect((changed.body.observed as { payload: unknown }).payload).toEqual({
+      status: "published",
+    });
+    // Both halves survive the read. Section 12.1 asks the UI to distinguish
+    // remembered from current, which it cannot do if one overwrote the other.
+    expect((changed.body.remembered as { payload: unknown }).payload).toEqual({
+      status: "draft",
+    });
+  });
+
+  it("does not call two identical observations a conflict", async () => {
+    const core = await startTestCore();
+    const source = await command(core, "source.register", {
+      idempotencyKey: newKey("source"),
+      sourceType: "vinted",
+      externalId: "listing-4821",
+      freshnessSeconds: 3600,
+      unavailableSemantics: "unknown",
+    });
+
+    // The same payload twice: two rows, one state, and no conflict.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await command(core, "source.observe", {
+        idempotencyKey: newKey("observe"),
+        sourceId: source.body.id,
+        reachable: true,
+        payloadVersion: 1,
+        payload: { status: "draft" },
+      });
+    }
+
+    const state = await read(core, `/sources/${String(source.body.id)}`);
+
+    expect(state.body.conflicted).toBe(false);
   });
 });

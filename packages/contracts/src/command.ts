@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { AuthorityTargetSchema, ReversibilitySchema } from "./authority.js";
+import { ArtifactKindSchema } from "./artifact.js";
+import {
+  AuthorityConstraintSchema,
+  AuthorityTargetSchema,
+  ReversibilitySchema,
+} from "./authority.js";
 import {
   AttentionStateSchema,
   ConversationalIdentityIdSchema,
@@ -21,6 +26,7 @@ import {
   UtcTimestampSchema,
   UuidSchema,
 } from "./primitives.js";
+import { UnavailableSemanticsSchema } from "./source.js";
 import { SurfaceDisplaySchema, SurfaceRegionSchema, SurfaceSizeSchema } from "./surface.js";
 
 /**
@@ -195,6 +201,145 @@ export const RecallVaultCommandSchema = z
   })
   .strict();
 
+/* -------------------------------------------------------------------------- */
+/* Phase 8: confirmation, execution, permissions, sources, and artifacts.     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The confirmation half of the prepare/commit boundary.
+ *
+ * Separate from `authority.request` on purpose: a request is a question and
+ * this is the answer, and collapsing them would mean the same call that asks
+ * whether something may happen also says that it may. `typedConfirmation` is
+ * required exactly when the decision demanded one, and it is compared against a
+ * phrase the core derived — never one the caller proposed.
+ */
+export const ConfirmAuthorityCommandSchema = z
+  .object({
+    ...CommandBase,
+    requestId: UuidSchema,
+    typedConfirmation: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+
+/**
+ * The commit half. Recording an execution is what makes the consequence
+ * irreversible in Noctis's own terms, so it happens once and carries the
+ * evidence the external system returned.
+ */
+export const ExecuteAuthorityCommandSchema = z
+  .object({
+    ...CommandBase,
+    requestId: UuidSchema,
+    evidenceVersion: SchemaVersionSchema,
+    evidence: z.unknown(),
+  })
+  .strict();
+
+/**
+ * A standing permission is granted with its constraints, never widened later.
+ * There is no `update`: changing scope means revoking and granting again, so
+ * the audit trail shows a new grant rather than a mutated one.
+ */
+export const GrantStandingPermissionCommandSchema = z
+  .object({
+    ...CommandBase,
+    actorId: z.string().trim().min(1).max(200),
+    capability: z.string().trim().min(1).max(200),
+    operationClass: OperationClassSchema,
+    constraints: AuthorityConstraintSchema,
+    expiresAt: UtcTimestampSchema.optional(),
+  })
+  .strict();
+
+export const RevokeStandingPermissionCommandSchema = z
+  .object({
+    ...CommandBase,
+    permissionId: UuidSchema,
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+/** Registering a source declares its freshness policy and unavailable semantics up front. */
+export const RegisterSourceCommandSchema = z
+  .object({
+    ...CommandBase,
+    sourceType: z.string().trim().min(1).max(100),
+    externalId: z.string().trim().min(1).max(500),
+    freshnessSeconds: z.int().positive().max(31_536_000),
+    unavailableSemantics: UnavailableSemanticsSchema,
+  })
+  .strict();
+
+/**
+ * One normalized live observation. The adapter says what it saw and when; it
+ * does not say whether that is current, because currency is a function of the
+ * source's policy and the clock, and an adapter that could assert it could
+ * assert it wrongly.
+ */
+export const ObserveSourceCommandSchema = z
+  .object({
+    ...CommandBase,
+    sourceId: UuidSchema,
+    reachable: z.boolean(),
+    payloadVersion: SchemaVersionSchema,
+    payload: z.unknown(),
+  })
+  .strict();
+
+export const RecordArtifactCommandSchema = z
+  .object({
+    ...CommandBase,
+    kind: ArtifactKindSchema,
+    title: z.string().trim().min(1).max(200),
+    uri: z.string().trim().min(1).max(2000),
+    mediaType: z.string().trim().min(1).max(200).optional(),
+    objectiveId: UuidSchema.optional(),
+    missionId: UuidSchema.optional(),
+    sourceId: UuidSchema.optional(),
+    hostId: z.string().trim().min(1).max(200).optional(),
+    checksum: z.string().trim().min(1).max(200).optional(),
+    provenanceVersion: SchemaVersionSchema,
+    provenance: z.unknown(),
+  })
+  .strict()
+  .refine(
+    (command) =>
+      command.kind !== "local_artifact" ||
+      (command.hostId !== undefined && command.checksum !== undefined),
+    {
+      message: "a local_artifact must name the host that holds it and the checksum of its bytes",
+      path: ["checksum"],
+    },
+  );
+
+/**
+ * The import that turns an external reference into a local artifact.
+ *
+ * It creates a second row rather than changing the first, because Section 12.2
+ * asks for lineage: after an import the Vault can still say "this file came
+ * from that remote thing", which a mutated row could not.
+ */
+export const ImportArtifactCommandSchema = z
+  .object({
+    ...CommandBase,
+    artifactId: UuidSchema,
+    hostId: z.string().trim().min(1).max(200),
+    uri: z.string().trim().min(1).max(2000),
+    checksum: z.string().trim().min(1).max(200),
+    mediaType: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
+export type ConfirmAuthorityCommand = z.infer<typeof ConfirmAuthorityCommandSchema>;
+export type ExecuteAuthorityCommand = z.infer<typeof ExecuteAuthorityCommandSchema>;
+export type GrantStandingPermissionCommand = z.infer<typeof GrantStandingPermissionCommandSchema>;
+export type RevokeStandingPermissionCommand = z.infer<typeof RevokeStandingPermissionCommandSchema>;
+export type RegisterSourceCommand = z.infer<typeof RegisterSourceCommandSchema>;
+export type ObserveSourceCommand = z.infer<typeof ObserveSourceCommandSchema>;
+export type RecordArtifactCommand = z.infer<typeof RecordArtifactCommandSchema>;
+export type ImportArtifactCommand = z.infer<typeof ImportArtifactCommandSchema>;
+
 export const COMMAND_NAMES = [
   "objective.create",
   "objective.change_status",
@@ -202,6 +347,14 @@ export const COMMAND_NAMES = [
   "mission.change_status",
   "identity.activate",
   "authority.request",
+  "authority.confirm",
+  "authority.execute",
+  "authority.grant_permission",
+  "authority.revoke_permission",
+  "source.register",
+  "source.observe",
+  "artifact.record",
+  "artifact.import",
   "surface.upsert_intent",
   "surface.change_lifecycle",
   "surface.set_override",

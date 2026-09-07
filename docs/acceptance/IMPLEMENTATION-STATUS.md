@@ -996,3 +996,106 @@ without anyone noticing" — is covered instead by the accessibility-tree
 assertions in the two keyboard E2E suites, which are stable across machines and
 fail for reasons that are readable. If a real visual regression appears that
 these miss, the answer is a Percy-style hosted diff, not a PNG in the repository.
+
+### 2026-09-06 Phase 8 full authority, sources, artifacts, and approval UI
+
+Implemented: the AuthorityService's three acts (`apps/core/src/authority/service.ts`),
+the typed-confirmation rule and constraint-aware evaluator
+(`packages/domain/src/authority/{confirmation,evaluate}.ts`), source truth with
+normalized freshness (`apps/core/src/sources/service.ts`), artifacts with lineage
+(`apps/core/src/artifacts/service.ts`), the Approval, Artifact, and Source State
+Surfaces (`packages/ui/src/surfaces/consequence.tsx`), the Settings permissions
+screen and the Artifacts destination (`apps/web/src/pages/{Settings,Artifacts}.tsx`),
+and node job dispatch routed through the evaluator (`apps/core/src/nodes/jobs.ts`).
+
+Migration `0005_authority.sql` adds the columns the boundary needs rather than new
+tables: `approvals` gains `confirmation_phrase`, `confirmed_at`, `confirmed_by`,
+`executed_at`, and the execution evidence; `standing_permissions` gains
+`granted_by` and `revoked_reason`; `sources` gains `unavailable_semantics`;
+`artifacts` gains `derived_from_artifact_id` with a unique partial index that
+makes a second import of one reference impossible at the storage layer.
+
+| Gate clause                                                           | State                    | Evidence                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bypass from the UI fails                                              | implemented              | `headless.integration.test.ts` — "refuses to execute a decision nobody confirmed" (403, `not_confirmed`, and `executedAt` still absent afterwards). The Approval Surface has no Execute control at all until `confirmedAt` is set, so the UI cannot render the bypass either                                     |
+| Bypass from the model fails                                           | implemented              | the same path: a model can only reach `authority.request`, and every consequence class returns `require_confirmation` or `require_typed_confirmation`. `evaluate.test.ts` — "allows only read_inspect without a scope or a permission" runs over the full operation-class enum                                   |
+| Bypass from an adapter fails                                          | implemented              | `AUTHORITY_MANAGEMENT_CAPABILITIES` — "THE GATE: never lets a permission grant the power to grant permissions". A standing permission cannot cover `authority.grant_permission`, so no adapter can widen its own scope                                                                                           |
+| Bypass from a replay fails                                            | implemented              | "answers a retry of the same submit with the same result" versus "THE GATE: a duplicate submit cannot repeat an external consequence". A replayed key returns the original result; a new key on an executed approval is refused                                                                                  |
+| Bypass from a node fails                                              | implemented              | `enqueueJob` evaluates authority before the row exists, using `CAPABILITY_OPERATION_CLASS` rather than anything the caller sends, so a job cannot understate its own operation class. "THE GATE: a node cannot be a way around authority" covers both the allowed and the refused path                           |
+| Duplicate submit cannot repeat an external consequence                | implemented              | `executed_at` is written by an `UPDATE ... WHERE executed_at IS NULL` inside the transaction that read it. The test asserts the second submit is refused **and** that the first submit's evidence is what survived                                                                                               |
+| Status cannot claim published/complete until source/evidence verifies | implemented              | three tests: an external reference stays external until an import produces a host and a checksum; a source says `unknown` before anyone looked and never confuses that with `unavailable`; `executedAt` is the only thing the Approval Surface renders "executed" from, never the fact that a button was pressed |
+| Every operation class and typed confirmation rule                     | implemented              | `confirmation.test.ts` and `evaluate.test.ts` — "gives every typed class a phrase and every other class none" iterates the whole enum. The phrase carries the amount for a spend and the exact target for a destructive operation                                                                                |
+| Narrow standing permissions, expiry, visibility, revocation           | implemented              | "THE GATE: a standing permission is narrow and target-bound" — five cases covering another target, another type, another host, a host-bound grant against a host-less request, and authority management. Settings lists live and revoked grants with reasons                                                     |
+| Prepare-versus-commit boundaries and idempotency                      | implemented              | ADR-0018. Three commands, one row, and a test for each edge                                                                                                                                                                                                                                                      |
+| External references versus local artifacts and lineage                | implemented              | "keeps an external reference external until an import produces bytes" plus a unique index proving the second import cannot race the first                                                                                                                                                                        |
+| Source freshness and remembered/current conflict display              | implemented              | "THE GATE: shows a remembered/current conflict rather than replacing one with the other", and "does not call two identical observations a conflict". `status` is computed on read against the clock, never trusted from the row                                                                                  |
+| Production deployment/activation                                      | deliberately not started | requires later explicit approval                                                                                                                                                                                                                                                                                 |
+
+Design decisions worth recording:
+
+- **`unavailableSemantics` is a property of the source, not a guess by the
+  reader.** A payment provider that cannot be reached must not read as "no
+  charges", but a feed that cannot be reached may reasonably read as "nothing
+  new". Section 12.1 asks a source to declare its unavailable semantics; without
+  the column, every reader decided for itself, and the safe reading is the one
+  nobody picks under time pressure.
+- **An import writes a second row.** Changing the external reference's kind in
+  place would be a shorter diff and would destroy exactly what Section 12.2 asks
+  for: after the import, Noctis can still say which remote thing the local file
+  came from.
+- **Section 5.3's two missing registry fields now exist because both halves do.**
+  `requires` names a capability and `resolveSurface` refuses to render a Surface
+  whose capability the caller does not hold; `sourceRefresh` marks the Surfaces
+  the workbench should offer a refresh action to. Phase 6 left both out on the
+  grounds that a `requires` array nothing checked would be false comfort, which
+  was right then and is no longer true.
+- **The approval Surface is never `compact`.** A consequence boundary too small
+  to show its target is one that gets approved without being read.
+
+| Command                    | Result                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| `npm run format:check`     | exit 0; all matched files use Prettier code style                                 |
+| `npm run lint`             | exit 0; 0 errors                                                                  |
+| `npm run typecheck`        | exit 0                                                                            |
+| `npm run test:unit`        | exit 0; 56 files, 1221 tests passed (1098 before this batch)                      |
+| `npm run test:integration` | exit 0; 5 files, 150 tests passed (128 before)                                    |
+| `npm run test:e2e`         | exit 0; 4 tests across 3 suites, run here against Edge (see the Phase 6 E2E note) |
+| `npm run test:boundary`    | exit 0; 6 tests passed                                                            |
+| `npm run test:desktop`     | exit 0; 6 tests passed                                                            |
+| `npm run test:security`    | exit 0; no dedicated security tests exist yet                                     |
+| `npm run test:performance` | exit 0; no dedicated performance tests exist yet                                  |
+| `npm run build`            | exit 0                                                                            |
+| `npm run build:web`        | exit 0; 801 kB bundle, 214 kB gzipped — `three` is 500 kB of that                 |
+| `npm run rust:fmt:check`   | exit 0                                                                            |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`                                             |
+| `npm run rust:test`        | exit 0; 37/37 library tests passed                                                |
+
+Three existing assertions moved with the schema rather than being worked around:
+the reported schema version 4 to 5, and the `ArtifactRecord`, `StandingPermission`,
+and `SourceRecord` contract fixtures, each of which gained the field its schema now
+requires. The `StandingPermission` fixture's `constraints: {}` is the clearest of
+the three — an empty constraint object used to be a valid permission, and is now a
+permission that matches nothing.
+
+**The bundle grew by 500 kB.** `three` is the cost of the port, and it is paid on
+a desktop shell loading from disk rather than a website loading over a network.
+Worth revisiting only if the Tauri cold start becomes measurably slower; there is
+no evidence it has.
+
+Deliberately not built this batch, carried forward rather than hidden:
+
+- **`provider_decisions`** and the provider routing that would write to it —
+  Section 8, not Phase 8's task list. ADR-0019.
+- **Real execution evidence.** The boundary is built and proven; the only caller
+  today is the workbench, which records `{ confirmedInWorkbench: true }`. The
+  adapters that reach a real external system arrive with Phases 10 and 11, and
+  the Artifacts page does not pretend otherwise.
+- **A grant form in Settings.** Revocation is the half that has to exist the
+  moment permissions do, and it does. Granting standing authority through a form
+  before any adapter needs one would be building the riskiest control first.
+- **Visual snapshots**, for the reason recorded in the Phase 7 acceptance entry
+  above.
+- **Still deferred from earlier phases:** ten of the fifteen Surface primitives
+  (three of them landed here), the Phase 5 intelligence renderer, and four of the
+  six remaining rail destinations — Artifacts and Settings are built now, leaving
+  Chat, Missions, Nodes, and Automations.

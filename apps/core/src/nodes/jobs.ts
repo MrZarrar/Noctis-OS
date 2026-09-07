@@ -7,11 +7,12 @@ import type {
 } from "@noctis/contracts";
 import { CAPABILITY_CONTRACTS, CAPABILITY_OPERATION_CLASS, NodeJobSchema } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
-import { conflict, ok, transitionNodeJobStatus } from "@noctis/domain";
+import { conflict, evaluateAuthority, ok, transitionNodeJobStatus } from "@noctis/domain";
 
 import type { NoctisDatabase } from "../db/connection.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
+import { loadStandingPermissionsFor } from "../authority/service.js";
 import { getMission } from "../missions/service.js";
 
 /** Short enough that a lost node frees its work quickly; long enough for a real read. */
@@ -137,6 +138,38 @@ export function enqueueJob(
         if (mission === undefined) {
           return conflict({ kind: "not_found", entity: "mission", id: command.missionId });
         }
+      }
+
+      // Section 9: "Test action dispatcher and node execution through
+      // AuthorityService only." A queued job is work a node will do on a real
+      // machine, so the policy decides here, before the row exists — not at
+      // lease time, where a refusal would leave a job nobody may ever run, and
+      // not on the node, which is the thing being authorised.
+      //
+      // The operation class comes from CAPABILITY_OPERATION_CLASS rather than
+      // from the command, so a caller cannot understate what it is asking for.
+      const operationClass = CAPABILITY_OPERATION_CLASS[command.capability];
+      const decision = evaluateAuthority({
+        operationClass,
+        capability: command.capability,
+        actorId: context.actorId,
+        target: { type: "capability", id: command.capability },
+        objectiveIsActive: false,
+        standingPermissions: loadStandingPermissionsFor(tx, context.actorId),
+        now: kernel.clock.now(),
+      });
+
+      if (decision.outcome !== "allow") {
+        // Enqueuing is preparation, and preparation stops at the consequence
+        // boundary. Anything needing a human answer goes through
+        // authority.request and authority.confirm first, and arrives here as a
+        // capability the policy already allows.
+        return conflict({
+          kind: "authority_refused",
+          requestId: id,
+          outcome: decision.outcome,
+          reasonCodes: decision.reasonCodes,
+        });
       }
 
       tx.prepare(

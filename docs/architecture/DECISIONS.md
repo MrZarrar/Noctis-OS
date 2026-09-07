@@ -208,3 +208,69 @@ stay off until asked for by name.
 **No contract changed.** The transports speak the Phase 1 client envelope and the Phase 2 REST
 surface as they already are. `core:frame`, `core:status`, and `core:deep-link` are Tauri event names
 inside one process, not additions to the event registry in `@noctis/contracts`.
+
+## ADR-0018: The consequence boundary is three commands, and `executed_at` is the fact
+
+**Decision:** `authority.request`, `authority.confirm`, and `authority.execute` are three separate
+commands against one `approvals` row. A request asks the policy and records its answer; a
+confirmation is a human answering at the boundary; an execution records that the consequence
+happened. None of them may be folded into another.
+
+**Why three and not one or two.** Section 9.1 says preparation "must stop before the external commit
+boundary". A request that also confirmed would let a caller answer its own question. A confirmation
+that also executed would make preparing and committing the same act, which is the boundary the
+section exists to draw. The split is also what makes the audit answer a question a merged row could
+not: _was this approved before it ran, and by whom?_
+
+**`executed_at` is the single fact that prevents a repeat.** It is written by an
+`UPDATE ... WHERE id = ? AND executed_at IS NULL` inside the transaction that read it, so two
+concurrent submits cannot both pass. The idempotency key already makes a _retry_ of one submit safe;
+this makes a _second_ submit refuse, which a key cannot do because a second click carries a new key.
+`apps/core/src/api/headless.integration.test.ts` proves both halves separately — same key returns the
+original result, different key is refused with `already_executed`.
+
+**The typed confirmation phrase is derived, never proposed.**
+`packages/domain/src/authority/confirmation.ts` builds it from the operation class, the target, and
+the amount, and the core stores it at decision time. A client renders it and echoes it back. A phrase
+a caller could choose is a phrase a caller could make easy to type by accident. Matching is
+case-sensitive after trimming: a phrase that matches case-insensitively is one that can be typed
+without being read, and reading it is the entire mechanism.
+
+**Money rounds up through millionths.** `1.005 * 100` is `100.49999999999999` in IEEE-754, so naive
+rounding renders a spend confirmation a penny short. The amount is normalised to millionths and then
+rounded up, because a confirmation may state more than will be spent and must never state less. The
+real fix is integer pence in the contract; this is the boundary that made the float load-bearing and
+it is marked `ponytail:` at the site.
+
+## ADR-0019: Phase 8 scope boundary
+
+**Decision:** Phase 8 delivers every operation class and its typed-confirmation rule, narrow
+target-bound standing permissions with expiry/visibility/revocation, the prepare-versus-commit
+boundary with idempotency, external references versus local artifacts with lineage, normalized source
+freshness with remembered/current conflict display, the Approval, Artifact, and Source State
+Surfaces, the Settings permissions screen, and node dispatch routed through the authority evaluator.
+
+Four things named nearby are deliberately not built:
+
+- **`provider_decisions`.** Section 4.1 lists the table and Section 8 owns provider and model
+  routing. Phase 8's task list does not include routing, and a table with no writer is scaffolding.
+- **Real execution evidence.** `authority.execute` records whatever evidence its caller supplies, and
+  the only caller today is the workbench, which supplies `{ confirmedInWorkbench: true }`. The
+  adapters that reach a real external system and return its answer arrive with Phases 10 and 11. The
+  boundary is built and proven; what crosses it is still a stub, and the Artifacts page says so.
+- **Model-proposed authority requests.** The contracts admit one — `authority.request` takes an
+  `actorId` — but nothing emits one yet, because there is no provider runtime. The evaluator does not
+  care who asked, which is the property that makes this additive.
+- **A UI for granting a permission.** Settings lists and revokes; `authority.grant_permission` is a
+  command with no button. Granting standing authority through a form before any adapter needs one
+  would be building the riskiest control first. Revocation is the half that must exist immediately,
+  and it does.
+
+**Contract vocabulary added:** eight commands (`authority.confirm`, `authority.execute`,
+`authority.grant_permission`, `authority.revoke_permission`, `source.register`, `source.observe`,
+`artifact.record`, `artifact.import`); five event names (`authority.confirmed.v1`,
+`authority.executed.v1`, `permission.granted.v1`, `source.registered.v1`, `artifact.imported.v1`);
+two stream types (`source`, `artifact`); and one `DomainConflict` kind, `authority_refused`, which
+maps to HTTP 403. It is its own kind rather than a `forbidden_transition` because a state-machine
+refusal is about what a record is and this is about what an actor may do to it, and a client cannot
+retry the same way after each.

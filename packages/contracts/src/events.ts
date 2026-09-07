@@ -31,6 +31,16 @@ export const EVENT_NAMES = [
   "identity.activated.v1",
   "identity.message_added.v1",
   "authority.decision_recorded.v1",
+  /**
+   * Phase 8 appended these three. Section 4.3 names the decision and the
+   * revocation; the consequence boundary needs the rest, because a decision, a
+   * human confirming it, and the consequence actually happening are three
+   * different facts. An audit that could not separate them could not answer
+   * "was this approved before it ran".
+   */
+  "authority.confirmed.v1",
+  "authority.executed.v1",
+  "permission.granted.v1",
   "permission.revoked.v1",
   "node.paired.v1",
   "node.connected.v1",
@@ -40,8 +50,11 @@ export const EVENT_NAMES = [
   "node.job_leased.v1",
   "node.job_status_changed.v1",
   "node.job_result.v1",
+  "source.registered.v1",
   "source.observed.v1",
   "artifact.recorded.v1",
+  /** An import is not a second recording: it is a new local row with lineage. */
+  "artifact.imported.v1",
   "vault.indexed.v1",
   "vault.recall_recorded.v1",
   "noir.hypothesis_added.v1",
@@ -66,6 +79,13 @@ export const StreamTypeSchema = z.enum([
   "noir",
   "authority",
   "vault",
+  /**
+   * Phase 8. A source and an artifact each have a life of their own — an
+   * artifact outlives the Mission that produced it, and a source is observed
+   * by many — so neither belongs under an Objective's stream.
+   */
+  "source",
+  "artifact",
 ]);
 
 export const ActorTypeSchema = z.enum(["user", "identity", "system", "node", "adapter"]);

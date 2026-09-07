@@ -8,6 +8,7 @@ import { BASELINE_POLICY_ID, evaluateAuthority } from "./evaluate.js";
 const NOW = Date.parse("2026-09-01T12:00:00.000Z");
 const ACTOR = "vesper";
 const CAPABILITY = "fs.read";
+const TARGET = { type: "repository", id: "noctis-os" } as const;
 
 const ALL_CLASSES: readonly OperationClass[] = OperationClassSchema.options;
 
@@ -28,6 +29,7 @@ function input(overrides: Partial<AuthorityEvaluationInput> = {}): AuthorityEval
     operationClass: "read_inspect",
     capability: CAPABILITY,
     actorId: ACTOR,
+    target: TARGET,
     objectiveIsActive: false,
     standingPermissions: [],
     now: NOW,
@@ -41,8 +43,9 @@ function permission(overrides: Partial<StandingPermission> = {}): StandingPermis
     actorId: ACTOR,
     capability: CAPABILITY,
     operationClass: "external_write",
-    constraints: {},
+    constraints: { targetType: TARGET.type, targetIds: [TARGET.id] },
     grantedAt: "2026-08-01T00:00:00.000Z",
+    grantedBy: "local",
     ...overrides,
   };
 }
@@ -151,5 +154,139 @@ describe("evaluateAuthority", () => {
     );
 
     expect(decision.outcome).toBe("allow");
+  });
+});
+
+describe("THE GATE: a standing permission is narrow and target-bound", () => {
+  it("does not cover a target it does not name", () => {
+    const decision = evaluateAuthority(
+      input({
+        operationClass: "external_write",
+        target: { type: "repository", id: "some-other-repo" },
+        standingPermissions: [permission()],
+      }),
+    );
+
+    expect(decision.outcome).toBe("require_confirmation");
+    expect(decision.permissionId).toBeUndefined();
+  });
+
+  it("does not cover another type of target with the same id", () => {
+    const decision = evaluateAuthority(
+      input({
+        operationClass: "external_write",
+        target: { type: "vinted_listing", id: TARGET.id },
+        standingPermissions: [permission()],
+      }),
+    );
+
+    expect(decision.outcome).toBe("require_confirmation");
+  });
+
+  it("does not cover a request on a host it was not granted for", () => {
+    const hostBound = permission({
+      constraints: { targetType: TARGET.type, targetIds: [TARGET.id], hostIds: ["desk"] },
+    });
+
+    expect(
+      evaluateAuthority(
+        input({
+          operationClass: "external_write",
+          target: { ...TARGET, hostId: "laptop" },
+          standingPermissions: [hostBound],
+        }),
+      ).outcome,
+    ).toBe("require_confirmation");
+
+    expect(
+      evaluateAuthority(
+        input({
+          operationClass: "external_write",
+          target: { ...TARGET, hostId: "desk" },
+          standingPermissions: [hostBound],
+        }),
+      ).outcome,
+    ).toBe("allow");
+  });
+
+  it("does not treat a host-bound permission as covering a host-less request", () => {
+    // The permission is narrower than the request, so it cannot cover it. The
+    // opposite reading — "no host named, so any host" — is how a laptop grant
+    // ends up authorising the production machine.
+    const decision = evaluateAuthority(
+      input({
+        operationClass: "external_write",
+        standingPermissions: [
+          permission({
+            constraints: { targetType: TARGET.type, targetIds: [TARGET.id], hostIds: ["desk"] },
+          }),
+        ],
+      }),
+    );
+
+    expect(decision.outcome).toBe("require_confirmation");
+  });
+
+  it("THE GATE: never lets a permission grant the power to grant permissions", () => {
+    for (const capability of ["authority.grant_permission", "authority.revoke_permission"]) {
+      const decision = evaluateAuthority(
+        input({
+          operationClass: "external_write",
+          capability,
+          standingPermissions: [permission({ capability })],
+        }),
+      );
+
+      expect(decision.outcome).toBe("require_confirmation");
+      expect(decision.permissionId).toBeUndefined();
+      expect(decision.reasonCodes).toContain("authority_management_never_delegated");
+    }
+  });
+});
+
+describe("THE GATE: typed confirmation names what is about to happen", () => {
+  it("gives spend a phrase carrying the amount and the target", () => {
+    const decision = evaluateAuthority(
+      input({
+        operationClass: "spend",
+        target: { type: "provider", id: "suno" },
+        estimatedCostGbp: 12.5,
+      }),
+    );
+
+    expect(decision.outcome).toBe("require_typed_confirmation");
+    expect(decision.confirmationPhrase).toBe("SPEND GBP 12.50 ON provider:suno");
+  });
+
+  it("names the exact target of a destructive operation", () => {
+    expect(
+      evaluateAuthority(
+        input({ operationClass: "destructive", target: { type: "database", id: "core.db" } }),
+      ).confirmationPhrase,
+    ).toBe("DESTROY database:core.db");
+  });
+
+  it("gives every typed class a phrase and every other class none", () => {
+    for (const operationClass of ALL_CLASSES) {
+      const decision = evaluateAuthority(input({ operationClass }));
+
+      if (NEVER_DELEGABLE.includes(operationClass)) {
+        expect(decision.confirmationPhrase, operationClass).toBeDefined();
+      } else {
+        expect(decision.confirmationPhrase, operationClass).toBeUndefined();
+      }
+    }
+  });
+
+  it("is deterministic, so the stored phrase and the checked phrase are one string", () => {
+    const twice = [1, 2].map(
+      () =>
+        evaluateAuthority(input({ operationClass: "spend", estimatedCostGbp: 0.1 }))
+          .confirmationPhrase,
+    );
+
+    expect(twice[0]).toBe(twice[1]);
+    // Pence, not float formatting: 0.1 must never render as 0.10000000000000001.
+    expect(twice[0]).toContain("GBP 0.10");
   });
 });

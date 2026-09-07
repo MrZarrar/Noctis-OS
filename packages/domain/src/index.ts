@@ -1,4 +1,5 @@
 export * from "./authority/evaluate.js";
+export * from "./authority/confirmation.js";
 export * from "./clock.js";
 export * from "./ids.js";
 export * from "./result.js";

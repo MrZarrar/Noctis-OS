@@ -13,7 +13,7 @@ import { defineConfig } from "vite";
  * 404 would have been.
  */
 const CORE_PATHS =
-  /^\/(commands|objectives|identities|missions|nodes|jobs|events|vault|ready|diagnostics|health|ws)(\/|\?|$)/;
+  /^\/(commands|objectives|identities|missions|nodes|jobs|events|vault|approvals|permissions|sources|artifacts|ready|diagnostics|health|ws)(\/|\?|$)/;
 
 /**
  * The dev and preview servers proxy the core so the page and the core share an

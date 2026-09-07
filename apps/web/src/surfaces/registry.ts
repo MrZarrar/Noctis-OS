@@ -10,10 +10,11 @@ import { z } from "zod";
  * table, because `resolveSurface` is the only way the workbench turns a kind
  * into something renderable.
  *
- * Two fields Section 5.3 lists are deliberately absent until the phase that can
- * enforce them: capability/authority requirements (Phase 8 owns the authority
- * model — a `requires` array nothing checks would be false comfort) and the
- * optional source refresh action (Phase 7 owns sources). Both are additive.
+ * `requires` and `sourceRefresh` are the two fields Section 5.3 lists that
+ * earlier phases left out because nothing could enforce them. Phase 8 built
+ * both halves, so they are here now: `requires` names the capability a Surface
+ * needs, and `resolveSurface` refuses to render one whose capability the caller
+ * does not hold — a `requires` array nothing checked would be worse than none.
  */
 
 const MessageSchema = z
@@ -57,6 +58,51 @@ const AttentionPayloadSchema = z
   .object({ headline: z.string().min(1), detail: z.string() })
   .strict();
 
+const ApprovalPayloadSchema = z
+  .object({
+    id: z.string().min(1),
+    consequenceSummary: z.string().min(1),
+    operationClass: z.string().min(1),
+    capability: z.string().min(1),
+    targetType: z.string().min(1),
+    targetId: z.string().min(1),
+    reversibility: z.enum(["reversible", "partially_reversible", "irreversible"]),
+    outcome: z.enum(["allow", "deny", "require_confirmation", "require_typed_confirmation"]),
+    reasonCodes: z.array(z.string().min(1)),
+    estimatedCostGbp: z.number().nonnegative().optional(),
+    confirmationPhrase: z.string().min(1).optional(),
+    confirmedAt: z.string().min(1).optional(),
+    executedAt: z.string().min(1).optional(),
+  })
+  .strict();
+
+const ArtifactPayloadSchema = z
+  .object({
+    kind: z.enum(["local_artifact", "external_reference"]),
+    title: z.string().min(1),
+    uri: z.string().min(1),
+    mediaType: z.string().min(1).optional(),
+    hostId: z.string().min(1).optional(),
+    checksum: z.string().min(1).optional(),
+    derivedFromArtifactId: z.string().min(1).optional(),
+    importedAs: z.string().min(1).optional(),
+  })
+  .strict();
+
+const SourceStatePayloadSchema = z
+  .object({
+    /** Carried so the refresh action has something to name. */
+    sourceId: z.string().min(1),
+    sourceType: z.string().min(1),
+    externalId: z.string().min(1),
+    status: z.enum(["current", "stale", "unavailable", "unknown"]),
+    ageSeconds: z.number().nonnegative().optional(),
+    conflicted: z.boolean(),
+    observed: z.string().optional(),
+    remembered: z.string().optional(),
+  })
+  .strict();
+
 /** Section 7's focused recall, as a Surface payload. */
 const VaultRecallPayloadSchema = z
   .object({
@@ -85,6 +131,14 @@ export interface SurfaceRegistryEntry {
   sizes: readonly SurfaceSize[];
   /** The accessible name for the Surface's frame, derived from its payload. */
   title: string;
+  /**
+   * The capability a caller must hold to see this Surface at all. Section 5.3.
+   * Absent means the Surface carries nothing the authority model gates —
+   * which is a claim about the payload, not a shortcut.
+   */
+  requires?: string;
+  /** Whether the workbench should offer this Surface a "check the source now" action. */
+  sourceRefresh?: boolean;
 }
 
 const ALL_SIZES: readonly SurfaceSize[] = ["compact", "standard", "wide", "stage"];
@@ -126,6 +180,35 @@ export const REGISTRY = {
     sizes: ["compact", "standard", "wide", "stage"],
     title: "From the Vault",
   },
+  approval: {
+    payloadVersion: 1,
+    schema: ApprovalPayloadSchema,
+    // Never compact. This is the screen where an irreversible thing is agreed
+    // to, and a Surface too small to show the target is a Surface that gets
+    // approved without being read.
+    sizes: ["standard", "wide", "stage"],
+    title: "Needs your approval",
+    requires: "authority.approve",
+  },
+  artifact: {
+    payloadVersion: 1,
+    schema: ArtifactPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Artifact",
+  },
+  source_state: {
+    payloadVersion: 1,
+    schema: SourceStatePayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Source",
+    /**
+     * Section 5.3's "optional source refresh action". It is a handoff the
+     * workbench provides, not something the Surface may do for itself: a
+     * refresh reaches an external system, and reaching one is authority's to
+     * decide, not a renderer's.
+     */
+    sourceRefresh: true,
+  },
 } as const satisfies Record<string, SurfaceRegistryEntry>;
 
 export type Resolved =
@@ -144,12 +227,24 @@ export function resolveSurface(
   payloadVersion: number,
   payload: unknown,
   size: SurfaceSize,
+  capabilities: readonly string[] = [],
 ): Resolved {
   if (!Object.hasOwn(REGISTRY, kind)) {
     return { status: "fallback", kind, reason: "no renderer is registered for this kind" };
   }
 
-  const entry = REGISTRY[kind as SurfaceKind];
+  const entry: SurfaceRegistryEntry = REGISTRY[kind as SurfaceKind];
+
+  if (entry.requires !== undefined && !capabilities.includes(entry.requires)) {
+    // A fallback rather than nothing: a Surface the caller may not see is a
+    // fact about the caller, and hiding it silently makes a missing grant look
+    // like a missing feature.
+    return {
+      status: "fallback",
+      kind,
+      reason: `this Surface requires the ${entry.requires} capability`,
+    };
+  }
 
   if (payloadVersion !== entry.payloadVersion) {
     return {
@@ -159,7 +254,7 @@ export function resolveSurface(
     };
   }
 
-  if (!(entry.sizes as readonly SurfaceSize[]).includes(size)) {
+  if (!entry.sizes.includes(size)) {
     return { status: "fallback", kind, reason: `this Surface does not support the ${size} size` };
   }
 

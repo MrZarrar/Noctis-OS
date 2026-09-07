@@ -115,6 +115,10 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
       kind: "local_artifact",
       title: "Report",
       uri: "file:///tmp/report.txt",
+      // Phase 8: a local artifact must name where the bytes are and what they
+      // hash to, or "local" is a word with nothing behind it.
+      hostId: "desk",
+      checksum: "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
       provenanceVersion: 1,
       provenance: {},
       createdAt: "2026-09-01T12:00:00.000Z",
@@ -405,8 +409,9 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
       actorId: "vesper",
       capability: "fs.read",
       operationClass: "read_inspect",
-      constraints: {},
+      constraints: { targetType: "repository", targetIds: ["noctis-os"] },
       grantedAt: "2026-09-01T12:00:00.000Z",
+      grantedBy: "local",
     },
   ],
   [
@@ -442,6 +447,7 @@ const VALID_FIXTURES: ReadonlyArray<readonly [string, ZodType, Record<string, un
       sourceType: "rss",
       externalId: "feed-1",
       freshnessSeconds: 300,
+      unavailableSemantics: "unknown",
       createdAt: "2026-09-01T12:00:00.000Z",
       updatedAt: "2026-09-01T12:00:00.000Z",
     },
