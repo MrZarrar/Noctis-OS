@@ -17,8 +17,14 @@ pub mod identity;
 pub mod monitor;
 pub mod region;
 
+/// The Win32 layer. Absent on other platforms rather than stubbed, so that a
+/// caller which forgets to handle "this machine cannot place windows" fails to
+/// compile there instead of quietly doing nothing at runtime.
+#[cfg(windows)]
+pub mod win32;
+
 pub use geometry::{fit, home_area, overlap, Placement, WorkArea};
-pub use guard::{admit, is_protected, Refusal};
+pub use guard::{admit, is_protected, select_window, Refusal, Selection};
 pub use identity::{evaluate, ApplicationTarget, MatchEvidence, WindowIdentity};
 pub use monitor::{select, Monitor, MonitorRole};
 pub use region::{resolve, PlacementRequest, RegionName, Resolution, ResolutionNote};

@@ -1202,3 +1202,93 @@ pass. Earlier batches did not hit it because their build scripts were already
 built and already trusted; adding a dependency changes the fingerprint and forces
 new ones. CI is the authority here, exactly as it is for the pinned Chromium in
 the Phase 6 E2E note.
+
+### 2026-09-07 Phase 9 (part 2) the Win32 layer, and what running it found
+
+Adds `crates/noctis-windows/src/win32.rs` — display and window enumeration,
+`WINDOWPLACEMENT` capture, `SetWindowPos` with verification, and restore — plus
+`examples/qualify.rs`, the read-only instrument the qualification runbook uses.
+Still nothing routed through authority, so no window moves in the product yet.
+
+**The write path is proven against a real window.** `cargo test -p noctis-windows
+-- --ignored` spawns Character Map, places it, and puts it back:
+
+```
+before:  x 15   y 65    491x437
+applied: x 300  y 200   900x700   in 29ms
+after:   x 15   y 65    491x437
+```
+
+Character Map is the subject because it is classic Win32, opens one window, and
+does not hand off to a running instance the way the packaged applications do. The
+test is `#[ignore]` by default: CI has no desk to qualify, and a suite that puts
+a window in front of a developer is a suite people stop running.
+
+Three things running the code found that reading the plan did not:
+
+- **The process must be per-monitor DPI aware or every coordinate is a lie.**
+  Windows _virtualizes_ `GetMonitorInfo` and `GetWindowRect` for a
+  system-aware process, returning them scaled into the primary display's DPI
+  space. Tauri's own manifest declares no awareness at all; `tao` calls
+  `SetProcessDpiAwarenessContext` when it builds the event loop, with fallbacks
+  through per-monitor v1 to system-aware. So `is_per_monitor_dpi_aware` checks
+  rather than assumes, and the probe prints a warning when it is false — which it
+  correctly does when run as a plain console application.
+- **`SetWindowPos` positions the invisible resize border, not the visible frame.**
+  Windows 10 and 11 put roughly seven pixels of invisible border outside the
+  frame you can see. Placing two windows into regions that share a boundary
+  therefore overlaps them by fourteen pixels and puts neither visible edge where
+  the region said. `frame_inset` measures it from
+  `DWMWA_EXTENDED_FRAME_BOUNDS` and `inflate` corrects for it. This is what makes
+  the applied rectangle above land on 300,200 exactly rather than near it.
+- **Identity does not answer "which window".** The probe found _two_ VS Code
+  windows on the first machine it ran on — two workspaces open, both matching the
+  target perfectly. `EnumWindows` promises no order, so taking the first match
+  would make which editor gets moved depend on the order Windows returned them.
+  `guard::select_window` therefore returns `Ambiguous` rather than guessing, and
+  `Selection::narrow_by_title` narrows it with a hint from the Objective. That is
+  not the title rule Section 11.2 forbids: authorization has already happened, and
+  the hint only chooses among windows the grant list already admitted. The test
+  `does_not_let_a_hint_reach_a_window_the_grant_list_refused` is the one that
+  holds the distinction.
+
+The probe's own output on the qualification machine, which is also the fixture the
+region tests are written against:
+
+```
+displays
+  \\.\DISPLAY1     work      0,0       2560x1440  scale 100%  primary
+  \\.\DISPLAY2     work   2560,252     1920x1080  scale 100%
+
+focus-mode layout, resolved (nothing is moved)
+  vscode     \\.\DISPLAY1          0,0       1706x1440  []
+  emulator   \\.\DISPLAY1       1706,0        854x1440  []
+  noctis     \\.\DISPLAY2       2560,252     1920x1080  []
+```
+
+1706 + 854 is 2560 exactly: the seam-free tiling holds on the real display, not
+only in the fixture. The probe also found the ChatGPT desktop application
+reporting window class `Chrome_WidgetWin_1` — the same class as VS Code — and
+correctly refusing to match, which is a live example of why the class corroborates
+the executable rather than standing in for it.
+
+| Command                                     | Result                                                  |
+| ------------------------------------------- | ------------------------------------------------------- |
+| `npm run format:check`                      | exit 0                                                  |
+| `npm run lint`                              | exit 0                                                  |
+| `npm run typecheck`                         | exit 0                                                  |
+| `npm run test:unit`                         | exit 0; 1277 tests                                      |
+| `npm run test:boundary`                     | exit 0                                                  |
+| `npm run test:desktop`                      | exit 0                                                  |
+| `npm run rust:fmt:check`                    | exit 0                                                  |
+| `npm run rust:clippy`                       | exit 0; 0 warnings with `-D warnings`                   |
+| `npm run rust:test`                         | exit 0; 106 tests — 37 in the shell, 69 in the crate    |
+| `cargo test -p noctis-windows -- --ignored` | exit 0; 1 test, the real-window place and restore above |
+| `npm run build:desktop`                     | still blocked by Smart App Control, see the part 1 note |
+
+Carried forward, and the reason Phase 9's gate stays open: the Tauri command that
+routes placement through `AuthorityService`, launch correlation for a process
+Noctis starts, `NativeApplicationSurface`, the node native-window adapter, and the
+qualification runbook document. `win32::apply` exists and has no authority-checked
+caller, which is the correct order — the boundary is not something to add to a
+capability that already works without it.

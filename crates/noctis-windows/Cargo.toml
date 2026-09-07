@@ -9,10 +9,19 @@ publish = false
 [dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
 
-# No `windows` dependency yet, deliberately. Everything in this crate today is
-# the pure decision layer, and a Win32 dependency nothing calls is weight in the
-# graph that no test can justify. It arrives with the FFI module, pinned to the
-# =0.61.3 the desktop shell already resolves so the graph gains no second copy.
+# Pinned to the version Tauri already resolves, so Win32 access adds no new crate
+# to the graph — a different major would pull a parallel windows-targets and
+# windows-link tree and a second set of import libraries.
+[target.'cfg(windows)'.dependencies.windows]
+version = "=0.61.3"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_WindowsAndMessaging",
+]
 
 [dev-dependencies]
 serde_json = "=1.0.151"
