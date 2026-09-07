@@ -13,4 +13,5 @@ export * from "./provider.js";
 export * from "./source.js";
 export * from "./surface.js";
 export * from "./vault.js";
+export * from "./window.js";
 export * from "./ws.js";

@@ -856,6 +856,13 @@ CI evidence for this batch: GitHub Actions `verify` run 34045341594 on commit
 `test:e2e` on the pinned browser, rust green in 18m25s covering fmt, clippy, 37
 tests, and the unbundled Tauri build against the Phase 6/7 web assets.
 
+That run predates the sphere port. `80e4488` did not yet contain `5375e45`, which
+is the commit that actually closed the Phase 7 gate, and GitHub fires `verify`
+once at the pushed tip rather than once per commit, so `5375e45` never had a run
+of its own. The evidence covering the ported sphere is run **34152451907** on
+commit `a95fbe1` — both jobs green, rust in 18m27s. Cited here rather than only in
+the Phase 8 entry, because it is this entry's gate that the later run proves.
+
 Three existing assertions moved with the schema rather than being worked around:
 the migration table count 27 to 33, the reported schema version 3 to 4, and
 `events.test.ts`'s "rejects an unknown stream type", which had been using `"vault"` —
@@ -1099,3 +1106,99 @@ Deliberately not built this batch, carried forward rather than hidden:
   (three of them landed here), the Phase 5 intelligence renderer, and four of the
   six remaining rail destinations — Artifacts and Settings are built now, leaving
   Chat, Missions, Nodes, and Automations.
+
+CI evidence for this batch: GitHub Actions `verify` run **34152451907** on commit
+`a95fbe1` — `javascript` green in 2m41s including `playwright install chromium`
+and `test:e2e` on the pinned browser, `rust` green in 18m27s covering fmt, clippy,
+`rust:test`, and the unbundled Tauri build. This is also the first CI run whose
+tree contains `5375e45`, so it doubles as the Phase 7 sphere port's evidence.
+
+### 2026-09-07 Phase 9 (part 1) the decision layer for native window placement
+
+**Phase 9 is not complete.** This batch builds the half that decides _whether and
+where_ a window may be moved. Nothing here calls Win32 yet, and no window has
+been moved by Noctis. The qualification matrix the gate names cannot be run until
+the FFI layer exists, so the gate is open.
+
+The repository gained a Cargo workspace. `apps/desktop/src-tauri` was a standalone
+crate with its own lock; it and the new `crates/noctis-windows` are now members of
+a root `Cargo.toml`, and `Cargo.lock` moved to the root. The lock diff is nine
+lines — the new crate and nothing else — so no transitive dependency was
+re-resolved by the move. The four `rust:*` scripts became `--workspace` and
+`--all`, which is a smaller change than running each of them twice.
+
+Implemented in `crates/noctis-windows`:
+
+- `geometry.rs` — `WorkArea`, `Placement`, and `fit`, moved out of the desktop
+  shell's `placement.rs` rather than copied. Placing another application's window
+  into a named region and restoring Noctis's own window after a crash are the same
+  rectangle problem, and the shell now calls the crate for it.
+- `identity.rs` — `evaluate` over five signals, and `MatchEvidence::is_actionable`,
+  which is `(launch_correlated || executable_matched) && class_matched`. Title is
+  absent from that expression by construction.
+- `guard.rs` — `is_protected` and `admit`, checked in that order.
+- `monitor.rs` — display roles rather than indices, with a deterministic ordering.
+- `region.rs` — named regions resolved through work area, DPI, minimum size, and a
+  saved user override.
+
+Implemented in TypeScript: `packages/contracts/src/window.ts` (the wire contract
+and `WINDOW_CAPABILITY_OPERATION_CLASS`), and the window-placement authority
+routing tests in `packages/domain/src/authority/evaluate.test.ts`.
+
+| Gate clause                                            | State                    | Evidence                                                                                                                                                                                     |
+| ------------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System/security windows cannot be moved                | implemented              | `guard.rs` — "THE GATE: refuses a protected window even when a grant would have matched it". The test first asserts the over-broad grant genuinely matches, then that `admit` refuses anyway |
+| Ungranted windows cannot be moved                      | implemented              | `refuses_an_application_nobody_granted`, and `refuses_a_copy_of_the_executable_outside_the_pinned_path` for the narrower case                                                                |
+| Never act on a title match alone                       | implemented              | `identity.rs` — "THE GATE: refuses a window that only has the right title", plus the Electron-class and helper-window cases that cover the two ways a partial match looks convincing         |
+| User overrides are respected                           | implemented              | `region.rs` — "THE GATE: lets a user override beat the named region", and its companion proving a stale override is still fitted to a display that exists                                    |
+| DPI-aware named regions                                | implemented              | `scales_the_minimum_by_the_monitors_dpi`. Scale is applied to the minimum size only; work areas are already physical pixels                                                                  |
+| Monitor removal and negative coordinates               | implemented              | `places_on_the_primary_and_says_so_when_the_second_display_is_gone`, `fits_a_rectangle_onto_a_monitor_at_negative_coordinates`                                                               |
+| Placement routes through `AuthorityService`            | implemented              | `evaluate.test.ts` — "native window placement routes through the same authority", eight cases including the target-bound grant and the revocation                                            |
+| Semantic requests, not model-provided coordinates      | implemented              | `window.test.ts` — "THE GATE: refuses a request that tries to carry coordinates". `RegionName` is a closed enum on both sides of the wire                                                    |
+| `WINDOWPLACEMENT` preservation, `SetWindowPos`, launch | deliberately not started | the FFI layer. `WindowPlacementEvidenceSchema.previous` is the field it must fill                                                                                                            |
+| Windows qualification matrix                           | not started              | needs the FFI layer. Fixtures are pinned to this machine's detected arrangement — 2560x1440 primary at the origin, 1920x1080 at `(2560, 252)` — by decision, rather than to guessed hardware |
+| `NativeApplicationSurface`, node adapter, runbook      | not started              | next batch                                                                                                                                                                                   |
+
+Two decisions worth recording:
+
+- **Window placement is `local_reversible_edit`, not `external_write`.** It writes
+  to no external system, and the previous `WINDOWPLACEMENT` is captured before the
+  move. The consequence, which falls out of Section 9.1's existing scope clause
+  rather than out of anything new: **an active Objective allows placement without
+  a prompt**, and with no active Objective and no grant it asks. That is the
+  behaviour focus mode wants, and it is now pinned by a test rather than left to be
+  discovered.
+- **A region is a pair of boundary fractions, not an offset and a width.**
+  Computing `left_two_thirds` and `right_third` independently rounds 2560 to 1706
+  and 853 and leaves a one-pixel stripe of desktop between the two windows.
+  Sharing the boundary makes the seam arithmetically impossible, and
+  `tiles_the_two_thirds_and_the_third_with_no_seam` fails if anyone changes it back.
+
+| Command                    | Result                                                                 |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `npm run format:check`     | exit 0                                                                 |
+| `npm run lint`             | exit 0                                                                 |
+| `npm run typecheck`        | exit 0                                                                 |
+| `npm run test:unit`        | exit 0; 57 files, 1277 tests passed (1221 before this batch)           |
+| `npm run test:integration` | exit 0                                                                 |
+| `npm run test:migrations`  | exit 0                                                                 |
+| `npm run test:e2e`         | exit 0; 4 tests across 3 suites, run here against Edge                 |
+| `npm run test:boundary`    | exit 0                                                                 |
+| `npm run test:desktop`     | exit 0                                                                 |
+| `npm run rust:fmt:check`   | exit 0                                                                 |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`, across both crates              |
+| `npm run rust:test`        | exit 0; 82 tests — 37 in the shell, unchanged, and 45 in the new crate |
+| `npm run build`            | exit 0                                                                 |
+| `npm run build:desktop`    | **blocked locally, see below**                                         |
+
+**`npm run build:desktop` could not be run on this machine.** Smart App Control
+refuses to execute freshly built release-profile Cargo build scripts: `An
+Application Control policy has blocked this file. (os error 4551)`. Five
+consecutive attempts were blocked. This is not the workspace move — building at
+the previous target path fails identically, on `tauri-plugin-notification`, a
+crate this batch does not touch — and debug-profile build scripts run fine, which
+is why `cargo test --workspace` and `cargo clippy --workspace --all-targets` both
+pass. Earlier batches did not hit it because their build scripts were already
+built and already trusted; adding a dependency changes the fingerprint and forces
+new ones. CI is the authority here, exactly as it is for the pinned Chromium in
+the Phase 6 E2E note.

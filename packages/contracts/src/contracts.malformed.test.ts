@@ -43,6 +43,13 @@ import {
 import { ObjectiveLinkSchema, ObjectiveRecordSchema } from "./objective.js";
 import { SourceObservationSchema, SourceRecordSchema } from "./source.js";
 import { CompositionPlanSchema, SurfaceIntentSchema, SurfaceOverrideSchema } from "./surface.js";
+import {
+  MatchEvidenceSchema,
+  WindowIdentitySchema,
+  WindowPlacementEvidenceSchema,
+  WindowPlacementRequestSchema,
+  WindowResolutionSchema,
+} from "./window.js";
 import { ClientFrameSchema, ServerFrameSchema } from "./ws.js";
 
 const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
@@ -86,6 +93,11 @@ const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["FileSearchConstraints", FileSearchConstraintsSchema],
   ["EnvironmentInspectEvidence", EnvironmentInspectEvidenceSchema],
   ["VerificationNoopEvidence", VerificationNoopEvidenceSchema],
+  ["WindowPlacementRequest", WindowPlacementRequestSchema],
+  ["WindowIdentity", WindowIdentitySchema],
+  ["MatchEvidence", MatchEvidenceSchema],
+  ["WindowResolution", WindowResolutionSchema],
+  ["WindowPlacementEvidence", WindowPlacementEvidenceSchema],
 ];
 
 const HOSTILE_INPUTS: ReadonlyArray<readonly [string, unknown]> = [

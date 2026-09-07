@@ -1,0 +1,18 @@
+[package]
+name = "noctis-windows"
+version = "0.0.0"
+description = "Identity-safe discovery and deterministic placement of native Windows windows"
+edition = "2021"
+rust-version = "1.98"
+publish = false
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+
+# No `windows` dependency yet, deliberately. Everything in this crate today is
+# the pure decision layer, and a Win32 dependency nothing calls is weight in the
+# graph that no test can justify. It arrives with the FFI module, pinned to the
+# =0.61.3 the desktop shell already resolves so the graph gains no second copy.
+
+[dev-dependencies]
+serde_json = "=1.0.151"

@@ -2252,6 +2252,7 @@ name = "noctis-desktop"
 version = "0.0.0"
 dependencies = [
  "futures-util",
+ "noctis-windows",
  "reqwest",
  "serde",
  "serde_json",
@@ -2264,6 +2265,14 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+]
+
+[[package]]
+name = "noctis-windows"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

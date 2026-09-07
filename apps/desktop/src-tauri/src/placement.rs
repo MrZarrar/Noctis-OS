@@ -1,56 +1,10 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use noctis_windows::geometry::{fit, home_area};
+pub use noctis_windows::geometry::{Placement, WorkArea};
 
 /// The window is never restored smaller than this, whatever was saved.
 pub const MIN_SIZE: (u32, u32) = (800, 600);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Placement {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
-    pub maximized: bool,
-}
-
-/// A monitor's work area: the part of it a window may occupy, so the taskbar is
-/// already excluded. Coordinates are virtual-screen, so a monitor to the left of
-/// the primary has a negative `x`, which is why nothing here clamps to zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WorkArea {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// How much of a saved window still falls on a monitor. Zero means the monitor
-/// it was on is gone, or moved, or resized out from under it.
-fn overlap(area: &WorkArea, saved: &Placement) -> i64 {
-    let width = span(area.x, area.width, saved.x, saved.width);
-    let height = span(area.y, area.height, saved.y, saved.height);
-
-    width * height
-}
-
-fn span(area_start: i32, area_size: u32, saved_start: i32, saved_size: u32) -> i64 {
-    let area_end = i64::from(area_start) + i64::from(area_size);
-    let saved_end = i64::from(saved_start) + i64::from(saved_size);
-    let overlap = area_end.min(saved_end) - i64::from(area_start).max(i64::from(saved_start));
-
-    overlap.max(0)
-}
-
-fn clamp_position(area_start: i32, area_size: u32, wanted: i32, size: u32) -> i32 {
-    let last = i64::from(area_start) + i64::from(area_size) - i64::from(size);
-    let clamped = i64::from(wanted).clamp(
-        i64::from(area_start).min(last),
-        last.max(i64::from(area_start)),
-    );
-
-    i32::try_from(clamped).unwrap_or(area_start)
-}
 
 /// Puts a saved window back somewhere it can actually be seen.
 ///
@@ -59,33 +13,19 @@ fn clamp_position(area_start: i32, area_size: u32, wanted: i32, size: u32) -> i3
 /// A window whose monitor is still there does not move; one that hangs off an
 /// edge, is larger than its monitor, or was on a monitor that is now gone is
 /// slid and shrunk until it is fully on a monitor that exists.
+///
+/// The arithmetic lives in `noctis-windows` because placing another
+/// application's window into a named region is the same problem, and two copies
+/// of it would be two copies that disagree the first time one is fixed.
 pub fn restore(saved: Placement, monitors: &[WorkArea]) -> Placement {
-    // The monitor the window still has most of itself on; failing that, whichever
-    // one comes last, since every candidate overlaps it by nothing.
-    let Some(home) = monitors
-        .iter()
-        .copied()
-        .max_by_key(|area| overlap(area, &saved))
-    else {
-        // Nothing is known about the displays, so anything this function did
-        // would be a guess dressed up as a correction.
+    // The monitor the window still has most of itself on. Nothing known about
+    // the displays means anything this function did would be a guess dressed up
+    // as a correction.
+    let Some(home) = home_area(monitors, &saved) else {
         return saved;
     };
 
-    let width = saved.width.clamp(MIN_SIZE.0.min(home.width), home.width);
-    let height = saved.height.clamp(MIN_SIZE.1.min(home.height), home.height);
-
-    // A window whose monitor is gone needs no separate case: clamping a position
-    // that is nowhere near this monitor slides it fully onto it, which is the
-    // whole requirement. Centring it instead was a branch no test could tell
-    // apart from this one, which is how sabotage found it.
-    Placement {
-        x: clamp_position(home.x, home.width, saved.x, width),
-        y: clamp_position(home.y, home.height, saved.y, height),
-        width,
-        height,
-        maximized: saved.maximized,
-    }
+    fit(saved, home, MIN_SIZE)
 }
 
 pub fn load(path: &Path) -> Option<Placement> {

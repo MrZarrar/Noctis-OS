@@ -1,5 +1,10 @@
 import type { OperationClass, StandingPermission } from "@noctis/contracts";
-import { OperationClassSchema } from "@noctis/contracts";
+import {
+  OperationClassSchema,
+  WINDOW_CAPABILITIES,
+  WINDOW_CAPABILITY_OPERATION_CLASS,
+  WINDOW_TARGET_TYPE,
+} from "@noctis/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { AuthorityEvaluationInput } from "./evaluate.js";
@@ -288,5 +293,129 @@ describe("THE GATE: typed confirmation names what is about to happen", () => {
     expect(twice[0]).toBe(twice[1]);
     // Pence, not float formatting: 0.1 must never render as 0.10000000000000001.
     expect(twice[0]).toContain("GBP 0.10");
+  });
+});
+
+/**
+ * Phase 9 routes native window placement through this evaluator rather than
+ * inventing a second permission model. These tests pin what that decision
+ * actually buys, because the answer is not obvious from the capability names.
+ */
+describe("native window placement routes through the same authority", () => {
+  const VSCODE = { type: WINDOW_TARGET_TYPE, id: "vscode" } as const;
+  const EMULATOR = { type: WINDOW_TARGET_TYPE, id: "emulator" } as const;
+
+  function placement(overrides: Partial<AuthorityEvaluationInput> = {}): AuthorityEvaluationInput {
+    return input({
+      capability: "window.place",
+      operationClass: WINDOW_CAPABILITY_OPERATION_CLASS["window.place"],
+      target: VSCODE,
+      ...overrides,
+    });
+  }
+
+  function windowPermission(targetIds: string[]): StandingPermission {
+    return permission({
+      capability: "window.place",
+      operationClass: WINDOW_CAPABILITY_OPERATION_CLASS["window.place"],
+      constraints: { targetType: WINDOW_TARGET_TYPE, targetIds },
+    });
+  }
+
+  it("lets anyone look at the windows that are open", () => {
+    const decision = evaluateAuthority(
+      placement({
+        capability: "window.discover",
+        operationClass: WINDOW_CAPABILITY_OPERATION_CLASS["window.discover"],
+      }),
+    );
+
+    expect(decision.outcome).toBe("allow");
+  });
+
+  /**
+   * THE GATE: with nothing granted and no Objective running, rearranging
+   * somebody's desk is a consequence they get asked about.
+   */
+  it("asks before moving a window with no grant and no active objective", () => {
+    const decision = evaluateAuthority(placement());
+
+    expect(decision.outcome).toBe("require_confirmation");
+    expect(decision.reasonCodes).toContain("objective_not_active");
+  });
+
+  /**
+   * The scope clause in Section 9.1 is what makes focus mode usable: an active
+   * Objective is the user's declared context, and arranging the tools for it is
+   * the whole point. Pinned here because it is the difference between Noctis
+   * tidying a desk on request and tidying one uninvited.
+   */
+  it("places without asking while an objective is active", () => {
+    const decision = evaluateAuthority(placement({ objectiveIsActive: true }));
+
+    expect(decision.outcome).toBe("allow");
+    expect(decision.reasonCodes).toContain("objective_active_scope");
+  });
+
+  it("places without asking when a standing permission names that window", () => {
+    const decision = evaluateAuthority(
+      placement({ standingPermissions: [windowPermission(["vscode"])] }),
+    );
+
+    expect(decision.outcome).toBe("allow");
+    expect(decision.reasonCodes).toContain("standing_permission_matched");
+  });
+
+  /**
+   * THE GATE: a grant is target-bound. Letting Noctis arrange the editor is not
+   * letting it arrange everything else on the machine.
+   */
+  it("does not let a grant for one application reach another", () => {
+    const decision = evaluateAuthority(
+      placement({ target: EMULATOR, standingPermissions: [windowPermission(["vscode"])] }),
+    );
+
+    expect(decision.outcome).toBe("require_confirmation");
+    expect(decision.reasonCodes).not.toContain("standing_permission_matched");
+  });
+
+  it("does not let a window grant reach a file with the same id", () => {
+    const decision = evaluateAuthority(
+      placement({
+        target: { type: "file", id: "vscode" },
+        standingPermissions: [windowPermission(["vscode"])],
+      }),
+    );
+
+    expect(decision.outcome).toBe("require_confirmation");
+  });
+
+  /** A revoked grant is the control the Settings screen already offers. */
+  it("stops placing the moment a grant is revoked", () => {
+    const revoked: StandingPermission = {
+      ...windowPermission(["vscode"]),
+      revokedAt: "2026-08-15T00:00:00.000Z",
+      revokedReason: "changed my mind",
+    };
+
+    expect(evaluateAuthority(placement({ standingPermissions: [revoked] })).outcome).toBe(
+      "require_confirmation",
+    );
+  });
+
+  /**
+   * Placement must never be classed so high that it needs a typed phrase. A
+   * confirmation that appears every time a window moves is one nobody reads,
+   * and a confirmation nobody reads is worse than none.
+   */
+  it("never demands a typed confirmation to move a window", () => {
+    for (const capability of WINDOW_CAPABILITIES) {
+      const decision = evaluateAuthority(
+        placement({ capability, operationClass: WINDOW_CAPABILITY_OPERATION_CLASS[capability] }),
+      );
+
+      expect(decision.outcome).not.toBe("require_typed_confirmation");
+      expect(decision.confirmationPhrase).toBeUndefined();
+    }
   });
 });

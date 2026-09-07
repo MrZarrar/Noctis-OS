@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["apps/desktop/src-tauri", "crates/noctis-windows"]
+
+# One lock for the repository. `crates/noctis-windows` is a path dependency of
+# the desktop shell, so a second lock would let the crate's own `cargo test`
+# resolve a dependency to one version while the shipped shell built against
+# another, and the unit tests would be proving code that never runs.
