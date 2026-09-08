@@ -143,6 +143,57 @@ describe("the native window bridge", () => {
     expect(state?.kind).toBe("needsApproval");
   });
 
+  /**
+   * THE GATE: Rust serializes `Option::None` as `null`, and `.optional()` means
+   * "absent or a string" — not null. The first draft of this suite omitted the
+   * field instead of sending null, so it passed while the real shell's very
+   * first `needsApproval` surfaced a raw zod error in the Surface.
+   */
+  it("reads an approval that needs no typed phrase, sent as null", async () => {
+    const bridge = bridgeWith({
+      window_place: {
+        kind: "needsApproval",
+        requestId: "0199a000-0000-7000-8000-000000000003",
+        outcome: "require_confirmation",
+        consequenceSummary: "Move vscode",
+        confirmationPhrase: null,
+      },
+    });
+
+    const state = await bridge?.place({
+      applicationId: "vscode",
+      monitor: "primary",
+      region: "full",
+    });
+
+    expect(state?.kind).toBe("needsApproval");
+  });
+
+  /**
+   * THE GATE: the core allows a reversible local edit without asking while an
+   * Objective is active, and decides that by looking the Objective up. A
+   * request that does not carry one is asked about — which made the whole
+   * active-Objective path unreachable until this was sent.
+   */
+  it("names the objective the placement belongs to", async () => {
+    const recorder = shell({ window_place: { kind: "notRunning" } });
+    const bridge = nativeWindowBridgeFrom({ __TAURI__: { core: { invoke: recorder.invoke } } });
+
+    await bridge?.place({
+      applicationId: "vscode",
+      monitor: "primary",
+      region: "full",
+      objectiveId: "0199a000-0000-7000-8000-0000000000ff",
+    });
+
+    expect(recorder.calls[0]?.args?.intent).toEqual({
+      applicationId: "vscode",
+      monitor: "primary",
+      region: "full",
+      objectiveId: "0199a000-0000-7000-8000-0000000000ff",
+    });
+  });
+
   it("reads a placement that happened, with the notes that explain it", async () => {
     const bridge = bridgeWith({
       window_place: {

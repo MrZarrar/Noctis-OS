@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 /**
@@ -10,6 +12,18 @@ import { DatabaseSync } from "node:sqlite";
 export type NoctisDatabase = DatabaseSync;
 
 export function openDatabase(path: string): NoctisDatabase {
+  if (path !== ":memory:") {
+    // A database path whose directory does not exist yet is the ordinary first
+    // run, not a misconfiguration. SQLite will not create it, and what it says
+    // instead is `unable to open database file` with an errcode — which reads
+    // like a permissions problem or a corrupt file rather than a missing
+    // folder, and sent a qualification run looking in the wrong place.
+    //
+    // Here rather than in each caller: this is the only module allowed to
+    // construct the driver, so every path into SQLite passes through it.
+    mkdirSync(dirname(path), { recursive: true });
+  }
+
   const database = new DatabaseSync(path);
 
   database.exec("PRAGMA foreign_keys = ON");

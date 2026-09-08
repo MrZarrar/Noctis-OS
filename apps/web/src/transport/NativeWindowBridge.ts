@@ -46,6 +46,14 @@ export interface NativePlaceRequest {
   monitor: MonitorRole;
   region: RegionName;
   /**
+   * The Objective this placement is part of.
+   *
+   * The core allows a reversible local edit without asking while an Objective
+   * is active, and it decides that by looking the Objective up — so a request
+   * that names none is one the core treats as unscoped and asks about.
+   */
+  objectiveId?: string;
+  /**
    * An approval the user has already confirmed. Absent on the first attempt: the
    * shell asks the core, and answers `needsApproval` if a person has to decide.
    */
@@ -81,13 +89,18 @@ class TauriNativeWindowBridge implements NativeWindowBridge {
   }
 
   async place(request: NativePlaceRequest): Promise<NativeApplicationState> {
-    const { applicationId, monitor, region, approvalId, titleHint } = request;
+    const { applicationId, monitor, region, objectiveId, approvalId, titleHint } = request;
 
     return NativeApplicationStateSchema.parse(
       await this.#invoke("window_place", {
         // The shell's `PlaceIntent`. It has nowhere to put a coordinate, which
         // is the point — see Section 11.2.
-        intent: { applicationId, monitor, region },
+        intent: {
+          applicationId,
+          monitor,
+          region,
+          ...(objectiveId === undefined ? {} : { objectiveId }),
+        },
         approvalId: approvalId ?? null,
         titleHint: titleHint ?? null,
       }),

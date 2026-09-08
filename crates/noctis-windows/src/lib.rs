@@ -11,6 +11,7 @@
 //! provable on any machine and in any test run, while the layer that *does* the
 //! moving stays small enough to qualify by hand.
 
+pub mod compose;
 pub mod geometry;
 pub mod guard;
 pub mod identity;
@@ -23,7 +24,8 @@ pub mod region;
 #[cfg(windows)]
 pub mod win32;
 
-pub use geometry::{fit, home_area, moved_by_hand, overlap, Placement, WorkArea};
+pub use compose::make_room;
+pub use geometry::{fit, home_area, moved_by_hand, overlap, overlaps, Placement, WorkArea};
 pub use guard::{admit, is_protected, select_window, Refusal, Selection};
 pub use identity::{evaluate, ApplicationTarget, MatchEvidence, WindowIdentity};
 pub use monitor::{select, Monitor, MonitorRole};

@@ -68,11 +68,15 @@ export interface NativeApplicationSurfaceProps extends NativeApplicationPayload 
   /** Put it back where it was before Noctis moved it. */
   onRestore?: () => void;
   /**
-   * Resolve an ambiguous selection by naming the window. The Surface renders the
-   * candidates; the shell still re-verifies identity before it moves anything,
-   * so a handle from here is a hint rather than an instruction.
+   * Resolve an ambiguous selection by naming the window.
+   *
+   * Carries the window's title rather than its handle, because the title is
+   * what the shell narrows by — and a window's own full title matches exactly
+   * itself and nothing else, so choosing always resolves. The shell still
+   * re-verifies identity before it moves anything, so this is a hint rather
+   * than an instruction.
    */
-  onChoose?: (handle: number) => void;
+  onChoose?: (windowTitle: string) => void;
   /** Take the pending decision to the Approval Surface. */
   onReview?: (requestId: string) => void;
   /**
@@ -84,6 +88,15 @@ export interface NativeApplicationSurfaceProps extends NativeApplicationPayload 
    * trap rather than a preference.
    */
   onClearOverride?: () => void;
+  /**
+   * Survey the native windows again.
+   *
+   * A Surface payload is persisted, so one describing the outside world is a
+   * snapshot — and it goes stale the moment somebody opens or closes an
+   * application. This is the same handoff the registry's `sourceRefresh` gives a
+   * source Surface: a native window is a source like any other.
+   */
+  onRefresh?: () => void;
 }
 
 /**
@@ -109,6 +122,7 @@ export function NativeApplicationSurface({
   onChoose,
   onReview,
   onClearOverride,
+  onRefresh,
 }: NativeApplicationSurfaceProps): JSX.Element {
   /**
    * Whether the position on screen is a person's rather than Noctis's.
@@ -168,6 +182,14 @@ export function NativeApplicationSurface({
           </button>
         )}
 
+        {/* Where staleness actually bites: a persisted payload saying nothing
+            is open, long after somebody opened it. */}
+        {(state.kind === "notRunning" || state.kind === "ambiguous") && onRefresh !== undefined && (
+          <button type="button" onClick={onRefresh} style={buttonStyle}>
+            Look again
+          </button>
+        )}
+
         {honouringOverride && onClearOverride !== undefined && (
           <button type="button" onClick={onClearOverride} style={buttonStyle}>
             Use the intended region instead
@@ -185,7 +207,7 @@ export function NativeApplicationSurface({
  */
 interface StateDetailProps {
   state: NativeApplicationState;
-  onChoose?: ((handle: number) => void) | undefined;
+  onChoose?: ((windowTitle: string) => void) | undefined;
   onReview?: ((requestId: string) => void) | undefined;
 }
 
@@ -259,7 +281,7 @@ function StateDetail({ state, onChoose, onReview }: StateDetailProps): JSX.Eleme
                   <button
                     type="button"
                     onClick={() => {
-                      onChoose(candidate.handle);
+                      onChoose(candidate.title);
                     }}
                     style={{ ...buttonStyle, textAlign: "left", width: "100%" }}
                   >

@@ -103,6 +103,14 @@ pub fn moved_by_hand(placed: &Placement, now: &Placement, tolerance: i32) -> boo
     shifted || resized
 }
 
+/// Whether two rectangles share any pixel at all.
+pub fn overlaps(one: &Placement, other: &Placement) -> bool {
+    let width = span(one.x, one.width, other.x, other.width);
+    let height = span(one.y, one.height, other.y, other.height);
+
+    width > 0 && height > 0
+}
+
 /// The work area a rectangle has most of itself on, or `None` when nothing is
 /// known about the displays — in which case any correction would be a guess
 /// dressed up as a fact.

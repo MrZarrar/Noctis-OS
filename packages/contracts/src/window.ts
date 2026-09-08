@@ -245,7 +245,14 @@ export const NativeApplicationStateSchema = z.discriminatedUnion("kind", [
       requestId: z.string().min(1).max(128),
       outcome: AuthorityOutcomeSchema,
       consequenceSummary: z.string().min(1).max(2000),
-      confirmationPhrase: z.string().min(1).max(200).optional(),
+      /**
+       * `nullish`, not `optional`. Rust serializes `Option::None` as `null`, and
+       * `optional` means "absent or a string" — so a decision that needs no
+       * typed phrase failed to parse and surfaced as a raw zod error in the
+       * Surface. Tolerating both is the right posture for a parser reading
+       * another process's output.
+       */
+      confirmationPhrase: z.string().min(1).max(200).nullish(),
     })
     .strict(),
   /**

@@ -143,7 +143,7 @@ pub fn authorises(approval: &Value, capability: &str, application_id: &str) -> R
 /// region. A summary that said "place a window" would be a boundary nobody could
 /// make a decision at.
 pub fn request_body(intent: &PlaceIntent, idempotency_key: &str, window_title: &str) -> Value {
-    json!({
+    let mut body = json!({
         "idempotencyKey": idempotency_key,
         "actorId": "local",
         "operationClass": PLACE_OPERATION_CLASS,
@@ -157,7 +157,15 @@ pub fn request_body(intent: &PlaceIntent, idempotency_key: &str, window_title: &
             intent.monitor_label(),
         ),
         "reversibility": "reversible",
-    })
+    });
+
+    // Added only when there is one: the core's schema takes an optional
+    // `objectiveId`, and a `null` there is not the same as an absent key.
+    if let Some(objective_id) = &intent.objective_id {
+        body["objectiveId"] = json!(objective_id);
+    }
+
+    body
 }
 
 /// The body of the `authority.execute` command, carrying the evidence.
@@ -338,6 +346,7 @@ mod tests {
             application_id: "vscode".to_owned(),
             monitor: noctis_windows::MonitorRole::Primary,
             region: noctis_windows::RegionName::LeftTwoThirds,
+            objective_id: Some("0199a000-0000-7000-8000-0000000000ff".to_owned()),
         };
 
         let body = request_body(&intent, "idem-1", "Noctis-OS - Visual Studio Code");
@@ -357,6 +366,7 @@ mod tests {
             application_id: "emulator".to_owned(),
             monitor: noctis_windows::MonitorRole::Secondary,
             region: noctis_windows::RegionName::Full,
+            objective_id: None,
         };
 
         let body = request_body(&intent, "idem-2", "Android Emulator");
@@ -366,6 +376,42 @@ mod tests {
         assert_eq!(body["target"]["type"], WINDOW_TARGET_TYPE);
         assert_eq!(body["target"]["id"], "emulator");
         assert_eq!(body["reversibility"], "reversible");
+    }
+
+    /// THE GATE: Section 9.1 lets a `local_reversible_edit` proceed without
+    /// asking while an Objective is active, and the core decides that by looking
+    /// the Objective up. A request that does not name one is a request the core
+    /// must treat as unscoped — so leaving this out made the whole
+    /// active-Objective path unreachable while every test of the evaluator that
+    /// implements it still passed.
+    #[test]
+    fn names_the_objective_so_the_core_can_see_it_is_active() {
+        let intent = PlaceIntent {
+            application_id: "vscode".to_owned(),
+            monitor: noctis_windows::MonitorRole::Primary,
+            region: noctis_windows::RegionName::LeftTwoThirds,
+            objective_id: Some("0199a000-0000-7000-8000-0000000000ff".to_owned()),
+        };
+
+        let body = request_body(&intent, "idem-4", "Noctis-OS");
+
+        assert_eq!(body["objectiveId"], "0199a000-0000-7000-8000-0000000000ff");
+    }
+
+    /// An absent key, not a `null`: the core's schema takes an optional
+    /// `objectiveId`, and `null` fails it.
+    #[test]
+    fn leaves_the_objective_out_entirely_when_there_is_none() {
+        let intent = PlaceIntent {
+            application_id: "vscode".to_owned(),
+            monitor: noctis_windows::MonitorRole::Primary,
+            region: noctis_windows::RegionName::Full,
+            objective_id: None,
+        };
+
+        let body = request_body(&intent, "idem-5", "Noctis-OS");
+
+        assert!(body.get("objectiveId").is_none());
     }
 
     #[test]

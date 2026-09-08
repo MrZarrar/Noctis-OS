@@ -6,7 +6,7 @@ import type {
 } from "@noctis/contracts";
 import { ObjectiveRecordSchema } from "@noctis/contracts";
 import { IDENTITY_PROFILES, corner, material, semantic, spacing, typography } from "@noctis/ui";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { useIdentityRuntime } from "../identities/useIdentityRuntime.js";
@@ -267,12 +267,51 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
 
   const active = objectives.find((objective) => objective.id === identity.activeObjectiveId);
   const composition = useComposition(transport, active?.id);
+  const { refresh } = composition;
+  /** The Objective the native windows were last surveyed for. */
+  const surveyedFor = useRef<string>();
   /**
    * `undefined` in a browser, and that is the answer rather than a failure: a
    * page with no desktop shell behind it has no Win32, so focus mode does not
    * appear at all instead of appearing and refusing.
    */
   const bridge = useMemo(() => nativeWindowBridgeFrom(globalThis), []);
+
+  /**
+   * Re-surveys the native windows and re-proposes the Surface.
+   *
+   * A Surface payload is persisted, which is what lets a Surface survive a
+   * restart — and is exactly why one describing the *outside world* cannot be
+   * trusted after one. Activation alone is not enough: a shell restarted against
+   * an already-active Objective never activates anything, so nothing ever
+   * looked, and the canvas showed a snapshot from before.
+   */
+  const surveyWindows = useCallback(() => {
+    if (transport === undefined || bridge === undefined || active === undefined) {
+      return;
+    }
+
+    void focusForObjective(transport, bridge, active).then(refresh, () => {
+      // `focusForObjective` already swallows a shell that cannot answer. This
+      // catches only the upsert, and a failed refresh leaves the canvas as it
+      // was rather than blanking it.
+    });
+  }, [transport, bridge, active, refresh]);
+
+  /**
+   * Surveys once per active Objective, including on a fresh page load.
+   *
+   * Keyed on the Objective's id rather than a boolean, so switching Objectives
+   * surveys again while a re-render does not.
+   */
+  useEffect(() => {
+    if (active === undefined || surveyedFor.current === active.id) {
+      return;
+    }
+
+    surveyedFor.current = active.id;
+    surveyWindows();
+  }, [active, surveyWindows]);
 
   /**
    * Runs a placement and re-proposes the Surface with what actually happened.
@@ -332,6 +371,7 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
           applicationId,
           monitor: layout?.monitor ?? "primary",
           region: layout?.region ?? "full",
+          ...(active === undefined ? {} : { objectiveId: active.id }),
           // The Objective's own title, so two editors on the same machine are
           // told apart by the work rather than by enumeration order.
           ...(active === undefined ? {} : { titleHint: active.title }),
@@ -346,6 +386,36 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
       void runPlacement(applicationId, (native) => native.restore(applicationId));
     },
     [runPlacement],
+  );
+
+  /**
+   * Answers "which of these windows did you mean" by placing the one chosen.
+   *
+   * The window's own full title becomes the hint, which narrows to exactly that
+   * window and nothing else. This is the path that matters: the Objective's
+   * title is a *sentence*, and `narrow_by_title` asks whether the window title
+   * contains the hint — so "Qualify Phase 9 on Noctis-OS" resolves nothing,
+   * however much of the workspace name it happens to include. When Noctis
+   * cannot tell, the answer is a person's, and it has to be clickable.
+   */
+  const chooseWindow = useCallback(
+    (applicationId: string, windowTitle: string) => {
+      void runPlacement(applicationId, (native) => {
+        const layout = FOCUS_LAYOUT[applicationId];
+
+        return native.place({
+          applicationId,
+          monitor: layout?.monitor ?? "primary",
+          region: layout?.region ?? "full",
+          ...(active === undefined ? {} : { objectiveId: active.id }),
+          titleHint: windowTitle,
+        });
+      });
+    },
+    // `active` is listed even though `runPlacement` already depends on it and
+    // would invalidate this callback anyway. Leaning on that would make this
+    // correct by accident, and wrong the moment `runPlacement` stops needing it.
+    [runPlacement, active],
   );
 
   /**
@@ -366,6 +436,7 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
           applicationId,
           monitor: layout?.monitor ?? "primary",
           region: layout?.region ?? "full",
+          ...(active === undefined ? {} : { objectiveId: active.id }),
           ...(active === undefined ? {} : { titleHint: active.title }),
         });
       });
@@ -544,7 +615,9 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
               capabilities: ["window.place"],
               onPlaceWindow: placeWindow,
               onRestoreWindow: restoreWindow,
+              onChooseWindow: chooseWindow,
               onClearWindowOverride: clearWindowOverride,
+              onSurveyWindows: surveyWindows,
             })}
       />
 

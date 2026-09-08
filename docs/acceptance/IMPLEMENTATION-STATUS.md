@@ -1531,3 +1531,126 @@ job at a desk — the runbook has the procedure, and it names the two task items
 still open (a maximized window is not un-maximized before placement, and the
 moved-window map is not persisted across a restart, so "put it back" does not
 survive one). Neither is a gate clause.
+
+### 2026-09-08 Phase 9 (part 6) the first qualification pass, and the four things it found
+
+Focus mode was run end to end on the qualification machine for the first time:
+core and shell up together, an Objective activated, and windows actually
+arranged. Every one of the four defects below was found by a person clicking a
+button, and none of them was reachable by any test that existed — which is the
+argument for the runbook rather than a note about it.
+
+**1. The shell never told the core which Objective a placement belonged to.**
+
+`request_body` sent no `objectiveId`, and the core derives `objectiveIsActive`
+by looking the Objective up (`objective?.status === "active"`). With no id it
+resolves to false, so every placement fell to `require_confirmation`.
+
+This is the sharper lesson of the pass. `evaluate.test.ts` contains a passing
+test named "places without asking while an objective is active", written in part
+2 and described there as the behaviour focus mode needs — and the product could
+not reach that branch. A unit test on a pure function proves the function; it
+says nothing about whether any caller passes real arguments.
+`names_the_objective_so_the_core_can_see_it_is_active` now covers the request
+body, which is where the gap was.
+
+**2. `Option::None` serializes as `null`, and `.optional()` does not accept it.**
+
+The first `needsApproval` the real shell produced put a raw zod error on screen:
+`{ "expected": "string", "path": [ "confirmationPhrase" ] }`. The bridge test
+that should have caught it omitted the field instead of sending null, so it
+passed. `confirmationPhrase` is `.nullish()` now, and the suite sends null.
+
+**3. Noctis covered the window it had just arranged.**
+
+Reported precisely: with Noctis on the secondary display the arrangement was
+right; with Noctis maximized on the primary it placed the editor into the left
+two thirds of that same display and then sat on top of it. This is Section 11.2's
+"compose Noctis with native windows without covering critical controls", which
+part 2 recorded as not started.
+
+`compose::make_room` decides where Noctis goes, and the rule is _move only when
+actually covering_ — not "always relocate to the secondary". Somebody who has put
+Noctis where they want it should not have it dragged around by a placement it was
+never in the way of, which is the same courtesy the user override gets. Two
+details in the Win32 half would each have been silent: `unmaximize` has to come
+_before_ `set_position`, because a maximized window ignores a position; and the
+comparison uses the _outer_ size, where the saved placement stores the inner one,
+so using the saved shape would under-measure Noctis by its own frame.
+
+A single display has nowhere to put Noctis that is not on top of the work, so
+`make_room` returns "stay put" there rather than shuffling it somewhere equally
+covered. There is a test pinning that.
+
+**4. A Surface payload describing the outside world goes stale, and could not
+look again.**
+
+After a shell restart the Surface said `not running` for an editor that was
+plainly open. Nothing was broken: `focusForObjective` only ran inside
+`changeStatus(…, "active")`, and a shell restarted against an already-active
+Objective activates nothing, so nothing ever looked. The canvas faithfully
+rendered a snapshot from before.
+
+Surface payloads persist by design — that is how a Surface survives a restart —
+which is exactly why one holding observations of the world cannot be trusted
+after one. The registry has had the concept since Phase 8: `sourceRefresh`,
+"check the source now". A native window is a source like any other, and that had
+simply not been noticed. Command now surveys once per active Objective including
+on a fresh load, and the Surface offers **Look again** where staleness bites.
+
+Two fixes outside Phase 9's scope came out of the same session:
+
+- **`openDatabase` did not create its parent directory.** A first run pointing
+  `NOCTIS_DATABASE_PATH` at a directory that does not exist yet is the ordinary
+  case, and SQLite answers `unable to open database file` with an errcode —
+  which reads like a permissions problem or a corrupt file rather than a missing
+  folder, and sent the qualification run looking in the wrong place. Fixed in
+  `openDatabase` because an ESLint rule makes it the only module allowed to
+  construct the driver, so every path into SQLite passes the one guard.
+- **`docs/operations/desktop.md` named the old shell binary path**, which moved
+  to the workspace `target/` in part 1.
+
+| Runbook step                                  | Result                                                                         |
+| --------------------------------------------- | ------------------------------------------------------------------------------ |
+| Step 1, read-only probe                       | **pass**; work areas match the display settings, and 1706 + 854 = 2560 exactly |
+| Step 2, write path on Character Map           | **pass**; applied 300,200 to the pixel, restored 15,65 exactly                 |
+| Step 3, Surface renders with both rows        | **pass**                                                                       |
+| Step 3, emulator not installed                | **pass**; `not running` with the open-only handoff                             |
+| Step 3, more than one editor open             | **pass**; refused to guess, candidates listed and clickable                    |
+| Step 3, arrange by choosing a candidate       | **pass**; editor to the left two thirds, no prompt, other window untouched     |
+| Step 3, Noctis composed out of the way        | **pass**, after fix 3                                                          |
+| Step 3, Noctis left alone when not in the way | **pass**                                                                       |
+| Step 3, put it back                           | not run                                                                        |
+| Step 3, drag by hand then arrange again       | not run                                                                        |
+| Step 3, the same after a shell restart        | not run                                                                        |
+| Step 3, use the intended region instead       | not run                                                                        |
+| Step 3, unplug the second display             | not run                                                                        |
+| Step 3, maximize the editor first             | not run; expected to fail, task item still open                                |
+| Step 4, a scaled display                      | not run                                                                        |
+
+| Command                    | Result                                      |
+| -------------------------- | ------------------------------------------- |
+| `npm run test:boundary`    | exit 0                                      |
+| `npm run format:check`     | exit 0                                      |
+| `npm run lint`             | exit 0                                      |
+| `npm run typecheck`        | exit 0                                      |
+| `npm run test:unit`        | exit 0; 58 files, 1307 tests (1301 before)  |
+| `npm run test:migrations`  | exit 0                                      |
+| `npm run test:integration` | exit 0                                      |
+| `npm run test:desktop`     | exit 0                                      |
+| `npm run rust:fmt:check`   | exit 0                                      |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`       |
+| `npm run rust:test`        | exit 0; 147 tests (138 before)              |
+| `npm run test:e2e`         | exit 0; 4 tests, run here against Edge      |
+| `npm run build:desktop`    | not run here; Smart App Control, see part 1 |
+
+A note on running the Rust suite locally: Smart App Control began refusing the
+freshly built `noctis-desktop` test binary outright, and repeated attempts did
+not clear it. Building into a different `CARGO_TARGET_DIR` does clear it, which
+confirms the block is per binary path rather than per crate. CI is unaffected and
+remains the authority.
+
+**Phase 9's gate is not closed.** Seven runbook rows pass and eight have not been
+run, including every row covering the user override — the clause the gate names.
+Those need a person at the desk; the procedure is in
+`docs/operations/windows-qualification.md`.

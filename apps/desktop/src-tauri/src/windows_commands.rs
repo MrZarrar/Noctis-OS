@@ -13,7 +13,7 @@
 
 use noctis_windows::win32;
 use noctis_windows::{
-    moved_by_hand, resolve, select_window, Placement, PlacementRequest, Selection,
+    make_room, moved_by_hand, resolve, select_window, Placement, PlacementRequest, Selection,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -29,7 +29,7 @@ use crate::window_authority::{authorises, execute_body, request_body, PLACE_CAPA
 use crate::windows_state::{
     display_name, granted_targets, minimum_dip, Moved, NativeWindows, PlaceIntent, OVERRIDES_FILE,
 };
-use crate::CoreState;
+use crate::{CoreState, MAIN_WINDOW};
 
 /// One of several windows a target matched, as much of it as a person choosing
 /// between them needs.
@@ -143,6 +143,68 @@ async fn get_json(core: &CoreState, client: &reqwest::Client, path: &str) -> Res
 /// which is the failure mode that makes "the user always wins" unusable rather
 /// than respectful.
 const HAND_TOLERANCE: i32 = 4;
+
+/// Moves Noctis's own window out from in front of what was just arranged.
+///
+/// Section 11.2's "compose Noctis with native windows without covering critical
+/// controls". Focus mode's layout has always put the tools on one display and
+/// Noctis on another; this is Noctis actually going there.
+///
+/// No authority is asked for, and that is not an oversight. Moving another
+/// application's window is a consequence somebody has to agree to; moving
+/// Noctis's own window is Noctis rearranging its own interface, which is what
+/// the crash-safe placement restore has always done without asking.
+///
+/// Only when it would otherwise be covering: a person who has put Noctis where
+/// they want it should not have it relocated by a placement it was never in the
+/// way of.
+fn compose_around(app: &AppHandle, placed: Placement, displays: &[noctis_windows::Monitor]) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+
+    let Some(current) = current_own_placement(&window) else {
+        return;
+    };
+
+    let Some(destination) = make_room(&current, &placed, displays) else {
+        return;
+    };
+
+    // Before the move, not after. A maximized window ignores a position, so
+    // setting one first would silently do nothing and leave Noctis on top.
+    if current.maximized {
+        let _ = window.unmaximize();
+    }
+
+    let _ = window.set_position(tauri::PhysicalPosition {
+        x: destination.x,
+        y: destination.y,
+    });
+    let _ = window.set_size(tauri::PhysicalSize {
+        width: destination.width,
+        height: destination.height,
+    });
+}
+
+/// Noctis's own window as a `Placement`.
+///
+/// The *outer* size here, unlike the saved placement, which stores the inner
+/// one: this is compared against another window's outer rectangle to decide
+/// whether they overlap, and comparing an inner size to an outer one would miss
+/// the frame.
+fn current_own_placement(window: &tauri::WebviewWindow) -> Option<Placement> {
+    let position = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+
+    Some(Placement {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+        maximized: window.is_maximized().ok()?,
+    })
+}
 
 /// Where the overrides file lives, beside the shell's own window placement.
 fn overrides_path(app: &AppHandle) -> PathBuf {
@@ -458,6 +520,10 @@ pub async fn window_place(
             })
         }
     };
+
+    // After the move, so the decision is made against where the window really
+    // ended up rather than where it was asked to go.
+    compose_around(&app, applied.placement, &displays);
 
     let evidence = json!({
         "applicationId": intent.application_id,

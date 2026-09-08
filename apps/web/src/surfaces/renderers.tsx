@@ -37,8 +37,9 @@ export interface SurfaceContext {
    */
   onPlaceWindow?: (applicationId: string) => void;
   onRestoreWindow?: (applicationId: string) => void;
-  onChooseWindow?: (applicationId: string, handle: number) => void;
+  onChooseWindow?: (applicationId: string, windowTitle: string) => void;
   onClearWindowOverride?: (applicationId: string) => void;
+  onSurveyWindows?: () => void;
   onReviewApproval?: (requestId: string) => void;
 }
 
@@ -110,13 +111,14 @@ const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) =
           {...(context.onChooseWindow === undefined
             ? {}
             : {
-                onChoose: (handle: number) => {
-                  context.onChooseWindow?.(application.applicationId, handle);
+                onChoose: (windowTitle: string) => {
+                  context.onChooseWindow?.(application.applicationId, windowTitle);
                 },
               })}
           {...(context.onReviewApproval === undefined
             ? {}
             : { onReview: context.onReviewApproval })}
+          {...(context.onSurveyWindows === undefined ? {} : { onRefresh: context.onSurveyWindows })}
           {...(context.onClearWindowOverride === undefined
             ? {}
             : {

@@ -25,6 +25,16 @@ pub struct PlaceIntent {
     pub application_id: String,
     pub monitor: MonitorRole,
     pub region: RegionName,
+    /// The Objective this placement is part of, when there is one.
+    ///
+    /// Not decoration. Section 9.1 lets a `local_reversible_edit` proceed
+    /// without asking while an Objective is active, and the core decides that by
+    /// looking the Objective up — so a request that names none is a request the
+    /// core must treat as unscoped, and it will ask. Omitting this made the
+    /// active-Objective path unreachable from the product while passing every
+    /// test of the evaluator that implements it.
+    #[serde(default)]
+    pub objective_id: Option<String>,
 }
 
 impl PlaceIntent {
@@ -167,6 +177,7 @@ mod tests {
             application_id: "vscode".to_owned(),
             monitor,
             region,
+            objective_id: None,
         }
     }
 
