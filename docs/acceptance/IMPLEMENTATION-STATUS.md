@@ -1469,3 +1469,65 @@ it, but nothing in the product writes one, because the shell passes no override.
 So "user overrides are respected" is proven in the resolver and cannot be
 exercised from the UI. Step 3 of the runbook also has not been run: driving a
 GUI shell through a placement is a person's job, which is what the runbook is for.
+
+### 2026-09-08 Phase 9 (part 5) the user always wins
+
+The policy, stated by the owner and now implemented: if Noctis places a window
+and a person later drags it, that position is theirs — on the next placement, and
+after a restart.
+
+**How the drag is noticed.** No hook and no polling. `geometry::moved_by_hand`
+compares where the window is now against the position Noctis observed _after_
+placing it, and `window_place` asks that question at the only moment the answer
+changes anything — just before placing the same window again. A global window
+hook to learn it sooner would be a permanent cost for a question asked
+occasionally.
+
+Comparing against the observed position rather than the requested one is what
+makes the check trustworthy: an application settling on its own minimum width a
+moment after being placed has not expressed a preference. `HAND_TOLERANCE` is
+four pixels, wider than the placement tolerance, for the same reason — mistaking
+an application's own adjustment for a person's would hand every window an
+override nobody asked for, which is the failure that makes this feature
+irritating rather than respectful.
+
+**The override is written to disk**, in `window-overrides.json` beside the
+shell's own window placement. "The user always wins until Noctis restarts" would
+not be the user winning. `placement::{save,load}` became generic over serde
+rather than gaining a second copy of the atomic write-and-rename.
+
+**There is a way out.** `window_clear_override` forgets the position, and the
+Surface offers **Use the intended region instead** — but only while an override
+is actually being honoured, which it reads from the resolver's own
+`honoured_user_override` note rather than tracking separately. Without this, one
+drag would mean Noctis could never arrange that window again: a preference with no
+undo is a trap. The action clears and re-places in one step, because clearing and
+leaving the window where it is would look like a button that does nothing.
+
+Clippy caught a real design smell rather than a lint: `window_place` had grown to
+nine parameters. The three managed maps — moved windows, overrides, launch
+correlations — all answer the same question, so they became one `NativeWindows`
+state. Three managed states became one and the command lost two arguments.
+
+| Command                  | Result                                      |
+| ------------------------ | ------------------------------------------- |
+| `npm run test:boundary`  | exit 0                                      |
+| `npm run format:check`   | exit 0                                      |
+| `npm run lint`           | exit 0                                      |
+| `npm run typecheck`      | exit 0                                      |
+| `npm run test:unit`      | exit 0; 58 files, 1301 tests                |
+| `npm run build:web`      | exit 0                                      |
+| `npm run test:desktop`   | exit 0                                      |
+| `npm run rust:fmt:check` | exit 0                                      |
+| `npm run rust:clippy`    | exit 0; 0 warnings with `-D warnings`       |
+| `npm run rust:test`      | exit 0; 138 tests (132 before)              |
+| `npm run test:e2e`       | exit 0; 4 tests, run here against Edge      |
+| `npm run build:desktop`  | not run here; Smart App Control, see part 1 |
+
+**Every clause of Phase 9's gate is now implemented.** System, security and
+ungranted windows cannot be moved; user overrides are respected, persisted, and
+reversible. What remains is running the qualification matrix, which is a person's
+job at a desk — the runbook has the procedure, and it names the two task items
+still open (a maximized window is not un-maximized before placement, and the
+moved-window map is not persisted across a restart, so "put it back" does not
+survive one). Neither is a gate clause.

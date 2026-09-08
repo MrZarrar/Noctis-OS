@@ -26,6 +26,13 @@ export interface NativeWindowBridge {
   survey(): Promise<SurveyedApplication[]>;
   place(request: NativePlaceRequest): Promise<NativeApplicationState>;
   restore(applicationId: string): Promise<NativeApplicationState>;
+  /**
+   * Forgets the position a person dragged this application's window to.
+   *
+   * Returns nothing: it discards a preference and moves no window, so there is
+   * no outcome to report. The caller places again to see the effect.
+   */
+  clearOverride(applicationId: string): Promise<void>;
 }
 
 export interface SurveyedApplication {
@@ -91,6 +98,10 @@ class TauriNativeWindowBridge implements NativeWindowBridge {
     return NativeApplicationStateSchema.parse(
       await this.#invoke("window_restore", { applicationId }),
     );
+  }
+
+  async clearOverride(applicationId: string): Promise<void> {
+    await this.#invoke("window_clear_override", { applicationId });
   }
 }
 

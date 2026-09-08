@@ -75,6 +75,15 @@ export interface NativeApplicationSurfaceProps extends NativeApplicationPayload 
   onChoose?: (handle: number) => void;
   /** Take the pending decision to the Approval Surface. */
   onReview?: (requestId: string) => void;
+  /**
+   * Forget the position this window was dragged to, so the named region applies
+   * again.
+   *
+   * The way out of "the user always wins". Without it one drag would mean Noctis
+   * could never arrange this window again, and a preference with no undo is a
+   * trap rather than a preference.
+   */
+  onClearOverride?: () => void;
 }
 
 /**
@@ -99,7 +108,18 @@ export function NativeApplicationSurface({
   onRestore,
   onChoose,
   onReview,
+  onClearOverride,
 }: NativeApplicationSurfaceProps): JSX.Element {
+  /**
+   * Whether the position on screen is a person's rather than Noctis's.
+   *
+   * Read from the note the resolver produced, not tracked separately: the
+   * resolver is the thing that decided to honour the override, so it is the
+   * thing that knows.
+   */
+  const honouringOverride =
+    state.kind === "placed" && state.notes.includes("honoured_user_override");
+
   return (
     <div style={{ display: "grid", gap: spacing.sm }}>
       <p style={{ margin: 0, color: typography.color.muted }}>
@@ -145,6 +165,12 @@ export function NativeApplicationSurface({
         {state.kind === "refused" && onPlace !== undefined && (
           <button type="button" onClick={onPlace} style={buttonStyle}>
             Try again
+          </button>
+        )}
+
+        {honouringOverride && onClearOverride !== undefined && (
+          <button type="button" onClick={onClearOverride} style={buttonStyle}>
+            Use the intended region instead
           </button>
         )}
       </div>

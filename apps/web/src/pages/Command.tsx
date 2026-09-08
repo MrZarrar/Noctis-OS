@@ -348,6 +348,31 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
     [runPlacement],
   );
 
+  /**
+   * Forgets a dragged position and places again in the same step.
+   *
+   * One action rather than two, because "use the intended region instead" is a
+   * single thing a person wants. Clearing the override and leaving the window
+   * where it is would make the button appear to do nothing.
+   */
+  const clearWindowOverride = useCallback(
+    (applicationId: string) => {
+      void runPlacement(applicationId, async (native) => {
+        await native.clearOverride(applicationId);
+
+        const layout = FOCUS_LAYOUT[applicationId];
+
+        return native.place({
+          applicationId,
+          monitor: layout?.monitor ?? "primary",
+          region: layout?.region ?? "full",
+          ...(active === undefined ? {} : { titleHint: active.title }),
+        });
+      });
+    },
+    [runPlacement, active],
+  );
+
   useEffect(() => {
     if (transport === undefined) {
       return;
@@ -519,6 +544,7 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
               capabilities: ["window.place"],
               onPlaceWindow: placeWindow,
               onRestoreWindow: restoreWindow,
+              onClearWindowOverride: clearWindowOverride,
             })}
       />
 

@@ -126,7 +126,10 @@ Then, in the shell:
 | A second VS Code window open on another folder            | `more than one window`, both titles listed, and no window moved until one is chosen                                               |
 | A second window open, Objective titled `Noctis-OS`        | the `Noctis-OS` editor is chosen and arranged; the other is untouched                                                             |
 | Unplug `DISPLAY2`, then arrange something intended for it | it is placed on the primary and the row says "there is no second display, so it went to the primary one"                          |
-| Drag the editor somewhere yourself, then arrange again    | **known gap** — it is moved back to the region. Nothing saves your position yet. See below                                        |
+| Drag the editor somewhere yourself, then arrange again    | your position is kept, and the row says "you had placed this window yourself, so that was kept"                                   |
+| The same again after restarting the shell                 | still your position. The override is written to `window-overrides.json` beside the shell's own placement                          |
+| **Use the intended region instead**, after that           | the override is forgotten and the editor moves to the region. The action only appears while an override is being honoured         |
+| Resize the editor by a pixel or two, then arrange         | no override is taken; the region applies. Only a move past four pixels counts as somebody's decision                              |
 | Maximize the editor first, then arrange                   | **known gap** — the window does not move and the row reads "the application kept its own position". See below                     |
 | Restart the shell, then **Put it back**                   | **known gap** — the row reads `not running` because what Noctis moved is remembered in memory. See below                          |
 | Arrange the taskbar, by any means you can contrive        | refused. There is no UI path to try, which is the first half of the answer                                                        |
@@ -154,11 +157,8 @@ Both are named in Phase 9's task list and neither is implemented:
   failing — but it does not do the job either.
 - **What Noctis moved is not persisted.** The map of moved windows lives in the shell's memory, so
   restarting it loses the ability to put anything back. The window stays where it was placed.
-- **A user override cannot be saved.** `region::resolve` honours one and says it did — there are
-  tests for both — but nothing in the product writes one, because the shell passes no override when
-  it resolves a region. So the gate clause "user overrides are respected" is proven in the resolver
-  and unreachable from the UI. This is the one gap that is a gate clause rather than a task item,
-  and it is the reason Phase 9 is not closed by running this runbook.
+  Both are task items rather than gate clauses. Every clause of Phase 9's gate is now implemented, so
+  running this runbook is what decides whether the phase closes.
 
 ## What to record
 

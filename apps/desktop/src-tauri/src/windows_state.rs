@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use noctis_windows::{ApplicationTarget, MonitorRole, RegionName};
+use noctis_windows::{ApplicationTarget, MonitorRole, Placement, RegionName};
 use serde::{Deserialize, Serialize};
 
 /// A placement request as it arrives from the WebView.
@@ -112,14 +112,29 @@ pub fn display_name(application_id: &str) -> &str {
     }
 }
 
-/// What Noctis moved, and what it looked like before.
+/// Everything the shell remembers about native windows.
 ///
-/// Keyed by window handle. Section 11.2: "restore only windows Noctis moved and
-/// only when their identity still matches" — this map is the first half, and the
-/// stored identity is what answers the second.
+/// One managed state rather than three, because all three answer the same
+/// question — what has Noctis done to which window — and a command that needed
+/// all of them took nine arguments, which clippy was right to object to.
 #[cfg(windows)]
 #[derive(Default)]
-pub struct MovedWindows(pub Mutex<HashMap<u64, Moved>>);
+pub struct NativeWindows {
+    /// What Noctis moved, keyed by window handle. Section 11.2: "restore only
+    /// windows Noctis moved and only when their identity still matches" — this
+    /// map is the first half, and the stored identity answers the second.
+    pub moved: Mutex<HashMap<u64, Moved>>,
+    /// Where a person moved a window after Noctis placed it, by application id.
+    ///
+    /// Written to disk, because "the user always wins" that lasted only until
+    /// the next restart would not be the user winning. Not keyed by display
+    /// arrangement: a stale override is fitted onto a display that currently
+    /// exists by `region::resolve`, so unplugging a monitor degrades rather than
+    /// resurrects a rectangle nobody can see.
+    pub overrides: Mutex<HashMap<String, Placement>>,
+    /// Correlations for processes Noctis started itself, by application id.
+    pub correlations: Mutex<HashMap<String, String>>,
+}
 
 #[cfg(windows)]
 pub struct Moved {
@@ -128,15 +143,20 @@ pub struct Moved {
     pub application_id: String,
     /// The exact placement to restore to.
     pub saved: noctis_windows::win32::Saved,
+    /// Where the window actually ended up, as read back after the move.
+    ///
+    /// Read back rather than what was asked for, because an application is
+    /// entitled to adjust its own size and the difference between "the app did
+    /// that" and "a person did that" is the whole question this field answers.
+    pub applied: Placement,
     /// The identity at the moment of the move. A handle is reused by Windows
     /// once its window is destroyed, so restoring on the handle alone would
     /// eventually move whatever inherited it.
     pub identity: noctis_windows::WindowIdentity,
 }
 
-/// Correlations for processes Noctis started itself, by application id.
-#[derive(Default)]
-pub struct LaunchCorrelations(pub Mutex<HashMap<String, String>>);
+/// The file the overrides live in, beside the shell's own window placement.
+pub const OVERRIDES_FILE: &str = "window-overrides.json";
 
 #[cfg(test)]
 mod tests {

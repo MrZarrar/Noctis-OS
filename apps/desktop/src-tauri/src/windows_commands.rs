@@ -12,17 +12,22 @@
 #![cfg(windows)]
 
 use noctis_windows::win32;
-use noctis_windows::{resolve, select_window, PlacementRequest, Selection};
+use noctis_windows::{
+    moved_by_hand, resolve, select_window, Placement, PlacementRequest, Selection,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::State;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
+use tauri::{AppHandle, Manager, State};
+
+use crate::placement;
 use crate::proxy;
 use crate::proxy::ProxyResponse;
 use crate::window_authority::{authorises, execute_body, request_body, PLACE_CAPABILITY};
 use crate::windows_state::{
-    display_name, granted_targets, minimum_dip, LaunchCorrelations, Moved, MovedWindows,
-    PlaceIntent,
+    display_name, granted_targets, minimum_dip, Moved, NativeWindows, PlaceIntent, OVERRIDES_FILE,
 };
 use crate::CoreState;
 
@@ -129,6 +134,99 @@ async fn get_json(core: &CoreState, client: &reqwest::Client, path: &str) -> Res
     serde_json::from_str(&body).map_err(|error| error.to_string())
 }
 
+/// How far a window may drift from where Noctis put it before that counts as
+/// somebody having moved it.
+///
+/// Wider than the placement tolerance on purpose. An application that adjusts
+/// its own size a moment after being placed has not expressed a preference, and
+/// mistaking that for one would hand every window an override nobody asked for —
+/// which is the failure mode that makes "the user always wins" unusable rather
+/// than respectful.
+const HAND_TOLERANCE: i32 = 4;
+
+/// Where the overrides file lives, beside the shell's own window placement.
+fn overrides_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(OVERRIDES_FILE)
+}
+
+/// Loads the overrides a previous run wrote into the managed state.
+///
+/// Called once from `setup`, which is the first point an `AppHandle` exists. A
+/// file that cannot be read is treated as no overrides: a corrupt preferences
+/// file should cost somebody their preferences, not their editor.
+pub fn restore_overrides(app: &AppHandle) {
+    let Some(saved) = placement::load::<HashMap<String, Placement>>(&overrides_path(app)) else {
+        return;
+    };
+
+    // `state` borrows from `app`, so it is used within this statement rather
+    // than bound first — the `let Some(..) else` form would drop the guard while
+    // the lock still borrowed it.
+    if let Some(state) = app.try_state::<NativeWindows>() {
+        if let Ok(mut held) = state.overrides.lock() {
+            *held = saved;
+        }
+    }
+}
+
+fn remember_override(
+    app: AppHandle,
+    native: &NativeWindows,
+    application_id: &str,
+    position: Placement,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut held = native
+            .overrides
+            .lock()
+            .map_err(|_| "user overrides are poisoned".to_owned())?;
+
+        held.insert(application_id.to_owned(), position);
+        held.clone()
+    };
+
+    if let Err(error) = placement::save(&overrides_path(&app), &snapshot) {
+        // The override still applies for this session. Saying nothing would be
+        // worse than a line in the log: the preference silently not surviving a
+        // restart is exactly the failure this file exists to prevent.
+        eprintln!("noctis: could not save the window overrides: {error}");
+    }
+
+    Ok(())
+}
+
+/// Forgets a person's position for one application, so the named region applies
+/// again.
+///
+/// The way out. Without it, one drag would mean Noctis could never arrange that
+/// window again — a preference with no undo is a trap rather than a preference.
+/// No authority is asked for: this discards a preference and moves nothing.
+#[tauri::command]
+pub fn window_clear_override(
+    app: AppHandle,
+    native: State<'_, NativeWindows>,
+    application_id: String,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut held = native
+            .overrides
+            .lock()
+            .map_err(|_| "user overrides are poisoned".to_owned())?;
+
+        held.remove(&application_id);
+        held.clone()
+    };
+
+    if let Err(error) = placement::save(&overrides_path(&app), &snapshot) {
+        eprintln!("noctis: could not save the window overrides: {error}");
+    }
+
+    Ok(())
+}
+
 /// One granted application and what Noctis can currently see of it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,9 +248,9 @@ pub struct Surveyed {
 /// for. It stays a named capability rather than an unnamed convenience so that
 /// it can be refused later without inventing a concept.
 #[tauri::command]
-pub fn window_survey(correlations: State<'_, LaunchCorrelations>) -> Result<Vec<Surveyed>, String> {
-    let held = correlations
-        .0
+pub fn window_survey(native: State<'_, NativeWindows>) -> Result<Vec<Surveyed>, String> {
+    let held = native
+        .correlations
         .lock()
         .map_err(|_| "launch correlations are poisoned".to_owned())?
         .clone();
@@ -191,10 +289,10 @@ pub fn window_survey(correlations: State<'_, LaunchCorrelations>) -> Result<Vec<
 /// through the ordinary core route.
 #[tauri::command]
 pub async fn window_place(
+    app: AppHandle,
     core: State<'_, CoreState>,
     client: State<'_, reqwest::Client>,
-    moved: State<'_, MovedWindows>,
-    correlations: State<'_, LaunchCorrelations>,
+    native: State<'_, NativeWindows>,
     intent: PlaceIntent,
     approval_id: Option<String>,
     title_hint: Option<String>,
@@ -220,8 +318,8 @@ pub async fn window_place(
         });
     };
 
-    let correlation = correlations
-        .0
+    let correlation = native
+        .correlations
         .lock()
         .map_err(|_| "launch correlations are poisoned".to_owned())?
         .get(&intent.application_id)
@@ -303,6 +401,34 @@ pub async fn window_place(
     };
     let previous = saved.placement();
 
+    // The user always wins.
+    //
+    // If Noctis placed this window before and it is no longer where Noctis left
+    // it, somebody moved it, and that position becomes their standing preference
+    // for this application — now and after a restart. Noticed here rather than
+    // by a hook because this is the only moment the answer changes anything, and
+    // a global window hook to learn it would be a permanent cost for one
+    // question asked occasionally.
+    let dragged = native
+        .moved
+        .lock()
+        .map_err(|_| "moved windows are poisoned".to_owned())?
+        .get(&window.handle)
+        .filter(|entry| entry.application_id == intent.application_id)
+        .filter(|entry| moved_by_hand(&entry.applied, &previous, HAND_TOLERANCE))
+        .map(|_| previous);
+
+    if let Some(position) = dragged {
+        remember_override(app.clone(), &native, &intent.application_id, position)?;
+    }
+
+    let user_override = native
+        .overrides
+        .lock()
+        .map_err(|_| "user overrides are poisoned".to_owned())?
+        .get(&intent.application_id)
+        .copied();
+
     let displays = win32::monitors();
     let Some(resolution) = resolve(
         PlacementRequest {
@@ -311,7 +437,7 @@ pub async fn window_place(
             minimum_dip: minimum_dip(&intent.application_id),
         },
         &displays,
-        None,
+        user_override,
     ) else {
         return Ok(PlaceOutcome::Refused {
             reason: "No display to place on".to_owned(),
@@ -364,14 +490,15 @@ pub async fn window_place(
         );
     }
 
-    moved
-        .0
+    native
+        .moved
         .lock()
         .map_err(|_| "moved windows are poisoned".to_owned())?
         .insert(
             window.handle,
             Moved {
                 application_id: intent.application_id.clone(),
+                applied: applied.placement,
                 saved,
                 identity: window.clone(),
             },
@@ -404,12 +531,12 @@ pub async fn window_place(
 /// optional check a caller can decline to pass.
 #[tauri::command]
 pub fn window_restore(
-    moved: State<'_, MovedWindows>,
+    native: State<'_, NativeWindows>,
     application_id: String,
 ) -> Result<PlaceOutcome, String> {
     let live = win32::top_level_windows();
-    let mut held = moved
-        .0
+    let mut held = native
+        .moved
         .lock()
         .map_err(|_| "moved windows are poisoned".to_owned())?;
 

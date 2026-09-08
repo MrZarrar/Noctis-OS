@@ -23,7 +23,7 @@ pub mod region;
 #[cfg(windows)]
 pub mod win32;
 
-pub use geometry::{fit, home_area, overlap, Placement, WorkArea};
+pub use geometry::{fit, home_area, moved_by_hand, overlap, Placement, WorkArea};
 pub use guard::{admit, is_protected, select_window, Refusal, Selection};
 pub use identity::{evaluate, ApplicationTarget, MatchEvidence, WindowIdentity};
 pub use monitor::{select, Monitor, MonitorRole};

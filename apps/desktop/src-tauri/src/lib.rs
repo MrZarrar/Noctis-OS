@@ -335,15 +335,15 @@ pub fn run() {
     // exists and always refuses is a capability the page has to learn is a lie.
     #[cfg(windows)]
     let builder = builder
-        .manage(windows_state::MovedWindows::default())
-        .manage(windows_state::LaunchCorrelations::default())
+        .manage(windows_state::NativeWindows::default())
         .invoke_handler(tauri::generate_handler![
             core_request,
             core_subscribe,
             core_unsubscribe,
             windows_commands::window_survey,
             windows_commands::window_place,
-            windows_commands::window_restore
+            windows_commands::window_restore,
+            windows_commands::window_clear_override
         ]);
 
     #[cfg(not(windows))]
@@ -356,6 +356,13 @@ pub fn run() {
     builder
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Filled here rather than where the state is managed, because the
+            // config directory needs an `AppHandle` and the builder has none
+            // yet. A position somebody dragged a window to has to survive a
+            // restart, or "the user always wins" means "until Noctis restarts".
+            #[cfg(windows)]
+            windows_commands::restore_overrides(&handle);
 
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
                 let window = window.as_ref().window();

@@ -25,6 +25,7 @@ export interface WorkbenchProps {
    */
   onPlaceWindow?: (applicationId: string) => void;
   onRestoreWindow?: (applicationId: string) => void;
+  onClearWindowOverride?: (applicationId: string) => void;
   /**
    * What this client can do, for the registry's `requires` gate.
    *
@@ -54,6 +55,7 @@ export function Workbench({
   onOpenInVault,
   onPlaceWindow,
   onRestoreWindow,
+  onClearWindowOverride,
   capabilities = [],
 }: WorkbenchProps): JSX.Element {
   const { plan, intents, overrides, focusedSurfaceId } = composition;
@@ -124,6 +126,7 @@ export function Workbench({
           ...(onOpenInVault === undefined ? {} : { onOpenInVault }),
           ...(onPlaceWindow === undefined ? {} : { onPlaceWindow }),
           ...(onRestoreWindow === undefined ? {} : { onRestoreWindow }),
+          ...(onClearWindowOverride === undefined ? {} : { onClearWindowOverride }),
         })}
       </SurfaceFrame>
     );

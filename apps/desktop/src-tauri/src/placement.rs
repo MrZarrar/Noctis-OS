@@ -28,7 +28,13 @@ pub fn restore(saved: Placement, monitors: &[WorkArea]) -> Placement {
     fit(saved, home, MIN_SIZE)
 }
 
-pub fn load(path: &Path) -> Option<Placement> {
+/// Reads a JSON file, or `None` for any reason it could not be read.
+///
+/// Generic because Phase 9 stores a second thing the same way — the positions a
+/// person moved a window to, which must survive a restart or "the user always
+/// wins" would only mean "until Noctis is restarted". One atomic
+/// write-and-rename rather than two.
+pub fn load<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
@@ -38,13 +44,13 @@ pub fn load(path: &Path) -> Option<Placement> {
 /// crash keeps the last position instead of the position from the last clean
 /// shutdown. Writing in place that often is how you end up restoring from a
 /// half-written file.
-pub fn save(path: &Path, placement: &Placement) -> std::io::Result<()> {
+pub fn save<T: serde::Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     let temporary = path.with_extension("tmp");
-    let body = serde_json::to_vec_pretty(placement).map_err(std::io::Error::other)?;
+    let body = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
 
     std::fs::write(&temporary, body)?;
     std::fs::rename(&temporary, path)
@@ -167,8 +173,8 @@ mod tests {
 
         std::fs::write(&path, "half a file").expect("write");
 
-        assert_eq!(load(&path), None);
-        assert_eq!(load(&directory.join("absent.json")), None);
+        assert_eq!(load::<Placement>(&path), None);
+        assert_eq!(load::<Placement>(&directory.join("absent.json")), None);
 
         std::fs::remove_dir_all(&directory).expect("cleanup");
     }

@@ -77,6 +77,32 @@ pub fn fit(wanted: Placement, area: &WorkArea, minimum: (u32, u32)) -> Placement
     }
 }
 
+/// Whether a window has been moved or resized away from where it was put.
+///
+/// This is how Noctis notices that a person disagreed with it. There is no hook
+/// and no polling: the only moment the answer matters is when Noctis is about to
+/// place the same window again, so it is asked then, by comparing the window's
+/// position now against the position Noctis last observed after placing it.
+///
+/// `tolerance` is not zero because an application is entitled to adjust its own
+/// size a moment after being placed — an editor settling on its minimum width is
+/// not a person dragging a window, and treating it as one would hand every
+/// window an override nobody asked for.
+///
+/// A change in maximized state counts however small the rectangle change,
+/// because maximizing is unmistakably somebody's decision.
+pub fn moved_by_hand(placed: &Placement, now: &Placement, tolerance: i32) -> bool {
+    if placed.maximized != now.maximized {
+        return true;
+    }
+
+    let shifted = (placed.x - now.x).abs() > tolerance || (placed.y - now.y).abs() > tolerance;
+    let resized = placed.width.abs_diff(now.width) > tolerance.unsigned_abs()
+        || placed.height.abs_diff(now.height) > tolerance.unsigned_abs();
+
+    shifted || resized
+}
+
 /// The work area a rectangle has most of itself on, or `None` when nothing is
 /// known about the displays — in which case any correction would be a guess
 /// dressed up as a fact.
@@ -185,5 +211,65 @@ mod tests {
     #[test]
     fn knows_nothing_about_a_home_when_no_monitor_is_known() {
         assert_eq!(home_area(&[], &placement(0, 0, 100, 100)), None);
+    }
+
+    #[test]
+    fn sees_no_hand_on_a_window_still_where_it_was_put() {
+        let placed = placement(0, 0, 1706, 1440);
+
+        assert!(!moved_by_hand(&placed, &placed, 2));
+    }
+
+    /// THE GATE: a person dragging a window Noctis placed is the signal that
+    /// their position wins from then on. Missing it means Noctis moves it back.
+    #[test]
+    fn sees_a_hand_on_a_window_somebody_dragged() {
+        let placed = placement(0, 0, 1706, 1440);
+        let dragged = placement(400, 120, 1706, 1440);
+
+        assert!(moved_by_hand(&placed, &dragged, 2));
+    }
+
+    #[test]
+    fn sees_a_hand_on_a_window_somebody_resized() {
+        let placed = placement(0, 0, 1706, 1440);
+
+        assert!(moved_by_hand(&placed, &placement(0, 0, 1200, 1440), 2));
+        assert!(moved_by_hand(&placed, &placement(0, 0, 1706, 900), 2));
+    }
+
+    /// An application settling on its own minimum size a moment after being
+    /// placed is not somebody's decision, and treating it as one would hand
+    /// every window an override nobody asked for.
+    #[test]
+    fn ignores_a_shift_inside_the_tolerance() {
+        let placed = placement(300, 200, 900, 700);
+
+        assert!(!moved_by_hand(&placed, &placement(301, 199, 902, 698), 2));
+    }
+
+    #[test]
+    fn sees_a_hand_the_moment_a_window_is_maximized() {
+        let placed = placement(0, 0, 1706, 1440);
+        let maximized = Placement {
+            maximized: true,
+            ..placed
+        };
+
+        assert!(moved_by_hand(&placed, &maximized, 2));
+        // And in the other direction: un-maximizing is a decision too.
+        assert!(moved_by_hand(&maximized, &placed, 2));
+    }
+
+    /// The comparison must not overflow on a window at an absurd coordinate,
+    /// which is what a window on a monitor that has just been unplugged looks
+    /// like.
+    #[test]
+    fn survives_comparing_rectangles_at_the_edges_of_the_coordinate_space() {
+        let far = placement(i32::MIN / 2, i32::MAX / 2, 1, 1);
+        let near = placement(0, 0, 1, 1);
+
+        assert!(moved_by_hand(&far, &near, 2));
+        assert!(moved_by_hand(&near, &far, 2));
     }
 }

@@ -177,6 +177,22 @@ describe("the native window bridge", () => {
     expect((await bridge?.restore("vscode"))?.kind).toBe("restored");
   });
 
+  /**
+   * The way out of "the user always wins". It returns nothing because it moves
+   * nothing — it discards a preference, and the caller places again to see it.
+   */
+  it("clears a dragged position without reporting an outcome", async () => {
+    const recorder = shell({ window_clear_override: null });
+    const bridge = nativeWindowBridgeFrom({ __TAURI__: { core: { invoke: recorder.invoke } } });
+
+    await expect(bridge?.clearOverride("vscode")).resolves.toBeUndefined();
+
+    expect(recorder.calls[0]).toEqual({
+      command: "window_clear_override",
+      args: { applicationId: "vscode" },
+    });
+  });
+
   it("names the application it is restoring", async () => {
     const recorder = shell({ window_restore: { kind: "notRunning" } });
     const bridge = nativeWindowBridgeFrom({ __TAURI__: { core: { invoke: recorder.invoke } } });
