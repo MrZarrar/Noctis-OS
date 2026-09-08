@@ -12,7 +12,7 @@
 #![cfg(windows)]
 
 use noctis_windows::win32;
-use noctis_windows::{resolve, select_window, PlacementRequest, Selection, WindowIdentity};
+use noctis_windows::{resolve, select_window, PlacementRequest, Selection};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::State;
@@ -21,21 +21,46 @@ use crate::proxy;
 use crate::proxy::ProxyResponse;
 use crate::window_authority::{authorises, execute_body, request_body, PLACE_CAPABILITY};
 use crate::windows_state::{
-    granted_targets, minimum_dip, LaunchCorrelations, Moved, MovedWindows, PlaceIntent,
+    display_name, granted_targets, minimum_dip, LaunchCorrelations, Moved, MovedWindows,
+    PlaceIntent,
 };
 use crate::CoreState;
 
+/// One of several windows a target matched, as much of it as a person choosing
+/// between them needs.
+///
+/// Not the whole `WindowIdentity`: this ends up in a Surface payload, and a
+/// Surface payload is persisted. Storing every candidate's executable path in
+/// the database to render a list of two titles is data kept for no reader.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Candidate {
+    pub handle: u64,
+    pub title: String,
+}
+
 /// What a placement attempt produced.
 ///
-/// A single tagged type rather than `Result<Placement, String>`, because three
-/// of these five are ordinary answers rather than errors. "Two editors are open,
+/// A single tagged type rather than `Result<Placement, String>`, because several
+/// of these are ordinary answers rather than errors. "Two editors are open,
 /// which did you mean" is a question, and a UI that received it as an error
 /// string would have to parse prose to know it could ask.
+///
 /// Tagged `kind`, not `outcome`: `NeedsApproval` carries the *authority's*
 /// outcome, and one field cannot honestly be both which answer this is and what
 /// the core decided.
+///
+/// `rename_all_fields` as well as `rename_all`, because they do different jobs
+/// and only having the first is a bug that hides: `rename_all` renames the
+/// *variants*, so without the second the fields go out as `monitor_id` while
+/// `NativeApplicationStateSchema` expects `monitorId`, the payload fails its
+/// schema, and the Surface silently renders a fallback.
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum PlaceOutcome {
     /// Moved, and here is what it cost and what it looked like before.
     Placed {
@@ -59,8 +84,10 @@ pub enum PlaceOutcome {
         placement: noctis_windows::Placement,
         application_id: String,
     },
+    /// Found, and not arranged. The state a Place action is offered from.
+    Discovered { window_title: String, handle: u64 },
     /// More than one window matched. Carries the candidates so the caller can ask.
-    Ambiguous { candidates: Vec<WindowIdentity> },
+    Ambiguous { candidates: Vec<Candidate> },
     /// The application is not running, or has no placeable window.
     NotRunning,
     /// Section 11.2's "degrade to an instruction/open-only handoff when control
@@ -102,15 +129,59 @@ async fn get_json(core: &CoreState, client: &reqwest::Client, path: &str) -> Res
     serde_json::from_str(&body).map_err(|error| error.to_string())
 }
 
-/// Every top-level window, with the verdict the placement layer would reach.
+/// One granted application and what Noctis can currently see of it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Surveyed {
+    pub application_id: String,
+    pub display_name: String,
+    pub state: PlaceOutcome,
+}
+
+/// What is on screen, per application Noctis is allowed to arrange.
 ///
-/// `window.discover` is `read_inspect`, which the baseline policy allows, so it
-/// does not go through an approval. It is still a named capability rather than
-/// an unnamed convenience, so that it can be refused later without inventing a
-/// concept.
+/// This is `window.discover`, and it reports per *target* rather than returning
+/// a raw window list, because the grant list lives here. A page handed every
+/// window on the machine would have to know which executables count as the
+/// editor in order to say anything about it, and a grant list the page knows is
+/// a grant list the page can disagree with.
+///
+/// `read_inspect`, which the baseline policy allows, so no approval is asked
+/// for. It stays a named capability rather than an unnamed convenience so that
+/// it can be refused later without inventing a concept.
 #[tauri::command]
-pub fn window_discover() -> Vec<WindowIdentity> {
-    win32::top_level_windows()
+pub fn window_survey(correlations: State<'_, LaunchCorrelations>) -> Result<Vec<Surveyed>, String> {
+    let held = correlations
+        .0
+        .lock()
+        .map_err(|_| "launch correlations are poisoned".to_owned())?
+        .clone();
+
+    let windows = win32::top_level_windows();
+
+    Ok(granted_targets()
+        .iter()
+        .map(|target| Surveyed {
+            application_id: target.id.clone(),
+            display_name: display_name(&target.id).to_owned(),
+            state: match select_window(&windows, target, held.get(&target.id).map(String::as_str)) {
+                Selection::One(window, _) => PlaceOutcome::Discovered {
+                    window_title: window.title.clone(),
+                    handle: window.handle,
+                },
+                Selection::Ambiguous(candidates) => PlaceOutcome::Ambiguous {
+                    candidates: candidates
+                        .into_iter()
+                        .map(|window| Candidate {
+                            handle: window.handle,
+                            title: window.title.clone(),
+                        })
+                        .collect(),
+                },
+                Selection::Absent => PlaceOutcome::NotRunning,
+            },
+        })
+        .collect())
 }
 
 /// Places one application's window in a named region.
@@ -164,7 +235,13 @@ pub async fn window_place(
         Selection::One(window, evidence) => (window, evidence),
         Selection::Ambiguous(candidates) => {
             return Ok(PlaceOutcome::Ambiguous {
-                candidates: candidates.into_iter().cloned().collect(),
+                candidates: candidates
+                    .into_iter()
+                    .map(|window| Candidate {
+                        handle: window.handle,
+                        title: window.title.clone(),
+                    })
+                    .collect(),
             })
         }
         Selection::Absent => return Ok(PlaceOutcome::NotRunning),
@@ -449,6 +526,72 @@ mod tests {
         let keys: std::collections::HashSet<String> = (0..50).map(|_| new_key()).collect();
 
         assert_eq!(keys.len(), 50);
+    }
+
+    /// THE GATE: these field names are the wire contract with
+    /// `NativeApplicationStateSchema`, which is `.strict()`. A snake_case field
+    /// here is not a compile error and not a runtime error — it is a Surface
+    /// that quietly renders a fallback, which is the worst of the three.
+    #[test]
+    fn spells_every_field_the_way_the_surface_schema_reads_it() {
+        let placed = serde_json::to_value(PlaceOutcome::Placed {
+            placement: noctis_windows::Placement {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100,
+                maximized: false,
+            },
+            previous: noctis_windows::Placement {
+                x: 1,
+                y: 1,
+                width: 100,
+                height: 100,
+                maximized: false,
+            },
+            monitor_id: r"\\.\DISPLAY1".to_owned(),
+            notes: vec![noctis_windows::ResolutionNote::DegradedToPrimary],
+            elapsed_ms: 29,
+            request_id: "req-1".to_owned(),
+        })
+        .expect("json");
+
+        assert_eq!(placed["kind"], "placed");
+        assert_eq!(placed["monitorId"], r"\\.\DISPLAY1");
+        assert_eq!(placed["elapsedMs"], 29);
+        assert_eq!(placed["requestId"], "req-1");
+        assert!(placed.get("monitor_id").is_none(), "snake_case leaked");
+        assert!(placed.get("elapsed_ms").is_none(), "snake_case leaked");
+        // The note spelling is the crate's serde, and it must stay snake_case
+        // because `ResolutionNoteSchema` is an enum of snake_case strings.
+        assert_eq!(placed["notes"][0], "degraded_to_primary");
+
+        let approval = serde_json::to_value(PlaceOutcome::NeedsApproval {
+            request_id: "req-2".to_owned(),
+            outcome: "require_confirmation".to_owned(),
+            consequence_summary: "Move vscode".to_owned(),
+            confirmation_phrase: None,
+        })
+        .expect("json");
+
+        assert_eq!(approval["kind"], "needsApproval");
+        assert_eq!(approval["requestId"], "req-2");
+        assert_eq!(approval["consequenceSummary"], "Move vscode");
+
+        let restored = serde_json::to_value(PlaceOutcome::Restored {
+            placement: noctis_windows::Placement {
+                x: 15,
+                y: 65,
+                width: 491,
+                height: 437,
+                maximized: false,
+            },
+            application_id: "vscode".to_owned(),
+        })
+        .expect("json");
+
+        assert_eq!(restored["kind"], "restored");
+        assert_eq!(restored["applicationId"], "vscode");
     }
 
     /// The outcome is a tagged union on the wire, because a caller has to tell

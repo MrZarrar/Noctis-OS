@@ -1,11 +1,18 @@
-import type { ObjectiveRecord } from "@noctis/contracts";
+import type {
+  MonitorRole,
+  NativeApplicationPayload,
+  ObjectiveRecord,
+  RegionName,
+} from "@noctis/contracts";
 import { ObjectiveRecordSchema } from "@noctis/contracts";
 import { IDENTITY_PROFILES, corner, material, semantic, spacing, typography } from "@noctis/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useIdentityRuntime } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import type { NativeWindowBridge, SurveyedApplication } from "../transport/NativeWindowBridge.js";
+import { nativeWindowBridgeFrom } from "../transport/NativeWindowBridge.js";
 import { Workbench } from "../workbench/Workbench.js";
 import { useComposition } from "../workbench/useComposition.js";
 import { Presence } from "./Presence.js";
@@ -135,6 +142,95 @@ async function recallForObjective(
 }
 
 /**
+ * The regions focus mode puts the development tools in.
+ *
+ * Written here rather than chosen by a model: Section 11.2 says the placement
+ * layer takes semantic requests, and this is the semantics. The editor gets the
+ * larger share because that is where the work happens, and the emulator sits
+ * beside it rather than behind it because a blocker you cannot see is a blocker
+ * you diagnose by guessing.
+ */
+const FOCUS_LAYOUT: Readonly<Record<string, { monitor: MonitorRole; region: RegionName }>> = {
+  vscode: { monitor: "primary", region: "left_two_thirds" },
+  emulator: { monitor: "primary", region: "right_third" },
+};
+
+/**
+ * Surveys the native applications focus mode arranges and proposes a Surface
+ * for each one it has something to say about.
+ *
+ * Mirrors `recallForObjective` deliberately, including the quiet failure. No
+ * desktop shell means no bridge and no Surfaces at all — a page served in a
+ * browser has no Win32 behind it, and a frame explaining that would be a frame
+ * about Noctis rather than about the work.
+ *
+ * A Surface is proposed even for an application that is not running, because
+ * "the emulator is not open" is a fact about the state of the work. It is not
+ * proposed for an application focus mode has no layout for.
+ */
+async function focusForObjective(
+  transport: CoreTransport,
+  bridge: NativeWindowBridge,
+  objective: ObjectiveRecord,
+): Promise<void> {
+  let surveyed: SurveyedApplication[];
+
+  try {
+    surveyed = await bridge.survey();
+  } catch {
+    // The shell is there but refused or drifted. Leave the canvas alone.
+    return;
+  }
+
+  const applications = surveyed
+    .filter((application) => Object.hasOwn(FOCUS_LAYOUT, application.applicationId))
+    .map((application) => {
+      const layout = FOCUS_LAYOUT[application.applicationId];
+
+      return {
+        applicationId: application.applicationId,
+        displayName: application.displayName,
+        intendedMonitor: layout?.monitor ?? "primary",
+        intendedRegion: layout?.region ?? "full",
+        state: application.state,
+      };
+    });
+
+  if (applications.length === 0) {
+    return;
+  }
+
+  await upsertFocusSurface(transport, objective.id, applications);
+}
+
+/**
+ * The single `native_application` intent for an Objective.
+ *
+ * Extracted because it is called twice: once on activation from the survey, and
+ * again after every placement, so that what the Surface shows is what actually
+ * happened rather than what was asked for. The upsert is keyed by
+ * `(objectiveId, kind, sourceIds)`, so calling it again updates the same
+ * Surface instead of adding another.
+ */
+async function upsertFocusSurface(
+  transport: CoreTransport,
+  objectiveId: string,
+  applications: readonly NativeApplicationPayload[],
+): Promise<void> {
+  await transport.request("POST", "/commands/surface.upsert_intent", {
+    idempotencyKey: nextKey("surface.upsert_intent"),
+    objectiveId,
+    kind: "native_application",
+    role: "supporting",
+    persistence: "objective",
+    priority: 40,
+    minSize: "standard",
+    payloadVersion: 1,
+    payload: { applications },
+  });
+}
+
+/**
  * What the Vault already knows about a freshly activated Objective.
  *
  * Section 7: "Command receives only a focused recall Surface". The recall runs
@@ -171,6 +267,86 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
 
   const active = objectives.find((objective) => objective.id === identity.activeObjectiveId);
   const composition = useComposition(transport, active?.id);
+  /**
+   * `undefined` in a browser, and that is the answer rather than a failure: a
+   * page with no desktop shell behind it has no Win32, so focus mode does not
+   * appear at all instead of appearing and refusing.
+   */
+  const bridge = useMemo(() => nativeWindowBridgeFrom(globalThis), []);
+
+  /**
+   * Runs a placement and re-proposes the Surface with what actually happened.
+   *
+   * The second half is the point. Rendering the requested region as though it
+   * had been achieved is exactly the dishonesty the resolution notes exist to
+   * prevent, so the outcome the shell returns — placed, refused, ambiguous, or
+   * waiting for approval — replaces the state in the payload.
+   */
+  const runPlacement = useCallback(
+    async (
+      applicationId: string,
+      act: (bridge: NativeWindowBridge) => Promise<NativeApplicationPayload["state"]>,
+    ) => {
+      if (transport === undefined || bridge === undefined || active === undefined) {
+        return;
+      }
+
+      const current = composition.intents.find((intent) => intent.kind === "native_application");
+      const payload = current?.payload as { applications?: NativeApplicationPayload[] } | undefined;
+      const applications = payload?.applications;
+
+      if (applications === undefined) {
+        return;
+      }
+
+      let state: NativeApplicationPayload["state"];
+
+      try {
+        state = await act(bridge);
+      } catch (failure: unknown) {
+        state = {
+          kind: "refused",
+          reason: failure instanceof Error ? failure.message : "the shell refused the request",
+        };
+      }
+
+      await upsertFocusSurface(
+        transport,
+        active.id,
+        applications.map((application) =>
+          application.applicationId === applicationId ? { ...application, state } : application,
+        ),
+      );
+
+      composition.refresh();
+    },
+    [transport, bridge, active, composition],
+  );
+
+  const placeWindow = useCallback(
+    (applicationId: string) => {
+      void runPlacement(applicationId, async (native) => {
+        const layout = FOCUS_LAYOUT[applicationId];
+
+        return native.place({
+          applicationId,
+          monitor: layout?.monitor ?? "primary",
+          region: layout?.region ?? "full",
+          // The Objective's own title, so two editors on the same machine are
+          // told apart by the work rather than by enumeration order.
+          ...(active === undefined ? {} : { titleHint: active.title }),
+        });
+      });
+    },
+    [runPlacement, active],
+  );
+
+  const restoreWindow = useCallback(
+    (applicationId: string) => {
+      void runPlacement(applicationId, (native) => native.restore(applicationId));
+    },
+    [runPlacement],
+  );
 
   useEffect(() => {
     if (transport === undefined) {
@@ -259,6 +435,10 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
         }
 
         await recallForObjective(transport, updated);
+
+        if (bridge !== undefined) {
+          await focusForObjective(transport, bridge, updated);
+        }
       }
 
       identity.setActiveObjectiveId(status === "active" ? updated.id : undefined);
@@ -329,6 +509,16 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
               onOpenInVault: (evidence: { entityId: string }) => {
                 onOpenInVault(evidence.entityId);
               },
+            })}
+        {...(bridge === undefined
+          ? {}
+          : {
+              // Both the handoffs and the capability come from the same fact:
+              // there is a shell that could carry a placement out. In a browser
+              // neither is passed, and the native Surface falls back saying so.
+              capabilities: ["window.place"],
+              onPlaceWindow: placeWindow,
+              onRestoreWindow: restoreWindow,
             })}
       />
 

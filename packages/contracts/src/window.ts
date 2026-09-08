@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { OperationClassSchema } from "./enums.js";
+import { AuthorityOutcomeSchema } from "./authority.js";
 
 /* -------------------------------------------------------------------------- */
 /* Phase 9: native window orchestration.                                      */
@@ -180,6 +181,119 @@ export const WindowPlacementEvidenceSchema = z
   })
   .strict();
 
+/**
+ * What Noctis currently knows about one native application it may arrange.
+ *
+ * The variant names match the desktop shell's `PlaceOutcome` on the wire, so the
+ * bridge passes an outcome through almost verbatim rather than translating it —
+ * a translation layer between two enums is where the two drift apart.
+ *
+ * `discovered` is the one the shell does not produce, because discovery is a
+ * separate command from placement: it means "found, not yet placed", which is
+ * the state a Place action is offered from.
+ */
+export const NativeApplicationStateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("notRunning") }).strict(),
+  z
+    .object({
+      kind: z.literal("discovered"),
+      windowTitle: z.string().max(1024),
+      handle: z.int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("placed"),
+      monitorId: z.string().min(1).max(128),
+      placement: PlacementSchema,
+      /**
+       * Where the window was before Noctis moved it. Carried so the Surface can
+       * offer to put it back and say what "back" means — and because a placement
+       * that cannot name its own previous state is not demonstrably reversible.
+       */
+      previous: PlacementSchema,
+      notes: z.array(ResolutionNoteSchema),
+      elapsedMs: z.int().nonnegative(),
+      /** The approval that authorised this move, so the record is traceable. */
+      requestId: z.string().min(1).max(128),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("restored"),
+      placement: PlacementSchema,
+      applicationId: z.string().trim().min(1).max(64),
+    })
+    .strict(),
+  /**
+   * More than one window matched, and the candidates are carried so a person can
+   * choose. Never resolved by picking the first: `EnumWindows` promises no order.
+   */
+  z
+    .object({
+      kind: z.literal("ambiguous"),
+      candidates: z
+        .array(z.object({ handle: z.int().nonnegative(), title: z.string().max(1024) }).strict())
+        .min(2)
+        .max(32),
+    })
+    .strict(),
+  /** The consequence boundary. The Surface renders it; it does not cross it. */
+  z
+    .object({
+      kind: z.literal("needsApproval"),
+      requestId: z.string().min(1).max(128),
+      outcome: AuthorityOutcomeSchema,
+      consequenceSummary: z.string().min(1).max(2000),
+      confirmationPhrase: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
+  /**
+   * Section 11.2's degrade. Covers a window Windows would not move, an
+   * application that is not responding, a display arrangement with nowhere to
+   * put it, and a browser with no desktop shell behind it — all of which are
+   * "Noctis cannot do this, and here is why" rather than a silent no-op.
+   */
+  z.object({ kind: z.literal("refused"), reason: z.string().min(1).max(500) }).strict(),
+]);
+
+/**
+ * The `native_application` Surface payload.
+ *
+ * It carries the *intended* region beside the current state, because a Surface
+ * showing only where a window is cannot say where it was meant to be — and the
+ * gap between those two is exactly what a person needs to see when placement
+ * degraded.
+ */
+export const NativeApplicationPayloadSchema = z
+  .object({
+    applicationId: z.string().trim().min(1).max(64),
+    displayName: z.string().trim().min(1).max(200),
+    intendedMonitor: MonitorRoleSchema,
+    intendedRegion: RegionNameSchema,
+    state: NativeApplicationStateSchema,
+  })
+  .strict();
+
+/**
+ * The `native_application` Surface payload: every native tool this piece of work
+ * uses, in one Surface.
+ *
+ * One Surface rather than one per application, because a surface intent's
+ * identity is `(objectiveId, kind, sourceIds)` — two intents of the same kind
+ * with the same sources are the same intent, and the second upsert would
+ * overwrite the first. It is also the better reading: "the tools for this work"
+ * is one thing a person looks at, not one frame per executable.
+ */
+export const NativeFocusPayloadSchema = z
+  .object({
+    applications: z.array(NativeApplicationPayloadSchema).min(1).max(8),
+  })
+  .strict();
+
+export type NativeApplicationState = z.infer<typeof NativeApplicationStateSchema>;
+export type NativeApplicationPayload = z.infer<typeof NativeApplicationPayloadSchema>;
+export type NativeFocusPayload = z.infer<typeof NativeFocusPayloadSchema>;
 export type MonitorRole = z.infer<typeof MonitorRoleSchema>;
 export type RegionName = z.infer<typeof RegionNameSchema>;
 export type Placement = z.infer<typeof PlacementSchema>;

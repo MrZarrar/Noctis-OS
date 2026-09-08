@@ -99,6 +99,19 @@ pub fn minimum_dip(application_id: &str) -> (u32, u32) {
     }
 }
 
+/// The application's name as a person would say it.
+///
+/// Beside the grant list rather than in `ApplicationTarget`, because how an
+/// application is identified and how it is described are different concerns and
+/// only one of them belongs in a crate that decides whether to move windows.
+pub fn display_name(application_id: &str) -> &str {
+    match application_id {
+        "vscode" => "Visual Studio Code",
+        "emulator" => "Android Emulator",
+        other => other,
+    }
+}
+
 /// What Noctis moved, and what it looked like before.
 ///
 /// Keyed by window handle. Section 11.2: "restore only windows Noctis moved and

@@ -47,6 +47,7 @@ import {
   MatchEvidenceSchema,
   WindowIdentitySchema,
   WindowPlacementEvidenceSchema,
+  NativeFocusPayloadSchema,
   WindowPlacementRequestSchema,
   WindowResolutionSchema,
 } from "./window.js";
@@ -98,6 +99,7 @@ const SCHEMAS: ReadonlyArray<readonly [string, ZodType]> = [
   ["MatchEvidence", MatchEvidenceSchema],
   ["WindowResolution", WindowResolutionSchema],
   ["WindowPlacementEvidence", WindowPlacementEvidenceSchema],
+  ["NativeFocusPayload", NativeFocusPayloadSchema],
 ];
 
 const HOSTILE_INPUTS: ReadonlyArray<readonly [string, unknown]> = [

@@ -1,4 +1,5 @@
 import type { SurfaceSize } from "@noctis/contracts";
+import { NativeFocusPayloadSchema } from "@noctis/contracts";
 import { z } from "zod";
 
 /**
@@ -195,6 +196,21 @@ export const REGISTRY = {
     schema: ArtifactPayloadSchema,
     sizes: ALL_SIZES,
     title: "Artifact",
+  },
+  native_application: {
+    payloadVersion: 1,
+    schema: NativeFocusPayloadSchema,
+    // Never compact. The intended region, the current state, and the reason
+    // they differ are three lines that all have to be readable at once, and a
+    // Surface that dropped the reason would be the one that gets distrusted.
+    sizes: ["standard", "wide", "stage"],
+    title: "Native application",
+    /**
+     * Placing another application's window is a consequence, so a caller
+     * without `window.place` sees the fallback rather than a Surface whose
+     * buttons would be refused by the shell anyway.
+     */
+    requires: "window.place",
   },
   source_state: {
     payloadVersion: 1,

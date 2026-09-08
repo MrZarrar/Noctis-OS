@@ -52,6 +52,15 @@ export interface CompositionState {
   move: (surfaceId: string, region: SurfaceRegion, size: SurfaceSize) => Promise<void>;
   release: (surfaceId: string) => Promise<void>;
   dismiss: (surfaceId: string) => Promise<void>;
+  /**
+   * Re-reads the composition.
+   *
+   * For a caller that changed an intent through a command this hook does not
+   * own — Phase 9's placement upserts its own Surface after the shell reports
+   * what happened. `move`, `release` and `dismiss` already re-read for
+   * themselves, so this exists for changes that arrive from outside them.
+   */
+  refresh: () => void;
 }
 
 /**
@@ -234,6 +243,9 @@ export function useComposition(
     attentionState,
     error,
     focus: setFocusedSurfaceId,
+    refresh: useCallback(() => {
+      setRevision((current) => current + 1);
+    }, []),
     move: useCallback(
       async (surfaceId, region, size) => {
         await send("surface.set_override", { ...overrideScope(surfaceId), region, size });

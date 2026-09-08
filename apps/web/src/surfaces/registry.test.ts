@@ -11,12 +11,16 @@ describe("the Surface registry", () => {
     expect(resolved.status).toBe("ok");
   });
 
+  /**
+   * The example used to be `native_application`, which Phase 9 registered. A
+   * test for "nothing registered this" needs a kind nothing ever will.
+   */
   it("falls back for a kind nothing registered", () => {
-    const resolved = resolveSurface("native_application", 1, {}, "wide");
+    const resolved = resolveSurface("haruspicy", 1, {}, "wide");
 
     expect(resolved).toEqual({
       status: "fallback",
-      kind: "native_application",
+      kind: "haruspicy",
       reason: "no renderer is registered for this kind",
     });
   });
@@ -105,5 +109,77 @@ describe("THE GATE: a Surface cannot show what the caller may not see", () => {
 
       expect(resolved.status === "fallback" ? resolved.reason : "ok").not.toContain("capability");
     }
+  });
+});
+
+describe("the native application Surface", () => {
+  const FOCUS = {
+    applications: [
+      {
+        applicationId: "vscode",
+        displayName: "Visual Studio Code",
+        intendedMonitor: "primary",
+        intendedRegion: "left_two_thirds",
+        state: { kind: "notRunning" },
+      },
+    ],
+  };
+
+  it("resolves with the window.place capability", () => {
+    const resolved = resolveSurface("native_application", 1, FOCUS, "wide", ["window.place"]);
+
+    expect(resolved.status).toBe("ok");
+  });
+
+  /**
+   * THE GATE: a page with no desktop shell behind it cannot place a window, and
+   * the honest answer is a fallback that says why rather than a Surface whose
+   * buttons would all fail.
+   */
+  it("falls back without it, which is what a browser gets", () => {
+    const resolved = resolveSurface("native_application", 1, FOCUS, "wide", []);
+
+    expect(resolved.status).toBe("fallback");
+    expect(resolved.status === "fallback" ? resolved.reason : "").toContain("window.place");
+  });
+
+  /**
+   * THE GATE: the payload carries the state the shell reported, and a state the
+   * schema does not know must not render as though it were understood.
+   */
+  it("refuses a state nothing in the contract describes", () => {
+    const invented = {
+      applications: [{ ...FOCUS.applications[0], state: { kind: "probably_fine" } }],
+    };
+
+    expect(resolveSurface("native_application", 1, invented, "wide", ["window.place"]).status).toBe(
+      "fallback",
+    );
+  });
+
+  it("refuses a placed state that cannot say where it was placed", () => {
+    const missingPlacement = {
+      applications: [
+        { ...FOCUS.applications[0], state: { kind: "placed", windowTitle: "Noctis-OS" } },
+      ],
+    };
+
+    expect(
+      resolveSurface("native_application", 1, missingPlacement, "wide", ["window.place"]).status,
+    ).toBe("fallback");
+  });
+
+  /** Never compact: the state, the intended region, and the reason they differ. */
+  it("refuses the compact size", () => {
+    expect(resolveSurface("native_application", 1, FOCUS, "compact", ["window.place"]).status).toBe(
+      "fallback",
+    );
+  });
+
+  it("refuses a payload with no applications in it at all", () => {
+    expect(
+      resolveSurface("native_application", 1, { applications: [] }, "wide", ["window.place"])
+        .status,
+    ).toBe("fallback");
   });
 });

@@ -1392,3 +1392,80 @@ not yet run together, because that needs the shell and the core up at once with 
 Surface to drive them from. `NativeApplicationSurface`, launch correlation for a
 process Noctis starts (the map exists; nothing writes to it yet), the node
 native-window adapter, and the qualification runbook document all remain.
+
+### 2026-09-08 Phase 9 (part 4) the Surface, the bridge, and the runbook
+
+Focus mode is now reachable. Activating an Objective surveys the native
+applications Noctis may arrange and proposes a `native_application` Surface;
+its actions reach the shell, which asks the core, and what the Surface then
+shows is the outcome rather than the request.
+
+Created: `packages/ui/src/surfaces/native.tsx`,
+`apps/web/src/transport/NativeWindowBridge.ts`, the `native_application`
+registry entry and renderer, `focusForObjective` in `Command.tsx`, and
+`docs/operations/windows-qualification.md` — the last of Phase 9's named
+deliverables.
+
+Four things reading the existing code changed, each of which would have been a
+bug:
+
+- **A surface intent's identity is `(objectiveId, kind, sourceIds)`.** Two
+  `native_application` intents with the same empty `sourceIds` are the same
+  intent, so the loop that proposed one per application would have had the
+  emulator's upsert silently overwrite the editor's, and focus mode would show
+  one tool instead of two. The payload therefore carries _all_ the applications
+  in one Surface, which is also the better reading: "the tools for this work" is
+  one thing a person looks at.
+- **`rename_all` renames serde variants, not struct-variant fields.** Without
+  `rename_all_fields` the shell sends `monitor_id` while the contract expects
+  `monitorId`, the payload fails its schema, and the Surface renders a fallback
+  — no compile error, no runtime error, just a Surface that quietly stops
+  working. `spells_every_field_the_way_the_surface_schema_reads_it` asserts the
+  wire names and that the snake_case ones are absent.
+- **`resolveSurface` was being called with no capabilities.** A `requires` entry
+  would have made this Surface always fall back in the workbench. `requires` is
+  now understood as a _client_ capability rather than an authority grant —
+  authority is decided by the core on every placement regardless — so the
+  workbench passes `window.place` exactly when a desktop shell is behind the
+  page. In a browser it is not passed, and the fallback says so, which is why
+  the E2E suite needed no shell to pretend at.
+- **`window.discover` returning a raw window list was the wrong shape.** The
+  grant list lives in the shell, so a page handed every window on the machine
+  would need to know which executables count as the editor in order to say
+  anything — and a grant list the page knows is one the page can disagree with.
+  Replaced by `window_survey`, which reports per granted target.
+
+The bridge parses every shell response through its contract schema, and that
+caught a real omission immediately: the Rust `Placed` variant sends `previous`
+and `requestId`, which the first draft of `NativeApplicationStateSchema` did not
+declare. Both belong — `previous` is what makes "Put it back" name somewhere
+real, and a placement that cannot state its own previous position is not
+demonstrably reversible.
+
+| Command                  | Result                                                |
+| ------------------------ | ----------------------------------------------------- |
+| `npm run test:boundary`  | exit 0                                                |
+| `npm run format:check`   | exit 0                                                |
+| `npm run lint`           | exit 0                                                |
+| `npm run typecheck`      | exit 0                                                |
+| `npm run test:unit`      | exit 0; 58 files, 1300 tests (1277 before this batch) |
+| `npm run build`          | exit 0                                                |
+| `npm run build:web`      | exit 0                                                |
+| `npm run test:desktop`   | exit 0                                                |
+| `npm run rust:fmt:check` | exit 0                                                |
+| `npm run rust:clippy`    | exit 0; 0 warnings with `-D warnings`                 |
+| `npm run rust:test`      | exit 0; 132 tests (131 before)                        |
+| `npm run test:e2e`       | exit 0; 4 tests, run here against Edge                |
+| `npm run build:desktop`  | not run here; Smart App Control, see part 1           |
+
+`docs/operations/desktop.md` had gone stale: the shell binary moved to the
+workspace `target/` in part 1 and the doc still named the old path.
+
+**Phase 9's gate is still open, and the runbook says why.** Two task items are
+unimplemented — a maximized window is not un-maximized before placement, and the
+moved-window map is not persisted across a shell restart — and one _gate clause_
+is unreachable: `region::resolve` honours a saved user override and has tests for
+it, but nothing in the product writes one, because the shell passes no override.
+So "user overrides are respected" is proven in the resolver and cannot be
+exercised from the UI. Step 3 of the runbook also has not been run: driving a
+GUI shell through a placement is a person's job, which is what the runbook is for.

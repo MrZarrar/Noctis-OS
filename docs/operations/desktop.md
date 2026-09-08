@@ -23,7 +23,7 @@ Then, in a second terminal:
 npm run build:web                      # tsc, then the page assets
 npm run build:desktop                  # tauri build --no-bundle
 $env:NOCTIS_CORE_TOKEN = "<the same token>"
-apps\desktop\src-tauri\target\release\noctis-desktop.exe
+target\release\noctis-desktop.exe    # a workspace target directory since Phase 9
 ```
 
 `npm --workspace @noctis/desktop run dev` does the same with a debug build and rebuilds the page

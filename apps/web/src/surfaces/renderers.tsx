@@ -7,9 +7,11 @@ import {
   EvidenceSurface,
   FallbackSurface,
   ListSurface,
+  NativeApplicationSurface,
   RecallSurface,
   SourceStateSurface,
 } from "@noctis/ui";
+import type { NativeFocusPayload } from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
@@ -28,6 +30,15 @@ export interface SurfaceContext {
   onExecute?: (approvalId: string) => void;
   onImport?: (artifactId: string) => void;
   onRefreshSource?: (sourceId: string) => void;
+  /**
+   * Phase 9 handoffs. Placement crosses into another application's window, which
+   * is the furthest thing from something a renderer may do for itself: these go
+   * to the desktop shell, which asks the core before it moves anything.
+   */
+  onPlaceWindow?: (applicationId: string) => void;
+  onRestoreWindow?: (applicationId: string) => void;
+  onChooseWindow?: (applicationId: string, handle: number) => void;
+  onReviewApproval?: (requestId: string) => void;
 }
 
 /**
@@ -73,6 +84,42 @@ const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) =
     />
   ),
   artifact: (payload: Parameters<typeof ArtifactSurface>[0]) => <ArtifactSurface {...payload} />,
+  // One Surface, several applications — see `NativeFocusPayloadSchema` for why
+  // it cannot be one Surface each.
+  native_application: (payload: NativeFocusPayload, context: SurfaceContext) => (
+    <>
+      {payload.applications.map((application) => (
+        <NativeApplicationSurface
+          key={application.applicationId}
+          {...application}
+          {...(context.onPlaceWindow === undefined
+            ? {}
+            : {
+                onPlace: () => {
+                  context.onPlaceWindow?.(application.applicationId);
+                },
+              })}
+          {...(context.onRestoreWindow === undefined
+            ? {}
+            : {
+                onRestore: () => {
+                  context.onRestoreWindow?.(application.applicationId);
+                },
+              })}
+          {...(context.onChooseWindow === undefined
+            ? {}
+            : {
+                onChoose: (handle: number) => {
+                  context.onChooseWindow?.(application.applicationId, handle);
+                },
+              })}
+          {...(context.onReviewApproval === undefined
+            ? {}
+            : { onReview: context.onReviewApproval })}
+        />
+      ))}
+    </>
+  ),
   source_state: (
     payload: Parameters<typeof SourceStateSurface>[0] & { sourceId: string },
     context: SurfaceContext,

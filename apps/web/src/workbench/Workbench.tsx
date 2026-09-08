@@ -18,6 +18,23 @@ export interface WorkbenchProps {
   composition: CompositionState;
   /** Passed through to any Surface renderer that offers a Vault handoff. */
   onOpenInVault?: (evidence: { entityId: string }) => void;
+  /**
+   * Phase 9. Absent when there is no desktop shell, which is what makes the
+   * native Surface render without action buttons in a browser rather than with
+   * buttons that would fail.
+   */
+  onPlaceWindow?: (applicationId: string) => void;
+  onRestoreWindow?: (applicationId: string) => void;
+  /**
+   * What this client can do, for the registry's `requires` gate.
+   *
+   * A client capability, not an authority grant — the two are different and
+   * conflating them would be the bug. Authority is decided by the core on every
+   * single placement, whatever is passed here. This answers the narrower
+   * question of whether this page could carry the action out at all, which for
+   * `window.place` means "is there a desktop shell behind it".
+   */
+  capabilities?: readonly string[];
 }
 
 function slotsIn(plan: CompositionPlan, region: SurfaceRegion): CompositionPlan["slots"] {
@@ -32,7 +49,13 @@ function slotsIn(plan: CompositionPlan, region: SurfaceRegion): CompositionPlan[
  * five region names into CSS, which is why no ranking, capacity, or override
  * logic appears in it.
  */
-export function Workbench({ composition, onOpenInVault }: WorkbenchProps): JSX.Element {
+export function Workbench({
+  composition,
+  onOpenInVault,
+  onPlaceWindow,
+  onRestoreWindow,
+  capabilities = [],
+}: WorkbenchProps): JSX.Element {
   const { plan, intents, overrides, focusedSurfaceId } = composition;
 
   if (plan === undefined) {
@@ -51,7 +74,13 @@ export function Workbench({ composition, onOpenInVault }: WorkbenchProps): JSX.E
       return undefined;
     }
 
-    const resolved = resolveSurface(intent.kind, intent.payloadVersion, intent.payload, slot.size);
+    const resolved = resolveSurface(
+      intent.kind,
+      intent.payloadVersion,
+      intent.payload,
+      slot.size,
+      capabilities,
+    );
 
     return (
       <SurfaceFrame
@@ -91,7 +120,11 @@ export function Workbench({ composition, onOpenInVault }: WorkbenchProps): JSX.E
         >
           {focusedSurfaceId === slot.surfaceId ? "Leave focus" : "Focus"}
         </button>
-        {renderSurface(resolved, onOpenInVault === undefined ? {} : { onOpenInVault })}
+        {renderSurface(resolved, {
+          ...(onOpenInVault === undefined ? {} : { onOpenInVault }),
+          ...(onPlaceWindow === undefined ? {} : { onPlaceWindow }),
+          ...(onRestoreWindow === undefined ? {} : { onRestoreWindow }),
+        })}
       </SurfaceFrame>
     );
   };

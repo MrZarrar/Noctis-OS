@@ -341,7 +341,7 @@ pub fn run() {
             core_request,
             core_subscribe,
             core_unsubscribe,
-            windows_commands::window_discover,
+            windows_commands::window_survey,
             windows_commands::window_place,
             windows_commands::window_restore
         ]);
