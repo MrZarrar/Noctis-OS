@@ -142,8 +142,50 @@ pub struct NativeWindows {
     /// exists by `region::resolve`, so unplugging a monitor degrades rather than
     /// resurrects a rectangle nobody can see.
     pub overrides: Mutex<HashMap<String, Placement>>,
-    /// Correlations for processes Noctis started itself, by application id.
-    pub correlations: Mutex<HashMap<String, String>>,
+    /// Processes Noctis started itself, by application id.
+    ///
+    /// Written by `tool_launch` and read by placement. Keyed by the id that the
+    /// window grant list and the tool descriptor share — `vscode` is one thing,
+    /// described twice — which is the whole contract between the two halves.
+    pub correlations: Mutex<HashMap<String, Launch>>,
+}
+
+/// A process Noctis started, and the id by which its windows can be recognised.
+///
+/// The process id is what makes the correlation checkable. Without it the
+/// correlation id would be a label Noctis assigned to nothing, which is what it
+/// was for the whole of Phase 9: the map existed, `select_window` preferred a
+/// correlated window, and nothing ever wrote an entry because nothing launched
+/// anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Launch {
+    pub correlation_id: String,
+    pub process_id: u32,
+}
+
+/// Marks the windows belonging to processes Noctis started.
+///
+/// `win32::top_level_windows` always reports `launch_correlation_id: None`,
+/// because discovery cannot prove what launched a process and does not guess.
+/// This is the caller filling it in, and it is the only thing that ever does.
+///
+/// ponytail: a direct process-id match, with no walk of the process tree. An
+/// application whose launcher exits and hands off to a running instance simply
+/// does not correlate, and identity falls back to executable and class — which
+/// already works. Walking the tree is the upgrade if a target ever needs it.
+pub fn stamp_launches(
+    windows: &mut [noctis_windows::WindowIdentity],
+    launches: &HashMap<String, Launch>,
+) {
+    for window in windows.iter_mut() {
+        if let Some(launch) = launches
+            .values()
+            .find(|launch| launch.process_id == window.process_id)
+        {
+            window.launch_correlation_id = Some(launch.correlation_id.clone());
+        }
+    }
 }
 
 /// Serializable so "put it back" survives a restart of the shell.
@@ -275,6 +317,69 @@ mod tests {
             );
             assert!(!target.executable_names.is_empty());
         }
+    }
+
+    fn window(handle: u64, process_id: u32) -> noctis_windows::WindowIdentity {
+        noctis_windows::WindowIdentity {
+            handle,
+            process_id,
+            executable_path: Some("C:/Program Files/Code.exe".to_owned()),
+            class_name: "Chrome_WidgetWin_1".to_owned(),
+            title: "Noctis - Visual Studio Code".to_owned(),
+            launch_correlation_id: None,
+        }
+    }
+
+    /// THE GATE: this is the half Phase 9 left unwritten. `select_window`
+    /// prefers a correlated window and `evaluate` compares the id, but nothing
+    /// ever set one on a window, so the whole correlation path was unreachable.
+    #[test]
+    fn marks_the_windows_of_a_process_noctis_started() {
+        let mut windows = [window(1, 4242), window(2, 9999)];
+        let launches = HashMap::from([(
+            "vscode".to_owned(),
+            Launch {
+                correlation_id: "launch-7".to_owned(),
+                process_id: 4242,
+            },
+        )]);
+
+        stamp_launches(&mut windows, &launches);
+
+        assert_eq!(
+            windows[0].launch_correlation_id.as_deref(),
+            Some("launch-7")
+        );
+        // A window belonging to a process Noctis did not start stays unmarked.
+        // Marking it would manufacture the strongest identity signal there is
+        // for a window nobody can prove anything about.
+        assert_eq!(windows[1].launch_correlation_id, None);
+    }
+
+    #[test]
+    fn marks_nothing_when_noctis_has_launched_nothing() {
+        let mut windows = [window(1, 4242)];
+
+        stamp_launches(&mut windows, &HashMap::new());
+
+        assert_eq!(windows[0].launch_correlation_id, None);
+    }
+
+    /// The correlation map is keyed by an id the window grant list and the tool
+    /// descriptor share, so a tool that launches the editor and a target that
+    /// places its window are talking about the same thing. If those two lists
+    /// ever disagree on the spelling, a launched editor stops correlating and
+    /// nothing says why.
+    #[test]
+    fn uses_the_same_id_for_the_editor_as_the_tool_registry_does() {
+        let placeable: Vec<String> = granted_targets().into_iter().map(|t| t.id).collect();
+        let tools: Vec<String> = crate::tool_registry::built_in()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+
+        assert!(placeable.contains(&"vscode".to_owned()));
+        assert!(tools.contains(&"vscode".to_owned()));
     }
 
     #[test]

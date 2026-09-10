@@ -1,40 +1,24 @@
-import type { RouteName, ToolDescriptor } from "@noctis/contracts";
+import type { RouteName, ToolVerb } from "@noctis/contracts";
 import { ROUTE_CAPABILITY, ROUTE_NAMES } from "@noctis/contracts";
 import { describe, expect, it } from "vitest";
 
+import type { ToolSummary } from "./route.js";
 import { UNAVAILABLE_UNBUILT, chooseRoute, raisedOperationClass } from "./route.js";
 
-const everything: ToolDescriptor = {
-  id: "vinted",
-  displayName: "Vinted",
-  instructions: "Open Vinted and start a new listing by hand.",
-  routes: [
-    {
-      route: "official_cli",
-      executable: "vinted-cli",
-      detached: false,
-      verbs: [
-        {
-          id: "draft",
-          label: "Draft a listing",
-          args: ["draft"],
-          operationClass: "local_reversible_edit",
-        },
-        { id: "publish", label: "Publish", args: ["publish"], operationClass: "publish" },
-      ],
-    },
-    {
-      route: "isolated_browser",
-      url: "https://www.vinted.co.uk/items/new",
-      origins: ["https://www.vinted.co.uk"],
-    },
-    {
-      route: "visible_handoff",
-      url: "https://www.vinted.co.uk/items/new",
-      origins: ["https://www.vinted.co.uk"],
-    },
-    { route: "manual", steps: ["Open Vinted", "Press Sell now"] },
-  ],
+const VERBS: readonly ToolVerb[] = [
+  {
+    id: "draft",
+    label: "Draft a listing",
+    args: ["draft"],
+    operationClass: "local_reversible_edit",
+  },
+  { id: "publish", label: "Publish", args: ["publish"], operationClass: "publish" },
+];
+
+const everything: ToolSummary = {
+  toolId: "vinted",
+  declaredRoutes: ["official_cli", "isolated_browser", "visible_handoff", "manual"],
+  verbs: VERBS,
 };
 
 const allGranted = new Set(Object.values(ROUTE_CAPABILITY));
@@ -52,22 +36,22 @@ const reachable = {
 
 describe("chooseRoute", () => {
   /**
-   * THE GATE: `manual` is the terminal fallback, so a tool with nothing declared
-   * and nothing granted still gets an answer. A router that could return "no
+   * THE GATE: `manual` is the terminal fallback, so a tool that declares nothing
+   * and is granted nothing still gets an answer. A router that could return "no
    * route" would make every caller invent its own degradation.
    */
   it("always finds a route, even for a tool that declares none", () => {
-    const bare: ToolDescriptor = { ...everything, routes: [] };
+    const bare: ToolSummary = { toolId: "unknown", declaredRoutes: [], verbs: [] };
 
-    expect(chooseRoute({ descriptor: bare, granted: new Set(), availability: {} })).toMatchObject({
+    expect(chooseRoute({ summary: bare, granted: new Set(), availability: {} })).toMatchObject({
       route: "manual",
       capability: "tool.inspect",
     });
   });
 
-  it("prefers the strongest route the tool declares, the machine can reach, and a grant covers", () => {
+  it("prefers the strongest route the tool declares, the machine reaches, and a grant covers", () => {
     const chosen = chooseRoute({
-      descriptor: everything,
+      summary: everything,
       granted: allGranted,
       availability: reachable,
     });
@@ -84,7 +68,7 @@ describe("chooseRoute", () => {
    */
   it("skips a route the machine cannot reach and says which it passed over", () => {
     const chosen = chooseRoute({
-      descriptor: everything,
+      summary: everything,
       granted: allGranted,
       availability: {
         ...reachable,
@@ -95,10 +79,11 @@ describe("chooseRoute", () => {
 
     expect(chosen.route).toBe("visible_handoff");
     expect(chosen.degradedFrom).toEqual(["official_cli", "isolated_browser"]);
+    expect(chosen.reasons[0]).toContain("vinted-cli is not installed");
   });
 
   /**
-   * THE GATE: Section 12.3 wants existing-profile control separately granted.
+   * THE GATE: Section 12.3 wants existing-profile use separately granted.
    * Without the grant the router degrades past it rather than asking authority
    * and being refused — a router that routes to a capability nobody holds turns
    * every session into a prompt.
@@ -110,7 +95,7 @@ describe("chooseRoute", () => {
     // Reachable, and still passed over. If the fixture left it unreported it
     // would degrade for the wrong reason and this test would prove nothing.
     const chosen = chooseRoute({
-      descriptor: everything,
+      summary: everything,
       granted: withoutHandoff,
       availability: {
         ...reachable,
@@ -128,26 +113,19 @@ describe("chooseRoute", () => {
    * A route the tool never declared is not a route, however available and
    * however granted. The descriptor is the allowlist.
    */
-  it("never chooses a route the descriptor does not declare", () => {
-    const handoffOnly: ToolDescriptor = {
-      ...everything,
-      routes: everything.routes.filter((route) => route.route === "visible_handoff"),
-    };
+  it("never chooses a route the tool does not declare", () => {
+    const handoffOnly: ToolSummary = { ...everything, declaredRoutes: ["visible_handoff"] };
 
     expect(
-      chooseRoute({ descriptor: handoffOnly, granted: allGranted, availability: reachable }).route,
+      chooseRoute({ summary: handoffOnly, granted: allGranted, availability: reachable }).route,
     ).toBe("visible_handoff");
   });
 
   /** An unreported route is unknown, not available. Fail closed. */
   it("treats a route the shell said nothing about as unreachable", () => {
-    const chosen = chooseRoute({
-      descriptor: everything,
-      granted: allGranted,
-      availability: {},
-    });
-
-    expect(chosen.route).toBe("manual");
+    expect(chooseRoute({ summary: everything, granted: allGranted, availability: {} }).route).toBe(
+      "manual",
+    );
   });
 
   /**
@@ -159,24 +137,25 @@ describe("chooseRoute", () => {
     expect(Object.keys(ROUTE_CAPABILITY).sort()).toEqual([...ROUTE_NAMES].sort());
   });
 
-  it("returns the verb it was asked for when the chosen route has one", () => {
+  it("returns the verb it was asked for", () => {
     const chosen = chooseRoute({
-      descriptor: everything,
+      summary: everything,
       granted: allGranted,
       availability: reachable,
       verbId: "publish",
     });
 
     expect(chosen.verb).toMatchObject({ id: "publish", operationClass: "publish" });
+    expect(chosen.operationClass).toBe("publish");
   });
 
   /**
-   * A verb the chosen route does not declare must not silently become another
-   * verb, and must not become "no verb, run the default" either.
+   * A verb the tool does not declare must not silently become another verb, and
+   * must not become "no verb, run the default" either.
    */
-  it("refuses a verb the chosen route does not declare", () => {
+  it("refuses a verb the tool does not declare", () => {
     const chosen = chooseRoute({
-      descriptor: everything,
+      summary: everything,
       granted: allGranted,
       availability: reachable,
       verbId: "delete_everything",
@@ -184,6 +163,15 @@ describe("chooseRoute", () => {
 
     expect(chosen.verb).toBeUndefined();
     expect(chosen.unknownVerb).toBe(true);
+  });
+
+  /**
+   * The page never sees an executable path, a URL, or an origin allowlist — a
+   * summary has nowhere to carry one. Asserted on the shape itself, because this
+   * is the property that keeps the descriptor an allowlist rather than advice.
+   */
+  it("is decided from a summary that carries no path, url, or origin", () => {
+    expect(Object.keys(everything).sort()).toEqual(["declaredRoutes", "toolId", "verbs"]);
   });
 });
 

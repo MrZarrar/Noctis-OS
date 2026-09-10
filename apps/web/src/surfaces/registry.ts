@@ -1,5 +1,5 @@
 import type { SurfaceSize } from "@noctis/contracts";
-import { NativeFocusPayloadSchema } from "@noctis/contracts";
+import { ExternalToolFocusPayloadSchema, NativeFocusPayloadSchema } from "@noctis/contracts";
 import { z } from "zod";
 
 /**
@@ -211,6 +211,33 @@ export const REGISTRY = {
      * buttons would be refused by the shell anyway.
      */
     requires: "window.place",
+  },
+  external_tool: {
+    payloadVersion: 1,
+    schema: ExternalToolFocusPayloadSchema,
+    // Never compact. The chosen route, what it degraded from, and the state are
+    // three lines that all have to be readable at once — and the one that would
+    // be dropped first is "in your own signed-in browser", which is the line
+    // somebody most needs to see before agreeing.
+    sizes: ["standard", "wide", "stage"],
+    title: "External tool",
+    /**
+     * Reaching a tool is a consequence, so a caller without `tool.inspect` sees
+     * the fallback rather than a Surface whose buttons the shell would refuse.
+     *
+     * `tool.inspect` rather than a stronger capability, because that is what the
+     * *Surface* needs: it renders what the survey found. Which route may
+     * actually be taken is decided per route by the router and per act by the
+     * core, neither of which this gate can stand in for.
+     */
+    requires: "tool.inspect",
+    /**
+     * A payload describing which programs are installed is a snapshot, and it
+     * goes stale the moment somebody installs one. Phase 9 learned this the
+     * expensive way with a Surface reporting an editor as closed while it sat
+     * open on the next display.
+     */
+    sourceRefresh: true,
   },
   source_state: {
     payloadVersion: 1,

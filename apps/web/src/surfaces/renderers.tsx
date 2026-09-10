@@ -5,13 +5,14 @@ import {
   ConversationSurface,
   DetailSurface,
   EvidenceSurface,
+  ExternalToolSurface,
   FallbackSurface,
   ListSurface,
   NativeApplicationSurface,
   RecallSurface,
   SourceStateSurface,
 } from "@noctis/ui";
-import type { NativeFocusPayload } from "@noctis/contracts";
+import type { ExternalToolFocusPayload, NativeFocusPayload } from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
@@ -40,6 +41,13 @@ export interface SurfaceContext {
   onChooseWindow?: (applicationId: string, windowTitle: string) => void;
   onClearWindowOverride?: (applicationId: string) => void;
   onSurveyWindows?: () => void;
+  /**
+   * Phase 10 handoffs. Taking a tool route starts a program or opens somebody's
+   * own browser, which is the same kind of thing placement is: it goes to the
+   * shell, which asks the core before it reaches anything.
+   */
+  onActOnTool?: (toolId: string, verbId: string) => void;
+  onSurveyTools?: () => void;
   onReviewApproval?: (requestId: string) => void;
 }
 
@@ -126,6 +134,31 @@ const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) =
                   context.onClearWindowOverride?.(application.applicationId);
                 },
               })}
+        />
+      ))}
+    </>
+  ),
+  // One Surface, several tools — the same reason `native_application` carries
+  // all its applications: a surface intent's identity is
+  // `(objectiveId, kind, sourceIds)`, so a second intent of the same kind would
+  // overwrite the first rather than sit beside it.
+  external_tool: (payload: ExternalToolFocusPayload, context: SurfaceContext) => (
+    <>
+      {payload.tools.map((tool) => (
+        <ExternalToolSurface
+          key={tool.toolId}
+          {...tool}
+          {...(context.onActOnTool === undefined
+            ? {}
+            : {
+                onAct: (verbId: string) => {
+                  context.onActOnTool?.(tool.toolId, verbId);
+                },
+              })}
+          {...(context.onReviewApproval === undefined
+            ? {}
+            : { onReview: context.onReviewApproval })}
+          {...(context.onSurveyTools === undefined ? {} : { onRefresh: context.onSurveyTools })}
         />
       ))}
     </>

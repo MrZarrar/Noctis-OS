@@ -3,6 +3,11 @@ pub mod deeplink;
 pub mod placement;
 pub mod proxy;
 pub mod stream;
+pub mod tool_authority;
+pub mod tool_registry;
+/// The Tauri commands that reach specialist tools. Empty off Windows, by an
+/// inner `cfg`, for the same reason `windows_commands` is.
+pub mod tools_commands;
 pub mod window_authority;
 /// The Tauri commands that place native windows. Empty off Windows, by an inner
 /// `cfg` in the module itself rather than a `cfg` here, so the file states its
@@ -343,7 +348,9 @@ pub fn run() {
             windows_commands::window_survey,
             windows_commands::window_place,
             windows_commands::window_restore,
-            windows_commands::window_clear_override
+            windows_commands::window_clear_override,
+            tools_commands::tool_survey,
+            tools_commands::tool_execute
         ]);
 
     #[cfg(not(windows))]

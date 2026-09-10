@@ -3,7 +3,6 @@ import type {
   RouteAvailability,
   RouteName,
   ToolCapability,
-  ToolDescriptor,
   ToolVerb,
 } from "@noctis/contracts";
 import { ROUTE_CAPABILITY, ROUTE_NAMES, TOOL_CAPABILITY_OPERATION_CLASS } from "@noctis/contracts";
@@ -13,8 +12,8 @@ import { ROUTE_CAPABILITY, ROUTE_NAMES, TOOL_CAPABILITY_OPERATION_CLASS } from "
  *
  * Deterministic code owns routing (AGENTS.md). A model may propose which tool
  * and what for; which route that becomes is decided here, from declared facts
- * only — what the descriptor offers, what the machine can reach, and what a
- * capability covers.
+ * only — what the tool offers, what the machine can reach, and what a capability
+ * covers.
  */
 
 /**
@@ -29,6 +28,23 @@ export const UNAVAILABLE_UNBUILT: RouteAvailability = {
   available: false,
   reason: "Noctis has no executor for this route yet, so it was passed over.",
 };
+
+/**
+ * What the shell reports about one tool: which routes it declares, and which
+ * verbs it has.
+ *
+ * Deliberately not the `ToolDescriptor`. Executable paths, URLs, and origin
+ * allowlists stay in the shell, because a page that held them is a page that can
+ * disagree with the allowlist rather than merely name a tool in it. That is
+ * Phase 9's `window_survey` lesson a layer up: report per target, never hand
+ * over the grant list.
+ */
+export interface ToolSummary {
+  toolId: string;
+  declaredRoutes: readonly RouteName[];
+  /** Only `official_cli` has verbs, so an empty list is the ordinary case. */
+  verbs: readonly ToolVerb[];
+}
 
 /**
  * Severity, strictest last. Total over `OperationClass`, and a `Record` so a
@@ -54,8 +70,9 @@ const SEVERITY: Readonly<Record<OperationClass, number>> = {
  * Section 9.1's commit boundary lives here. A descriptor may declare that a
  * command publishes or spends, and the request that goes to authority carries
  * that stricter class — but a descriptor claiming a `tool.run_command` merely
- * inspects cannot talk its way below the floor, because a descriptor that could
- * understate its own consequence would make the whole table advisory.
+ * inspects cannot talk its way below the floor. Reaching an external tool with a
+ * command is an external act even when the command reads, and a floor that could
+ * be argued down would make the whole table advisory.
  */
 export function raisedOperationClass(
   capability: ToolCapability,
@@ -71,7 +88,7 @@ export function raisedOperationClass(
 }
 
 export interface RouteChoiceInput {
-  descriptor: ToolDescriptor;
+  summary: ToolSummary;
   /** The capabilities the caller holds. Not an authority decision — an eligibility filter. */
   granted: ReadonlySet<ToolCapability>;
   /**
@@ -80,23 +97,24 @@ export interface RouteChoiceInput {
    * a shell that failed to report cannot cause a route to be attempted blind.
    */
   availability: Partial<Readonly<Record<RouteName, RouteAvailability>>>;
-  /** Which verb the caller wants, when the route has verbs. */
+  /** Which verb the caller wants, when the chosen route has verbs. */
   verbId?: string;
 }
 
 export interface RouteChoice {
   route: RouteName;
   capability: ToolCapability;
-  /** The class to ask authority for: the capability's floor raised by the verb. */
+  /** The class to ask authority for: the capability's floor, raised by the verb. */
   operationClass: OperationClass;
-  /** Routes that were declared but passed over, in order, with why. */
+  /** Routes that were declared and passed over, in the order they were tried. */
   degradedFrom: RouteName[];
+  /** One sentence per degradation, so a Surface can say why rather than only that. */
   reasons: string[];
   verb?: ToolVerb;
   /**
-   * The caller asked for a verb the chosen route does not declare. Reported
-   * rather than silently ignored: running "the default" because a verb id did
-   * not match is how a caller ends up publishing when it meant to draft.
+   * The caller asked for a verb this tool does not declare. Reported rather than
+   * silently ignored: running "the default" because a verb id did not match is
+   * how a caller ends up publishing when it meant to draft.
    */
   unknownVerb?: boolean;
 }
@@ -114,30 +132,22 @@ export interface RouteChoice {
 export function chooseRoute(input: RouteChoiceInput): RouteChoice {
   const degradedFrom: RouteName[] = [];
   const reasons: string[] = [];
+  const verb = input.summary.verbs.find((candidate) => candidate.id === input.verbId);
+  const unknownVerb = input.verbId !== undefined && verb === undefined;
 
   for (const route of ROUTE_NAMES) {
-    const declared = input.descriptor.routes.find((candidate) => candidate.route === route);
     const capability = ROUTE_CAPABILITY[route];
 
     // The terminal fallback. It needs no declaration — a descriptor's
     // `instructions` are always present — and no grant beyond inspection, which
-    // is what makes it unconditional.
+    // is what makes it unconditional and the walk total.
     if (route === "manual") {
-      const verb = findVerb(declared, input.verbId);
-
-      return {
-        route,
-        capability,
-        operationClass: raisedOperationClass(capability, verb?.operationClass),
-        degradedFrom,
-        reasons,
-        ...(verb === undefined ? {} : { verb }),
-      };
+      return choice(route, capability, verb, degradedFrom, reasons, unknownVerb);
     }
 
-    if (declared === undefined) {
-      // Not degradation: a route the tool never offered was never on the table,
-      // so it is not something a person needs told about.
+    if (!input.summary.declaredRoutes.includes(route)) {
+      // Not a degradation: a route the tool never offered was never on the
+      // table, so it is not something a person needs told about.
       continue;
     }
 
@@ -146,7 +156,9 @@ export function chooseRoute(input: RouteChoiceInput): RouteChoice {
     if (availability === undefined || !availability.available) {
       degradedFrom.push(route);
       reasons.push(
-        `${route}: ${availability === undefined ? "the shell did not report this route" : availability.reason}`,
+        `${route}: ${
+          availability === undefined ? "the shell did not report this route" : availability.reason
+        }`,
       );
       continue;
     }
@@ -157,18 +169,7 @@ export function chooseRoute(input: RouteChoiceInput): RouteChoice {
       continue;
     }
 
-    const verb = findVerb(declared, input.verbId);
-    const unknownVerb = input.verbId !== undefined && verb === undefined && hasVerbs(declared);
-
-    return {
-      route,
-      capability,
-      operationClass: raisedOperationClass(capability, verb?.operationClass),
-      degradedFrom,
-      reasons,
-      ...(verb === undefined ? {} : { verb }),
-      ...(unknownVerb ? { unknownVerb: true } : {}),
-    };
+    return choice(route, capability, verb, degradedFrom, reasons, unknownVerb);
   }
 
   // Unreachable: `manual` is in `ROUTE_NAMES` and returns unconditionally. It is
@@ -177,17 +178,21 @@ export function chooseRoute(input: RouteChoiceInput): RouteChoice {
   throw new Error("route list contained no terminal fallback");
 }
 
-function hasVerbs(route: ToolDescriptor["routes"][number] | undefined): boolean {
-  return route !== undefined && route.route === "official_cli";
-}
-
-function findVerb(
-  route: ToolDescriptor["routes"][number] | undefined,
-  verbId: string | undefined,
-): ToolVerb | undefined {
-  if (route === undefined || verbId === undefined || route.route !== "official_cli") {
-    return undefined;
-  }
-
-  return route.verbs.find((verb) => verb.id === verbId);
+function choice(
+  route: RouteName,
+  capability: ToolCapability,
+  verb: ToolVerb | undefined,
+  degradedFrom: RouteName[],
+  reasons: string[],
+  unknownVerb: boolean,
+): RouteChoice {
+  return {
+    route,
+    capability,
+    operationClass: raisedOperationClass(capability, verb?.operationClass),
+    degradedFrom,
+    reasons,
+    ...(verb === undefined ? {} : { verb }),
+    ...(unknownVerb ? { unknownVerb: true } : {}),
+  };
 }

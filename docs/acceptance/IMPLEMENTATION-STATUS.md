@@ -1785,3 +1785,159 @@ second display. The mechanism was observed being honoured, but on a preference
 that came from the maximize defect rather than a hand drag, so it is recorded as
 unverified rather than passing. Three clicks would settle it. The gate is closed
 on the owner's judgement with that written down rather than waived.
+
+### 2026-09-10 Phase 10 (part 1) the router, four routes, and tools as data
+
+**Phase 10's gate is open.** Nothing in this batch has been run at a desk: no
+process has been launched, no browser opened, and the qualification runbook has
+not been walked. What exists is the decision layer, the boundary, the executors
+for three of the four routes, and a Surface that can reach them.
+
+**Tools are data, not adapters.** The starting question was which of Suno,
+Vinted, VS Code and GitHub to build adapters for. The owner's answer changed the
+shape: those names are how you test that routing works, not what routing is. So
+Phase 10 builds one router and four generic routes, and a tool is a row —
+`ToolDescriptor` in `tools.json`, overlaying a built-in set. Phase 11 should add
+rows. If it has to add code, this batch failed.
+
+Re-reading the plan afterwards, that split was already written: Phase 10's tasks
+name four **routes** and Phase 11's name three **adapters**. The tools were never
+supposed to appear here.
+
+Created: `packages/contracts/src/tool.ts`, `packages/domain/src/tools/route.ts`,
+`apps/desktop/src-tauri/src/{tool_registry,tool_authority,tools_commands}.rs`,
+`packages/ui/src/surfaces/external_tool.tsx`,
+`apps/web/src/transport/ExternalToolBridge.ts`, the `external_tool` registry
+entry and renderer, `toolsForObjective` in `Command.tsx`, and
+`docs/operations/tools-qualification.md`.
+
+#### What routes, and what does not
+
+| Route              | Capability                  | This batch                         |
+| ------------------ | --------------------------- | ---------------------------------- |
+| `official_cli`     | `tool.run_command`          | built — resolve, launch, or run    |
+| `isolated_browser` | `browser.automate_isolated` | routed to, reports why, not built  |
+| `visible_handoff`  | `browser.open_visible`      | built — opens the person's browser |
+| `manual`           | `tool.inspect`              | built — the terminal fallback      |
+
+`ROUTE_NAMES` is ordered strongest-first and `chooseRoute` walks it, taking the
+first route the tool declares, the machine can reach, and a capability covers.
+`manual` is last, needs no declaration, and cannot be unavailable — so the walk
+always terminates on an answer. "Failure degrades safely" is a property of the
+list rather than a branch somebody remembered to write, which is the distinction
+that cost Phase 9 three defects.
+
+Availability is consulted **before** authority, so a grant is never spent on a
+route that cannot run.
+
+#### Four decisions worth recording
+
+- **Existing-profile control and isolated automation differ by operation class,
+  not by a flag.** Section 12.3 wants them separately granted;
+  `browser.control_profile` is `external_write` and `browser.automate_isolated`
+  is `local_reversible_edit`, so an active Objective silently clears the second
+  and never the first, and `covers` compares class as well as name so neither
+  grant can cover the other. A flag would have needed a bespoke branch. The test
+  that matters runs it through the real evaluator rather than reading the table.
+- **A grant binds to a tool, not to a browser profile.** The tempting target for
+  profile control is `{ type: "browser_profile", id: "default" }`, which is a
+  grant over somebody's whole signed-in life. `{ type: "tool", id: "vinted" }`
+  reads "drive my signed-in browser **on Vinted**", and the descriptor's origin
+  allowlist is what makes that narrow reading true rather than nominal —
+  `origin_allows` compares a parsed origin, so `www.vinted.co.uk.evil.example`
+  and `evil.example/?https://www.vinted.co.uk` both fail where a `starts_with`
+  would have accepted both.
+- **Registering a descriptor is `credential_security`.** Writing one names an
+  executable and an origin allowlist, so it widens what Noctis may reach.
+  Choosing that class means `PERMISSION_INELIGIBLE` already puts it beyond every
+  standing permission and beyond a model, with no new policy code.
+- **A verb raises the operation class and can never lower it.** The capability is
+  a floor, derived in the shell from its own descriptor rather than sent by the
+  page. Reaching an external tool with a command is an external act even when the
+  command reads, so `tool.run_command` floors at `external_write` and a verb that
+  publishes raises it. Preparation stays cheap; the commit boundary does not.
+
+#### The correlation Phase 9 left plumbed and empty
+
+`tool_launch` writes `NativeWindows.correlations`, which nothing had ever
+written. Two things had to change for that to mean anything: the map now carries
+the process id beside the correlation id, and `stamp_launches` marks the windows
+of processes Noctis started — because `win32::top_level_windows` always reports
+`launch_correlation_id: None`, and until now nobody filled it in. So the
+`select_window` preference for a correlated window, and the `evaluate` comparison
+behind it, were both unreachable for the whole of Phase 9.
+
+ponytail: a direct process-id match, no walk of the process tree. An application
+whose launcher exits and hands off to a running instance simply does not
+correlate and falls back to executable and class, which already works.
+
+#### The defect the boundary parse caught, again
+
+Phase 9's lesson was to parse every cross-process response through its contract
+schema. It earned its keep immediately: `z.record` with an enum key is
+**exhaustive** in zod — it demands an entry for all four routes — while
+`tool_survey` reports availability only for the routes a tool declares. Every
+real response would have been rejected inside `survey()`, the catch in
+`toolsForObjective` would have swallowed it, and the Surface would simply never
+have appeared. No test would have failed; it is a runtime-only mismatch between
+two languages. `z.partialRecord` is the fix, and an unknown route name still
+fails loudly.
+
+The reason the test caught it is that the fixture is a real shell response — one
+declared route — rather than a convenient one with all four filled in. Phase 9's
+`.optional()`/`null` defect got through precisely because its test omitted the
+field instead of sending `null`.
+
+One smaller thing a test caught rather than a person: the unavailability reason
+named the executable (`Code.exe is not installed here`) and that string reaches a
+persisted Surface payload. It names the tool now, which is both narrower and
+what somebody reading it actually wants.
+
+#### Not built, deliberately
+
+- **The isolated Playwright executor**, and therefore the gate clause "isolated
+  sessions cannot access personal cookies" is satisfied by construction rather
+  than demonstrated: no isolated session exists to inspect. The route is declared,
+  routed to, and reports that it has no executor.
+- **`browser.control_profile` has no command.** It is a capability name and an
+  operation class and nothing else, which pins the decision so a later batch
+  cannot quietly reclassify it.
+- **`tool.register_descriptor` has no command either**, and this one was a
+  deliberate reversal. Noctis proposing a descriptor is what would make "handles
+  any use case" true rather than "handles any use case you configured" — but
+  building the command without a Surface to reach it from would be exactly the
+  shape that cost Phase 9 three defects: a mechanism built, tested in isolation,
+  with no path a person could take to it. The capability and its class are
+  recorded; the command belongs with the UI that reaches it.
+- **MeshCentral-style screen access.** Phase 10 says a separate future flag and a
+  security review, and not v1-critical. Nothing was added, not even a flag.
+
+Adding a tool today means editing `tools.json`, which the shell reads on every
+command so an edit takes effect without a restart. The runbook's Step 4 walks
+that, because "a tool is a row" is a claim worth testing rather than asserting.
+
+| Command                    | Result                                                             |
+| -------------------------- | ------------------------------------------------------------------ |
+| `npm run test:boundary`    | exit 0                                                             |
+| `npm run format:check`     | exit 0                                                             |
+| `npm run lint`             | exit 0                                                             |
+| `npm run typecheck`        | exit 0                                                             |
+| `npm run test:unit`        | exit 0; 63 files, 1367 tests (1313 before)                         |
+| `npm run test:integration` | exit 0; 150 tests                                                  |
+| `npm run test:migrations`  | exit 0; 30 tests                                                   |
+| `npm run build`            | exit 0                                                             |
+| `npm run test:e2e`         | exit 0; 4 tests, run here against Edge                             |
+| `npm run build:web`        | exit 0                                                             |
+| `npm run test:desktop`     | exit 0                                                             |
+| `npm run rust:fmt:check`   | exit 0                                                             |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`                              |
+| `npm run rust:test`        | exit 0; 206 tests — 118 in the shell, 88 in the crate (153 before) |
+| `npm run build:desktop`    | not run here; Smart App Control, see the Phase 9 part 1 note       |
+
+Every gate the CI job lists was run, in the order the job lists them.
+
+**What Phase 10 still needs**, and none of it is code that exists and cannot be
+reached: the qualification runbook walked at a desk, which is what would turn
+"three routes are implemented" into "three routes work". Four rows of the Windows
+runbook's Step 3 remain unverified from Phase 9 and are folded into the same
+session, because the shell has to be running for Step 2 here anyway.

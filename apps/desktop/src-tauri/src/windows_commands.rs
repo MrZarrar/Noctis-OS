@@ -27,8 +27,8 @@ use crate::proxy;
 use crate::proxy::ProxyResponse;
 use crate::window_authority::{authorises, execute_body, request_body, PLACE_CAPABILITY};
 use crate::windows_state::{
-    display_name, granted_targets, minimum_dip, Moved, NativeWindows, PlaceIntent, MOVED_FILE,
-    OVERRIDES_FILE,
+    display_name, granted_targets, minimum_dip, stamp_launches, Moved, NativeWindows, PlaceIntent,
+    MOVED_FILE, OVERRIDES_FILE,
 };
 use crate::{CoreState, MAIN_WINDOW};
 
@@ -355,14 +355,22 @@ pub fn window_survey(native: State<'_, NativeWindows>) -> Result<Vec<Surveyed>, 
         .map_err(|_| "launch correlations are poisoned".to_owned())?
         .clone();
 
-    let windows = win32::top_level_windows();
+    let mut windows = win32::top_level_windows();
+    // Discovery cannot prove what launched a process, so it reports none. This
+    // is the caller filling that in for the processes Noctis started itself.
+    stamp_launches(&mut windows, &held);
 
     Ok(granted_targets()
         .iter()
         .map(|target| Surveyed {
             application_id: target.id.clone(),
             display_name: display_name(&target.id).to_owned(),
-            state: match select_window(&windows, target, held.get(&target.id).map(String::as_str)) {
+            state: match select_window(
+                &windows,
+                target,
+                held.get(&target.id)
+                    .map(|launch| launch.correlation_id.as_str()),
+            ) {
                 Selection::One(window, _) => PlaceOutcome::Discovered {
                     window_title: window.title.clone(),
                     handle: window.handle,
@@ -418,14 +426,18 @@ pub async fn window_place(
         });
     };
 
-    let correlation = native
+    let launches = native
         .correlations
         .lock()
         .map_err(|_| "launch correlations are poisoned".to_owned())?
+        .clone();
+    let correlation = launches
         .get(&intent.application_id)
-        .cloned();
+        .map(|launch| launch.correlation_id.clone());
 
-    let windows = win32::top_level_windows();
+    let mut windows = win32::top_level_windows();
+    stamp_launches(&mut windows, &launches);
+
     let selection = select_window(&windows, target, correlation.as_deref())
         .narrow_by_title(title_hint.as_deref().unwrap_or_default());
 

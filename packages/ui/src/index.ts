@@ -7,6 +7,7 @@ export { SurfaceFrame } from "./surfaces/SurfaceFrame.js";
 export type { SurfaceFrameProps } from "./surfaces/SurfaceFrame.js";
 export * from "./surfaces/primitives.js";
 export * from "./surfaces/consequence.js";
+export * from "./surfaces/external_tool.js";
 export * from "./surfaces/native.js";
 export { VaultSphere } from "./vault/VaultSphere.js";
 export type { VaultSphereProps, VaultSphereNode, VaultSphereEdge } from "./vault/VaultSphere.js";

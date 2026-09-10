@@ -1,16 +1,21 @@
 import type {
+  ExternalToolPayload,
   MonitorRole,
   NativeApplicationPayload,
   ObjectiveRecord,
   RegionName,
+  ToolCapability,
 } from "@noctis/contracts";
 import { ObjectiveRecordSchema } from "@noctis/contracts";
+import { chooseRoute } from "@noctis/domain";
 import { IDENTITY_PROFILES, corner, material, semantic, spacing, typography } from "@noctis/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { useIdentityRuntime } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import type { ExternalToolBridge, SurveyedTool } from "../transport/ExternalToolBridge.js";
+import { externalToolBridgeFrom } from "../transport/ExternalToolBridge.js";
 import type { NativeWindowBridge, SurveyedApplication } from "../transport/NativeWindowBridge.js";
 import { nativeWindowBridgeFrom } from "../transport/NativeWindowBridge.js";
 import { Workbench } from "../workbench/Workbench.js";
@@ -231,6 +236,105 @@ async function upsertFocusSurface(
 }
 
 /**
+ * Surveys the specialist tools and proposes one Surface carrying all of them.
+ *
+ * The route is chosen here, by `chooseRoute`, from three declared facts: what
+ * the tool offers, what the shell says it can reach, and which capabilities a
+ * desktop shell makes available at all. Nothing about Suno or Vinted appears in
+ * this function, and nothing should — a tool is a row in the shell's registry,
+ * and if adding one ever needs a change here, the router is not general.
+ */
+async function toolsForObjective(
+  transport: CoreTransport,
+  bridge: ExternalToolBridge,
+  objective: ObjectiveRecord,
+): Promise<void> {
+  let surveyed: SurveyedTool[];
+
+  try {
+    surveyed = await bridge.survey();
+  } catch {
+    // The shell is there but refused or drifted. Leave the canvas alone.
+    return;
+  }
+
+  const tools = surveyed.map((tool) => {
+    const chosen = chooseRoute({
+      summary: {
+        toolId: tool.toolId,
+        declaredRoutes: tool.declaredRoutes,
+        verbs: tool.verbs,
+      },
+      granted: SHELL_TOOL_CAPABILITIES,
+      availability: tool.availability,
+    });
+
+    return {
+      toolId: tool.toolId,
+      displayName: tool.displayName,
+      route: chosen.route,
+      degradedFrom: chosen.degradedFrom,
+      verbs: tool.verbs.map((verb) => ({ id: verb.id, label: verb.label })),
+      // Nothing has been asked of this tool yet, which is a state rather than an
+      // absence — it is what the go-ahead action is offered from.
+      state: { kind: "ready" } as const,
+    };
+  });
+
+  if (tools.length === 0) {
+    return;
+  }
+
+  await upsertToolSurface(transport, objective.id, tools);
+}
+
+/**
+ * The capabilities a desktop shell makes reachable.
+ *
+ * Not an authority grant, and it must not be mistaken for one: the core decides
+ * every act on every request regardless of what is in this set. It is an
+ * eligibility filter, answering "could this route be taken at all here", which
+ * is the same question `requires` answers for a whole Surface.
+ *
+ * `browser.control_profile` is absent, deliberately. Section 12.3 keeps
+ * existing-profile *control* separately granted from everything else, and no
+ * executor for it exists — so the router degrades past it rather than routing to
+ * something that cannot run.
+ */
+const SHELL_TOOL_CAPABILITIES: ReadonlySet<ToolCapability> = new Set<ToolCapability>([
+  "tool.inspect",
+  "tool.launch",
+  "tool.run_command",
+  "browser.open_visible",
+]);
+
+/**
+ * The single `external_tool` intent for an Objective.
+ *
+ * One Surface carrying every tool, for the reason the native one is: a surface
+ * intent's identity is `(objectiveId, kind, sourceIds)`, so a second intent of
+ * the same kind and sources is the same intent and the upsert would overwrite
+ * rather than add.
+ */
+async function upsertToolSurface(
+  transport: CoreTransport,
+  objectiveId: string,
+  tools: readonly ExternalToolPayload[],
+): Promise<void> {
+  await transport.request("POST", "/commands/surface.upsert_intent", {
+    idempotencyKey: nextKey("surface.upsert_intent"),
+    objectiveId,
+    kind: "external_tool",
+    role: "supporting",
+    persistence: "objective",
+    priority: 45,
+    minSize: "standard",
+    payloadVersion: 1,
+    payload: { tools },
+  });
+}
+
+/**
  * What the Vault already knows about a freshly activated Objective.
  *
  * Section 7: "Command receives only a focused recall Surface". The recall runs
@@ -276,6 +380,8 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
    * appear at all instead of appearing and refusing.
    */
   const bridge = useMemo(() => nativeWindowBridgeFrom(globalThis), []);
+  /** The same fact, for tools: no desktop shell means nothing to route through. */
+  const toolBridge = useMemo(() => externalToolBridgeFrom(globalThis), []);
 
   /**
    * Re-surveys the native windows and re-proposes the Surface.
@@ -299,6 +405,25 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
   }, [transport, bridge, active, refresh]);
 
   /**
+   * Re-surveys the tools and re-proposes the Surface.
+   *
+   * Same shape and same reason as `surveyWindows`: a payload describing which
+   * programs are installed is a snapshot, and it is wrong the moment somebody
+   * installs one.
+   */
+  const surveyTools = useCallback(() => {
+    if (transport === undefined || toolBridge === undefined || active === undefined) {
+      return;
+    }
+
+    void toolsForObjective(transport, toolBridge, active).then(refresh, () => {
+      // `toolsForObjective` already swallows a shell that cannot answer. This
+      // catches only the upsert, and a failed refresh leaves the canvas as it
+      // was rather than blanking it.
+    });
+  }, [transport, toolBridge, active, refresh]);
+
+  /**
    * Surveys once per active Objective, including on a fresh page load.
    *
    * Keyed on the Objective's id rather than a boolean, so switching Objectives
@@ -311,7 +436,8 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
 
     surveyedFor.current = active.id;
     surveyWindows();
-  }, [active, surveyWindows]);
+    surveyTools();
+  }, [active, surveyWindows, surveyTools]);
 
   /**
    * Runs a placement and re-proposes the Surface with what actually happened.
@@ -360,6 +486,64 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
       composition.refresh();
     },
     [transport, bridge, active, composition],
+  );
+
+  /**
+   * Takes a tool route and re-proposes the Surface with what actually happened.
+   *
+   * The second half is the point, exactly as it is for placement: rendering the
+   * route as though it had succeeded is the dishonesty the outcome variants
+   * exist to prevent, so the shell's answer — handed off, launched, waiting for
+   * approval, or unavailable — replaces the state in the payload.
+   */
+  const actOnTool = useCallback(
+    (toolId: string, verbId: string) => {
+      if (transport === undefined || toolBridge === undefined || active === undefined) {
+        return;
+      }
+
+      const current = composition.intents.find((intent) => intent.kind === "external_tool");
+      const payload = current?.payload as { tools?: ExternalToolPayload[] } | undefined;
+      const tools = payload?.tools;
+      const tool = tools?.find((candidate) => candidate.toolId === toolId);
+
+      if (tools === undefined || tool === undefined) {
+        return;
+      }
+
+      void (async () => {
+        let state: ExternalToolPayload["state"];
+
+        try {
+          state = await toolBridge.execute({
+            toolId,
+            verbId,
+            // The route the router already chose and the Surface already showed.
+            // The shell re-checks it against its own descriptor rather than
+            // taking the page's word, so this is a request and not an
+            // instruction.
+            route: tool.route,
+            objectiveId: active.id,
+          });
+        } catch (failure: unknown) {
+          state = {
+            kind: "refused",
+            reason: failure instanceof Error ? failure.message : "the shell refused the request",
+          };
+        }
+
+        await upsertToolSurface(
+          transport,
+          active.id,
+          tools.map((candidate) =>
+            candidate.toolId === toolId ? { ...candidate, state } : candidate,
+          ),
+        );
+
+        composition.refresh();
+      })();
+    },
+    [transport, toolBridge, active, composition],
   );
 
   const placeWindow = useCallback(
@@ -612,12 +796,19 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
               // Both the handoffs and the capability come from the same fact:
               // there is a shell that could carry a placement out. In a browser
               // neither is passed, and the native Surface falls back saying so.
-              capabilities: ["window.place"],
+              // `tool.inspect` alongside `window.place`: both say the same
+              // thing, that there is a shell which could carry the consequence
+              // out. Neither is an authority grant — the core still decides
+              // every act — and in a browser neither is passed, so both Surfaces
+              // fall back saying so.
+              capabilities: ["window.place", "tool.inspect"],
               onPlaceWindow: placeWindow,
               onRestoreWindow: restoreWindow,
               onChooseWindow: chooseWindow,
               onClearWindowOverride: clearWindowOverride,
               onSurveyWindows: surveyWindows,
+              onActOnTool: actOnTool,
+              onSurveyTools: surveyTools,
             })}
       />
 
