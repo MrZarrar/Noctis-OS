@@ -52,6 +52,35 @@ const STATE_WORD: Readonly<Record<NativeApplicationState["kind"], string>> = {
   refused: "cannot be arranged",
 };
 
+/**
+ * What the place action is called in each state, and `undefined` where placing
+ * makes no sense yet.
+ *
+ * A table rather than a chain of conditions, because the first version of this
+ * offered no action at all in the `placed` state — and "arrange again after
+ * dragging it yourself" was the only path to the user override, so the override
+ * could never be reached from the interface. A table makes the missing entry
+ * visible; a condition just quietly did not match.
+ *
+ * `notRunning` has nothing to place. `ambiguous` needs a window chosen first,
+ * and `needsApproval` a decision made — offering a place action in either would
+ * be a button that cannot do what it says.
+ */
+export const PLACE_LABEL: Readonly<Record<NativeApplicationState["kind"], string | undefined>> = {
+  notRunning: undefined,
+  ambiguous: undefined,
+  needsApproval: undefined,
+  discovered: "Arrange this window",
+  restored: "Arrange this window",
+  // Arranging something already arranged is the gesture that says "I have moved
+  // this, use my position" — and, when nothing was moved, a harmless re-place
+  // against a display arrangement that may have changed since.
+  placed: "Arrange again",
+  // A refusal is worth retrying: the display arrangement, or the application's
+  // willingness, may both have changed.
+  refused: "Try again",
+};
+
 const STATE_COLOUR: Readonly<Record<NativeApplicationState["kind"], string>> = {
   notRunning: semantic.unavailable,
   discovered: semantic.stale,
@@ -133,6 +162,7 @@ export function NativeApplicationSurface({
    */
   const honouringOverride =
     state.kind === "placed" && state.notes.includes("honoured_user_override");
+  const placeLabel = PLACE_LABEL[state.kind];
 
   return (
     <div style={{ display: "grid", gap: spacing.sm }}>
@@ -162,23 +192,15 @@ export function NativeApplicationSurface({
       <StateDetail state={state} onChoose={onChoose} onReview={onReview} />
 
       <div style={{ display: "flex", gap: spacing.sm, flexWrap: "wrap" }}>
-        {(state.kind === "discovered" || state.kind === "restored") && onPlace !== undefined && (
+        {placeLabel !== undefined && onPlace !== undefined && (
           <button type="button" onClick={onPlace} style={buttonStyle}>
-            Arrange this window
+            {placeLabel}
           </button>
         )}
 
         {state.kind === "placed" && onRestore !== undefined && (
           <button type="button" onClick={onRestore} style={buttonStyle}>
             Put it back
-          </button>
-        )}
-
-        {/* A refusal can be retried: the display arrangement, or the
-            application's willingness, may both have changed since. */}
-        {state.kind === "refused" && onPlace !== undefined && (
-          <button type="button" onClick={onPlace} style={buttonStyle}>
-            Try again
           </button>
         )}
 

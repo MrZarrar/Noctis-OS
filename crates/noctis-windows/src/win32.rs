@@ -326,13 +326,35 @@ pub fn capture(handle: u64) -> Option<Saved> {
 /// and neither of their visible edges lands where the region said. Correcting
 /// for it is the difference between a tiling that looks deliberate and one that
 /// looks approximate.
+/// The widest an invisible resize border can plausibly be.
+///
+/// Windows uses roughly eight pixels, and about sixteen at 200% scaling. Sixty-
+/// four is generous for any scaling anybody runs, and small enough that a
+/// measurement mistake cannot hide inside it.
+const MAX_FRAME_INSET: i32 = 64;
+
 fn frame_inset(outer: RECT, visible: RECT) -> (i32, i32, i32, i32) {
-    (
+    let inset = (
         visible.left - outer.left,
         visible.top - outer.top,
         outer.right - visible.right,
         outer.bottom - visible.bottom,
-    )
+    );
+
+    // An implausible inset is not a wide border, it is two measurements of
+    // different things — which is what comparing a maximized rectangle against
+    // restored visible bounds produces, and it placed windows hundreds of pixels
+    // too large. Correcting by nothing is always safe; correcting by a wrong
+    // number never is.
+    let implausible = [inset.0, inset.1, inset.2, inset.3]
+        .into_iter()
+        .any(|edge| !(0..=MAX_FRAME_INSET).contains(&edge));
+
+    if implausible {
+        return (0, 0, 0, 0);
+    }
+
+    inset
 }
 
 /// Grows a target rectangle so the *visible* frame lands on it.
@@ -406,6 +428,17 @@ pub fn apply(handle: u64, target: Placement) -> Result<Applied, PlacementError> 
         // back maximized: `Saved` keeps the `showCmd` that says so.
         if IsZoomed(window).as_bool() {
             let _ = ShowWindow(window, SW_RESTORE);
+
+            // Re-read, and this is the point of doing so rather than an
+            // optimisation. The frame inset below is the difference between two
+            // measurements of the *same* window state; the rectangle read above
+            // is of a maximized window, and comparing it against the restored
+            // visible bounds yields an "inset" of tens or hundreds of pixels.
+            // `inflate` then grows the target by that much, and the window is
+            // placed far larger than the region and overflowing the display.
+            if GetWindowRect(window, &mut outer).is_err() {
+                return Err(PlacementError::Gone);
+            }
         }
 
         let mut visible = RECT::default();
@@ -527,6 +560,72 @@ mod tests {
 
     #[test]
     fn measures_the_invisible_resize_border() {
+        let outer = RECT {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: 800,
+        };
+        let visible = RECT {
+            left: 7,
+            top: 0,
+            right: 993,
+            bottom: 793,
+        };
+
+        assert_eq!(frame_inset(outer, visible), (7, 0, 7, 7));
+    }
+
+    /// THE GATE: the reported symptom was a maximized window being placed far
+    /// larger than its region and overflowing the display.
+    ///
+    /// The cause was two measurements of different states — the outer rectangle
+    /// read while maximized, the visible bounds read after un-maximizing. That
+    /// difference is not a border, and inflating by it is what overflowed. The
+    /// ordering is fixed in `apply`; this makes the whole class of mistake
+    /// harmless rather than fixing the one instance.
+    #[test]
+    fn refuses_an_inset_too_large_to_be_a_border() {
+        let maximized = RECT {
+            left: -8,
+            top: -8,
+            right: 2568,
+            bottom: 1448,
+        };
+        let restored = RECT {
+            left: 500,
+            top: 300,
+            right: 1500,
+            bottom: 1000,
+        };
+
+        assert_eq!(frame_inset(maximized, restored), (0, 0, 0, 0));
+    }
+
+    /// A visible frame outside the window rectangle is equally nonsense, and
+    /// would shrink the placement instead of growing it.
+    #[test]
+    fn refuses_a_negative_inset() {
+        let outer = RECT {
+            left: 100,
+            top: 100,
+            right: 900,
+            bottom: 700,
+        };
+        let bigger = RECT {
+            left: 90,
+            top: 100,
+            right: 900,
+            bottom: 700,
+        };
+
+        assert_eq!(frame_inset(outer, bigger), (0, 0, 0, 0));
+    }
+
+    /// An ordinary border is still measured. The guard must not throw away the
+    /// correction that makes tiled windows meet exactly.
+    #[test]
+    fn still_measures_a_plausible_border() {
         let outer = RECT {
             left: 0,
             top: 0,

@@ -89,11 +89,22 @@ pub fn fit(wanted: Placement, area: &WorkArea, minimum: (u32, u32)) -> Placement
 /// not a person dragging a window, and treating it as one would hand every
 /// window an override nobody asked for.
 ///
-/// A change in maximized state counts however small the rectangle change,
-/// because maximizing is unmistakably somebody's decision.
+/// A maximized window is never a position preference, and this is the correction
+/// to a rule that had it backwards.
+///
+/// Maximizing *is* unmistakably somebody's decision — but it is a decision about
+/// state, not about position, and a maximized window's rectangle is not a place
+/// anybody chose. It is the display. Treating it as a preference stored "always
+/// fill the screen", which is the opposite of a named region, and made a
+/// maximized window that was correctly un-maximized and then placed at its
+/// "preferred" full-display position look exactly like one that had never been
+/// un-maximized at all.
+///
+/// So somebody who maximizes a window and then asks Noctis to arrange it is
+/// asking for the region. Somebody who wants it maximized simply does not ask.
 pub fn moved_by_hand(placed: &Placement, now: &Placement, tolerance: i32) -> bool {
-    if placed.maximized != now.maximized {
-        return true;
+    if now.maximized {
+        return false;
     }
 
     let shifted = (placed.x - now.x).abs() > tolerance || (placed.y - now.y).abs() > tolerance;
@@ -256,17 +267,52 @@ mod tests {
         assert!(!moved_by_hand(&placed, &placement(301, 199, 902, 698), 2));
     }
 
+    /// THE GATE: a maximized window is not a position preference, and this test
+    /// replaces one that asserted the opposite.
+    ///
+    /// The reported symptom was a maximized window that "never un-maximized".
+    /// It did — and was then placed at the position that had been recorded as
+    /// preferred, which was the whole display, so it looked identical. A
+    /// maximized rectangle is the display's, not anybody's choice.
     #[test]
-    fn sees_a_hand_the_moment_a_window_is_maximized() {
+    fn takes_no_preference_from_a_maximized_window() {
+        let placed = placement(0, 0, 1706, 1440);
+        let maximized = Placement {
+            maximized: true,
+            x: -8,
+            y: -8,
+            width: 2576,
+            height: 1456,
+        };
+
+        assert!(!moved_by_hand(&placed, &maximized, 2));
+    }
+
+    /// Un-maximizing to somewhere specific *is* a position, and is honoured.
+    #[test]
+    fn sees_a_hand_when_a_window_is_un_maximized_somewhere_of_its_own() {
+        let maximized = Placement {
+            maximized: true,
+            ..placement(0, 0, 2560, 1440)
+        };
+
+        assert!(moved_by_hand(
+            &maximized,
+            &placement(400, 200, 1200, 800),
+            2
+        ));
+    }
+
+    /// Un-maximizing back to where Noctis put it is not a new preference.
+    #[test]
+    fn sees_no_hand_when_a_window_returns_to_where_it_was_placed() {
         let placed = placement(0, 0, 1706, 1440);
         let maximized = Placement {
             maximized: true,
             ..placed
         };
 
-        assert!(moved_by_hand(&placed, &maximized, 2));
-        // And in the other direction: un-maximizing is a decision too.
-        assert!(moved_by_hand(&maximized, &placed, 2));
+        assert!(!moved_by_hand(&maximized, &placed, 2));
     }
 
     /// The comparison must not overflow on a window at an absurd coordinate,

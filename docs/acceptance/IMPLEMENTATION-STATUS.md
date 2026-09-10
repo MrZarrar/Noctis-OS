@@ -1654,3 +1654,109 @@ remains the authority.
 run, including every row covering the user override — the clause the gate names.
 Those need a person at the desk; the procedure is in
 `docs/operations/windows-qualification.md`.
+
+### 2026-09-10 Phase 9 (part 7) the second qualification pass
+
+Three more defects, all found by clicking, and **all three were mine from
+earlier in the same session** rather than gaps carried forward. Worth recording
+in that shape, because the pattern is more useful than the fixes.
+
+**1. The place action did not exist in the `placed` state.**
+
+The Surface offered **Arrange this window** only for `discovered`, `restored`
+and `refused`. Once a window was arranged the only action was **Put it back** —
+and "arrange again after dragging it yourself" is the _sole_ gesture that
+expresses a user override, so the gate clause could not be reached from the
+interface at all.
+
+Third defect of that exact shape in two sessions, after the missing
+`objectiveId` and the unwired `onChooseWindow`: a mechanism built, tested in
+isolation, and left with no path a person could take to it. The fix is a total
+table — `PLACE_LABEL` has an entry for every one of the seven states, and
+`native.test.ts` asserts its key set equals the state union. A chain of
+`state.kind === "x" && …` conditions can silently cover no case; a total table
+cannot, which is the same reason `CAPABILITY_OPERATION_CLASS` is a table.
+
+**2. The un-maximize fix from part 6 broke the frame-inset measurement.**
+
+Reported as "if I have vscode maximised on monitor 1 and I arrange it, it gets
+larger and overflows". `GetWindowRect` was read _while maximized_, the window was
+then un-maximized, and `DWMWA_EXTENDED_FRAME_BOUNDS` was read _restored_. The
+difference between those two is not a border — it is hundreds of pixels — and
+`inflate` grew the target by it. The persisted evidence was unambiguous:
+`{"x":-8,"y":-147,"width":3014,"height":1789}` on a 2560×1440 display.
+
+Fixed by re-reading the rectangle after un-maximizing, and then by making the
+class of mistake harmless: `frame_inset` returns nothing when any edge is
+negative or wider than 64 pixels, because an implausible inset is two
+measurements of different things. Correcting by nothing is always safe;
+correcting by a wrong number never is.
+
+**3. Maximizing was recorded as a position preference.**
+
+The second symptom of the same session, and it followed from the first: the
+overflowed rectangle differed from where Noctis thought it had put the window,
+so `moved_by_hand` recorded it as a standing preference, and every subsequent
+placement faithfully honoured "fill the whole display". Reported as "no matter
+how I press the buttons it never goes to the 2/3rds format".
+
+Underneath it was a rule written backwards in part 5. The comment said "a change
+in maximized state counts, because maximizing is unmistakably somebody's
+decision" — true, and the wrong conclusion. Maximizing is a decision about
+_state_; a maximized window's rectangle is the display's, not a place anybody
+chose. `moved_by_hand` now takes no preference from a maximized window, while
+un-maximizing to somewhere specific still counts. Somebody who maximizes a
+window and then asks Noctis to arrange it is asking for the region; somebody who
+wants it maximized does not ask.
+
+The poisoned `window-overrides.json` and `window-moved.json` were backed up and
+deleted, because no code change clears a preference already written to disk.
+
+**Qualification result: passed, with reservations recorded rather than waived.**
+
+| Runbook row                                  | Result                                                  |
+| -------------------------------------------- | ------------------------------------------------------- |
+| Step 1, read-only probe                      | pass                                                    |
+| Step 2, write path on Character Map          | pass                                                    |
+| Surface renders with both rows               | pass                                                    |
+| Emulator not installed, open-only handoff    | pass                                                    |
+| More than one editor, refuses to guess       | pass                                                    |
+| Arrange by choosing a candidate              | pass                                                    |
+| Arrange, no prompt under an active Objective | pass                                                    |
+| Put it back                                  | pass                                                    |
+| Put back, move, arrange, put back            | pass; "back" is where it was before _that_ arrange      |
+| Noctis composed out of the way               | pass                                                    |
+| Noctis left alone when not in the way        | pass                                                    |
+| Maximize the editor first, then arrange      | **passed on the owner's judgement** after the two fixes |
+| Drag by hand, then arrange again             | **not cleanly verified** — see below                    |
+| The same after a shell restart               | not run                                                 |
+| Use the intended region instead              | not run                                                 |
+| Unplug the second display                    | not run                                                 |
+| Step 4, a scaled display                     | not run                                                 |
+
+The override rows are recorded as unverified rather than passing, and the
+distinction matters. The override _was_ seen being honoured, with the Surface
+saying "you had placed this window yourself, so that was kept" — but the
+preference it was honouring had come from the maximize bug, not from a hand
+drag. A mechanism observed working on the wrong input has not been tested. The
+sequence that would settle it is three clicks and is the first row of Step 3's
+remaining work.
+
+| Command                  | Result                                      |
+| ------------------------ | ------------------------------------------- |
+| `npm run test:boundary`  | exit 0                                      |
+| `npm run format:check`   | exit 0                                      |
+| `npm run lint`           | exit 0                                      |
+| `npm run typecheck`      | exit 0                                      |
+| `npm run test:unit`      | exit 0; 59 files, 1313 tests (1307 before)  |
+| `npm run test:desktop`   | exit 0                                      |
+| `npm run rust:fmt:check` | exit 0                                      |
+| `npm run rust:clippy`    | exit 0; 0 warnings with `-D warnings`       |
+| `npm run rust:test`      | exit 0; 153 tests (148 before)              |
+| `npm run build:desktop`  | not run here; Smart App Control, see part 1 |
+
+**Phase 9 is functionally complete and its gate is not formally closed.** Every
+task item and every gate clause is implemented and eleven runbook rows pass. Five
+rows are unrun, four of which cover the user override and one the DPI transform —
+the largest genuinely untested surface in the phase, since both displays on the
+qualification machine run at 100%.
