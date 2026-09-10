@@ -15,3 +15,4 @@ export * from "./compositor/layouts.js";
 export * from "./vault/markdown.js";
 export * from "./vault/layout.js";
 export * from "./vault/view.js";
+export * from "./tools/route.js";

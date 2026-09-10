@@ -1,14 +1,18 @@
-import type { OperationClass, StandingPermission } from "@noctis/contracts";
+import type { OperationClass, StandingPermission, ToolCapability } from "@noctis/contracts";
 import {
   OperationClassSchema,
   WINDOW_CAPABILITIES,
   WINDOW_CAPABILITY_OPERATION_CLASS,
   WINDOW_TARGET_TYPE,
+  TOOL_CAPABILITIES,
+  TOOL_CAPABILITY_OPERATION_CLASS,
+  TOOL_TARGET_TYPE,
 } from "@noctis/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { AuthorityEvaluationInput } from "./evaluate.js";
 import { BASELINE_POLICY_ID, evaluateAuthority } from "./evaluate.js";
+import { raisedOperationClass } from "../tools/route.js";
 
 const NOW = Date.parse("2026-09-01T12:00:00.000Z");
 const ACTOR = "vesper";
@@ -416,6 +420,159 @@ describe("native window placement routes through the same authority", () => {
 
       expect(decision.outcome).not.toBe("require_typed_confirmation");
       expect(decision.confirmationPhrase).toBeUndefined();
+    }
+  });
+});
+
+describe("tool routes go through the same authority", () => {
+  const VINTED = { type: TOOL_TARGET_TYPE, id: "vinted" } as const;
+  const SUNO = { type: TOOL_TARGET_TYPE, id: "suno" } as const;
+
+  function toolRequest(
+    capability: ToolCapability,
+    overrides: Partial<AuthorityEvaluationInput> = {},
+  ): AuthorityEvaluationInput {
+    return input({
+      capability,
+      operationClass: TOOL_CAPABILITY_OPERATION_CLASS[capability],
+      target: VINTED,
+      ...overrides,
+    });
+  }
+
+  function toolPermission(capability: ToolCapability, targetIds: string[]): StandingPermission {
+    return permission({
+      capability,
+      operationClass: TOOL_CAPABILITY_OPERATION_CLASS[capability],
+      constraints: { targetType: TOOL_TARGET_TYPE, targetIds },
+    });
+  }
+
+  it("lets anyone look at what a tool offers", () => {
+    expect(evaluateAuthority(toolRequest("tool.inspect")).outcome).toBe("allow");
+  });
+
+  /**
+   * THE GATE, and the whole reason `tool.launch` is `local_reversible_edit`:
+   * opening the editor for the work in hand is what focus mode does, and a
+   * prompt every time would make it useless. With no Objective it still asks.
+   */
+  it("launches without asking while an objective is active, and asks otherwise", () => {
+    expect(evaluateAuthority(toolRequest("tool.launch")).outcome).toBe("require_confirmation");
+    expect(evaluateAuthority(toolRequest("tool.launch", { objectiveIsActive: true })).outcome).toBe(
+      "allow",
+    );
+  });
+
+  /**
+   * Opening a tab in somebody's own browser is the handoff itself, not a write.
+   * It travels the same path as a placement for the same reason.
+   */
+  it("hands off to a visible browser without asking under an active objective", () => {
+    expect(
+      evaluateAuthority(toolRequest("browser.open_visible", { objectiveIsActive: true })).outcome,
+    ).toBe("allow");
+  });
+
+  /**
+   * THE GATE for Section 12.3's separation. Driving the signed-in profile is an
+   * `external_write`, so an active Objective does *not* clear it — the scope
+   * clause only covers `local_reversible_edit`. Isolated automation does clear.
+   * That difference is the separation, and it needs no flag to enforce.
+   */
+  it("does not let an active objective authorise driving the signed-in profile", () => {
+    expect(
+      evaluateAuthority(toolRequest("browser.control_profile", { objectiveIsActive: true }))
+        .outcome,
+    ).toBe("require_confirmation");
+    expect(
+      evaluateAuthority(toolRequest("browser.automate_isolated", { objectiveIsActive: true }))
+        .outcome,
+    ).toBe("allow");
+  });
+
+  /**
+   * THE GATE: a grant for one tool is a grant for one tool. Section 12.3's
+   * narrow reading of existing-profile control — "drive my browser on Vinted",
+   * not "drive my browser" — is only true if the target binding holds.
+   */
+  it("refuses a profile-control grant issued for another tool", () => {
+    const forVinted = [toolPermission("browser.control_profile", ["vinted"])];
+
+    expect(
+      evaluateAuthority(toolRequest("browser.control_profile", { standingPermissions: forVinted }))
+        .outcome,
+    ).toBe("allow");
+    expect(
+      evaluateAuthority(
+        toolRequest("browser.control_profile", { standingPermissions: forVinted, target: SUNO }),
+      ).outcome,
+    ).toBe("require_confirmation");
+  });
+
+  /**
+   * THE GATE: a grant to drive the signed-in profile must not also cover
+   * isolated automation or the reverse. They differ in name *and* class, and
+   * `covers` compares both — so this holds even if somebody later gives them the
+   * same class by mistake.
+   */
+  it("does not let an isolated-automation grant cover the signed-in profile", () => {
+    const isolated = [toolPermission("browser.automate_isolated", ["vinted"])];
+
+    expect(
+      evaluateAuthority(toolRequest("browser.control_profile", { standingPermissions: isolated }))
+        .outcome,
+    ).toBe("require_confirmation");
+  });
+
+  /**
+   * THE GATE: writing a descriptor names an executable and an origin allowlist,
+   * so it widens what Noctis may reach. `credential_security` puts it beyond
+   * every standing permission and every active Objective, and this asserts the
+   * existing policy actually delivers that rather than the table merely saying so.
+   */
+  it("never delegates registering a tool, whatever is granted or active", () => {
+    const granted = [toolPermission("tool.register_descriptor", ["vinted"])];
+
+    const decision = evaluateAuthority(
+      toolRequest("tool.register_descriptor", {
+        objectiveIsActive: true,
+        standingPermissions: granted,
+      }),
+    );
+
+    expect(decision.outcome).toBe("require_typed_confirmation");
+    expect(decision.confirmationPhrase).toBeDefined();
+    expect(decision.reasonCodes).toContain("standing_permission_ineligible_operation_class");
+  });
+
+  /**
+   * The commit boundary. A verb that publishes raises the class above the
+   * capability's floor, and the raised class is what authority sees — so
+   * preparation is cheap and the commit is not.
+   */
+  it("asks harder when a verb raises the class above the capability's floor", () => {
+    const floor = evaluateAuthority(toolRequest("tool.run_command", { objectiveIsActive: true }));
+    const spending = evaluateAuthority(
+      input({
+        capability: "tool.run_command",
+        operationClass: raisedOperationClass("tool.run_command", "spend"),
+        target: VINTED,
+        objectiveIsActive: true,
+      }),
+    );
+
+    expect(floor.outcome).toBe("require_confirmation");
+    expect(spending.outcome).toBe("require_typed_confirmation");
+  });
+
+  /** Every tool capability's declared class must be one the evaluator handles. */
+  it("decides every tool capability rather than falling through", () => {
+    for (const capability of TOOL_CAPABILITIES) {
+      const decision = evaluateAuthority(toolRequest(capability));
+
+      expect(decision.policyId).toBe(BASELINE_POLICY_ID);
+      expect(decision.reasonCodes).not.toContain("unknown_operation_class");
     }
   });
 });
