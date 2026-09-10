@@ -1936,8 +1936,40 @@ that, because "a tool is a row" is a claim worth testing rather than asserting.
 
 Every gate the CI job lists was run, in the order the job lists them.
 
-**What Phase 10 still needs**, and none of it is code that exists and cannot be
-reached: the qualification runbook walked at a desk, which is what would turn
-"three routes are implemented" into "three routes work". Four rows of the Windows
-runbook's Step 3 remain unverified from Phase 9 and are folded into the same
-session, because the shell has to be running for Step 2 here anyway.
+**What Phase 10 still needs**: the qualification runbook walked at a desk, which
+is what would turn "three routes are implemented" into "three routes work". Four
+rows of the Windows runbook's Step 3 remain unverified from Phase 9 and are
+folded into the same session, because the shell has to be running for Step 2 here
+anyway.
+
+**And one thing that is a mechanism nothing can reach**, found by tracing the
+`needsApproval` branch after this batch was already written, rather than by a
+test. It is not new to Phase 10 — it is Phase 8 residue that Phase 9 shipped over
+and this batch inherited — but it is a Phase 10 gate row, so it is recorded here
+and not carried quietly:
+
+**No human confirmation can be given anywhere in the product.** `ApprovalSurface`
+exists, the `approval` registry entry exists, and `SurfaceContext` declares
+`onConfirm`, `onExecute` and `onReviewApproval` — and nothing proposes an
+`approval` surface intent, and `Command.tsx` supplies none of those three
+handoffs. So `authority.confirm` has no caller from the page, and neither
+`window_place` nor `tool_execute` is ever passed an `approval_id`, though both
+accept one.
+
+The consequence, stated plainly: under an active Objective every route this batch
+built is `allow` and works. With no active Objective, a handoff returns
+`needsApproval`, the Surface renders the consequence summary, and there is no
+button in Noctis that can agree to it. That makes three runbook rows unrunnable
+as written — "with no active Objective, the handoff asks first", "the approval
+names the tool and says whose browser it will use", and "declining it opens
+nothing" — and it means the gate clause "visible session use requires explicit
+grant" can only be demonstrated for the active-Objective scope, not for the
+asking case.
+
+Phase 9 did not notice because placement under an active Objective never needs a
+confirmation, which is exactly why this is the same lesson a fourth time: a
+mechanism proven in isolation, with no path a person could take to it. The
+difference is that this one was found by walking the branch rather than after a
+qualification pass. Wiring it is the next batch, and it is Phase 8's shape rather
+than Phase 10's — an approval intent proposed when a decision is pending, the
+three handoffs supplied, and `approvalId` carried back into the retry.
