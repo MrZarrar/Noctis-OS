@@ -108,11 +108,25 @@ Section 9.1 defines — not the absence of one. To see the prompt, pause the Obj
 there** again: it should ask, and the consequence summary should name Vinted and say "in your own
 signed-in browser".
 
-| Row                                                            | Result |
-| -------------------------------------------------------------- | ------ |
-| With no active Objective, the handoff asks first               |        |
-| The approval names the tool and says whose browser it will use |        |
-| Declining it opens nothing                                     |        |
+| Row                                                                 | Result |
+| ------------------------------------------------------------------- | ------ |
+| With no active Objective, the handoff asks first                    |        |
+| An approval Surface appears, naming the tool and whose browser      |        |
+| Its **Confirm** control is there, and pressing it opens the browser |        |
+| The approval then reads confirmed **and** executed                  |        |
+| Reloading the page mid-decision, then confirming, still opens it    |        |
+| Leaving it unconfirmed opens nothing                                |        |
+
+The third and fourth rows are the ones worth watching. Confirming records that a
+person agreed; it does not perform the act, because the core cannot open a
+browser — only the shell can. So confirming re-runs the route with the approval
+in hand, and the approval Surface is re-read afterwards, which is why it should
+say executed rather than "confirmed, not executed".
+
+The fifth row is not exotic. A decision sits unanswered for as long as somebody
+takes to read it, and a reload in that window is ordinary — the retry is derived
+from the approval record and the persisted Surface payload rather than from
+anything held in memory, and this row is what proves it.
 
 ## Step 4 — degradation, which is most of the phase
 

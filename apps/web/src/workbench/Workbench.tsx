@@ -1,6 +1,7 @@
 import type { CompositionPlan, SurfaceIntent, SurfaceRegion } from "@noctis/contracts";
 import { SurfaceFrame, corner, elevation, material, spacing, typography } from "@noctis/ui";
 
+import type { SurfaceContext } from "../surfaces/renderers.js";
 import { renderSurface } from "../surfaces/renderers.js";
 import { resolveSurface } from "../surfaces/registry.js";
 import type { CompositionState } from "./useComposition.js";
@@ -16,18 +17,24 @@ const COLUMN_WIDTH: Readonly<Record<string, string>> = {
 
 export interface WorkbenchProps {
   composition: CompositionState;
-  /** Passed through to any Surface renderer that offers a Vault handoff. */
-  onOpenInVault?: (evidence: { entityId: string }) => void;
   /**
-   * Phase 9. Absent when there is no desktop shell, which is what makes the
-   * native Surface render without action buttons in a browser rather than with
-   * buttons that would fail.
+   * Every handoff a Surface renderer may be given, as one object.
+   *
+   * One prop rather than one per handoff, and the reason is a bug this shape
+   * caused twice. Forwarding them individually means each new handoff needs a
+   * prop declared here, destructured, and spread into the context — three edits,
+   * and missing any one of them leaves a Surface rendering with no buttons and
+   * nothing failing. A JSX spread of extra props does not even trip the
+   * type-checker, so `onActOnTool` and `onSurveyTools` were passed by Phase 10's
+   * caller, dropped here, and typechecked clean.
+   *
+   * Passing the context straight through means the intermediate layer is no
+   * longer a place a handoff can go missing. Absent handoffs are still how a
+   * Surface renders without an action — a browser with no desktop shell behind
+   * it supplies no `onPlaceWindow`, and the native Surface shows no place
+   * button — but that is now the caller's decision alone.
    */
-  onPlaceWindow?: (applicationId: string) => void;
-  onRestoreWindow?: (applicationId: string) => void;
-  onChooseWindow?: (applicationId: string, windowTitle: string) => void;
-  onClearWindowOverride?: (applicationId: string) => void;
-  onSurveyWindows?: () => void;
+  handoffs?: SurfaceContext;
   /**
    * What this client can do, for the registry's `requires` gate.
    *
@@ -54,12 +61,7 @@ function slotsIn(plan: CompositionPlan, region: SurfaceRegion): CompositionPlan[
  */
 export function Workbench({
   composition,
-  onOpenInVault,
-  onPlaceWindow,
-  onRestoreWindow,
-  onChooseWindow,
-  onClearWindowOverride,
-  onSurveyWindows,
+  handoffs = {},
   capabilities = [],
 }: WorkbenchProps): JSX.Element {
   const { plan, intents, overrides, focusedSurfaceId } = composition;
@@ -126,14 +128,7 @@ export function Workbench({
         >
           {focusedSurfaceId === slot.surfaceId ? "Leave focus" : "Focus"}
         </button>
-        {renderSurface(resolved, {
-          ...(onOpenInVault === undefined ? {} : { onOpenInVault }),
-          ...(onPlaceWindow === undefined ? {} : { onPlaceWindow }),
-          ...(onRestoreWindow === undefined ? {} : { onRestoreWindow }),
-          ...(onChooseWindow === undefined ? {} : { onChooseWindow }),
-          ...(onClearWindowOverride === undefined ? {} : { onClearWindowOverride }),
-          ...(onSurveyWindows === undefined ? {} : { onSurveyWindows }),
-        })}
+        {renderSurface(resolved, handoffs)}
       </SurfaceFrame>
     );
   };

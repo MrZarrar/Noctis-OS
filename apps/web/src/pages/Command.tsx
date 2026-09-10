@@ -5,6 +5,7 @@ import type {
   ObjectiveRecord,
   RegionName,
   ToolCapability,
+  WindowCapability,
 } from "@noctis/contracts";
 import { ObjectiveRecordSchema } from "@noctis/contracts";
 import { chooseRoute } from "@noctis/domain";
@@ -341,6 +342,136 @@ async function upsertToolSurface(
  * once, on activation, and becomes one Surface among the others — Command never
  * shows a graph, and a Surface is only created when there is something to show.
  */
+/**
+ * An approval record, as much of it as the Approval Surface renders.
+ *
+ * Parsed rather than asserted, for the reason `ObjectiveListSchema` exists: a
+ * 200 does not prove the body came from the core.
+ */
+const ApprovalRecordSchema = z.object({
+  id: z.string().min(1),
+  capability: z.string().min(1),
+  target: z.object({ type: z.string().min(1), id: z.string().min(1) }),
+  consequenceSummary: z.string().min(1),
+  operationClass: z.string().min(1),
+  reversibility: z.enum(["reversible", "partially_reversible", "irreversible"]),
+  outcome: z.enum(["allow", "deny", "require_confirmation", "require_typed_confirmation"]),
+  reasonCodes: z.array(z.string()),
+  estimatedCostGbp: z.number().nonnegative().optional(),
+  confirmationPhrase: z.string().min(1).optional(),
+  confirmedAt: z.string().min(1).optional(),
+  executedAt: z.string().min(1).optional(),
+});
+
+type ApprovalRecord = z.infer<typeof ApprovalRecordSchema>;
+
+/**
+ * Puts a pending decision on the canvas.
+ *
+ * Until this existed, nothing in Noctis proposed an `approval` intent — so
+ * `ApprovalSurface`, the registry entry, and `authority.confirm` were all
+ * reachable only from a test. Phase 9 shipped over it because placement under an
+ * active Objective is allowed outright and never asks; the first route that
+ * actually needed a human answer had nowhere to put the question.
+ *
+ * The whole record is fetched rather than built from the shell's four-field
+ * `needsApproval`, because the Surface renders the operation class, the target,
+ * the reversibility and the reason codes — and a boundary screen assembled from
+ * a summary would be a boundary screen that cannot show what it is agreeing to.
+ */
+async function showApproval(
+  transport: CoreTransport,
+  objectiveId: string,
+  requestId: string,
+): Promise<void> {
+  const response = await transport.request("GET", `/approvals/${requestId}`);
+  const parsed = ApprovalRecordSchema.safeParse(response.body);
+
+  if (response.status !== 200 || !parsed.success) {
+    return;
+  }
+
+  const approval = parsed.data;
+
+  await transport.request("POST", "/commands/surface.upsert_intent", {
+    idempotencyKey: nextKey("surface.upsert_intent"),
+    objectiveId,
+    kind: "approval",
+    // Section 5.5's attention state. A decision Noctis is blocked on is the one
+    // thing on the canvas that is not about the work but about Noctis waiting.
+    role: "attention",
+    persistence: "objective",
+    // Above every other Surface. A consequence boundary that composed into
+    // overflow would be a boundary nobody was asked at.
+    priority: 90,
+    minSize: "standard",
+    payloadVersion: 1,
+    payload: {
+      id: approval.id,
+      consequenceSummary: approval.consequenceSummary,
+      operationClass: approval.operationClass,
+      capability: approval.capability,
+      targetType: approval.target.type,
+      targetId: approval.target.id,
+      reversibility: approval.reversibility,
+      outcome: approval.outcome,
+      reasonCodes: approval.reasonCodes,
+      ...(approval.estimatedCostGbp === undefined
+        ? {}
+        : { estimatedCostGbp: approval.estimatedCostGbp }),
+      ...(approval.confirmationPhrase === undefined
+        ? {}
+        : { confirmationPhrase: approval.confirmationPhrase }),
+      ...(approval.confirmedAt === undefined ? {} : { confirmedAt: approval.confirmedAt }),
+      ...(approval.executedAt === undefined ? {} : { executedAt: approval.executedAt }),
+    },
+  });
+}
+
+/**
+ * What carrying out a confirmed approval means, per capability.
+ *
+ * A total table over both capability lists, and `satisfies` is the enforcement:
+ * a capability added to either list without a decision here does not compile.
+ * That is the only reason this is a table rather than two `if`s — three of Phase
+ * 9's seven defects were a mechanism with no path a person could take to it, and
+ * a condition chain is how a path goes missing without anything failing.
+ *
+ * `none` is a real answer, not a gap. `window.discover` and `tool.inspect` are
+ * allowed by policy and never produce an approval to confirm; `window.restore`
+ * is authorised by membership of the moved-window map rather than by a record;
+ * and `tool.register_descriptor` has no command yet, so a confirmation for one
+ * could not exist.
+ */
+const RETRY_AFTER_CONFIRM = {
+  "window.discover": "none",
+  "window.place": "window",
+  "window.restore": "none",
+  "tool.inspect": "none",
+  "tool.launch": "tool",
+  "tool.run_command": "tool",
+  "browser.open_visible": "tool",
+  "browser.automate_isolated": "tool",
+  "browser.control_profile": "tool",
+  "tool.register_descriptor": "none",
+} as const satisfies Record<WindowCapability | ToolCapability, "window" | "tool" | "none">;
+
+/**
+ * What to do about a confirmed approval, from a capability the core spelled.
+ *
+ * The capability arrives as a string, because the core's approval record is the
+ * authority on it and it is not narrowed to these two lists. So a capability
+ * this page does not know does nothing at all: the confirmation is recorded and
+ * the act is not retried, which leaves an approval visible in the audit as
+ * confirmed and unexecuted. Guessing would be the alternative, and guessing at
+ * the consequence boundary is the one place it is never worth it.
+ */
+function retryKindFor(capability: string): "window" | "tool" | "none" {
+  return Object.hasOwn(RETRY_AFTER_CONFIRM, capability)
+    ? RETRY_AFTER_CONFIRM[capability as keyof typeof RETRY_AFTER_CONFIRM]
+    : "none";
+}
+
 const RecallResultSchema = z.object({
   entityIds: z.array(z.string()),
   evidence: z.array(
@@ -483,6 +614,12 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
         ),
       );
 
+      // The same gap placement had all along, and never hit: under an active
+      // Objective a placement is allowed outright, so nothing ever asked.
+      if (state.kind === "needsApproval") {
+        await showApproval(transport, active.id, state.requestId);
+      }
+
       composition.refresh();
     },
     [transport, bridge, active, composition],
@@ -497,7 +634,7 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
    * approval, or unavailable — replaces the state in the payload.
    */
   const actOnTool = useCallback(
-    (toolId: string, verbId: string) => {
+    async (toolId: string, verbId: string, approvalId?: string): Promise<void> => {
       if (transport === undefined || toolBridge === undefined || active === undefined) {
         return;
       }
@@ -511,7 +648,7 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
         return;
       }
 
-      void (async () => {
+      await (async () => {
         let state: ExternalToolPayload["state"];
 
         try {
@@ -524,6 +661,8 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
             // instruction.
             route: tool.route,
             objectiveId: active.id,
+            // Present only on the second attempt, after a person confirmed.
+            ...(approvalId === undefined ? {} : { approvalId }),
           });
         } catch (failure: unknown) {
           state = {
@@ -540,15 +679,27 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
           ),
         );
 
+        // A decision with nowhere to be made is not a decision. Without this the
+        // Surface renders the consequence summary and there is no control in
+        // Noctis that can answer it.
+        if (state.kind === "needsApproval") {
+          await showApproval(transport, active.id, state.requestId);
+        }
+
         composition.refresh();
       })();
     },
     [transport, toolBridge, active, composition],
   );
 
+  /**
+   * Returns its promise rather than discarding it, so a confirmation can wait
+   * for the placement it authorised before re-reading the approval record. The
+   * handoff that reaches a Surface discards it at the call site instead.
+   */
   const placeWindow = useCallback(
-    (applicationId: string) => {
-      void runPlacement(applicationId, async (native) => {
+    async (applicationId: string, approvalId?: string): Promise<void> => {
+      await runPlacement(applicationId, async (native) => {
         const layout = FOCUS_LAYOUT[applicationId];
 
         return native.place({
@@ -559,6 +710,10 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
           // The Objective's own title, so two editors on the same machine are
           // told apart by the work rather than by enumeration order.
           ...(active === undefined ? {} : { titleHint: active.title }),
+          // Present only on the second attempt, after a person confirmed. The
+          // shell re-checks that this approval covers this application before
+          // it moves anything.
+          ...(approvalId === undefined ? {} : { approvalId }),
         });
       });
     },
@@ -626,6 +781,119 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
       });
     },
     [runPlacement, active],
+  );
+
+  /**
+   * Puts a pending decision on the canvas, or back on it.
+   *
+   * The "Review the decision" handoff both Surfaces have offered since Phase 9,
+   * which until now went nowhere because `onReviewApproval` was declared in
+   * `SurfaceContext` and supplied by nobody.
+   */
+  const reviewApproval = useCallback(
+    (requestId: string) => {
+      if (transport === undefined || active === undefined) {
+        return;
+      }
+
+      void showApproval(transport, active.id, requestId).then(refresh, () => {
+        setError("That decision could not be read from the core");
+      });
+    },
+    [transport, active, refresh],
+  );
+
+  /**
+   * Does the thing a confirmed approval authorised.
+   *
+   * Derived from the approval record rather than from a closure remembered when
+   * the request was made, so confirming still works after a page reload — which
+   * is the ordinary case, not the exotic one: a decision can sit unanswered for
+   * as long as a person takes to read it. The route and verb come from the
+   * persisted Surface payload, the same place the button that started this read
+   * them from.
+   */
+  const retryConfirmed = useCallback(
+    async (approval: ApprovalRecord): Promise<void> => {
+      const kind = retryKindFor(approval.capability);
+
+      if (kind === "window") {
+        await placeWindow(approval.target.id, approval.id);
+
+        return;
+      }
+
+      if (kind !== "tool") {
+        return;
+      }
+
+      const current = composition.intents.find((intent) => intent.kind === "external_tool");
+      const payload = current?.payload as { tools?: ExternalToolPayload[] } | undefined;
+      const tool = payload?.tools?.find((candidate) => candidate.toolId === approval.target.id);
+
+      if (tool === undefined) {
+        return;
+      }
+
+      await actOnTool(approval.target.id, tool.verbs[0]?.id ?? "", approval.id);
+    },
+    [placeWindow, actOnTool, composition],
+  );
+
+  /**
+   * Confirms a decision, then carries out the thing it authorised.
+   *
+   * The second half is what makes the first half mean anything.
+   * `authority.confirm` records that a person agreed; it does not perform the
+   * act, because the core cannot move a window or open a browser — only the
+   * shell can. So the act is retried with the approval in hand, and the shell
+   * re-checks that the approval covers the thing it is about to do.
+   *
+   * The approval Surface is re-proposed *after* the retry, so its payload
+   * carries the real `executedAt`. Proposing it first would persist a Surface
+   * saying "confirmed, not executed" about something that had already happened —
+   * the stale-payload failure Phase 9 found on a shell restart, here in the one
+   * place where a stale claim is a claim about somebody's consent.
+   */
+  const confirmApproval = useCallback(
+    (approvalId: string, typedConfirmation?: string) => {
+      if (transport === undefined || active === undefined) {
+        return;
+      }
+
+      void (async () => {
+        const confirmed = await transport.request("POST", "/commands/authority.confirm", {
+          idempotencyKey: nextKey("authority.confirm"),
+          requestId: approvalId,
+          ...(typedConfirmation === undefined ? {} : { typedConfirmation }),
+        });
+
+        if (confirmed.status !== 200) {
+          // The core refused — a near-miss on the typed phrase, or an approval
+          // that is not confirmable. Nothing is retried, and the Surface is
+          // re-read rather than left claiming an agreement nobody recorded.
+          setError("That confirmation was not accepted");
+          await showApproval(transport, active.id, approvalId);
+          refresh();
+
+          return;
+        }
+
+        const record = ApprovalRecordSchema.safeParse(
+          (await transport.request("GET", `/approvals/${approvalId}`)).body,
+        );
+
+        if (record.success) {
+          await retryConfirmed(record.data);
+        }
+
+        await showApproval(transport, active.id, approvalId);
+        refresh();
+      })().catch((failure: unknown) => {
+        setError(failure instanceof Error ? failure.message : "could not confirm that decision");
+      });
+    },
+    [transport, active, refresh, retryConfirmed],
   );
 
   useEffect(() => {
@@ -783,33 +1051,52 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
 
       <Workbench
         composition={composition}
-        {...(onOpenInVault === undefined
-          ? {}
-          : {
-              onOpenInVault: (evidence: { entityId: string }) => {
-                onOpenInVault(evidence.entityId);
-              },
-            })}
-        {...(bridge === undefined
-          ? {}
-          : {
-              // Both the handoffs and the capability come from the same fact:
-              // there is a shell that could carry a placement out. In a browser
-              // neither is passed, and the native Surface falls back saying so.
-              // `tool.inspect` alongside `window.place`: both say the same
-              // thing, that there is a shell which could carry the consequence
-              // out. Neither is an authority grant — the core still decides
-              // every act — and in a browser neither is passed, so both Surfaces
-              // fall back saying so.
-              capabilities: ["window.place", "tool.inspect"],
-              onPlaceWindow: placeWindow,
-              onRestoreWindow: restoreWindow,
-              onChooseWindow: chooseWindow,
-              onClearWindowOverride: clearWindowOverride,
-              onSurveyWindows: surveyWindows,
-              onActOnTool: actOnTool,
-              onSurveyTools: surveyTools,
-            })}
+        handoffs={{
+          ...(onOpenInVault === undefined
+            ? {}
+            : {
+                onOpenInVault: (evidence: { entityId: string }) => {
+                  onOpenInVault(evidence.entityId);
+                },
+              }),
+          // Agreeing to a consequence needs no shell, so these two are always
+          // supplied. `onExecute` deliberately is not — see below.
+          onConfirm: confirmApproval,
+          onReviewApproval: reviewApproval,
+          ...(bridge === undefined
+            ? {}
+            : {
+                onPlaceWindow: (applicationId: string) => {
+                  void placeWindow(applicationId);
+                },
+                onRestoreWindow: restoreWindow,
+                onChooseWindow: chooseWindow,
+                onClearWindowOverride: clearWindowOverride,
+                onSurveyWindows: surveyWindows,
+                onActOnTool: (toolId: string, verbId: string) => {
+                  void actOnTool(toolId, verbId);
+                },
+                onSurveyTools: surveyTools,
+              }),
+        }}
+        /**
+         * `authority.approve` unconditionally, because agreeing to a
+         * consequence is a core concern and works in a plain browser — and
+         * because the `approval` registry entry requires it, so without it every
+         * proposed decision rendered as a fallback. That was the third instance
+         * of one shape in this codebase: a Surface built, registered, and
+         * unreachable.
+         *
+         * `window.place` and `tool.inspect` only when a shell is behind the
+         * page. Both say the same thing — there is a process that could carry
+         * the consequence out — and neither is an authority grant, because the
+         * core still decides every act on every request.
+         */
+        capabilities={
+          bridge === undefined
+            ? ["authority.approve"]
+            : ["authority.approve", "window.place", "tool.inspect"]
+        }
       />
 
       {(error ?? composition.error) !== undefined && (

@@ -1973,3 +1973,112 @@ difference is that this one was found by walking the branch rather than after a
 qualification pass. Wiring it is the next batch, and it is Phase 8's shape rather
 than Phase 10's — an approval intent proposed when a decision is pending, the
 three handoffs supplied, and `approvalId` carried back into the retry.
+
+### 2026-09-10 Phase 10 (part 3) somewhere to say yes
+
+The confirmation path the previous entry recorded as unreachable now exists, and
+finding it cost two more defects of the same shape — one of them mine from part
+2, and one that had been sitting in `ApprovalSurface` since Phase 8.
+
+**The gap, restated.** `authority.confirm` had no caller from the page. Nothing
+proposed an `approval` surface intent, `Command.tsx` supplied none of
+`onConfirm`, `onExecute` or `onReviewApproval`, and neither `window_place` nor
+`tool_execute` was ever passed the `approval_id` both accept. Under an active
+Objective every route is allowed outright, which is why three phases shipped over
+it.
+
+Four things were needed, and only the first is the obvious one:
+
+- **`showApproval` proposes the decision as a Surface.** The whole approval
+  record is fetched rather than assembled from the shell's four-field
+  `needsApproval`, because the Surface renders the operation class, the target,
+  the reversibility and the reason codes — a boundary screen built from a summary
+  is a boundary screen that cannot show what is being agreed to. Role
+  `attention`, priority 90: a consequence boundary that composed into overflow
+  would be a boundary nobody was asked at.
+- **Confirming carries out the act.** `authority.confirm` records that a person
+  agreed; it cannot open a browser or move a window, because only the shell can.
+  So the act is retried with the approval in hand and the shell re-checks that
+  the approval covers it. The approval Surface is re-proposed _after_ the retry,
+  so its payload carries the real `executedAt` — proposing it first would persist
+  a Surface saying "confirmed, not executed" about something that had already
+  happened, which is the Phase 9 stale-payload failure in the one place where a
+  stale claim is a claim about somebody's consent.
+- **The retry is derived, not remembered.** `RETRY_AFTER_CONFIRM` is a total
+  table over both capability lists — `satisfies Record<WindowCapability |
+ToolCapability, …>`, so a capability added to either without a decision here
+  does not compile. A closure remembered when the request was made would have
+  been shorter and wrong: a decision sits unanswered for as long as somebody
+  takes to read it, and a reload in that window is the ordinary case. The route
+  and verb come from the persisted Surface payload, the same place the button
+  that started it read them from. A capability the page does not know retries
+  nothing rather than guessing.
+- **`authority.approve` is passed unconditionally.** The `approval` registry
+  entry requires it and nobody ever passed it, so every proposed decision would
+  have rendered as a fallback. Agreeing to a consequence needs no desktop shell,
+  so it is not gated on one — unlike `window.place` and `tool.inspect`, which are.
+
+`onExecute` is deliberately still not supplied. For these capabilities the shell
+performs the act and records the execution itself, so a page-side execute button
+would write evidence for something that may not have happened. The retry _is_ the
+execution.
+
+#### Two more defects of the one shape, and the one that generates them
+
+**1. Phase 10 part 2's own handoffs never reached the renderer.**
+`onActOnTool` and `onSurveyTools` were passed by `Command.tsx`, declared in
+`SurfaceContext`, consumed by the renderer — and `Workbench` never forwarded
+them, because it forwarded handoffs one prop at a time. A JSX spread of props a
+component does not declare is not a type error, so it typechecked clean, and the
+`external_tool` Surface rendered with no buttons at all. The claim in part 2 that
+the Surface was reachable was wrong.
+
+So the fix is not a seventh forwarding line. `Workbench` now takes one
+`handoffs?: SurfaceContext` prop and passes it straight through, which deletes
+the layer where a handoff could go missing: adding one needs no change to
+`Workbench` at all. That is five instances of one defect shape in this codebase,
+and the first four were each fixed individually.
+
+**2. `ApprovalSurface` rendered its Confirm button with no handler.** Found by
+the second half of the new test rather than by a person. `onExecute` had always
+been guarded; `onConfirm` had not, so a context without it produced a button that
+reads as consent and does nothing. It says so in words now instead, which is the
+rule the rest of the Surfaces already follow.
+
+#### The check that would have caught all five
+
+`apps/web/src/workbench/handoffs.test.ts` renders each Surface that has an action
+twice — once with its handoff, once without — and asserts the control appears
+only in the first. The second half is what makes the first mean "because of the
+handoff" rather than "always", and it is the half that found defect 2.
+
+It renders through `renderToStaticMarkup` and `createElement` in a plain
+`.test.ts`, because the vitest `include` is `*.test.ts` and `react-dom` was
+already a dependency: no config change, no test-library added.
+
+This is the class of bug a type-checker cannot see. A declared, optional,
+never-passed handoff renders a Surface with no button, and a Surface with no
+button is indistinguishable from one that is working.
+
+| Command                    | Result                                                       |
+| -------------------------- | ------------------------------------------------------------ |
+| `npm run test:boundary`    | exit 0                                                       |
+| `npm run format:check`     | exit 0                                                       |
+| `npm run lint`             | exit 0                                                       |
+| `npm run typecheck`        | exit 0                                                       |
+| `npm run test:unit`        | exit 0; 64 files, 1374 tests (1367 before)                   |
+| `npm run test:integration` | exit 0; 150 tests                                            |
+| `npm run test:migrations`  | exit 0; 30 tests                                             |
+| `npm run build`            | exit 0                                                       |
+| `npm run test:e2e`         | exit 0; 4 tests, run here against Edge                       |
+| `npm run build:web`        | exit 0                                                       |
+| `npm run test:desktop`     | exit 0                                                       |
+| `npm run rust:fmt:check`   | exit 0                                                       |
+| `npm run rust:clippy`      | exit 0; 0 warnings with `-D warnings`                        |
+| `npm run rust:test`        | exit 0; 206 tests, unchanged by this batch                   |
+| `npm run build:desktop`    | not run here; Smart App Control, see the Phase 9 part 1 note |
+
+**Phase 10's gate is still open**, and for the same reason as part 2: nothing has
+been run at a desk. What changed is that six runbook rows which could not have
+passed as written are now runnable — the whole of Step 3's asking case, plus
+confirming after a page reload. The runbook has them.

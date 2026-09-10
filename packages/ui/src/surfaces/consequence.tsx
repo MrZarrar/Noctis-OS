@@ -141,6 +141,18 @@ export function ApprovalSurface({
         <p style={{ margin: 0, color: typography.color.muted }}>
           Allowed without confirmation. Recorded for audit either way.
         </p>
+      ) : onConfirm === undefined ? (
+        /*
+         * No handoff, so no control — the same courtesy `onExecute` two branches
+         * up already gets, and the rule the rest of the Surfaces follow. A
+         * Confirm button rendered without a handler is a button that reads as
+         * consent and does nothing, which is the worst possible place in Noctis
+         * for a silent no-op. Said in words instead, so the state is still legible.
+         */
+        <p style={{ margin: 0, color: semantic.approval }}>
+          This needs your confirmation. There is no control here, because this view was not given
+          one.
+        </p>
       ) : (
         <form
           onSubmit={(event) => {
