@@ -134,19 +134,21 @@ Then, in the shell:
 | Restart the shell, then **Put it back**                   | still works. The records are in `window-moved.json`; the handle is re-verified against the process id and class before any move   |
 | Arrange the taskbar, by any means you can contrive        | refused. There is no UI path to try, which is the first half of the answer                                                        |
 
-## Step 4 — a scaled display
+## Step 4 — a scaled display, only if the configuration ever changes
 
-Set `DISPLAY2` to 150% in Windows display settings, restart the shell, and repeat the two rows of
-Step 3 that place onto the secondary display.
+**Not part of this qualification.** The gate is worded "the intended PC/display configurations", and
+the intended configuration is 100% on both displays — chosen deliberately at the start of the phase,
+not defaulted into. A scaling nobody sets is not an untested gap; it is a configuration this desk
+does not have.
 
-The thing to check is the **minimum size**. `vscode` declares an 800×600 minimum in
-device-independent pixels; at 150% that is 1200×900 physical pixels, so a region narrower than 1200
-should come back wider than asked with the note "the region was narrower than this application's
-minimum width". A placement that honoured 800 physical pixels instead has skipped the DPI
-conversion, and the window will be a third too small.
+The DPI transform is unit-tested, and this step is written down so that whoever does change a display
+to a scaled setting knows what to look at. Until that happens it is neither passed nor failed.
 
-This step has not been run. Both displays on the qualification machine are at 100%, so the DPI
-transform is unit-tested and has never faced a real scaled display.
+Set the display to 150%, restart the shell, and place onto it. The thing to check is the **minimum
+size**: `vscode` declares an 800×600 minimum in device-independent pixels, which is 1200×900 physical
+pixels at 150%, so a region narrower than 1200 should come back wider than asked with the note "the
+region was narrower than this application's minimum width". A placement that honoured 800 physical
+pixels has skipped the conversion, and the window will be a third too small.
 
 ## Known gaps, so a failure here is not a surprise
 

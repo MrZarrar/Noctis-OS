@@ -1732,7 +1732,7 @@ deleted, because no code change clears a preference already written to disk.
 | The same after a shell restart               | not run                                                 |
 | Use the intended region instead              | not run                                                 |
 | Unplug the second display                    | not run                                                 |
-| Step 4, a scaled display                     | not run                                                 |
+| Step 4, a scaled display                     | does not apply; intended configuration is 100%          |
 
 The override rows are recorded as unverified rather than passing, and the
 distinction matters. The override _was_ seen being honoured, with the Surface
@@ -1755,8 +1755,33 @@ remaining work.
 | `npm run rust:test`      | exit 0; 153 tests (148 before)              |
 | `npm run build:desktop`  | not run here; Smart App Control, see part 1 |
 
-**Phase 9 is functionally complete and its gate is not formally closed.** Every
-task item and every gate clause is implemented and eleven runbook rows pass. Five
-rows are unrun, four of which cover the user override and one the DPI transform —
-the largest genuinely untested surface in the phase, since both displays on the
-qualification machine run at 100%.
+**Phase 9 is closed on the owner's judgement**, with two things written down
+rather than glossed.
+
+Every gate clause is implemented and the qualification passed at the desk. One
+_task_ item is not fully built: "identity-safe discovery and process **launch
+correlation**". Discovery is done and correlation is plumbed end to end —
+`select_window` prefers a correlated window, the map is managed state — but
+nothing writes to it, because nothing launches a process. So the phase outcome's
+"Noctis **opens** or discovers VS Code" is half met: it discovers, and it has
+never opened anything. Earlier entries in this batch claimed every task item was
+implemented, which was wrong.
+
+Nothing depends on it today: discovery plus the title hint resolves the editor,
+and launching a process is a new external consequence that belongs with the tool
+routing in Phase 10 rather than bolted on here.
+
+On the scope of the gate, since this entry previously overstated it: the gate is
+worded "the intended PC/display configurations", and the intended configuration —
+chosen deliberately at the start of the phase, not defaulted into — is 100% on
+both displays. Repeatedly listing a 150% display as the largest untested surface
+was wrong. It is not an untested surface; it is a configuration this desk does
+not have and is not going to. Step 4 of the runbook stays written down for
+whoever changes a display later, and does not apply now.
+
+Four rows remain genuinely unrun, all of the user override: drag-then-arrange,
+the same after a restart, **Use the intended region instead**, and unplugging the
+second display. The mechanism was observed being honoured, but on a preference
+that came from the maximize defect rather than a hand drag, so it is recorded as
+unverified rather than passing. Three clicks would settle it. The gate is closed
+on the owner's judgement with that written down rather than waived.
