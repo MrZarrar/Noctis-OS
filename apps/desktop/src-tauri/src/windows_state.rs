@@ -146,7 +146,16 @@ pub struct NativeWindows {
     pub correlations: Mutex<HashMap<String, String>>,
 }
 
+/// Serializable so "put it back" survives a restart of the shell.
+///
+/// The window handle it is keyed by survives too, as long as the *window* does:
+/// an `HWND` is stable for the life of its window, and Windows only recycles it
+/// afterwards. Which is exactly why `window_restore` re-checks the process id
+/// and class before it moves anything — a recycled handle is a different window
+/// wearing the same number, and that risk is the same across a restart as within
+/// a session.
 #[cfg(windows)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Moved {
     /// Which granted target this window belonged to. Without it, restoring "the
     /// editor" would put back whichever moved window happened to still be alive.
@@ -167,6 +176,9 @@ pub struct Moved {
 
 /// The file the overrides live in, beside the shell's own window placement.
 pub const OVERRIDES_FILE: &str = "window-overrides.json";
+
+/// The file the moved-window records live in.
+pub const MOVED_FILE: &str = "window-moved.json";
 
 #[cfg(test)]
 mod tests {

@@ -130,8 +130,8 @@ Then, in the shell:
 | The same again after restarting the shell                 | still your position. The override is written to `window-overrides.json` beside the shell's own placement                          |
 | **Use the intended region instead**, after that           | the override is forgotten and the editor moves to the region. The action only appears while an override is being honoured         |
 | Resize the editor by a pixel or two, then arrange         | no override is taken; the region applies. Only a move past four pixels counts as somebody's decision                              |
-| Maximize the editor first, then arrange                   | **known gap** — the window does not move and the row reads "the application kept its own position". See below                     |
-| Restart the shell, then **Put it back**                   | **known gap** — the row reads `not running` because what Noctis moved is remembered in memory. See below                          |
+| Maximize the editor first, then arrange                   | it is un-maximized and placed. `Saved` keeps the `showCmd`, so **Put it back** returns it maximized                               |
+| Restart the shell, then **Put it back**                   | still works. The records are in `window-moved.json`; the handle is re-verified against the process id and class before any move   |
 | Arrange the taskbar, by any means you can contrive        | refused. There is no UI path to try, which is the first half of the answer                                                        |
 
 ## Step 4 — a scaled display
@@ -150,15 +150,23 @@ transform is unit-tested and has never faced a real scaled display.
 
 ## Known gaps, so a failure here is not a surprise
 
-Both are named in Phase 9's task list and neither is implemented:
+None outstanding for the rows above. The two gaps this runbook used to carry are implemented, and
+their rows now expect a pass rather than a failure:
 
-- **A maximized window is not un-maximized before placement.** `SetWindowPos` does not move a
-  maximized window, so the placement is honestly reported as not honoured rather than silently
-  failing — but it does not do the job either.
-- **What Noctis moved is not persisted.** The map of moved windows lives in the shell's memory, so
-  restarting it loses the ability to put anything back. The window stays where it was placed.
-  Both are task items rather than gate clauses. Every clause of Phase 9's gate is now implemented, so
-  running this runbook is what decides whether the phase closes.
+- **A maximized window is un-maximized before placement.** `SetWindowPos` does not move a maximized
+  window at all, so the un-maximize has to come first — the same ordering Noctis's own window needs.
+  The `showCmd` is preserved, so **Put it back** returns it maximized.
+- **What Noctis moved is written to `window-moved.json`.** It used to live only in the shell's
+  memory, so a restart lost the ability to put anything back — a window Noctis moved and can no
+  longer return is worse than one it never moved. The window handle survives as long as the window
+  does, and it is still re-checked against the process id and class before anything moves, because a
+  recycled handle is a different window wearing the same number.
+
+What remains untested rather than unimplemented is Step 4: both displays on the qualification machine
+run at 100%, so the DPI transform has never faced a real scaled display.
+
+Every clause of Phase 9's gate is implemented, so running this runbook is what decides whether the
+phase closes.
 
 ## What to record
 

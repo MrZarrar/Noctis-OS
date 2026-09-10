@@ -27,7 +27,8 @@ use crate::proxy;
 use crate::proxy::ProxyResponse;
 use crate::window_authority::{authorises, execute_body, request_body, PLACE_CAPABILITY};
 use crate::windows_state::{
-    display_name, granted_targets, minimum_dip, Moved, NativeWindows, PlaceIntent, OVERRIDES_FILE,
+    display_name, granted_targets, minimum_dip, Moved, NativeWindows, PlaceIntent, MOVED_FILE,
+    OVERRIDES_FILE,
 };
 use crate::{CoreState, MAIN_WINDOW};
 
@@ -220,17 +221,54 @@ fn overrides_path(app: &AppHandle) -> PathBuf {
 /// file that cannot be read is treated as no overrides: a corrupt preferences
 /// file should cost somebody their preferences, not their editor.
 pub fn restore_overrides(app: &AppHandle) {
-    let Some(saved) = placement::load::<HashMap<String, Placement>>(&overrides_path(app)) else {
-        return;
-    };
-
     // `state` borrows from `app`, so it is used within this statement rather
     // than bound first — the `let Some(..) else` form would drop the guard while
     // the lock still borrowed it.
-    if let Some(state) = app.try_state::<NativeWindows>() {
+    let Some(state) = app.try_state::<NativeWindows>() else {
+        return;
+    };
+
+    if let Some(saved) = placement::load::<HashMap<String, Placement>>(&overrides_path(app)) {
         if let Ok(mut held) = state.overrides.lock() {
             *held = saved;
         }
+    }
+
+    // Keyed by window handle, which JSON can only spell as a string. Anything
+    // that does not parse back to a handle is dropped rather than guessed at.
+    if let Some(saved) = placement::load::<HashMap<String, Moved>>(&moved_path(app)) {
+        if let Ok(mut held) = state.moved.lock() {
+            *held = saved
+                .into_iter()
+                .filter_map(|(handle, entry)| handle.parse::<u64>().ok().map(|key| (key, entry)))
+                .collect();
+        }
+    }
+}
+
+fn moved_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(MOVED_FILE)
+}
+
+/// Writes the moved-window records out.
+///
+/// Without this, "put it back" worked until the shell was restarted and then
+/// reported the window as not running — a window Noctis moved and can no longer
+/// return is worse than one it never moved.
+fn remember_moved(app: &AppHandle, native: &NativeWindows) {
+    let snapshot: HashMap<String, Moved> = match native.moved.lock() {
+        Ok(held) => held
+            .iter()
+            .map(|(handle, entry)| (handle.to_string(), entry.clone()))
+            .collect(),
+        Err(_) => return,
+    };
+
+    if let Err(error) = placement::save(&moved_path(app), &snapshot) {
+        eprintln!("noctis: could not save the moved-window records: {error}");
     }
 }
 
@@ -570,6 +608,8 @@ pub async fn window_place(
             },
         );
 
+    remember_moved(&app, &native);
+
     Ok(PlaceOutcome::Placed {
         placement: applied.placement,
         previous,
@@ -597,10 +637,25 @@ pub async fn window_place(
 /// optional check a caller can decline to pass.
 #[tauri::command]
 pub fn window_restore(
+    app: AppHandle,
     native: State<'_, NativeWindows>,
     application_id: String,
 ) -> Result<PlaceOutcome, String> {
     let live = win32::top_level_windows();
+    let outcome = restore_locked(&native, &live, application_id)?;
+
+    // Outside the lock `restore_locked` holds, because writing the file takes
+    // it again to snapshot the map.
+    remember_moved(&app, &native);
+
+    Ok(outcome)
+}
+
+fn restore_locked(
+    native: &NativeWindows,
+    live: &[noctis_windows::WindowIdentity],
+    application_id: String,
+) -> Result<PlaceOutcome, String> {
     let mut held = native
         .moved
         .lock()

@@ -6,10 +6,11 @@
 //! be wrong without a display attached — the DPI arithmetic and the frame inset
 //! correction — are split out as pure functions and tested.
 
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 use windows::core::BOOL;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, RECT, TRUE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, POINT, RECT, TRUE};
 use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
@@ -25,9 +26,10 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect,
-    GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsWindowVisible, SetWindowPlacement,
-    SetWindowPos, GWL_EXSTYLE, HWND_TOP, MONITORINFOF_PRIMARY, SET_WINDOW_POS_FLAGS,
-    SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOWMAXIMIZED, WINDOWPLACEMENT, WS_EX_TOOLWINDOW,
+    GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsWindowVisible, IsZoomed,
+    SetWindowPlacement, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOP, MONITORINFOF_PRIMARY,
+    SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED,
+    WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS, WS_EX_TOOLWINDOW,
 };
 
 use crate::geometry::{Placement, WorkArea};
@@ -252,10 +254,24 @@ pub fn top_level_windows() -> Vec<WindowIdentity> {
 /// return to when un-maximized, which a plain rectangle cannot express. It never
 /// leaves this process, because it is a Win32 structure rather than evidence
 /// anybody can read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Saved {
     /// The readable form, for the authority decision's execution evidence.
     pub placement: Placement,
-    raw: WINDOWPLACEMENT,
+    /// `showCmd` and `rcNormalPosition` out of the `WINDOWPLACEMENT` read before
+    /// the move: exactly the two fields `SetWindowPlacement` needs handed back.
+    ///
+    /// Stored as plain numbers rather than the Win32 structure so the record can
+    /// be written to disk. Storing the structure meant "put it back" could not
+    /// survive a restart of the shell, and a window Noctis moved and can no
+    /// longer return is worse than one it never moved.
+    ///
+    /// `rcNormalPosition` is in workspace coordinates, which are not screen
+    /// coordinates when a taskbar is present — so these are the values Win32
+    /// gave, kept verbatim and handed straight back. Deriving them from
+    /// `GetWindowRect` instead would be off by the taskbar on every restore.
+    show_cmd: u32,
+    normal: [i32; 4],
 }
 
 impl Saved {
@@ -292,7 +308,13 @@ pub fn capture(handle: u64) -> Option<Saved> {
 
     Some(Saved {
         placement: rect_to_placement(rect, raw.showCmd == SW_SHOWMAXIMIZED.0 as u32),
-        raw,
+        show_cmd: raw.showCmd,
+        normal: [
+            raw.rcNormalPosition.left,
+            raw.rcNormalPosition.top,
+            raw.rcNormalPosition.right,
+            raw.rcNormalPosition.bottom,
+        ],
     })
 }
 
@@ -374,6 +396,18 @@ pub fn apply(handle: u64, target: Placement) -> Result<Applied, PlacementError> 
             return Err(PlacementError::NotResponding);
         }
 
+        // A maximized window ignores a position entirely, so `SetWindowPos`
+        // would report success and change nothing. Un-maximizing first is the
+        // whole of the fix, and it has to happen before the position is set
+        // rather than after — the same order Noctis's own window needs in
+        // `compose_around`, for the same reason.
+        //
+        // The prior state is already captured, so the window can still be put
+        // back maximized: `Saved` keeps the `showCmd` that says so.
+        if IsZoomed(window).as_bool() {
+            let _ = ShowWindow(window, SW_RESTORE);
+        }
+
         let mut visible = RECT::default();
         let inset = if DwmGetWindowAttribute(
             window,
@@ -446,10 +480,26 @@ pub fn apply(handle: u64, target: Placement) -> Result<Applied, PlacementError> 
 pub fn restore(handle: u64, saved: &Saved) -> Result<(), PlacementError> {
     let window = HWND(handle as *mut std::ffi::c_void);
 
-    // SAFETY: `saved.raw` was filled by `GetWindowPlacement` with its `length`
-    // already set, and is passed straight back.
+    // Rebuilt from the two fields that were kept rather than held as a struct,
+    // so a restore works just as well after the shell has been restarted.
+    let raw = WINDOWPLACEMENT {
+        length: u32::try_from(size_of::<WINDOWPLACEMENT>()).unwrap_or_default(),
+        flags: WINDOWPLACEMENT_FLAGS(0),
+        showCmd: saved.show_cmd,
+        ptMinPosition: POINT { x: 0, y: 0 },
+        ptMaxPosition: POINT { x: 0, y: 0 },
+        rcNormalPosition: RECT {
+            left: saved.normal[0],
+            top: saved.normal[1],
+            right: saved.normal[2],
+            bottom: saved.normal[3],
+        },
+    };
+
+    // SAFETY: `raw` is sized and filled above, and `SetWindowPlacement` reads it
+    // without retaining it.
     unsafe {
-        SetWindowPlacement(window, &saved.raw).map_err(|error| PlacementError::Refused {
+        SetWindowPlacement(window, &raw).map_err(|error| PlacementError::Refused {
             code: error.code().0 as u32,
         })
     }
@@ -557,6 +607,33 @@ mod tests {
         let placement = rect_to_placement(collapsed, false);
 
         assert!(placement.width >= 1 && placement.height >= 1);
+    }
+
+    /// THE GATE: "put it back" has to survive a restart of the shell, and it
+    /// only can if what was preserved is data rather than a Win32 structure. A
+    /// window Noctis moved and can no longer return is worse than one it never
+    /// moved.
+    #[test]
+    fn round_trips_a_preserved_placement_through_json() {
+        let saved = Saved {
+            placement: Placement {
+                x: 15,
+                y: 65,
+                width: 491,
+                height: 437,
+                maximized: true,
+            },
+            show_cmd: SW_SHOWMAXIMIZED.0 as u32,
+            // Workspace coordinates as Win32 gave them, which is why they are
+            // kept verbatim rather than recomputed from the rectangle above.
+            normal: [100, 120, 1380, 920],
+        };
+
+        let json = serde_json::to_string(&saved).expect("json");
+        let read: Saved = serde_json::from_str(&json).expect("read back");
+
+        assert_eq!(read, saved);
+        assert!(read.placement.maximized);
     }
 
     #[test]
