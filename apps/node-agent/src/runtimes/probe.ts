@@ -152,9 +152,18 @@ export async function probeProviders(deps: ProbeDeps): Promise<RuntimeProbe[]> {
 export function probeInstalledProviders(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<RuntimeProbe[]> {
+  return probeProviders(installedDeps(env));
+}
+
+/** The codex runtime's own probe: this machine, one provider. */
+export function probeCodexInstalled(env: NodeJS.ProcessEnv = process.env): Promise<RuntimeProbe> {
+  return probeCodex(installedDeps(env));
+}
+
+function installedDeps(env: NodeJS.ProcessEnv): ProbeDeps {
   const childEnv = childEnvironment(env);
 
-  return probeProviders({
+  return {
     env,
     home: homedir(),
     readFile: (path) => readFile(path, "utf8"),
@@ -176,5 +185,5 @@ export function probeInstalledProviders(
           },
         );
       }),
-  });
+  };
 }
