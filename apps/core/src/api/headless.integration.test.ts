@@ -8,6 +8,7 @@ import { ENVELOPE_VERSION } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
+import { getApprovalByAskId } from "../authority/service.js";
 import type { CoreConfig } from "../config/server.js";
 import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
@@ -1067,6 +1068,128 @@ describe("THE GATE: preparation cannot commit itself", () => {
 
     expect(confirmed.status).toBe(404);
     expect(executed.status).toBe(404);
+  });
+});
+
+describe("THE GATE: a human can say no, and the executor that asked is recorded", () => {
+  function reasonCodes(response: { body: Record<string, unknown> }): string[] {
+    return (response.body.error as { details: { reasonCodes: string[] } }).details.reasonCodes;
+  }
+
+  async function declinedEvents(core: TestCore): Promise<number> {
+    const events = await read(core, "/events?after=0");
+
+    return (events.body.events as Array<{ type: string }>).filter(
+      (event) => event.type === "authority.declined.v1",
+    ).length;
+  }
+
+  it("records who declined and when, and says so exactly once", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    const declined = await command(core, "authority.decline", {
+      idempotencyKey: newKey("decline"),
+      requestId: decision.requestId,
+      reason: "Not this listing",
+    });
+
+    expect(declined.status).toBe(200);
+    expect(declined.body.declinedAt).toBeDefined();
+    expect(declined.body.declinedBy).toBe("local");
+    expect(declined.body.confirmedAt).toBeUndefined();
+    expect(await declinedEvents(core)).toBe(1);
+
+    // A second no with a new key is not a second act. Same record, no event.
+    const again = await command(core, "authority.decline", {
+      idempotencyKey: newKey("decline"),
+      requestId: decision.requestId,
+    });
+
+    expect(again.status).toBe(200);
+    expect(again.body.declinedAt).toBe(declined.body.declinedAt);
+    expect(await declinedEvents(core)).toBe(1);
+  });
+
+  it("a declined approval can be neither confirmed nor executed", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    await command(core, "authority.decline", {
+      idempotencyKey: newKey("decline"),
+      requestId: decision.requestId,
+    });
+
+    const confirmed = await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+    });
+    const executed = await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: {},
+    });
+
+    expect(confirmed.status).toBe(403);
+    expect(reasonCodes(confirmed)).toEqual(["declined"]);
+    expect(executed.status).toBe(403);
+    expect(reasonCodes(executed)).toEqual(["declined"]);
+  });
+
+  it("a no after the consequence happened changes nothing", async () => {
+    const core = await startTestCore();
+    const decision = await requestAuthorityFor(core);
+
+    await command(core, "authority.confirm", {
+      idempotencyKey: newKey("confirm"),
+      requestId: decision.requestId,
+    });
+    await command(core, "authority.execute", {
+      idempotencyKey: newKey("exec"),
+      requestId: decision.requestId,
+      evidenceVersion: 1,
+      evidence: {},
+    });
+
+    const declined = await command(core, "authority.decline", {
+      idempotencyKey: newKey("decline"),
+      requestId: decision.requestId,
+    });
+
+    expect(declined.status).toBe(403);
+    expect(reasonCodes(declined)).toEqual(["already_executed"]);
+  });
+
+  it("remembers which job asked, and finds the approval by its ask", async () => {
+    const core = await startTestCore();
+    const nodeJobId = "01941f29-7c00-7000-8000-00000000a0b1";
+    const askId = "01941f29-7c00-7000-8000-00000000a0b2";
+    const at = "2026-09-12T00:00:00.000Z";
+
+    // `approvals.node_job_id` is a foreign key; an ask only comes from a job that exists.
+    core.core.kernel.db
+      .prepare(
+        `INSERT INTO node_jobs (id, capability, status, idempotency_key, payload_version,
+                                payload_json, created_at, updated_at)
+         VALUES (?, 'runtime.turn', 'running', ?, 1, '{}', ?, ?)`,
+      )
+      .run(nodeJobId, newKey("job"), at, at);
+
+    const key = newKey("ask");
+    const decision = await requestAuthorityFor(core, { idempotencyKey: key, nodeJobId, askId });
+    const approval = await read(core, `/approvals/${String(decision.requestId)}`);
+
+    expect(approval.body.nodeJobId).toBe(nodeJobId);
+    expect(approval.body.askId).toBe(askId);
+    expect(getApprovalByAskId(core.core.kernel.db, askId)?.id).toBe(decision.requestId);
+
+    // The ask id is the idempotency key: a node that reconnects re-asks under
+    // the same key and gets the answer it already had, not a second decision.
+    const replayed = await requestAuthorityFor(core, { idempotencyKey: key, nodeJobId, askId });
+
+    expect(replayed.requestId).toBe(decision.requestId);
+    expect(replayed.decidedAt).toBe(decision.decidedAt);
   });
 });
 

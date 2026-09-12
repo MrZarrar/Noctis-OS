@@ -2,6 +2,7 @@ import type {
   ApprovalRecord,
   AuthorityDecision,
   ConfirmAuthorityCommand,
+  DeclineAuthorityCommand,
   ExecuteAuthorityCommand,
   GrantStandingPermissionCommand,
   RequestAuthorityCommand,
@@ -74,6 +75,10 @@ type ApprovalRow = {
   executed_at: string | null;
   execution_evidence_version: number | null;
   execution_evidence_json: string | null;
+  declined_at: string | null;
+  declined_by: string | null;
+  node_job_id: string | null;
+  ask_id: string | null;
 };
 
 const APPROVAL_COLUMNS = `id, objective_id, mission_id, actor_id, operation_class, capability,
@@ -81,7 +86,7 @@ const APPROVAL_COLUMNS = `id, objective_id, mission_id, actor_id, operation_clas
                           outcome, policy_id, reason_codes_json, permission_id,
                           confirmation_phrase, requested_at, decided_at, confirmed_at,
                           confirmed_by, executed_at, execution_evidence_version,
-                          execution_evidence_json`;
+                          execution_evidence_json, declined_at, declined_by, node_job_id, ask_id`;
 
 const PERMISSION_COLUMNS = `id, actor_id, capability, operation_class, constraints_json,
                             granted_at, granted_by, expires_at, revoked_at, revoked_reason`;
@@ -130,6 +135,10 @@ function toApproval(row: ApprovalRow): ApprovalRecord | undefined {
     ...(row.execution_evidence_json === null
       ? {}
       : { executionEvidence: JSON.parse(row.execution_evidence_json) as unknown }),
+    ...(row.declined_at === null ? {} : { declinedAt: row.declined_at }),
+    ...(row.declined_by === null ? {} : { declinedBy: row.declined_by }),
+    ...(row.node_job_id === null ? {} : { nodeJobId: row.node_job_id }),
+    ...(row.ask_id === null ? {} : { askId: row.ask_id }),
   });
 }
 
@@ -170,6 +179,15 @@ export function getStandingPermission(
 export function getApproval(db: NoctisDatabase, id: string): ApprovalRecord | undefined {
   const row = db.prepare(`SELECT ${APPROVAL_COLUMNS} FROM approvals WHERE id = ?`).get(id) as
     ApprovalRow | undefined;
+
+  return row === undefined ? undefined : toApproval(row);
+}
+
+/** The node's handle for a pending ask; `idx_approvals_ask` makes this one lookup. */
+export function getApprovalByAskId(db: NoctisDatabase, askId: string): ApprovalRecord | undefined {
+  const row = db
+    .prepare(`SELECT ${APPROVAL_COLUMNS} FROM approvals WHERE ask_id = ?`)
+    .get(askId) as ApprovalRow | undefined;
 
   return row === undefined ? undefined : toApproval(row);
 }
@@ -266,8 +284,8 @@ export function requestAuthority(
            (id, objective_id, mission_id, actor_id, operation_class, capability, target_json,
             consequence_summary, reversibility, estimated_cost_gbp, idempotency_key,
             outcome, policy_id, reason_codes_json, permission_id, confirmation_phrase,
-            requested_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            requested_at, decided_at, node_job_id, ask_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         command.objectiveId ?? null,
@@ -289,6 +307,8 @@ export function requestAuthority(
         decision.confirmationPhrase ?? null,
         now,
         decision.decidedAt,
+        command.nodeJobId ?? null,
+        command.askId ?? null,
       );
 
       return ok({
@@ -317,6 +337,8 @@ export function requestAuthority(
               outcome: decision.outcome,
               policyId: decision.policyId,
               reasonCodes: decision.reasonCodes,
+              ...(command.nodeJobId === undefined ? {} : { nodeJobId: command.nodeJobId }),
+              ...(command.askId === undefined ? {} : { askId: command.askId }),
             },
             correlationId: context.correlationId,
             occurredAt: now,
@@ -358,6 +380,15 @@ export function confirmAuthority(
           requestId: approval.id,
           outcome: "deny",
           reasonCodes: ["policy_denied_cannot_be_confirmed"],
+        });
+      }
+
+      if (approval.declinedAt !== undefined) {
+        return conflict({
+          kind: "authority_refused",
+          requestId: approval.id,
+          outcome: approval.outcome,
+          reasonCodes: ["declined"],
         });
       }
 
@@ -456,6 +487,15 @@ export function executeAuthority(
         return conflict({ kind: "not_found", entity: "approval", id: command.requestId });
       }
 
+      if (approval.declinedAt !== undefined) {
+        return conflict({
+          kind: "authority_refused",
+          requestId: approval.id,
+          outcome: approval.outcome,
+          reasonCodes: ["declined"],
+        });
+      }
+
       if (approval.executedAt !== undefined) {
         return conflict({
           kind: "authority_refused",
@@ -527,6 +567,97 @@ export function executeAuthority(
               capability: approval.capability,
               target: approval.target,
               reversibility: approval.reversibility,
+            },
+            correlationId: context.correlationId,
+            occurredAt: now,
+          },
+        ],
+      });
+    },
+  );
+}
+
+/**
+ * The human says no. A policy `deny` is not a question; a decline is an answer
+ * to one, and it is recorded as a fact rather than left as an absence, so the
+ * executor that asked can be told.
+ *
+ * A yes already given at the boundary is not undone by a later no — the
+ * executor was told yes and may be mid-act; telling it to stop is a separate
+ * conversation. A `deny` can still be declined: it is the owner's no on top of
+ * policy's, and it costs nothing to keep.
+ */
+export function declineAuthority(
+  kernel: Kernel,
+  context: CommandContext,
+  command: DeclineAuthorityCommand,
+): Result<ApprovalRecord> {
+  const now = new Date(kernel.clock.now()).toISOString();
+
+  return runCommand<ApprovalRecord>(
+    kernel,
+    { scope: "authority.decline", key: command.idempotencyKey, resultId: command.requestId },
+    (tx) => {
+      const approval = getApproval(tx, command.requestId);
+
+      if (approval === undefined) {
+        return conflict({ kind: "not_found", entity: "approval", id: command.requestId });
+      }
+
+      if (approval.executedAt !== undefined) {
+        return conflict({
+          kind: "authority_refused",
+          requestId: approval.id,
+          outcome: approval.outcome,
+          reasonCodes: ["already_executed"],
+        });
+      }
+
+      if (approval.confirmedAt !== undefined) {
+        return conflict({
+          kind: "authority_refused",
+          requestId: approval.id,
+          outcome: approval.outcome,
+          reasonCodes: ["already_confirmed"],
+        });
+      }
+
+      if (approval.declinedAt !== undefined) {
+        // Same shape as a second confirm: the first no stands, nothing new happened.
+        return ok({ value: approval, events: [] });
+      }
+
+      tx.prepare("UPDATE approvals SET declined_at = ?, declined_by = ? WHERE id = ?").run(
+        now,
+        context.actorId,
+        approval.id,
+      );
+
+      const declined = getApproval(tx, approval.id);
+
+      if (declined === undefined) {
+        throw new Error(`Approval ${approval.id} vanished mid-transaction`);
+      }
+
+      return ok({
+        value: declined,
+        events: [
+          {
+            id: kernel.ids.nextId(),
+            streamType: "authority",
+            streamId: approval.id,
+            type: "authority.declined.v1",
+            actorType: context.actorType,
+            actorId: context.actorId,
+            payloadVersion: 1,
+            payload: {
+              requestId: approval.id,
+              operationClass: approval.operationClass,
+              capability: approval.capability,
+              target: approval.target,
+              ...(command.reason === undefined ? {} : { reason: command.reason }),
+              ...(approval.nodeJobId === undefined ? {} : { nodeJobId: approval.nodeJobId }),
+              ...(approval.askId === undefined ? {} : { askId: approval.askId }),
             },
             correlationId: context.correlationId,
             occurredAt: now,

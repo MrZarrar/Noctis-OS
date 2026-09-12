@@ -11,6 +11,7 @@ import {
   ComposeSurfacesCommandSchema,
   CreateMissionCommandSchema,
   CreateObjectiveCommandSchema,
+  DeclineAuthorityCommandSchema,
   EnqueueNodeJobCommandSchema,
   ExecuteAuthorityCommandSchema,
   GrantStandingPermissionCommandSchema,
@@ -37,6 +38,7 @@ import type { z } from "zod";
 
 import {
   confirmAuthority,
+  declineAuthority,
   executeAuthority,
   getApproval,
   getAuthorityDecision,
@@ -348,6 +350,9 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     getApproval(db, id),
   ),
   "authority.execute": defineCommand(ExecuteAuthorityCommandSchema, executeAuthority, (db, id) =>
+    getApproval(db, id),
+  ),
+  "authority.decline": defineCommand(DeclineAuthorityCommandSchema, declineAuthority, (db, id) =>
     getApproval(db, id),
   ),
   "authority.grant_permission": defineCommand(
