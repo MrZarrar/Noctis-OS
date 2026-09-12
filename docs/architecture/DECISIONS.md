@@ -274,3 +274,93 @@ two stream types (`source`, `artifact`); and one `DomainConflict` kind, `authori
 maps to HTTP 403. It is its own kind rather than a `forbidden_transition` because a state-machine
 refusal is about what a record is and this is about what an actor may do to it, and a client cannot
 retry the same way after each.
+
+## ADR-0020: Runtimes execute on nodes
+
+**Decision:** A model runtime (Codex App Server, Claude Code via the Agent SDK, later Hermes) is
+spawned by the node agent through a `runtime.turn` capability, never by the core and never by the
+Tauri shell.
+
+**Why.** A runtime reads files, runs commands, and holds a login; all three belong to a machine, and
+the node agent is already the outbound, granted, leased, revocable worker on one. The core stays a
+thin ledger; the shell keeps Win32 placement only. Phone → core → worker is the only path, so the
+path a phone will need is proven from the first live run.
+
+## ADR-0021: A turn is `read_inspect`; the actions inside it ask
+
+**Decision:** `runtime.turn` needs no approval to start. Each command, file change, network
+permission or tool call the runtime wants is surfaced by the runtime itself (Codex
+`item/*/requestApproval`, Claude `canUseTool`) and classified by deterministic node code
+(`classifyAsk`) into an `AuthorityRequest` whose idempotency key is the ask id. Under an active
+Objective, `local_reversible_edit` inside granted roots is allowed by the existing evaluator and
+audited; everything else waits for a human. The sandbox (`workspace-write` on granted roots when the
+Objective is active, read-only otherwise) is an independent second fence.
+
+**Why.** The capability owns its operation class, and a turn's class is honest only if the
+consequential acts inside it are classed separately. Nothing the model emits is a decision: the node
+classifies, the core evaluates, and the runtime blocks until the core's answer is forwarded.
+
+## ADR-0022: Items are events; deltas are an ephemeral frame
+
+**Decision:** Completed runtime items become `identity.turn_item.v1` and, for agent messages,
+`identity.message_added.v1`. Token deltas travel node `delta` frame → in-process `LiveBroker` →
+client `runtime_delta` frame over `/ws/clients`. Deltas are never written to `orchestration_events`.
+
+**Why.** A ledger row per token would bury every real event under thousands of fragments nobody
+reads back. A client that missed a delta has the committed message; a client that missed an item has
+the ledger. The node socket's frame budget for `runtime.turn` is sized for deltas (100 000 per job)
+and every frame renews the lease, so a turn that streams is a turn that stays alive.
+
+## ADR-0023: Cost class is probed at startup and enforced at dispatch
+
+**Decision:** `hello.providers[]` carries `{providerId, available, authMode, version, models[]}`
+per runtime the node found; the core stores it on the node row and the router selects only
+`chatgpt`, `claude_ai`, or `local` auth modes. Spawned children never see `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, or `CODEX_API_KEY`; `claude --bare` is never used.
+
+**Why.** No metered API adapter is ever registered. A probe that reports a mode string (never a
+token) lets the core refuse an `api_key` login before a job exists, rather than discovering a bill
+afterwards.
+
+## ADR-0024: Model proposals travel a structured channel into existing commands
+
+**Decision:** `noctis_propose_surface` and `noctis_propose_objective` are tools served by a stdio
+MCP server the node agent owns. Each call is validated against `RuntimeProposalSchema`, appended to a
+per-turn proposals file the runtime adapter tails, and surfaced as a `proposal` item. The core
+validates a surface proposal against `SURFACE_PAYLOAD_SCHEMAS` and lands it through
+`surface.upsert_intent`; an objective proposal lands through `objective.create` with
+`status: "suggested"`, both with `actorType: "identity"`. ADR-0005 holds: the model proposes
+validated intent, deterministic code owns everything else.
+
+## ADR-0025: The boundary gains `authority.decline` and job linkage (amends ADR-0018)
+
+**Decision:** `approvals` gains `declined_at`, `declined_by`, `node_job_id`, and `ask_id`. A human
+may decline a `require_*` decision; a declined approval can be neither confirmed nor executed. The
+ask id is the request's idempotency key, so a reconnecting node that re-asks receives the answer
+already recorded.
+
+**Why.** A "no" that was only an absence could not be told to the executor waiting on it, and could
+not be audited. Linking the row to the job and the ask is what lets the conversation service answer
+the right node, and what lets the Chat page show which turn is waiting.
+
+## ADR-0026: Model choice is data
+
+**Decision:** A `ModelRef { providerId, model, label? }` catalogue is assembled from probes (Codex's
+`models_cache.json`, Claude's `sonnet`/`opus` aliases, later LM Studio's loaded models). Each
+identity has a default `ModelRef` in `runtime_kv`; `conversation.send` may override per turn;
+`provider_decisions` records the request, the candidates, and the choice. No code names a model's
+job.
+
+**Why.** Owner decision 0.3: switching what model does what is a toggle, not a code change, and a new
+model appears when a node reports it.
+
+## ADR-0027: The core runs on the work PC from Slice 1
+
+**Decision:** The authoritative core runs on the work PC (owner decision 0.15); the home PC pairs as a
+worker over Tailscale Serve (private, never Funnel). The home development core remains for tests. The
+work PC never holds a home-root grant (0.30): a turn that needs home files is pinned to the home node
+by `pinned_node_id`, and the work node may enqueue such a turn but never reads the result files.
+
+**Consequence accepted for now.** Conversation text of turns that ran at home lives in the work-PC
+database. File contents never leave the home node. If that becomes unacceptable, the repair is
+content residency, which `identity_message_content` was shaped to allow.
