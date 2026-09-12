@@ -5,17 +5,25 @@ import { join } from "node:path";
 
 import type { CoreConfig, RunningCore } from "@noctis/core";
 import { createLogger, signAssignment, startCore } from "@noctis/core";
-import type { NodeCredential, NodeFrame } from "@noctis/contracts";
+import type {
+  NodeCredential,
+  NodeFrame,
+  RuntimeAsk,
+  RuntimeItem,
+  RuntimeProbe,
+} from "@noctis/contracts";
 import {
   EnvironmentInspectEvidenceSchema,
   FileSearchEvidenceSchema,
   NODE_ENVELOPE_VERSION,
+  RuntimeTurnEvidenceSchema,
 } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import type { RunningAgent } from "./agent.js";
+import type { AgentOptions, RunningAgent } from "./agent.js";
 import { startAgent } from "./agent.js";
+import { FAKE_PROBE, createFakeRuntime } from "./runtimes/fake.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -156,12 +164,16 @@ async function connectAgent(
   core: TestCore,
   credential: NodeCredential,
   saved: NodeCredential[] = [],
+  overrides: Partial<AgentOptions> = {},
 ): Promise<RunningAgent> {
   const agent = startAgent({
     credential,
     saveCredential: (next) => saved.push(next),
     initialBackoffMs: 20,
     maxBackoffMs: 100,
+    // Nothing on the test machine is probed; each case says what it found.
+    probes: () => Promise.resolve([]),
+    ...overrides,
   });
 
   agents.push(agent);
@@ -279,6 +291,7 @@ describe("the real agent against the real core", () => {
         credential: "a".repeat(64),
       },
       saveCredential: () => undefined,
+      probes: () => Promise.resolve([]),
       initialBackoffMs: 10,
       maxBackoffMs: 40,
     });
@@ -319,6 +332,139 @@ describe("the real agent against the real core", () => {
 
     const job = await readJob(core, id);
     expect(job.failureReason).toContain("not-granted");
+  });
+});
+
+describe("a runtime turn through the real core", () => {
+  const TURN = {
+    threadId: "0199a000-0000-7000-8000-0000000000e1",
+    identityId: "vesper",
+    model: { providerId: "codex", model: "fake-model" },
+    userMessageId: "0199a000-0000-7000-8000-0000000000e2",
+    primaryRootGrantId: "scratch",
+    objectiveActive: false,
+  };
+
+  interface Seen {
+    items: Array<{ jobId: string; item: RuntimeItem }>;
+    deltas: Array<{ jobId: string; text: string }>;
+    asks: Array<{ jobId: string; ask: RuntimeAsk }>;
+  }
+
+  /** A paired node granted runtime.turn over a scratch root, with the fake behind codex. */
+  async function turnReadyAgent(probes: RuntimeProbe[] = [FAKE_PROBE]): Promise<{
+    core: TestCore;
+    credential: NodeCredential;
+    seen: Seen;
+  }> {
+    const core = await startTestCore();
+    const credential = await pair(core);
+    const scratch = mkdtempSync(join(tmpdir(), "noctis-turn-root-"));
+
+    scratches.push(scratch);
+
+    await command(core, "node.grant_capability", {
+      idempotencyKey: "g-turn",
+      nodeId: credential.nodeId,
+      capability: "runtime.turn",
+      constraints: {
+        providers: ["codex"],
+        roots: [{ grantId: "scratch", path: scratch, mode: "write" }],
+      },
+    });
+
+    const seen: Seen = { items: [], deltas: [], asks: [] };
+
+    core.core.runtimeFrames.subscribe({
+      onStreamItem: (_nodeId, jobId, _sequence, item) => seen.items.push({ jobId, item }),
+      onDelta: (_nodeId, jobId, delta) => seen.deltas.push({ jobId, text: delta.text }),
+      onAsk: (_nodeId, jobId, ask) => seen.asks.push({ jobId, ask }),
+    });
+
+    await connectAgent(core, credential, [], {
+      runtimes: { codex: createFakeRuntime() },
+      probes: () => Promise.resolve(probes),
+    });
+
+    return { core, credential, seen };
+  }
+
+  async function enqueueTurn(core: TestCore, key: string, prompt: string): Promise<string> {
+    const enqueued = await command(core, "node.job_enqueue", {
+      idempotencyKey: key,
+      capability: "runtime.turn",
+      payload: { ...TURN, prompt },
+    });
+
+    return (enqueued.job as { id: string }).id;
+  }
+
+  async function status(core: TestCore, id: string): Promise<string> {
+    return ((await readJob(core, id)).job as { status: string }).status;
+  }
+
+  it("streams items, deltas and an ask to the real core, and the answer comes back", async () => {
+    const { core, credential, seen } = await turnReadyAgent();
+
+    // hello carried the probe: the core knows this node offers the fake model.
+    const node = await fetch(`${core.base}/nodes/${credential.nodeId}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(((await node.json()) as { providers: unknown }).providers).toEqual([FAKE_PROBE]);
+
+    const id = await enqueueTurn(core, "turn-ask", "ASK: please");
+
+    await waitFor(() => seen.asks.some((ask) => ask.jobId === id), "the ask to reach the hub");
+
+    expect(seen.deltas.filter((delta) => delta.jobId === id).map((delta) => delta.text)).toEqual([
+      "Hel",
+      "lo",
+    ]);
+    expect(seen.items.map((entry) => entry.item.kind)).toEqual(["agent_message", "command"]);
+
+    const ask = seen.asks[0]?.ask;
+
+    expect(ask).toMatchObject({ itemId: "c1", kind: "command", capability: "runtime.command" });
+    // The runtime is parked on the ask: the job is running, not finished.
+    expect(await status(core, id)).toBe("running");
+
+    expect(
+      core.core.dispatcher.sendAnswer(credential.nodeId, id, {
+        askId: ask?.askId ?? "",
+        decision: "allow",
+        approvalId: "0199a000-0000-7000-8000-0000000000a6",
+      }),
+    ).toBe(true);
+
+    await waitFor(async () => (await status(core, id)) === "succeeded", "the turn to succeed");
+
+    const evidence = RuntimeTurnEvidenceSchema.parse((await readJob(core, id)).result);
+
+    expect(evidence.itemCount).toBeGreaterThanOrEqual(2);
+    expect(evidence.stoppedReason).toBe("completed");
+    expect(seen.items.at(-1)?.item).toMatchObject({ itemId: "c1", status: "completed" });
+  });
+
+  it("runs two turns on one node at the same time", async () => {
+    const { core, seen } = await turnReadyAgent();
+
+    const first = await enqueueTurn(core, "turn-slow-1", "SLOW: one");
+    const second = await enqueueTurn(core, "turn-slow-2", "SLOW: two");
+
+    // Both have started streaming while neither has finished.
+    await waitFor(
+      () =>
+        seen.deltas.some((delta) => delta.jobId === first) &&
+        seen.deltas.some((delta) => delta.jobId === second),
+      "both turns to stream",
+    );
+    expect([await status(core, first), await status(core, second)]).toEqual(["running", "running"]);
+
+    await waitFor(
+      async () =>
+        (await status(core, first)) === "succeeded" && (await status(core, second)) === "succeeded",
+      "both turns to succeed",
+    );
   });
 });
 
@@ -425,6 +571,7 @@ describe("the agent refuses what a real core would never send", () => {
       credential: { coreUrl: fake.url, nodeId: NODE, generation: 0, credential: "a".repeat(64) },
       saveCredential: () => undefined,
       reconnect: false,
+      probes: () => Promise.resolve([]),
     });
 
     agents.push(agent);
@@ -448,7 +595,11 @@ describe("the agent refuses what a real core would never send", () => {
   it("runs a correctly signed job, which is what makes the refusals below mean something", async () => {
     const fake = await connected();
 
-    fake.job(assignment(), signAssignment(SESSION, JSON.stringify(assignment())));
+    // Built once: two calls stamp two leaseExpiresAt values across a millisecond
+    // boundary, and the signature then covers bytes the job frame never sent.
+    const signed = assignment();
+
+    fake.job(signed, signAssignment(SESSION, JSON.stringify(signed)));
 
     await waitFor(() => fake.frames.some((frame) => frame.kind === "result"), "a result frame");
 

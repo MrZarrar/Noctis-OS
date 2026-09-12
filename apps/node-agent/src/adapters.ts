@@ -2,22 +2,43 @@ import { readdir, realpath, stat } from "node:fs/promises";
 import { arch, cpus, platform, totalmem } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
-import type { CapabilityGrant, NodeCapability } from "@noctis/contracts";
+import type {
+  CapabilityGrant,
+  NodeCapability,
+  RuntimeAnswer,
+  RuntimeAsk,
+  RuntimeItem,
+  RuntimeProviderId,
+} from "@noctis/contracts";
 import {
   EnvironmentInspectPayloadSchema,
   FileSearchConstraintsSchema,
   FileSearchPayloadSchema,
+  RuntimeTurnEvidenceSchema,
+  RuntimeTurnPayloadSchema,
   VerificationNoopPayloadSchema,
 } from "@noctis/contracts";
 
-/** The node refused the job itself. Reported to the core as a failure, not a crash. */
-export class AdapterRefused extends Error {}
+import type { Runtime, RuntimeSink } from "./runtimes/Runtime.js";
+import { AdapterRefused } from "./runtimes/Runtime.js";
+import { childEnvironment } from "./runtimes/env.js";
+import { resolveRoots } from "./runtimes/roots.js";
+
+export { AdapterRefused };
 
 export interface AdapterContext {
   /** Only the grants the core sent in `welcome`. The node trusts nothing else. */
   grants: readonly CapabilityGrant[];
   signal: AbortSignal;
   progress(percent: number, note: string): void;
+  /** Mid-turn frames to the core. Items are persisted there; deltas are not. */
+  stream(item: RuntimeItem): void;
+  delta(itemId: string, text: string): void;
+  /** Resolves when the core answers. The runtime cannot proceed until it does. */
+  ask(ask: Omit<RuntimeAsk, "askId">): Promise<RuntimeAnswer>;
+  /** The agent's own environment. Stripped of billing keys before any child sees it. */
+  env: NodeJS.ProcessEnv;
+  runtimes: Partial<Record<RuntimeProviderId, Runtime>>;
 }
 
 export type Adapter = (payload: unknown, context: AdapterContext) => Promise<unknown>;
@@ -201,9 +222,51 @@ const verificationNoop: Adapter = async (payload, context) => {
   return Promise.resolve({ verified: true });
 };
 
-/** Placeholder until Task 1.7 lands the runtime host. Refuses rather than pretends. */
-const runtimeTurn: Adapter = () =>
-  Promise.reject(new AdapterRefused("runtime.turn is not available on this agent yet"));
+/**
+ * The lease heartbeat. An ask can wait minutes for a human, and the core
+ * renews the lease on every frame, so a turn that is silent is a turn the core
+ * will reclaim from under a runtime that is still working.
+ */
+export const TURN_HEARTBEAT_MS = 10_000;
+
+/**
+ * One conversational turn on a spawned runtime.
+ *
+ * The adapter owns nothing the runtime could misuse: roots arrive real, the
+ * environment arrives stripped, and every ask goes to the core and comes back
+ * as the core's answer. The runtime proposes; the frames decide.
+ */
+const runtimeTurn: Adapter = async (payload, context) => {
+  const request = RuntimeTurnPayloadSchema.parse(payload);
+  const roots = await resolveRoots(context.grants, request.primaryRootGrantId);
+  const runtime = context.runtimes[request.model.providerId];
+
+  if (runtime === undefined) {
+    throw new AdapterRefused(`no runtime for ${request.model.providerId}`);
+  }
+
+  assertNotCancelled(context.signal);
+
+  const sink: RuntimeSink = {
+    item: (item) => context.stream(item),
+    delta: (itemId, text) => context.delta(itemId, text),
+    ask: (ask) => context.ask(ask),
+  };
+
+  const heartbeat = setInterval(() => context.progress(0, "turn in progress"), TURN_HEARTBEAT_MS);
+  heartbeat.unref();
+
+  try {
+    return RuntimeTurnEvidenceSchema.parse(
+      await runtime.turn(
+        { payload: request, roots, env: childEnvironment(context.env), signal: context.signal },
+        sink,
+      ),
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
+};
 
 /**
  * Every capability this agent can execute. A job naming anything else is refused

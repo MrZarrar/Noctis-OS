@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@noctis/contracts": "0.0.0",
+    "@noctis/domain": "0.0.0",
     "ws": "8.21.3",
     "zod": "4.4.3"
   },

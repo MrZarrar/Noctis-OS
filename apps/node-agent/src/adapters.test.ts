@@ -2,16 +2,18 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import type { CapabilityGrant } from "@noctis/contracts";
+import type { CapabilityGrant, RuntimeAsk, RuntimeItem } from "@noctis/contracts";
 import {
   EnvironmentInspectEvidenceSchema,
   FileSearchEvidenceSchema,
+  RuntimeTurnEvidenceSchema,
   VerificationNoopEvidenceSchema,
 } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AdapterContext } from "./adapters.js";
 import { ADAPTERS, AdapterRefused, isInside } from "./adapters.js";
+import { createFakeRuntime } from "./runtimes/fake.js";
 
 const GRANT_ID = "root-a";
 
@@ -42,6 +44,11 @@ function context(overrides: Partial<AdapterContext> = {}): AdapterContext {
     grants: [],
     signal: new AbortController().signal,
     progress: () => undefined,
+    stream: () => undefined,
+    delta: () => undefined,
+    ask: () => Promise.reject(new Error("no ask expected")),
+    env: {},
+    runtimes: {},
     ...overrides,
   };
 }
@@ -247,5 +254,100 @@ describe("isInside", () => {
   it("rejects a parent and an unrelated path", () => {
     expect(isInside(root, join(sep, "granted"))).toBe(false);
     expect(isInside(root, join(sep, "somewhere", "else"))).toBe(false);
+  });
+});
+
+describe("runtime.turn", () => {
+  const PAYLOAD = {
+    threadId: "0199a000-0000-7000-8000-0000000000e1",
+    identityId: "vesper",
+    model: { providerId: "codex", model: "fake-model" },
+    userMessageId: "0199a000-0000-7000-8000-0000000000e2",
+    prompt: "ASK: please",
+    primaryRootGrantId: "w",
+    objectiveActive: false,
+  };
+
+  function turnGrant(path: string): CapabilityGrant {
+    return {
+      id: "0199a000-0000-7000-8000-00000000000a",
+      nodeId: "0199a000-0000-7000-8000-00000000000b",
+      capability: "runtime.turn",
+      operationClass: "read_inspect",
+      constraintsVersion: 1,
+      constraints: { providers: ["codex"], roots: [{ grantId: "w", path, mode: "write" }] },
+      grantedAt: "2026-09-01T12:00:00.000Z",
+    };
+  }
+
+  it("runs the fake runtime, forwarding items, deltas and the ask, and returns its evidence", async () => {
+    const { root } = treeWithEscape();
+    const items: RuntimeItem[] = [];
+    const deltas: string[] = [];
+    const asks: Array<Omit<RuntimeAsk, "askId">> = [];
+    const fake = createFakeRuntime();
+    let seenEnv: NodeJS.ProcessEnv | undefined;
+
+    const evidence = await ADAPTERS["runtime.turn"](
+      PAYLOAD,
+      context({
+        grants: [turnGrant(root)],
+        runtimes: {
+          codex: {
+            ...fake,
+            turn(input, sink) {
+              seenEnv = input.env;
+              return fake.turn(input, sink);
+            },
+          },
+        },
+        env: { PATH: "x", OPENAI_API_KEY: "sk-leak" },
+        stream: (item) => items.push(item),
+        delta: (_itemId, text) => deltas.push(text),
+        ask: (ask) => {
+          asks.push(ask);
+
+          return Promise.resolve({
+            askId: "0199a000-0000-7000-8000-0000000000a5",
+            decision: "allow",
+            approvalId: "0199a000-0000-7000-8000-0000000000a6",
+          });
+        },
+      }),
+    );
+
+    expect(deltas).toEqual(["Hel", "lo"]);
+    expect(items.map((item) => item.itemId)).toEqual(["m1", "c1", "c1"]);
+    // The ask carries the real root as cwd: the runtime saw resolved roots.
+    expect(asks[0]?.detail?.cwd).toBe(root);
+    // THE GATE: the runtime's environment is the agent's minus the billing keys.
+    expect(seenEnv).toEqual({ PATH: "x" });
+    expect(RuntimeTurnEvidenceSchema.parse(evidence)).toMatchObject({
+      itemCount: 3,
+      stoppedReason: "completed",
+    });
+  });
+
+  it("refuses when no runtime answers for the requested provider", async () => {
+    const { root } = treeWithEscape();
+
+    await expect(
+      ADAPTERS["runtime.turn"](PAYLOAD, context({ grants: [turnGrant(root)] })),
+    ).rejects.toThrow(/no runtime for codex/);
+  });
+
+  it("refuses a primary root the grant does not name, before touching a runtime", async () => {
+    const { root } = treeWithEscape();
+
+    await expect(
+      ADAPTERS["runtime.turn"](
+        { ...PAYLOAD, primaryRootGrantId: "elsewhere" },
+        context({ grants: [turnGrant(root)], runtimes: { codex: createFakeRuntime() } }),
+      ),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+
+  it("rejects a payload the capability does not describe", async () => {
+    await expect(ADAPTERS["runtime.turn"]({ prompt: "hi" }, context())).rejects.toThrow();
   });
 });

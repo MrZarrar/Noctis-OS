@@ -5,16 +5,22 @@ import type {
   NodeCredential,
   NodeFrame,
   NodeJobAssignment,
+  RuntimeAnswer,
+  RuntimeProbe,
+  RuntimeProviderId,
 } from "@noctis/contracts";
 import {
   NODE_ENVELOPE_VERSION,
   NodeJobAssignmentSchema,
   NodeServerFrameSchema,
 } from "@noctis/contracts";
+import { createIdFactory, systemClock } from "@noctis/domain";
 import { WebSocket } from "ws";
 
 import type { Adapter, AdapterContext } from "./adapters.js";
 import { ADAPTERS, AdapterRefused } from "./adapters.js";
+import type { Runtime } from "./runtimes/Runtime.js";
+import { probeInstalledProviders } from "./runtimes/probe.js";
 
 export const AGENT_VERSION = "0.0.0";
 
@@ -45,6 +51,16 @@ export interface AgentOptions {
   maxBackoffMs?: number;
   /** False in tests that want exactly one connection attempt. */
   reconnect?: boolean;
+  /** Which runtime answers for each provider. Empty by default: nothing is guessed. */
+  runtimes?: Partial<Record<RuntimeProviderId, Runtime>>;
+  /** Run once before the first connect; the result rides in every `hello`. */
+  probes?: () => Promise<RuntimeProbe[]>;
+  env?: NodeJS.ProcessEnv;
+}
+
+interface PendingAsk {
+  resolve(answer: RuntimeAnswer): void;
+  reject(reason: Error): void;
 }
 
 export interface RunningAgent {
@@ -87,7 +103,14 @@ export function startAgent(options: AgentOptions): RunningAgent {
   const log: AgentLogger = options.logger ?? (() => undefined);
   const initialBackoff = options.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
   const maxBackoff = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+  const runtimes = options.runtimes ?? {};
+  const env = options.env ?? process.env;
+  const probes = options.probes ?? (() => probeInstalledProviders(env));
+  const ids = createIdFactory(systemClock);
   const running = new Map<string, AbortController>();
+  /** Per job, the asks whose answer has not arrived. Rejected on cancel and on disconnect. */
+  const pendingAsks = new Map<string, Map<string, PendingAsk>>();
+  let providers: RuntimeProbe[] = [];
 
   let credential = options.credential;
   let sessionCredential: string | undefined;
@@ -103,20 +126,59 @@ export function startAgent(options: AgentOptions): RunningAgent {
     }
   }
 
+  function rejectAsks(jobId: string, reason: string): void {
+    for (const pending of pendingAsks.get(jobId)?.values() ?? []) {
+      pending.reject(new AdapterRefused(reason));
+    }
+
+    pendingAsks.delete(jobId);
+  }
+
   async function execute(assignment: NodeJobAssignment): Promise<void> {
     const controller = new AbortController();
-    running.set(assignment.jobId, controller);
+    const { jobId } = assignment;
+    const asks = new Map<string, PendingAsk>();
+    let sequence = 0;
+
+    running.set(jobId, controller);
+    pendingAsks.set(jobId, asks);
+    controller.signal.addEventListener("abort", () => rejectAsks(jobId, "job was cancelled"));
 
     const context: AdapterContext = {
       grants,
       signal: controller.signal,
+      env,
+      runtimes,
       progress(percent, note) {
+        send({ kind: "progress", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, percent, note });
+      },
+      stream(item) {
+        sequence += 1;
+        send({ kind: "stream", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, sequence, item });
+      },
+      delta(itemId, text) {
         send({
-          kind: "progress",
+          kind: "delta",
           envelopeVersion: NODE_ENVELOPE_VERSION,
-          jobId: assignment.jobId,
-          percent,
-          note,
+          jobId,
+          delta: { itemId, text },
+        });
+      },
+      ask(ask) {
+        if (controller.signal.aborted) {
+          return Promise.reject(new AdapterRefused("job was cancelled"));
+        }
+
+        const askId = ids.nextId();
+
+        return new Promise<RuntimeAnswer>((resolve, reject) => {
+          asks.set(askId, { resolve, reject });
+          send({
+            kind: "ask",
+            envelopeVersion: NODE_ENVELOPE_VERSION,
+            jobId,
+            ask: { ...ask, askId },
+          });
         });
       },
     };
@@ -150,8 +212,21 @@ export function startAgent(options: AgentOptions): RunningAgent {
         failureReason: (error instanceof Error ? error.message : "unknown").slice(0, 500),
       });
     } finally {
-      running.delete(assignment.jobId);
+      running.delete(jobId);
+      pendingAsks.delete(jobId);
     }
+  }
+
+  function onAnswer(jobId: string, answer: RuntimeAnswer): void {
+    const pending = pendingAsks.get(jobId)?.get(answer.askId);
+
+    if (pending === undefined) {
+      log("warn", "answer for an ask this node is not waiting on", { jobId, askId: answer.askId });
+      return;
+    }
+
+    pendingAsks.get(jobId)?.delete(answer.askId);
+    pending.resolve(answer);
   }
 
   function onJob(assignmentJson: string, signature: string): void {
@@ -245,8 +320,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
         envelopeVersion: NODE_ENVELOPE_VERSION,
         agentVersion,
         capabilities: Object.keys(adapters) as NodeJobAssignment["capability"][],
-        // Nothing probed yet. Task 1.7 fills this from the runtime probes.
-        providers: [],
+        providers,
       });
     });
 
@@ -308,12 +382,19 @@ export function startAgent(options: AgentOptions): RunningAgent {
         case "cancel":
           running.get(frame.jobId)?.abort();
           return;
+        case "answer":
+          onAnswer(frame.jobId, frame.answer);
+          return;
       }
     });
 
     ws.on("close", () => {
       sessionCredential = undefined;
       grants = [];
+
+      for (const jobId of running.keys()) {
+        rejectAsks(jobId, "disconnected");
+      }
 
       for (const controller of running.values()) {
         controller.abort();
@@ -333,7 +414,21 @@ export function startAgent(options: AgentOptions): RunningAgent {
     });
   }
 
-  connect();
+  // Probed once, before the first hello, so the core never sees a node that
+  // has not yet found out what it can run. A probe that fails reports nothing
+  // rather than something.
+  void probes()
+    .catch((error: unknown) => {
+      log("warn", "runtime probe failed", {
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+
+      return [];
+    })
+    .then((probed) => {
+      providers = probed;
+      connect();
+    });
 
   return {
     close() {

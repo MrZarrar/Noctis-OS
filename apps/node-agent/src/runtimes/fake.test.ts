@@ -1,0 +1,148 @@
+import type { RuntimeAnswer, RuntimeAsk, RuntimeItem, RuntimeTurnPayload } from "@noctis/contracts";
+import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts";
+import { describe, expect, it } from "vitest";
+
+import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
+import { FAKE_PROBE, createFakeRuntime } from "./fake.js";
+
+const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: [], localOnly: false };
+
+function payload(prompt: string): RuntimeTurnPayload {
+  return {
+    threadId: "0199a000-0000-7000-8000-0000000000e1",
+    identityId: "vesper",
+    model: { providerId: "codex", model: "fake-model" },
+    userMessageId: "0199a000-0000-7000-8000-0000000000e2",
+    prompt,
+    primaryRootGrantId: "w",
+    objectiveActive: false,
+  };
+}
+
+interface Recorded {
+  sink: RuntimeSink;
+  items: RuntimeItem[];
+  deltas: Array<[string, string]>;
+  asks: Array<Omit<RuntimeAsk, "askId">>;
+}
+
+function recorder(decision: RuntimeAnswer["decision"] = "allow"): Recorded {
+  const recorded: Recorded = { items: [], deltas: [], asks: [], sink: undefined as never };
+
+  recorded.sink = {
+    item: (item) => recorded.items.push(RuntimeItemSchema.parse(item)),
+    delta: (itemId, text) => recorded.deltas.push([itemId, text]),
+    ask: (ask) => {
+      recorded.asks.push(ask);
+
+      return Promise.resolve({
+        askId: "0199a000-0000-7000-8000-0000000000a5",
+        decision,
+        approvalId: "0199a000-0000-7000-8000-0000000000a6",
+      });
+    },
+  };
+
+  return recorded;
+}
+
+function input(prompt: string, signal = new AbortController().signal): RuntimeTurnInput {
+  return { payload: payload(prompt), roots: ROOTS, env: {}, signal };
+}
+
+describe("the fake runtime", () => {
+  it("probes as an available ChatGPT Codex offering one model", async () => {
+    expect(await createFakeRuntime().probe()).toEqual(FAKE_PROBE);
+  });
+
+  it("streams two deltas and one completed message, and echoes the prompt", async () => {
+    const r = recorder();
+    const evidence = RuntimeTurnEvidenceSchema.parse(
+      await createFakeRuntime().turn(input("hi there"), r.sink),
+    );
+
+    expect(r.deltas).toEqual([
+      ["m1", "Hel"],
+      ["m1", "lo"],
+    ]);
+    expect(r.items).toEqual([
+      { itemId: "m1", kind: "agent_message", status: "completed", text: "Hello hi there" },
+    ]);
+    expect(r.asks).toEqual([]);
+    expect(evidence).toEqual({
+      model: { providerId: "codex", model: "fake-model" },
+      sessionRef: "fake-session-1",
+      itemCount: 1,
+      finalText: "Hello hi there",
+      stoppedReason: "completed",
+    });
+  });
+
+  it("asks before running a command and completes it when allowed", async () => {
+    const r = recorder("allow");
+    const evidence = await createFakeRuntime().turn(input("ASK: please"), r.sink);
+
+    expect(r.asks).toHaveLength(1);
+    expect(r.asks[0]).toMatchObject({
+      itemId: "c1",
+      kind: "command",
+      capability: "runtime.command",
+      // `echo hi` is a read-only head, so the classifier says read_inspect.
+      operationClass: "read_inspect",
+      reversibility: "reversible",
+      target: { type: "command", id: "echo hi" },
+      detail: { command: "echo hi", cwd: ROOTS.cwd },
+    });
+    expect(r.items.map((item) => [item.itemId, item.status])).toEqual([
+      ["m1", "completed"],
+      ["c1", "in_progress"],
+      ["c1", "completed"],
+    ]);
+    expect(r.items[2]).toMatchObject({ output: "hi", exitCode: 0 });
+    expect(evidence).toMatchObject({ itemCount: 3, stoppedReason: "completed" });
+  });
+
+  it("declines the command and stops when the answer is deny", async () => {
+    const r = recorder("deny");
+    const evidence = await createFakeRuntime().turn(input("ASK: please PROPOSE: too"), r.sink);
+
+    expect(r.items.at(-1)).toMatchObject({ itemId: "c1", status: "declined" });
+    expect(r.items.some((item) => item.kind === "proposal")).toBe(false);
+    expect(evidence).toMatchObject({ itemCount: 3, stoppedReason: "declined" });
+  });
+
+  it("proposes an objective when asked to", async () => {
+    const r = recorder();
+
+    await createFakeRuntime().turn(input("PROPOSE: an idea"), r.sink);
+
+    expect(r.items.at(-1)).toEqual({
+      itemId: "p1",
+      kind: "proposal",
+      status: "completed",
+      proposal: { kind: "objective", title: "Suggested", intent: "PROPOSE: an idea" },
+    });
+  });
+
+  it("uses the caller's sessionRef when there is one", async () => {
+    const evidence = await createFakeRuntime().turn(
+      { ...input("x"), payload: { ...payload("x"), sessionRef: "thread-9" } },
+      recorder().sink,
+    );
+
+    expect(evidence.sessionRef).toBe("thread-9");
+  });
+
+  it("stops with cancelled when the signal fires mid-turn", async () => {
+    const controller = new AbortController();
+    const r = recorder();
+    const turn = createFakeRuntime().turn(input("SLOW: take your time", controller.signal), r.sink);
+
+    setTimeout(() => controller.abort(), 50);
+
+    const evidence = await turn;
+
+    expect(evidence.stoppedReason).toBe("cancelled");
+    expect(r.items).toEqual([]);
+  });
+});
