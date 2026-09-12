@@ -5,6 +5,8 @@ import type {
   NodeDescriptor,
   PairNodeRequest,
   RevokeNodeCommand,
+  RuntimeProbe,
+  RuntimeRoot,
 } from "@noctis/contracts";
 import {
   CAPABILITY_OPERATION_CLASS,
@@ -12,6 +14,7 @@ import {
   FileSearchConstraintsSchema,
   NodeDescriptorSchema,
   RuntimeGrantConstraintsSchema,
+  RuntimeProbeSchema,
 } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
 import { conflict, ok } from "@noctis/domain";
@@ -33,12 +36,16 @@ type NodeRow = {
   agent_version: string;
   last_seen_at: string | null;
   revoked_at: string | null;
+  providers_json: string;
   created_at: string;
   updated_at: string;
 };
 
 const NODE_COLUMNS = `id, host_id, status, fingerprint, agent_version, last_seen_at, revoked_at,
-                      created_at, updated_at`;
+                      providers_json, created_at, updated_at`;
+
+/** A bad row throws, like every other parse here: a node whose probes cannot be read is not a node to route to. */
+const ProbesSchema = RuntimeProbeSchema.array();
 
 function toDescriptor(row: NodeRow): NodeDescriptor {
   return NodeDescriptorSchema.parse({
@@ -49,6 +56,7 @@ function toDescriptor(row: NodeRow): NodeDescriptor {
     agentVersion: row.agent_version,
     ...(row.last_seen_at === null ? {} : { lastSeenAt: row.last_seen_at }),
     ...(row.revoked_at === null ? {} : { revokedAt: row.revoked_at }),
+    providers: ProbesSchema.parse(JSON.parse(row.providers_json)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -142,6 +150,75 @@ export function listRouteCandidates(db: NoctisDatabase): Array<Omit<RouteCandida
       ...(grant.revokedAt === undefined ? {} : { revokedAt: grant.revokedAt }),
     })),
   }));
+}
+
+/**
+ * One node x one probed provider. The first six fields are what the domain's
+ * `chooseProvider` reads; `roots` is what the dispatcher needs once it has chosen.
+ */
+export interface RuntimeCandidate {
+  nodeId: string;
+  hostId: string;
+  connected: boolean;
+  /** A live `runtime.turn` grant on this node names this provider. */
+  granted: boolean;
+  probe: RuntimeProbe;
+  /** Every required root grant id is among this node's granted roots. */
+  hasRoots: boolean;
+  roots: RuntimeRoot[];
+}
+
+/**
+ * Everything the provider chooser needs. Ordered by node then provider so the
+ * same state always yields the same list, for the same reason `routeJob` sorts.
+ */
+export function listRuntimeCandidates(
+  db: NoctisDatabase,
+  isConnected: (nodeId: string) => boolean,
+  requiredRootGrantIds: readonly string[],
+  /** Epoch milliseconds from the injected clock, for grant expiry. */
+  now: number,
+): RuntimeCandidate[] {
+  const nodes = db
+    .prepare(`SELECT ${NODE_COLUMNS} FROM nodes WHERE status != 'revoked' ORDER BY id`)
+    .all() as NodeRow[];
+  const candidates: RuntimeCandidate[] = [];
+
+  for (const row of nodes) {
+    const node = toDescriptor(row);
+    const grants = listGrants(db, node.id).filter(
+      (grant) =>
+        grant.capability === "runtime.turn" &&
+        grant.revokedAt === undefined &&
+        (grant.expiresAt === undefined || Date.parse(grant.expiresAt) > now),
+    );
+    const probes = [...node.providers].sort((left, right) =>
+      left.providerId.localeCompare(right.providerId),
+    );
+
+    for (const probe of probes) {
+      const grant = grants.find((candidate) =>
+        RuntimeGrantConstraintsSchema.parse(candidate.constraints).providers.includes(
+          probe.providerId,
+        ),
+      );
+      const roots =
+        grant === undefined ? [] : RuntimeGrantConstraintsSchema.parse(grant.constraints).roots;
+      const rootIds = new Set(roots.map((root) => root.grantId));
+
+      candidates.push({
+        nodeId: node.id,
+        hostId: node.hostId,
+        connected: isConnected(node.id),
+        granted: grant !== undefined,
+        probe,
+        hasRoots: requiredRootGrantIds.every((id) => rootIds.has(id)),
+        roots,
+      });
+    }
+  }
+
+  return candidates;
 }
 
 export interface IssuedPairingCode {
@@ -375,7 +452,12 @@ export function currentCredential(
 export function connectNode(
   kernel: Kernel,
   context: CommandContext,
-  input: { nodeId: string; connectionId: string; agentVersion: string },
+  input: {
+    nodeId: string;
+    connectionId: string;
+    agentVersion: string;
+    providers: readonly RuntimeProbe[];
+  },
   coreToken: string,
 ): Result<PairedNode> {
   const nowIso = new Date(kernel.clock.now()).toISOString();
@@ -400,9 +482,16 @@ export function connectNode(
       tx.prepare(
         `UPDATE nodes
             SET status = 'online', agent_version = ?, credential_generation = ?,
-                last_seen_at = ?, updated_at = ?
+                providers_json = ?, last_seen_at = ?, updated_at = ?
           WHERE id = ?`,
-      ).run(input.agentVersion, rotated, nowIso, nowIso, input.nodeId);
+      ).run(
+        input.agentVersion,
+        rotated,
+        JSON.stringify(input.providers),
+        nowIso,
+        nowIso,
+        input.nodeId,
+      );
 
       return ok({
         value: {
@@ -420,7 +509,18 @@ export function connectNode(
             actorType: "node",
             actorId: input.nodeId,
             payloadVersion: 1,
-            payload: { hostId: node.hostId, agentVersion: input.agentVersion, from: node.status },
+            payload: {
+              hostId: node.hostId,
+              agentVersion: input.agentVersion,
+              from: node.status,
+              // Mode and availability only. The model list is on the row; an
+              // event that repeated it would grow with every model a vendor ships.
+              providers: input.providers.map((probe) => ({
+                providerId: probe.providerId,
+                available: probe.available,
+                authMode: probe.authMode,
+              })),
+            },
             correlationId: context.correlationId,
             occurredAt: nowIso,
           },

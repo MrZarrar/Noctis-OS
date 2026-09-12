@@ -807,6 +807,9 @@ function handleRead(
         ? explainQueued(deps.kernel, deps.dispatcher, {
             capability: record.job.capability,
             ...(record.job.missionId === undefined ? {} : { missionId: record.job.missionId }),
+            ...(record.job.pinnedNodeId === undefined
+              ? {}
+              : { pinnedNodeId: record.job.pinnedNodeId }),
           })
         : undefined;
 

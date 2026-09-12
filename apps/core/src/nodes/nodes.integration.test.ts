@@ -3,16 +3,21 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { NodeServerFrame } from "@noctis/contracts";
-import { NODE_ENVELOPE_VERSION, NodeJobAssignmentSchema } from "@noctis/contracts";
+import type { NodeServerFrame, RuntimeAsk } from "@noctis/contracts";
+import {
+  NODE_ENVELOPE_VERSION,
+  NodeJobAssignmentSchema,
+  NodeServerFrameSchema,
+} from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
 import type { CoreConfig } from "../config/server.js";
+import { runCommand } from "../kernel.js";
 import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
-import { LEASE_MS, MAX_ATTEMPTS } from "./jobs.js";
+import { enqueueJobInTransaction, LEASE_MS, MAX_ATTEMPTS } from "./jobs.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 const START = Date.parse("2026-09-01T12:00:00.000Z");
@@ -179,6 +184,8 @@ interface FakeNode {
   jobs: () => Array<{ assignment: string; signature: string }>;
   welcome: () => Extract<NodeServerFrame, { kind: "welcome" }> | undefined;
   sendRaw: (payload: string | Buffer) => void;
+  /** A node frame with the envelope filled in. */
+  frame: (body: Record<string, unknown>) => void;
   result: (jobId: string, evidence: unknown, outcome?: "succeeded" | "failed") => void;
   progress: (jobId: string, percent: number) => void;
   closed: () => { code: number } | undefined;
@@ -193,7 +200,12 @@ interface FakeNode {
 async function openFake(
   core: TestCore,
   paired: PairedFake,
-  options: { hello?: boolean; headers?: Record<string, string>; path?: string } = {},
+  options: {
+    hello?: boolean;
+    headers?: Record<string, string>;
+    path?: string;
+    providers?: unknown[];
+  } = {},
 ): Promise<FakeNode> {
   const socket = new WebSocket(`${core.socketUrl}${options.path ?? "/ws/nodes"}`, {
     headers: options.headers ?? {
@@ -219,6 +231,8 @@ async function openFake(
     jobs: () => frames.filter((frame) => frame.kind === "job"),
     welcome: () => frames.find((frame) => frame.kind === "welcome"),
     sendRaw: (payload) => socket.send(payload),
+    frame: (body) =>
+      socket.send(JSON.stringify({ envelopeVersion: NODE_ENVELOPE_VERSION, ...body })),
     result: (jobId, evidence, outcome = "succeeded") => {
       socket.send(
         JSON.stringify({
@@ -260,7 +274,8 @@ async function openFake(
         kind: "hello",
         envelopeVersion: NODE_ENVELOPE_VERSION,
         agentVersion: "0.0.0-test",
-        capabilities: ["environment.inspect", "file.search", "verification.noop"],
+        capabilities: ["environment.inspect", "file.search", "verification.noop", "runtime.turn"],
+        ...(options.providers === undefined ? {} : { providers: options.providers }),
       }),
     );
 
@@ -1149,5 +1164,213 @@ describe("cancellation", () => {
 
     const job = await read(core, `/jobs/${id}`);
     expect(job.body.job).toMatchObject({ status: "cancelled" });
+  });
+});
+
+describe("runtime frames", () => {
+  const CODEX_PROBE = {
+    providerId: "codex",
+    available: true,
+    authMode: "chatgpt",
+    models: [{ providerId: "codex", model: "gpt-5.6-sol" }],
+  };
+
+  /** A valid `runtime.turn` payload; the ids are UUIDv7-shaped like the rest of the suite. */
+  const TURN_PAYLOAD = {
+    threadId: "0199a000-0000-7000-8000-0000000000e1",
+    identityId: "vesper",
+    model: { providerId: "codex", model: "gpt-5.6-sol" },
+    userMessageId: "0199a000-0000-7000-8000-0000000000e2",
+    prompt: "say hello",
+    primaryRootGrantId: "d",
+    objectiveActive: false,
+  };
+
+  const ASK: RuntimeAsk = {
+    askId: "0199a000-0000-7000-8000-0000000000a5",
+    itemId: "item-1",
+    kind: "command",
+    summary: "run the tests",
+    operationClass: "local_reversible_edit",
+    reversibility: "reversible",
+    capability: "shell.exec",
+    target: { type: "capability", id: "shell.exec" },
+  };
+
+  /** Leases one runtime.turn job to a fake node and returns both. */
+  async function leaseTurn(core: TestCore, directory: string) {
+    const paired = await pairFake(core);
+
+    await grant(core, paired.nodeId, "runtime.turn", {
+      constraints: {
+        providers: ["codex"],
+        roots: [{ grantId: "d", path: directory, mode: "write" }],
+      },
+    });
+
+    const node = await openFake(core, paired, { providers: [CODEX_PROBE] });
+    // An explicit key: the helper's default stringifies the payload past 255 chars.
+    const enqueued = await enqueue(core, "runtime.turn", {
+      idempotencyKey: "turn-1",
+      payload: TURN_PAYLOAD,
+    });
+    const id = jobId(enqueued);
+
+    await waitFor(() => node.jobs().length === 1, "a job frame");
+
+    return { paired, node, id };
+  }
+
+  it("hello persists what the node can run", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    await openFake(core, paired, { providers: [CODEX_PROBE] });
+
+    const one = await read(core, `/nodes/${paired.nodeId}`);
+
+    expect(one.body.providers).toEqual([CODEX_PROBE]);
+  });
+
+  it("a pinned job waits for its node", async () => {
+    const core = await startTestCore();
+    const a = await pairFake(core, { hostId: "a", fingerprint: "fa" });
+    const b = await pairFake(core, {
+      hostId: "b",
+      fingerprint: "fb",
+      code: await issueCode(core, "b", "code-b"),
+    });
+
+    await grant(core, a.nodeId, "verification.noop");
+    await grant(core, b.nodeId, "verification.noop");
+    await openFake(core, a);
+
+    const { kernel } = core.core;
+    const id = kernel.ids.nextId();
+    const pinned = runCommand(
+      kernel,
+      { scope: "node.job_enqueue", key: "pinned", resultId: id },
+      (tx) =>
+        enqueueJobInTransaction(
+          tx,
+          kernel,
+          { correlationId: kernel.ids.nextId(), actorType: "system", actorId: "test" },
+          {
+            id,
+            capability: "verification.noop",
+            payload: {},
+            idempotencyKey: "pinned",
+            pinnedNodeId: b.nodeId,
+          },
+        ),
+    );
+
+    expect(pinned.ok).toBe(true);
+    core.core.dispatcher.pass();
+
+    const queued = await read(core, `/jobs/${id}`);
+
+    expect(queued.body.job).toMatchObject({ status: "queued", pinnedNodeId: b.nodeId });
+    expect(queued.body.routingReason).toBe("pinned_node_unavailable");
+
+    const nodeB = await openFake(core, b);
+
+    await waitFor(() => nodeB.jobs().length === 1, "the pinned job on node B");
+
+    const leased = await read(core, `/jobs/${id}`);
+
+    expect(leased.body.job).toMatchObject({ status: "leased", nodeId: b.nodeId });
+  });
+
+  it("a delta frame renews the lease and reaches the hub without being persisted", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const { paired, node, id } = await leaseTurn(core, directory);
+
+    const before = await read(core, `/jobs/${id}`);
+    const eventsBefore = (await eventTypes(core)).length;
+    const deltas: unknown[] = [];
+
+    core.core.runtimeFrames.subscribe({
+      onDelta: (nodeId, forJob, delta) => deltas.push({ nodeId, forJob, delta }),
+    });
+
+    core.advance(LEASE_MS - 1000);
+    node.frame({ kind: "delta", jobId: id, delta: { itemId: "item-1", text: "hel" } });
+
+    await waitFor(() => deltas.length === 1, "the delta to reach the hub");
+
+    expect(deltas[0]).toEqual({
+      nodeId: paired.nodeId,
+      forJob: id,
+      delta: { itemId: "item-1", text: "hel" },
+    });
+
+    await waitForAsync(async () => {
+      const job = await read(core, `/jobs/${id}`);
+      return (job.body.job as { status: string }).status === "running";
+    }, "the job to be running");
+
+    const after = await read(core, `/jobs/${id}`);
+    const lease = (record: Record<string, unknown>) =>
+      Date.parse((record.job as { leaseExpiresAt: string }).leaseExpiresAt);
+
+    expect(lease(after.body)).toBeGreaterThan(lease(before.body));
+    expect(node.closed()).toBeUndefined();
+
+    // Exactly one more event — leased -> running — and it is not a delta.
+    const types = await eventTypes(core);
+    expect(types.length).toBe(eventsBefore + 1);
+    expect(types.at(-1)).toBe("node.job_status_changed.v1");
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("an ask reaches the hub and an answer reaches the node", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const { paired, node, id } = await leaseTurn(core, directory);
+    const asks: unknown[] = [];
+
+    core.core.runtimeFrames.subscribe({ onAsk: (_nodeId, _jobId, ask) => asks.push(ask) });
+    node.frame({ kind: "ask", jobId: id, ask: ASK });
+
+    await waitFor(() => asks.length === 1, "the ask to reach the hub");
+    expect(asks[0]).toEqual(ASK);
+
+    const answer = {
+      askId: ASK.askId,
+      decision: "deny" as const,
+      approvalId: "0199a000-0000-7000-8000-0000000000a6",
+    };
+
+    expect(core.core.dispatcher.sendAnswer(paired.nodeId, id, answer)).toBe(true);
+
+    await waitFor(() => node.frames.some((frame) => frame.kind === "answer"), "an answer frame");
+
+    const received = node.frames.find((frame) => frame.kind === "answer");
+    expect(NodeServerFrameSchema.parse(received)).toEqual({
+      kind: "answer",
+      envelopeVersion: NODE_ENVELOPE_VERSION,
+      jobId: id,
+      answer,
+    });
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("a frame for a job the node does not hold closes the socket", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const node = await openFake(core, paired);
+
+    node.frame({
+      kind: "delta",
+      jobId: "0199a000-0000-7000-8000-0000000000bb",
+      delta: { itemId: "item-1", text: "x" },
+    });
+
+    await waitFor(() => node.closed() !== undefined, "the socket to close");
+    expect(node.closed()?.code).toBe(1008);
   });
 });

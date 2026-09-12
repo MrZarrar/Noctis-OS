@@ -14,6 +14,8 @@ import { migrate } from "./db/migrate.js";
 import { createEventBroker } from "./events/broker.js";
 import type { Dispatcher } from "./nodes/dispatch.js";
 import { createDispatcher } from "./nodes/dispatch.js";
+import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
+import { createRuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { attachNodeSocket } from "./nodes/ws.js";
 import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
@@ -48,6 +50,8 @@ export interface RunningCore {
   schemaVersion: number;
   /** Exposed so a test can drive a sweep instead of waiting for the interval. */
   dispatcher: Dispatcher;
+  /** Where stream, delta and ask frames from nodes fan out. */
+  runtimeFrames: RuntimeFrameHub;
   close: () => Promise<void>;
 }
 
@@ -116,8 +120,14 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     void handleRequest(deps, req, res);
   });
 
+  const runtimeFrames = createRuntimeFrameHub((error) => {
+    logger.log("error", "runtime frame subscriber threw", {
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  });
+
   const clients = attachClientSocket(deps);
-  const nodes = attachNodeSocket({ kernel, config, dispatcher });
+  const nodes = attachNodeSocket({ kernel, config, dispatcher, runtime: runtimeFrames });
 
   // One listener, offering the request to each realm in turn. Two listeners each
   // writing their own 404 would race to answer the other realm's paths.
@@ -157,6 +167,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     kernel,
     schemaVersion: deps.schemaVersion,
     dispatcher,
+    runtimeFrames,
     async close() {
       dispatcher.stop();
 

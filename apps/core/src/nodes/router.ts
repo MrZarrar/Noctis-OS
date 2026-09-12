@@ -11,7 +11,9 @@ export type RouteRefusal =
   | "no_node_for_host"
   | "no_node_with_capability"
   | "grant_expired"
-  | "no_online_node";
+  | "no_online_node"
+  /** The job named its node and that node is revoked, unpaired, or not connected. */
+  | "pinned_node_unavailable";
 
 export interface CandidateGrant {
   capability: string;
@@ -34,6 +36,8 @@ export interface RouteInput {
   /** `any_granted_host` when the job has no Mission: nothing constrains it. */
   hostPolicy: MissionHostPolicy;
   hostId?: string;
+  /** Only this node may take the job. A pin is not a preference. */
+  pinnedNodeId?: string;
   candidates: readonly RouteCandidate[];
   /** Epoch milliseconds from the injected clock. */
   now: number;
@@ -64,7 +68,23 @@ export function routeJob(input: RouteInput): RouteOutcome {
     return { ok: false, reason: "mission_is_core_only" };
   }
 
-  const paired = input.candidates.filter((candidate) => candidate.status !== "revoked");
+  const pinned =
+    input.pinnedNodeId === undefined
+      ? input.candidates
+      : input.candidates.filter(
+          (candidate) =>
+            candidate.nodeId === input.pinnedNodeId &&
+            candidate.status !== "revoked" &&
+            candidate.connected,
+        );
+
+  // Before every other gate: a pinned job has exactly one place it can go, and
+  // "the other node was fine" is not a reason a resumed session can use.
+  if (input.pinnedNodeId !== undefined && pinned.length === 0) {
+    return { ok: false, reason: "pinned_node_unavailable" };
+  }
+
+  const paired = pinned.filter((candidate) => candidate.status !== "revoked");
 
   if (paired.length === 0) {
     return { ok: false, reason: "no_paired_node" };

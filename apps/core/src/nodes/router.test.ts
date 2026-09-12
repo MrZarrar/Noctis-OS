@@ -149,6 +149,31 @@ describe("routeJob", () => {
     expect(route([b, a])).toEqual({ ok: true, nodeId: "0199a000-0000-7000-8000-00000000000a" });
   });
 
+  /** A pin outranks load: a turn resuming a session must land where the session is. */
+  it("places a pinned job on its node even when another has fewer leases", () => {
+    const outcome = route(
+      [
+        candidate({ nodeId: "0199a000-0000-7000-8000-00000000000a", activeLeases: 0 }),
+        candidate({ nodeId: "0199a000-0000-7000-8000-00000000000b", activeLeases: 5 }),
+      ],
+      { pinnedNodeId: "0199a000-0000-7000-8000-00000000000b" },
+    );
+
+    expect(outcome).toEqual({ ok: true, nodeId: "0199a000-0000-7000-8000-00000000000b" });
+  });
+
+  it("refuses a pinned job when its node is offline, whatever else is connected", () => {
+    const outcome = route(
+      [
+        candidate({ nodeId: "0199a000-0000-7000-8000-00000000000a" }),
+        candidate({ nodeId: "0199a000-0000-7000-8000-00000000000b", connected: false }),
+      ],
+      { pinnedNodeId: "0199a000-0000-7000-8000-00000000000b" },
+    );
+
+    expect(outcome).toEqual({ ok: false, reason: "pinned_node_unavailable" });
+  });
+
   it("does not mutate the candidate list it was given", () => {
     const candidates = [
       candidate({ nodeId: "0199a000-0000-7000-8000-00000000000b", activeLeases: 5 }),

@@ -232,6 +232,16 @@ describe("write discipline", () => {
    */
   const PREPARE = /([\w.]+)\s*\.prepare\(\s*(["`])([\s\S]*?)\2/g;
 
+  /**
+   * The one write allowed off the transaction handle: a lease renewal. It is a
+   * heartbeat, not a command — it claims no key and emits no event, by design
+   * (see `renewLease` in nodes/jobs.ts) — and a guard that cannot name its one
+   * exception would have to be switched off for the whole file instead.
+   */
+  const ADVISORY_WRITES = [
+    /^UPDATE node_jobs SET lease_expires_at = \?\s+WHERE id = \? AND node_id = \?/,
+  ];
+
   it.each([
     "objectives/service.ts",
     "missions/service.ts",
@@ -258,6 +268,10 @@ describe("write discipline", () => {
     // that callback runs after the idempotency claim. A write on any other
     // handle — `db`, `kernel.db` — is a write outside that guarantee.
     for (const [, receiver, , sql] of writes) {
+      if (ADVISORY_WRITES.some((pattern) => pattern.test(sql ?? ""))) {
+        continue;
+      }
+
       expect(receiver, `write is not on the transaction handle: ${sql?.slice(0, 60) ?? ""}`).toBe(
         "tx",
       );

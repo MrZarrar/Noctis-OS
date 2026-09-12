@@ -10,6 +10,7 @@ import type { Result } from "@noctis/domain";
 import { conflict, evaluateAuthority, ok, transitionNodeJobStatus } from "@noctis/domain";
 
 import type { NoctisDatabase } from "../db/connection.js";
+import type { Mutation } from "../db/transactions.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
 import { loadStandingPermissionsFor } from "../authority/service.js";
@@ -31,10 +32,18 @@ const TERMINAL: ReadonlySet<NodeJobStatus> = new Set<NodeJobStatus>([
   "cancelled",
 ]);
 
+/**
+ * Capabilities never re-run blind even though their class is `read_inspect`. A
+ * turn may have edited files before its lease lapsed; re-running it is how one
+ * uncertain edit becomes two.
+ */
+const NEVER_RETRIED: ReadonlySet<NodeCapability> = new Set<NodeCapability>(["runtime.turn"]);
+
 type JobRow = {
   id: string;
   mission_id: string | null;
   node_id: string | null;
+  pinned_node_id: string | null;
   capability: string;
   status: string;
   idempotency_key: string;
@@ -49,7 +58,7 @@ type JobRow = {
   failure_reason: string | null;
 };
 
-const JOB_COLUMNS = `id, mission_id, node_id, capability, status, idempotency_key, lease_expires_at,
+const JOB_COLUMNS = `id, mission_id, node_id, pinned_node_id, capability, status, idempotency_key, lease_expires_at,
                      attempts, payload_version, payload_json, revision, created_at, updated_at,
                      result_json, failure_reason`;
 
@@ -69,6 +78,7 @@ function toRecord(row: JobRow): NodeJobRecord {
     id: row.id,
     ...(row.mission_id === null ? {} : { missionId: row.mission_id }),
     ...(row.node_id === null ? {} : { nodeId: row.node_id }),
+    ...(row.pinned_node_id === null ? {} : { pinnedNodeId: row.pinned_node_id }),
     capability: row.capability,
     status: row.status,
     idempotencyKey: row.idempotency_key,
@@ -117,104 +127,137 @@ export function listExpiredLeases(db: NoctisDatabase, nowIso: string): NodeJobRe
   return rows.map(toRecord);
 }
 
+export interface EnqueueJobInput {
+  /** Pre-allocated so the caller's idempotency claim can name it. Allocated here if absent. */
+  id?: string;
+  capability: NodeCapability;
+  payload: unknown;
+  idempotencyKey: string;
+  missionId?: string;
+  pinnedNodeId?: string;
+}
+
+/**
+ * Queues one job inside a transaction the caller already holds. `enqueueJob`
+ * wraps it in its own command; a service queuing a job as part of a larger
+ * command (a conversation turn) calls this directly, so nothing nests `runCommand`.
+ */
+export function enqueueJobInTransaction(
+  tx: NoctisDatabase,
+  kernel: Kernel,
+  context: CommandContext,
+  input: EnqueueJobInput,
+): Result<Mutation<NodeJobRecord>> {
+  const id = input.id ?? kernel.ids.nextId();
+  const nowIso = new Date(kernel.clock.now()).toISOString();
+  // Parsed here rather than at execution, so a payload the capability cannot
+  // accept never becomes a queued job that will fail on some node later.
+  const payload = CAPABILITY_CONTRACTS[input.capability].payload.parse(input.payload);
+
+  if (input.missionId !== undefined) {
+    const mission = getMission(tx, input.missionId);
+
+    if (mission === undefined) {
+      return conflict({ kind: "not_found", entity: "mission", id: input.missionId });
+    }
+  }
+
+  // Section 9: "Test action dispatcher and node execution through
+  // AuthorityService only." A queued job is work a node will do on a real
+  // machine, so the policy decides here, before the row exists — not at
+  // lease time, where a refusal would leave a job nobody may ever run, and
+  // not on the node, which is the thing being authorised.
+  //
+  // The operation class comes from CAPABILITY_OPERATION_CLASS rather than
+  // from the command, so a caller cannot understate what it is asking for.
+  const operationClass = CAPABILITY_OPERATION_CLASS[input.capability];
+  const decision = evaluateAuthority({
+    operationClass,
+    capability: input.capability,
+    actorId: context.actorId,
+    target: { type: "capability", id: input.capability },
+    objectiveIsActive: false,
+    standingPermissions: loadStandingPermissionsFor(tx, context.actorId),
+    now: kernel.clock.now(),
+  });
+
+  if (decision.outcome !== "allow") {
+    // Enqueuing is preparation, and preparation stops at the consequence
+    // boundary. Anything needing a human answer goes through
+    // authority.request and authority.confirm first, and arrives here as a
+    // capability the policy already allows.
+    return conflict({
+      kind: "authority_refused",
+      requestId: id,
+      outcome: decision.outcome,
+      reasonCodes: decision.reasonCodes,
+    });
+  }
+
+  tx.prepare(
+    `INSERT INTO node_jobs
+       (id, mission_id, pinned_node_id, capability, status, idempotency_key, attempts,
+        payload_version, payload_json, revision, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'queued', ?, 0, 1, ?, 0, ?, ?)`,
+  ).run(
+    id,
+    input.missionId ?? null,
+    input.pinnedNodeId ?? null,
+    input.capability,
+    input.idempotencyKey,
+    JSON.stringify(payload),
+    nowIso,
+    nowIso,
+  );
+
+  const record = getJob(tx, id);
+
+  if (record === undefined) {
+    throw new Error(`Job ${id} vanished mid-transaction`);
+  }
+
+  return ok({
+    value: record,
+    events: [
+      {
+        id: kernel.ids.nextId(),
+        streamType: "node_job",
+        streamId: id,
+        type: "node.job_queued.v1",
+        actorType: context.actorType,
+        actorId: context.actorId,
+        payloadVersion: 1,
+        payload: {
+          capability: input.capability,
+          operationClass,
+          ...(input.missionId === undefined ? {} : { missionId: input.missionId }),
+          ...(input.pinnedNodeId === undefined ? {} : { pinnedNodeId: input.pinnedNodeId }),
+        },
+        correlationId: context.correlationId,
+        occurredAt: nowIso,
+      },
+    ],
+  });
+}
+
 export function enqueueJob(
   kernel: Kernel,
   context: CommandContext,
   command: EnqueueNodeJobCommand,
 ): Result<NodeJobRecord> {
   const id = kernel.ids.nextId();
-  const nowIso = new Date(kernel.clock.now()).toISOString();
-  // Parsed here rather than at execution, so a payload the capability cannot
-  // accept never becomes a queued job that will fail on some node later.
-  const payload = CAPABILITY_CONTRACTS[command.capability].payload.parse(command.payload);
 
   return runCommand<NodeJobRecord>(
     kernel,
     { scope: "node.job_enqueue", key: command.idempotencyKey, resultId: id },
-    (tx) => {
-      if (command.missionId !== undefined) {
-        const mission = getMission(tx, command.missionId);
-
-        if (mission === undefined) {
-          return conflict({ kind: "not_found", entity: "mission", id: command.missionId });
-        }
-      }
-
-      // Section 9: "Test action dispatcher and node execution through
-      // AuthorityService only." A queued job is work a node will do on a real
-      // machine, so the policy decides here, before the row exists — not at
-      // lease time, where a refusal would leave a job nobody may ever run, and
-      // not on the node, which is the thing being authorised.
-      //
-      // The operation class comes from CAPABILITY_OPERATION_CLASS rather than
-      // from the command, so a caller cannot understate what it is asking for.
-      const operationClass = CAPABILITY_OPERATION_CLASS[command.capability];
-      const decision = evaluateAuthority({
-        operationClass,
-        capability: command.capability,
-        actorId: context.actorId,
-        target: { type: "capability", id: command.capability },
-        objectiveIsActive: false,
-        standingPermissions: loadStandingPermissionsFor(tx, context.actorId),
-        now: kernel.clock.now(),
-      });
-
-      if (decision.outcome !== "allow") {
-        // Enqueuing is preparation, and preparation stops at the consequence
-        // boundary. Anything needing a human answer goes through
-        // authority.request and authority.confirm first, and arrives here as a
-        // capability the policy already allows.
-        return conflict({
-          kind: "authority_refused",
-          requestId: id,
-          outcome: decision.outcome,
-          reasonCodes: decision.reasonCodes,
-        });
-      }
-
-      tx.prepare(
-        `INSERT INTO node_jobs
-           (id, mission_id, capability, status, idempotency_key, attempts,
-            payload_version, payload_json, revision, created_at, updated_at)
-         VALUES (?, ?, ?, 'queued', ?, 0, 1, ?, 0, ?, ?)`,
-      ).run(
+    (tx) =>
+      enqueueJobInTransaction(tx, kernel, context, {
         id,
-        command.missionId ?? null,
-        command.capability,
-        command.idempotencyKey,
-        JSON.stringify(payload),
-        nowIso,
-        nowIso,
-      );
-
-      const record = getJob(tx, id);
-
-      if (record === undefined) {
-        throw new Error(`Job ${id} vanished mid-transaction`);
-      }
-
-      return ok({
-        value: record,
-        events: [
-          {
-            id: kernel.ids.nextId(),
-            streamType: "node_job",
-            streamId: id,
-            type: "node.job_queued.v1",
-            actorType: context.actorType,
-            actorId: context.actorId,
-            payloadVersion: 1,
-            payload: {
-              capability: command.capability,
-              operationClass: CAPABILITY_OPERATION_CLASS[command.capability],
-              ...(command.missionId === undefined ? {} : { missionId: command.missionId }),
-            },
-            correlationId: context.correlationId,
-            occurredAt: nowIso,
-          },
-        ],
-      });
-    },
+        capability: command.capability,
+        payload: command.payload,
+        idempotencyKey: command.idempotencyKey,
+        ...(command.missionId === undefined ? {} : { missionId: command.missionId }),
+      }),
   );
 }
 
@@ -454,13 +497,22 @@ function changeStatus(
 
       // Leaving the node on the row would claim it still owns work it does not.
       const clearNode = input.to === "queued";
+      // A running job is still leased: clearing the lease here would make it
+      // un-expirable, and a result that arrived years later would be accepted.
+      const keepLease = input.to === "running";
 
       tx.prepare(
         `UPDATE node_jobs
-            SET status = ?, lease_expires_at = NULL, node_id = ?,
+            SET status = ?, lease_expires_at = ?, node_id = ?,
                 revision = revision + 1, updated_at = ?
           WHERE id = ?`,
-      ).run(input.to, clearNode ? null : (existing.job.nodeId ?? null), nowIso, input.jobId);
+      ).run(
+        input.to,
+        keepLease ? (existing.job.leaseExpiresAt ?? null) : null,
+        clearNode ? null : (existing.job.nodeId ?? null),
+        nowIso,
+        input.jobId,
+      );
 
       const updated = getJob(tx, input.jobId);
 
@@ -494,6 +546,61 @@ function changeStatus(
   );
 }
 
+/**
+ * The node has started doing the work: leased -> running, once. A second call
+ * is a no-op with no event, so a node that streams a thousand frames writes one
+ * status change.
+ */
+export function startJob(
+  kernel: Kernel,
+  context: CommandContext,
+  input: { jobId: string; nodeId: string },
+): Result<NodeJobRecord> {
+  const existing = getJob(kernel.db, input.jobId);
+
+  if (existing === undefined || existing.job.nodeId !== input.nodeId) {
+    return conflict({ kind: "not_found", entity: "node_job", id: input.jobId });
+  }
+
+  if (existing.job.status === "running") {
+    return ok(existing);
+  }
+
+  return changeStatus(kernel, context, {
+    jobId: input.jobId,
+    to: "running",
+    reason: "runtime_started",
+    scope: "node.job_start",
+    key: `${input.jobId}:${String(existing.job.attempts)}`,
+  });
+}
+
+/**
+ * Pushes a held lease forward by `LEASE_MS` from `now`. True if a row changed;
+ * false means the node does not hold this job any more and the frame that
+ * prompted the renewal should not be trusted.
+ *
+ * ponytail: a direct UPDATE, no command, no event, no idempotency claim. A
+ * renewal is an advisory heartbeat like progress; writing an event per frame
+ * would append to the ledger every few hundred milliseconds. If a reader ever
+ * needs lease history, add a `node.job_renewed.v1` behind a sampling gate.
+ */
+export function renewLease(
+  db: NoctisDatabase,
+  input: { jobId: string; nodeId: string; now: number },
+): boolean {
+  const nowIso = new Date(input.now).toISOString();
+  const outcome = db
+    .prepare(
+      `UPDATE node_jobs SET lease_expires_at = ?
+        WHERE id = ? AND node_id = ? AND status IN ('leased', 'running')
+          AND lease_expires_at > ?`,
+    )
+    .run(new Date(input.now + LEASE_MS).toISOString(), input.jobId, input.nodeId, nowIso);
+
+  return outcome.changes > 0;
+}
+
 /** The lease ran out. A separate step from requeueing, because they are separate facts. */
 export function expireJob(
   kernel: Kernel,
@@ -520,6 +627,7 @@ export function expireJob(
 export function isRetryable(capability: string): boolean {
   return (
     Object.hasOwn(CAPABILITY_OPERATION_CLASS, capability) &&
+    !NEVER_RETRIED.has(capability as NodeCapability) &&
     CAPABILITY_OPERATION_CLASS[capability as NodeCapability] === "read_inspect"
   );
 }

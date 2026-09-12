@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 
-import type { NodeServerFrame } from "@noctis/contracts";
+import type { NodeCapability, NodeServerFrame, RuntimeProbe } from "@noctis/contracts";
 import { NODE_ENVELOPE_VERSION, NodeFrameSchema } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -12,7 +12,7 @@ import type { CommandContext, Kernel } from "../kernel.js";
 import { parseNodeAuthorization, verifyCredential } from "./credentials.js";
 import type { Dispatcher, NodeConnection } from "./dispatch.js";
 import type { NodeJobRecord } from "./jobs.js";
-import { completeJob } from "./jobs.js";
+import { completeJob, getJob, renewLease, startJob } from "./jobs.js";
 import {
   connectNode,
   disconnectNode,
@@ -20,6 +20,7 @@ import {
   getNode,
   listGrants,
 } from "./registry.js";
+import type { RuntimeFrameHub } from "./runtime-frames.js";
 
 /** The node realm. Not interchangeable with `/ws/clients` (Section 10). */
 export const NODE_SOCKET_PATH = "/ws/nodes";
@@ -27,18 +28,34 @@ export const NODE_SOCKET_PATH = "/ws/nodes";
 const MAX_FRAME_BYTES = 64 * 1024;
 
 /**
- * Progress is advisory. A node that sends more than this about a single job is
- * either broken or trying to keep the core busy, and neither is worth serving.
+ * Advisory frames (progress, stream, delta, ask) a node may send about one job.
+ * A node that sends more is either broken or trying to keep the core busy, and
+ * neither is worth serving. A turn streams a token at a time, so its budget is
+ * sized for deltas; everything else reports progress and nothing more.
  */
-const MAX_PROGRESS_FRAMES_PER_JOB = 200;
+export const FRAME_BUDGET: Record<NodeCapability, number> = {
+  "environment.inspect": 200,
+  "file.search": 200,
+  "verification.noop": 200,
+  "runtime.turn": 100_000,
+};
 
-/** In-flight jobs the core will track progress for on one connection. */
+/** In-flight jobs the core will track frames for on one connection. */
 const MAX_TRACKED_JOBS = 256;
+
+/** What the socket remembers about a job it has seen frames for. */
+interface HeldJob {
+  capability: NodeCapability;
+  frames: number;
+  /** Whether `startJob` has run, so a thousand frames cost one status change. */
+  started: boolean;
+}
 
 export interface NodeSocketDeps {
   kernel: Kernel;
   config: CoreConfig;
   dispatcher: Dispatcher;
+  runtime: RuntimeFrameHub;
 }
 
 /**
@@ -66,7 +83,7 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
     const nodeId = authorization.nodeId;
     const connectionId = deps.kernel.ids.nextId();
     const logger = deps.kernel.logger.child({ connectionId, nodeId, socket: NODE_SOCKET_PATH });
-    const progressCounts = new Map<string, number>();
+    const held = new Map<string, HeldJob>();
 
     let connection: NodeConnection | undefined;
     let alive = true;
@@ -80,7 +97,11 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
       ws.close(code, reason);
     }
 
-    function onHello(agentVersion: string, advertised: readonly string[]): void {
+    function onHello(
+      agentVersion: string,
+      advertised: readonly string[],
+      providers: readonly RuntimeProbe[],
+    ): void {
       if (connection !== undefined) {
         closeWith(CLOSE_POLICY, "already connected");
         return;
@@ -89,7 +110,7 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
       const connected = connectNode(
         deps.kernel,
         context(),
-        { nodeId, connectionId, agentVersion },
+        { nodeId, connectionId, agentVersion, providers },
         deps.config.token,
       );
 
@@ -139,25 +160,83 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
       deps.dispatcher.pass();
     }
 
-    function onProgress(jobId: string, percent: number, note: string): void {
+    /**
+     * Admits one advisory frame about `jobId`, or closes the socket and returns
+     * undefined. Every check a node could fail is here: it said hello, the job
+     * is leased or running to this node, the frame budget holds, and the lease
+     * is still live (renewed as a side effect — the frame is the heartbeat).
+     */
+    function admit(jobId: string, kind: string): HeldJob | undefined {
       if (connection === undefined) {
-        closeWith(CLOSE_POLICY, "progress before hello");
+        closeWith(CLOSE_POLICY, `${kind} before hello`);
+        return undefined;
+      }
+
+      let entry = held.get(jobId);
+
+      if (entry === undefined) {
+        if (held.size >= MAX_TRACKED_JOBS) {
+          closeWith(CLOSE_POLICY, "too many concurrent jobs");
+          return undefined;
+        }
+
+        // Looked up once per job, not per frame: a delta arrives every few
+        // hundred milliseconds and the row's capability does not change.
+        const record = getJob(deps.kernel.db, jobId);
+        const status = record?.job.status;
+
+        if (
+          record === undefined ||
+          record.job.nodeId !== nodeId ||
+          (status !== "leased" && status !== "running")
+        ) {
+          closeWith(CLOSE_POLICY, "frame for a job this node does not hold");
+          return undefined;
+        }
+
+        entry = { capability: record.job.capability as NodeCapability, frames: 0, started: false };
+        held.set(jobId, entry);
+      }
+
+      if (entry.frames >= FRAME_BUDGET[entry.capability]) {
+        closeWith(CLOSE_POLICY, "frame budget exhausted");
+        return undefined;
+      }
+
+      entry.frames += 1;
+
+      if (!renewLease(deps.kernel.db, { jobId, nodeId, now: deps.kernel.clock.now() })) {
+        // The lease is what authorised the work. A frame after it lapsed is
+        // from a node the core has already given up on; the sweep settles the job.
+        logger.log("debug", "frame after lease lapsed", { jobId, kind });
+        return undefined;
+      }
+
+      return entry;
+    }
+
+    /** The first stream, delta or ask is the runtime starting: leased -> running. */
+    function markStarted(jobId: string, entry: HeldJob): void {
+      if (entry.started) {
         return;
       }
 
-      const seen = progressCounts.get(jobId) ?? 0;
+      entry.started = true;
 
-      if (seen === 0 && progressCounts.size >= MAX_TRACKED_JOBS) {
-        closeWith(CLOSE_POLICY, "too many concurrent jobs");
+      const started = startJob(deps.kernel, context(), { jobId, nodeId });
+
+      if (!started.ok) {
+        logger.log("warn", "could not mark a job running", {
+          jobId,
+          conflict: started.conflict.kind,
+        });
+      }
+    }
+
+    function onProgress(jobId: string, percent: number, note: string): void {
+      if (admit(jobId, "progress") === undefined) {
         return;
       }
-
-      if (seen >= MAX_PROGRESS_FRAMES_PER_JOB) {
-        closeWith(CLOSE_POLICY, "progress frame budget exhausted");
-        return;
-      }
-
-      progressCounts.set(jobId, seen + 1);
 
       // ponytail: validated, counted, and dropped. Nothing consumes progress yet
       // — persisting it would be a write and an event every few hundred
@@ -177,7 +256,7 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
         return;
       }
 
-      progressCounts.delete(jobId);
+      held.delete(jobId);
 
       let recorded: Result<NodeJobRecord>;
 
@@ -239,13 +318,45 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
 
       const frame = parsed.data;
 
+      // Stream, delta and ask are handed to the hub and nothing else. What
+      // becomes durable is the subscriber's decision; a delta never does.
       switch (frame.kind) {
         case "hello":
-          onHello(frame.agentVersion, frame.capabilities);
+          onHello(frame.agentVersion, frame.capabilities, frame.providers);
           return;
         case "progress":
           onProgress(frame.jobId, frame.percent, frame.note);
           return;
+        case "stream": {
+          const entry = admit(frame.jobId, "stream");
+
+          if (entry !== undefined) {
+            markStarted(frame.jobId, entry);
+            deps.runtime.onStreamItem(nodeId, frame.jobId, frame.sequence, frame.item);
+          }
+
+          return;
+        }
+        case "delta": {
+          const entry = admit(frame.jobId, "delta");
+
+          if (entry !== undefined) {
+            markStarted(frame.jobId, entry);
+            deps.runtime.onDelta(nodeId, frame.jobId, frame.delta);
+          }
+
+          return;
+        }
+        case "ask": {
+          const entry = admit(frame.jobId, "ask");
+
+          if (entry !== undefined) {
+            markStarted(frame.jobId, entry);
+            deps.runtime.onAsk(nodeId, frame.jobId, frame.ask);
+          }
+
+          return;
+        }
         case "result":
           onResult(frame.jobId, frame.outcome, frame.evidence, frame.failureReason);
           return;

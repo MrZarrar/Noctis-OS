@@ -1,4 +1,4 @@
-import type { NodeJobAssignment, NodeServerFrame } from "@noctis/contracts";
+import type { NodeJobAssignment, NodeServerFrame, RuntimeAnswer } from "@noctis/contracts";
 import { NODE_ENVELOPE_VERSION } from "@noctis/contracts";
 
 import type { CommandContext, Kernel } from "../kernel.js";
@@ -42,6 +42,8 @@ export interface Dispatcher {
   unregister(connection: NodeConnection): void;
   isConnected(nodeId: string): boolean;
   sendCancel(nodeId: string, jobId: string): boolean;
+  /** The core's decision on an `ask`. False if the node is not connected to receive it. */
+  sendAnswer(nodeId: string, jobId: string, answer: RuntimeAnswer): boolean;
   /** Drops a node's socket. Revoking a node that stays connected is not revoked. */
   disconnect(nodeId: string, code: number, reason: string): boolean;
   /** One sweep: lapsed leases first, then placement of queued work. */
@@ -132,13 +134,14 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
     }));
 
     for (const record of queued) {
-      const { id, capability, missionId, attempts } = record.job;
+      const { id, capability, missionId, pinnedNodeId, attempts } = record.job;
       const mission = missionId === undefined ? undefined : getMission(kernel.db, missionId);
       const outcome = routeJob({
         capability: capability as NodeJobAssignment["capability"],
         // A job with no Mission has nothing constraining where it runs.
         hostPolicy: mission?.hostPolicy ?? "any_granted_host",
         ...(mission?.hostId === undefined ? {} : { hostId: mission.hostId }),
+        ...(pinnedNodeId === undefined ? {} : { pinnedNodeId }),
         candidates,
         now: kernel.clock.now(),
       });
@@ -253,6 +256,16 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
       connection.send({ kind: "cancel", envelopeVersion: NODE_ENVELOPE_VERSION, jobId });
       return true;
     },
+    sendAnswer(nodeId, jobId, answer) {
+      const connection = connections.get(nodeId);
+
+      if (connection === undefined) {
+        return false;
+      }
+
+      connection.send({ kind: "answer", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, answer });
+      return true;
+    },
     pass,
     start() {
       if (timer !== undefined) {
@@ -318,13 +331,14 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
 export function explainQueued(
   kernel: Kernel,
   dispatcher: Dispatcher,
-  job: { capability: string; missionId?: string },
+  job: { capability: string; missionId?: string; pinnedNodeId?: string },
 ): RouteRefusal | undefined {
   const mission = job.missionId === undefined ? undefined : getMission(kernel.db, job.missionId);
   const outcome = routeJob({
     capability: job.capability as NodeJobAssignment["capability"],
     hostPolicy: mission?.hostPolicy ?? "any_granted_host",
     ...(mission?.hostId === undefined ? {} : { hostId: mission.hostId }),
+    ...(job.pinnedNodeId === undefined ? {} : { pinnedNodeId: job.pinnedNodeId }),
     candidates: listRouteCandidates(kernel.db).map((candidate) => ({
       ...candidate,
       connected: dispatcher.isConnected(candidate.nodeId),

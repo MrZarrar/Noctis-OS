@@ -29,6 +29,8 @@ export const NodeDescriptorSchema = z
     agentVersion: z.string().trim().min(1),
     lastSeenAt: UtcTimestampSchema.optional(),
     revokedAt: UtcTimestampSchema.optional(),
+    /** What the node probed at its last hello. ADR-0023. */
+    providers: z.array(RuntimeProbeSchema).max(8).default([]),
     createdAt: UtcTimestampSchema,
     updatedAt: UtcTimestampSchema,
   })
@@ -53,6 +55,8 @@ export const NodeJobSchema = z
     id: UuidSchema,
     missionId: UuidSchema.optional(),
     nodeId: UuidSchema.optional(),
+    /** A request, not the assignment: `nodeId` still records where it ran. */
+    pinnedNodeId: UuidSchema.optional(),
     capability: z.string().trim().min(1),
     status: NodeJobStatusSchema,
     idempotencyKey: IdempotencyKeySchema,
