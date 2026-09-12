@@ -2082,3 +2082,70 @@ button is indistinguishable from one that is working.
 been run at a desk. What changed is that six runbook rows which could not have
 passed as written are now runnable — the whole of Step 3's asking case, plus
 confirming after a page reload. The runbook has them.
+
+### 2026-09-13 Intelligence Slice 1 — a prompt becomes a turn on the model you chose
+
+Eleven tasks of the master plan
+(`docs/superpowers/plans/2026-09-12-noctis-intelligence-master-plan.md`, revision 2) landed as
+twelve commits, one per green task. For the first time a sentence typed into Noctis reaches a model:
+`conversation.send` → `runtime.turn` job pinned to a node → Codex App Server or Claude Code spawned
+on that machine inside granted roots → items, token deltas and asks streamed back over the existing
+node socket → asks answered through the authority boundary → the reply and every item in the
+thread's history.
+
+**What is proven with fixtures (the fake runtime, a real core, a real node agent):**
+
+- Contracts: `runtime.turn` is `read_inspect`; `ModelRef`, probes with models, roots with `mode`
+  and `localOnly`, items (`agent_message`, `command`, `file_change`, `tool_call`, `proposal`,
+  `sub_agent`), deltas, ask/answer, evidence; `stream`/`delta`/`ask` node frames, `answer` server
+  frame, `runtime_delta` client frame; six events; four commands (`conversation.send`,
+  `conversation.cancel`, `authority.decline`, `identity.set_default_model`).
+- Migration 0006: message bodies, sessions per thread × provider × node, turns with the model
+  chosen, `provider_decisions`, approvals linked to the job and the ask, job pinning, one free-chat
+  thread per identity plus one per Objective (partial unique indexes), `nodes.providers_json`.
+- Domain: `chooseProvider` (requested model, eligible auth mode, roots, local-only, session
+  affinity, stable order) and `classifyAsk` (a pattern table; `// ponytail:` names the ceiling).
+- Nodes: pinning, `pinned_node_unavailable`, lease renewal on every frame, per-capability frame
+  budgets, leased → running on the first stream frame, `runtime.turn` never blind-retried,
+  `RuntimeFrameHub` fan-out, `sendAnswer`, providers persisted on hello.
+- Authority: `authority.decline`; a declined approval can be neither confirmed nor executed; the ask
+  id is the request's idempotency key so a re-ask gets the recorded answer.
+- Core: the conversation service — model resolution (override, then identity default, else
+  `unavailable`), thread per Objective, candidate routing, an honest `failed` turn when no node
+  offers the model, items → events and messages, proposals → `surface.upsert_intent` /
+  `objective.create(status: suggested)` with `actorType: "identity"`, asks → approvals → answers,
+  turn completion from the job result with the session stored, deltas → `LiveBroker` →
+  `/ws/clients` and never the ledger. `GET /models`, `/threads`, `/threads/:id/{messages,turns}`.
+- Node agent: `Runtime` interface, roots resolved through junctions, billing keys stripped from
+  every child, probes that report a mode string and never a token, the donor's `codex.exe`
+  resolver ported (ledger row first), a scripted fake runtime, concurrent turns, a heartbeat while
+  an ask waits, the Codex App Server JSON-RPC client, the Claude Agent SDK client, and the
+  proposal channel (a stdio MCP server for Codex, in-process SDK tools for Claude).
+- Web: `useConversation`, the Chat page, the prompt form with a model selector in Presence and
+  Chat, per-identity default models in Settings, Decline on the approval Surface, `onFrame` on the
+  transports so the desktop shell's deltas reach the page; `chat.test.mjs` drives the fake runtime
+  end to end.
+
+**Three things the live machine taught before any turn ran.** codex-cli auto-updated to
+0.154.0-alpha.6.2 during the work: `-c approval_policy="untrusted"` is refused on the command line
+and must travel per request; the owner's Codex plugins and MCP servers start inside every spawned
+thread unless disabled one by one (`codex.ts` does this — the Isolation constraint made concrete);
+and the SDK bundles its own `claude` binary, so the Claude route needs nothing on PATH. Under an
+inactive Objective the Codex sandbox is `readOnly` so every write asks; active → `workspaceWrite`
+on the granted roots. `additionalDirectories` in the Claude SDK does not distinguish read from write,
+so writes into a read-only root are caught by `canUseTool` + `classifyAsk`.
+
+**What is deliberately not claimed.** No live turn has been run yet, on either provider, on either
+PC. The procedure the owner runs is `docs/operations/runtime-live-evidence.md`; its evidence log is
+empty. The core is still on the home PC; `docs/operations/work-pc-core.md` is the runbook for
+moving it, and pairing the home PC as a worker is Task 1.12's manual steps. The browser transport
+has no token deltas (Slice 2). Jester is unavailable by design (Slice 4).
+
+**Gates.** Each task's subagent ran the targeted tests red-then-green and `npm run typecheck`; the
+full gate set was last run green by the coordinator after Task 1.6 (73 unit files / 1499 tests, 6
+integration files / 170 tests, build). The owner runs the complete set — including `npm run lint`,
+`npm run format:check`, `npm run test:e2e` — before the live procedure; step 0 of the evidence
+document lists them.
+
+ADRs 0020–0027 are recorded. Revision 1's step text for Tasks 1.4–1.9 had been overwritten by
+revision 2; those tasks were implemented from Part B's file table and the interfaces in Part C.
