@@ -31,6 +31,12 @@ export interface SubscribeOptions {
    */
   onGap?: (fromSequence: number, toSequence: number) => void;
   onError?: (error: unknown) => void;
+  /**
+   * Frames that are not committed events — today only `runtime_delta`, the one
+   * ephemeral channel (ADR-0022). Unsequenced, so never deduplicated or resumed;
+   * a transport with no live socket simply never calls this.
+   */
+  onFrame?: (frame: ServerFrame) => void;
 }
 
 export interface Subscription {

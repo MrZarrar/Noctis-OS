@@ -50,8 +50,11 @@ export interface ApprovalSurfaceProps {
   confirmationPhrase?: string;
   confirmedAt?: string;
   executedAt?: string;
+  /** Set when a person said no. A decline is a recorded fact, not an absence. */
+  declinedAt?: string;
   onConfirm?: (typedConfirmation?: string) => void;
   onExecute?: () => void;
+  onDecline?: () => void;
 }
 
 const OUTCOME_WORDS: Readonly<Record<ApprovalOutcome, string>> = {
@@ -87,8 +90,10 @@ export function ApprovalSurface({
   confirmationPhrase,
   confirmedAt,
   executedAt,
+  declinedAt,
   onConfirm,
   onExecute,
+  onDecline,
 }: ApprovalSurfaceProps): JSX.Element {
   const [typed, setTyped] = useState("");
 
@@ -97,6 +102,7 @@ export function ApprovalSurface({
   const canConfirm =
     confirmedAt === undefined &&
     executedAt === undefined &&
+    declinedAt === undefined &&
     outcome !== "deny" &&
     outcome !== "allow" &&
     (!needsTyping || phraseMatches);
@@ -120,6 +126,8 @@ export function ApprovalSurface({
         <p style={{ margin: 0, color: semantic.current }}>
           Executed at {executedAt}. This cannot happen again.
         </p>
+      ) : declinedAt !== undefined ? (
+        <p style={{ margin: 0, color: semantic.stale }}>Declined at {declinedAt}.</p>
       ) : confirmedAt !== undefined ? (
         <div style={{ display: "grid", gap: spacing.sm }}>
           <p style={{ margin: 0, color: semantic.approval }}>
@@ -210,7 +218,7 @@ export function ApprovalSurface({
             </div>
           )}
 
-          <div>
+          <div style={{ display: "flex", gap: spacing.sm }}>
             <button
               type="submit"
               disabled={!canConfirm}
@@ -218,6 +226,12 @@ export function ApprovalSurface({
             >
               Confirm
             </button>
+            {/* Never gated on the phrase: saying no must always be one step. */}
+            {onDecline !== undefined && (
+              <button type="button" onClick={onDecline} style={buttonStyle}>
+                Decline
+              </button>
+            )}
           </div>
         </form>
       )}

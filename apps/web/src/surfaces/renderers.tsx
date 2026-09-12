@@ -28,6 +28,7 @@ export interface SurfaceContext {
   onOpenInVault?: (evidence: RecallEvidenceView) => void;
   /** Phase 8 handoffs. Each one crosses a boundary the Surface may not cross itself. */
   onConfirm?: (approvalId: string, typedConfirmation?: string) => void;
+  onDecline?: (approvalId: string) => void;
   onExecute?: (approvalId: string) => void;
   onImport?: (artifactId: string) => void;
   onRefreshSource?: (sourceId: string) => void;
@@ -82,6 +83,13 @@ const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) =
         : {
             onConfirm: (typedConfirmation?: string) => {
               context.onConfirm?.(payload.id, typedConfirmation);
+            },
+          })}
+      {...(context.onDecline === undefined
+        ? {}
+        : {
+            onDecline: () => {
+              context.onDecline?.(payload.id);
             },
           })}
       {...(context.onExecute === undefined

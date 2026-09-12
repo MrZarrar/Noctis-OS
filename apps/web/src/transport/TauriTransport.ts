@@ -82,8 +82,9 @@ export class TauriTransport implements CoreTransport {
         return;
       }
 
-      // Ephemeral and unsequenced: nothing here consumes deltas yet (Task 1.9).
+      // Ephemeral and unsequenced: handed over as-is, outside the cursor.
       if (frame.kind === "runtime_delta") {
+        options.onFrame?.(frame);
         return;
       }
 

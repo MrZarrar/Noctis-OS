@@ -67,6 +67,7 @@ export const ApprovalPayloadSchema = z
     confirmationPhrase: z.string().min(1).optional(),
     confirmedAt: z.string().min(1).optional(),
     executedAt: z.string().min(1).optional(),
+    declinedAt: z.string().min(1).optional(),
   })
   .strict();
 

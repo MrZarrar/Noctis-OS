@@ -1,29 +1,40 @@
+import type { ModelRef } from "@noctis/contracts";
 import {
   IDENTITY_PROFILES,
   IntelligenceRenderer,
   depth,
   material,
-  promptPlaceholder,
   semantic,
   spacing,
   typography,
 } from "@noctis/ui";
 
+import { PromptForm } from "../conversation/PromptForm.js";
+import type { ConversationState } from "../conversation/useConversation.js";
 import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 export interface PresenceProps {
   /**
-   * Owned by Command, not created here. Two `useIdentityRuntime` calls would be
-   * two fetches and two copies of "which identity is active" that could
+   * Owned above this page, not created here. Two `useIdentityRuntime` calls would
+   * be two fetches and two copies of "which identity is active" that could
    * disagree — and the one that lost would be the one steering the canvas.
    */
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
+  /** The same conversation Chat shows; Presence only needs its model catalogue. */
+  conversation: Pick<ConversationState, "models" | "defaultModel">;
+  /** Sends on the active identity's thread and takes the rail to Chat. */
+  onSend: (text: string, model?: ModelRef) => void;
 }
 
 /** Phase 5's outcome: "Presence renders Vesper" and switches to Jester on command. */
-export function Presence({ identity, transport }: PresenceProps): JSX.Element {
+export function Presence({
+  identity,
+  transport,
+  conversation,
+  onSend,
+}: PresenceProps): JSX.Element {
   const { activeIdentityId, protocolIds, activate, toggleNoir, error } = identity;
   const identityId = activeIdentityId ?? "vesper";
 
@@ -43,19 +54,15 @@ export function Presence({ identity, transport }: PresenceProps): JSX.Element {
     >
       <IntelligenceRenderer identityId={identityId} protocolIds={protocolIds} />
 
-      <input
-        aria-label={`Message ${IDENTITY_PROFILES.find((p) => p.id === identityId)?.displayName ?? identityId}`}
-        placeholder={promptPlaceholder(identityId)}
-        style={{
-          width: 420,
-          padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
-          background: material.fill,
-          border: `1px solid ${material.border}`,
-          borderRadius: spacing.md,
-          color: "inherit",
-          fontSize: typography.scale.base,
-        }}
-      />
+      <div style={{ width: 480 }}>
+        <PromptForm
+          identityId={identityId}
+          models={conversation.models}
+          defaultModel={conversation.defaultModel}
+          disabled={transport === undefined}
+          onSend={onSend}
+        />
+      </div>
 
       <div style={{ display: "flex", gap: spacing.sm }}>
         {IDENTITY_PROFILES.map((profile) => (

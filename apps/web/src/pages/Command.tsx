@@ -1,5 +1,6 @@
 import type {
   ExternalToolPayload,
+  ModelRef,
   MonitorRole,
   NativeApplicationPayload,
   ObjectiveRecord,
@@ -13,7 +14,8 @@ import { IDENTITY_PROFILES, corner, material, semantic, spacing, typography } fr
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { useIdentityRuntime } from "../identities/useIdentityRuntime.js";
+import type { ConversationState } from "../conversation/useConversation.js";
+import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { ExternalToolBridge, SurveyedTool } from "../transport/ExternalToolBridge.js";
 import { externalToolBridgeFrom } from "../transport/ExternalToolBridge.js";
@@ -102,6 +104,16 @@ function seedIntents(objective: ObjectiveRecord): Array<Record<string, unknown>>
 
 export interface CommandProps {
   transport: CoreTransport | undefined;
+  /**
+   * Owned by App, because Chat needs the same identity and the same Objective.
+   * Two `useIdentityRuntime` calls would be two copies of "which identity is
+   * active" that could disagree.
+   */
+  identity: IdentityRuntimeState;
+  /** The identity's conversation, for Presence's model selector. */
+  conversation: Pick<ConversationState, "models" | "defaultModel">;
+  /** Presence's prompt: sends on the thread and takes the rail to Chat. */
+  onSend: (text: string, model?: ModelRef) => void;
   /** Handoff to the dedicated Vault view, from a recall Surface. */
   onOpenInVault?: (entityId: string) => void;
 }
@@ -361,6 +373,7 @@ const ApprovalRecordSchema = z.object({
   confirmationPhrase: z.string().min(1).optional(),
   confirmedAt: z.string().min(1).optional(),
   executedAt: z.string().min(1).optional(),
+  declinedAt: z.string().min(1).optional(),
 });
 
 type ApprovalRecord = z.infer<typeof ApprovalRecordSchema>;
@@ -424,6 +437,7 @@ async function showApproval(
         : { confirmationPhrase: approval.confirmationPhrase }),
       ...(approval.confirmedAt === undefined ? {} : { confirmedAt: approval.confirmedAt }),
       ...(approval.executedAt === undefined ? {} : { executedAt: approval.executedAt }),
+      ...(approval.declinedAt === undefined ? {} : { declinedAt: approval.declinedAt }),
     },
   });
 }
@@ -493,8 +507,13 @@ const RecallResultSchema = z.object({
  * Objective is state, not a route (Section 5.1) — which is why activating one
  * changes what this single page renders rather than navigating anywhere.
  */
-export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element {
-  const identity = useIdentityRuntime(transport);
+export function Command({
+  transport,
+  identity,
+  conversation,
+  onSend,
+  onOpenInVault,
+}: CommandProps): JSX.Element {
   const [objectives, setObjectives] = useState<readonly ObjectiveRecord[]>([]);
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string>();
@@ -896,6 +915,37 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
     [transport, active, refresh, retryConfirmed],
   );
 
+  /**
+   * Says no to a decision, then re-reads it so the Surface shows the recorded
+   * decline rather than a control that still reads as open. No retry follows —
+   * a decline authorises nothing — and the runtime waiting on this ask is
+   * answered by the core from the `authority.declined.v1` event.
+   */
+  const declineApproval = useCallback(
+    (approvalId: string) => {
+      if (transport === undefined || active === undefined) {
+        return;
+      }
+
+      void (async () => {
+        const declined = await transport.request("POST", "/commands/authority.decline", {
+          idempotencyKey: nextKey("authority.decline"),
+          requestId: approvalId,
+        });
+
+        if (declined.status !== 200) {
+          setError("That decline was not accepted");
+        }
+
+        await showApproval(transport, active.id, approvalId);
+        refresh();
+      })().catch((failure: unknown) => {
+        setError(failure instanceof Error ? failure.message : "could not decline that decision");
+      });
+    },
+    [transport, active, refresh],
+  );
+
   useEffect(() => {
     if (transport === undefined) {
       return;
@@ -999,7 +1049,12 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
   if (active === undefined) {
     return (
       <section style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <Presence identity={identity} transport={transport} />
+        <Presence
+          identity={identity}
+          transport={transport}
+          conversation={conversation}
+          onSend={onSend}
+        />
         <ObjectiveList
           objectives={objectives}
           title={title}
@@ -1062,6 +1117,7 @@ export function Command({ transport, onOpenInVault }: CommandProps): JSX.Element
           // Agreeing to a consequence needs no shell, so these two are always
           // supplied. `onExecute` deliberately is not — see below.
           onConfirm: confirmApproval,
+          onDecline: declineApproval,
           onReviewApproval: reviewApproval,
           ...(bridge === undefined
             ? {}

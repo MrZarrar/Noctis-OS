@@ -184,6 +184,25 @@ describe("BrowserTransport.subscribe", () => {
     subscription.close();
   });
 
+  it("never calls onFrame: a polled ledger carries committed events and no deltas", async () => {
+    const { fetch } = scripted([() => json({ events: [event(1)], latestSequence: 1 })]);
+    const { wait } = steppedWait();
+    const transport = new BrowserTransport({ baseUrl: BASE, token: TOKEN, fetch, wait });
+    const seen: number[] = [];
+    const frames: unknown[] = [];
+
+    const subscription = await transport.subscribe({
+      afterSequence: 0,
+      onEvent: (received) => seen.push(received.sequence),
+      onFrame: (frame) => frames.push(frame),
+    });
+
+    await vi.waitFor(() => expect(seen).toEqual([1]));
+    expect(frames).toHaveLength(0);
+
+    subscription.close();
+  });
+
   it("stops polling once the subscription is closed", async () => {
     const { fetch, calls } = scripted([() => json({ events: [event(1)], latestSequence: 1 })]);
     const { wait, step } = steppedWait();

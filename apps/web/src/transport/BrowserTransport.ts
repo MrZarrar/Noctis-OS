@@ -37,6 +37,11 @@ export interface BrowserTransportOptions {
  * ponytail: polling costs one request per interval and delivers at interval
  * latency. Fine for a development page; if this ever becomes a shipped surface,
  * give the core a browser-usable credential rather than making the poll faster.
+ *
+ * `onFrame` is accepted and never called: `/events` is the committed ledger,
+ * and token deltas are never written to it (ADR-0022). A browser page shows
+ * turn items as they commit and gets live deltas only once Slice 2's SSE
+ * channel exists.
  */
 export class BrowserTransport implements CoreTransport {
   readonly #baseUrl: string;

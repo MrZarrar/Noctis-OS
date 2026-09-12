@@ -1,7 +1,10 @@
-import { corner, material, semantic, spacing, typography } from "@noctis/ui";
+import type { ConversationalIdentityId, ModelRef } from "@noctis/contracts";
+import { ModelRefSchema } from "@noctis/contracts";
+import { IDENTITY_PROFILES, corner, material, semantic, spacing, typography } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
+import { modelKey, modelLabel } from "../conversation/PromptForm.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 /**
@@ -37,6 +40,18 @@ const PermissionSchema = z.object({
 const PermissionsSchema = z.object({ permissions: z.array(PermissionSchema) });
 
 type Permission = z.infer<typeof PermissionSchema>;
+
+/** `GET /models` (ADR-0026): what connected nodes offer, and what each identity defaults to. */
+const ModelsSchema = z
+  .object({
+    catalogue: z.array(ModelRefSchema),
+    defaults: z
+      .object({ vesper: ModelRefSchema.optional(), jester: ModelRefSchema.optional() })
+      .strict(),
+  })
+  .strict();
+
+type Models = z.infer<typeof ModelsSchema>;
 
 let keySequence = 0;
 
@@ -121,6 +136,64 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
     [transport],
   );
 
+  const [models, setModels] = useState<Models>();
+
+  useEffect(() => {
+    if (transport === undefined) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await transport.request("GET", "/models");
+        const parsed = ModelsSchema.safeParse(response.body);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (response.status === 200 && parsed.success) {
+          setModels(parsed.data);
+        } else {
+          setError("The core returned a model catalogue that does not match its contract");
+        }
+      } catch (failure: unknown) {
+        if (!cancelled) {
+          setError(failure instanceof Error ? failure.message : "could not read the models");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, revision]);
+
+  /** 0.3: the per-identity default is data; changing it is a command, not a code change. */
+  const setDefaultModel = useCallback(
+    async (identityId: ConversationalIdentityId, model: ModelRef) => {
+      if (transport === undefined) {
+        return;
+      }
+
+      const response = await transport.request("POST", "/commands/identity.set_default_model", {
+        idempotencyKey: nextKey(),
+        identityId,
+        model,
+      });
+
+      if (response.status === 200) {
+        setRevision((current) => current + 1);
+        setError(undefined);
+      } else {
+        setError(`The core refused that default model for ${identityId}`);
+      }
+    },
+    [transport],
+  );
+
   const live = permissions.filter((permission) => permission.revokedAt === undefined);
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
@@ -139,6 +212,65 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
       <h1 style={{ margin: 0, font: `${String(typography.scale.lg)}px ${typography.family}` }}>
         Settings
       </h1>
+
+      <section style={{ display: "grid", gap: spacing.sm }}>
+        <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
+          Default model
+        </h2>
+        <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
+          What each identity runs on when a prompt does not choose. The list is what connected nodes
+          offer right now; a model appears here as data, never as a role.
+        </p>
+        {IDENTITY_PROFILES.map((profile) => {
+          const current = models?.defaults[profile.id];
+          const currentKey = current === undefined ? "" : modelKey(current);
+          const catalogue = models?.catalogue ?? [];
+          // The saved default stays selectable even while no node offers it, so
+          // the control shows the truth rather than the first available option.
+          const options =
+            current !== undefined && !catalogue.some((model) => modelKey(model) === currentKey)
+              ? [current, ...catalogue]
+              : catalogue;
+
+          return (
+            <label
+              key={profile.id}
+              style={{ display: "flex", alignItems: "center", gap: spacing.sm }}
+            >
+              <span style={{ minWidth: 80 }}>{profile.displayName}</span>
+              <select
+                value={currentKey}
+                disabled={transport === undefined || options.length === 0}
+                onChange={(event) => {
+                  const chosen = options.find((model) => modelKey(model) === event.target.value);
+
+                  if (chosen !== undefined) {
+                    void setDefaultModel(profile.id, chosen);
+                  }
+                }}
+                style={{
+                  background: material.fill,
+                  border: `1px solid ${material.border}`,
+                  borderRadius: corner.sm,
+                  color: "inherit",
+                  padding: spacing.xs,
+                }}
+              >
+                {current === undefined && (
+                  <option value="">
+                    {options.length === 0 ? "No model offered by any node" : "Not set"}
+                  </option>
+                )}
+                {options.map((model) => (
+                  <option key={modelKey(model)} value={modelKey(model)}>
+                    {modelLabel(model)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </section>
 
       <section style={{ display: "grid", gap: spacing.sm }}>
         <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>

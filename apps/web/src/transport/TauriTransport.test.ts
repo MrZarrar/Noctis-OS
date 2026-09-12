@@ -135,6 +135,34 @@ describe("TauriTransport.subscribe", () => {
     subscription.close();
   });
 
+  it("hands a runtime_delta frame to onFrame rather than to onEvent", async () => {
+    const { transport, emit } = harness();
+    const frames: unknown[] = [];
+    const events: unknown[] = [];
+
+    const subscription = await transport.subscribe({
+      afterSequence: 0,
+      onEvent: (received) => events.push(received),
+      onFrame: (frame) => frames.push(frame),
+    });
+
+    const delta = {
+      kind: "runtime_delta",
+      envelopeVersion: 1,
+      threadId: "0199a000-0000-7000-8000-0000000000ff",
+      jobId: "0199a000-0000-7000-8000-0000000000aa",
+      itemId: "m1",
+      text: "Hel",
+    };
+
+    emit(JSON.stringify(delta));
+
+    expect(frames).toEqual([delta]);
+    expect(events).toHaveLength(0);
+
+    subscription.close();
+  });
+
   it("reports a frame it cannot read instead of dropping it quietly", async () => {
     const { transport, emit } = harness();
     const errors: unknown[] = [];
