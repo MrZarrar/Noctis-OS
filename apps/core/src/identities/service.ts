@@ -13,19 +13,24 @@ import { runCommand } from "../kernel.js";
 
 const ACTIVE_IDENTITY_KEY = "active_identity";
 
-type ThreadRow = {
+export type ThreadRow = {
   id: string;
   identity_id: string;
+  objective_id: string | null;
   active_objective_id: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
 };
 
-function toThread(row: ThreadRow): ConversationThread {
+export const THREAD_COLUMNS = `id, identity_id, objective_id, active_objective_id, revision,
+                               created_at, updated_at`;
+
+export function toThread(row: ThreadRow): ConversationThread {
   return ConversationThreadSchema.parse({
     id: row.id,
     identityId: row.identity_id,
+    ...(row.objective_id === null ? {} : { objectiveId: row.objective_id }),
     ...(row.active_objective_id === null ? {} : { activeObjectiveId: row.active_objective_id }),
     revision: row.revision,
     createdAt: row.created_at,
@@ -34,10 +39,11 @@ function toThread(row: ThreadRow): ConversationThread {
 }
 
 /**
- * At most one thread per identity: activating an identity reuses its thread
- * rather than branching a new one, which is what makes "JESTER never mutates
- * a Vesper thread" a structural fact — a lookup keyed by `identityId` can
- * never return the other identity's row.
+ * The identity's free-chat thread. Since 0006 an identity also has one thread
+ * per Objective (`conversation/threads.ts`); this is the one with no Objective,
+ * and the partial unique index makes it at most one. A lookup keyed by
+ * `identityId` still never returns the other identity's row, which is what
+ * makes "JESTER never mutates a Vesper thread" a structural fact.
  */
 export function getThreadForIdentity(
   db: NoctisDatabase,
@@ -45,8 +51,8 @@ export function getThreadForIdentity(
 ): ConversationThread | undefined {
   const row = db
     .prepare(
-      `SELECT id, identity_id, active_objective_id, revision, created_at, updated_at
-         FROM identity_threads WHERE identity_id = ? ORDER BY created_at ASC LIMIT 1`,
+      `SELECT ${THREAD_COLUMNS} FROM identity_threads
+        WHERE identity_id = ? AND objective_id IS NULL`,
     )
     .get(identityId) as ThreadRow | undefined;
 
@@ -62,14 +68,15 @@ export function getActiveIdentity(db: NoctisDatabase): ConversationalIdentityId 
 }
 
 /**
- * Returns the identity's thread, creating it if this is the first time anything
- * needed one.
+ * Returns the identity's free-chat thread, creating it if this is the first
+ * time anything needed one.
  *
- * Both callers that can be the first — activating the identity, and activating
- * an Objective that belongs to it — route through here. A second creation path
- * would be a second chance to create a second thread for one identity, and the
- * "at most one thread per identity" fact above is what makes identity isolation
- * structural.
+ * Every caller that can be the first — activating the identity, activating an
+ * Objective that belongs to it, a free-chat prompt — routes through here. A
+ * second creation path would be a second chance to create a second free thread
+ * for one identity, and the "one free-chat thread per identity" fact above is
+ * what makes identity isolation structural. Objective threads are created by
+ * `conversation/threads.ts`, under their own unique index.
  */
 export function ensureThread(
   tx: NoctisDatabase,

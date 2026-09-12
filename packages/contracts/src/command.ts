@@ -129,6 +129,8 @@ export const SendConversationMessageCommandSchema = z
     /** Absent means the identity's default model. */
     model: ModelRefSchema.optional(),
     objectiveId: UuidSchema.optional(),
+    /** A grant id the turn must run inside. Absent means the chosen node's first writable root. */
+    rootGrantId: z.string().trim().min(1).max(128).optional(),
   })
   .strict();
 

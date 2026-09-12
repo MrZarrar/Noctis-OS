@@ -15,6 +15,8 @@ export const ConversationThreadSchema = z
   .object({
     id: UuidSchema,
     identityId: ConversationalIdentityIdSchema,
+    /** 0.12: absent on the identity's one free-chat thread; set on its thread for one Objective. */
+    objectiveId: UuidSchema.optional(),
     activeObjectiveId: UuidSchema.optional(),
     revision: RevisionSchema,
     createdAt: UtcTimestampSchema,

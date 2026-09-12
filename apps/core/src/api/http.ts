@@ -3,8 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   ActivateIdentityCommandSchema,
   AttentionStateSchema,
+  CancelConversationTurnCommandSchema,
   CancelNodeJobCommandSchema,
   ConfirmAuthorityCommandSchema,
+  ConversationalIdentityIdSchema,
   ChangeMissionStatusCommandSchema,
   ChangeObjectiveStatusCommandSchema,
   ChangeSurfaceLifecycleCommandSchema,
@@ -28,6 +30,8 @@ import {
   RequestAuthorityCommandSchema,
   RevokeNodeCommandSchema,
   RevokeStandingPermissionCommandSchema,
+  SendConversationMessageCommandSchema,
+  SetIdentityDefaultModelCommandSchema,
   SetSurfaceOverrideCommandSchema,
   SurfaceDisplaySchema,
   UpsertSurfaceIntentCommandSchema,
@@ -56,8 +60,13 @@ import {
   listArtifacts,
   recordArtifact,
 } from "../artifacts/service.js";
+import { catalogue, defaultModelFor, setDefaultModel } from "../conversation/models.js";
+import type { ConversationService } from "../conversation/service.js";
+import { getTurn, getTurnByJobId, listMessages, listTurns } from "../conversation/service.js";
+import { findThread } from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
+import type { LiveBroker } from "../events/live.js";
 import {
   activateIdentity,
   getActiveIdentity,
@@ -135,6 +144,9 @@ export interface ApiDeps {
   schemaVersion: number;
   startedAt: number;
   dispatcher: Dispatcher;
+  conversation: ConversationService;
+  /** Token deltas for streaming clients. Never persisted. */
+  live: LiveBroker;
   /** Absent when no Vault is configured, which is the default. */
   vaultRoot?: VaultRoot;
   /** The environment the Vault write switch is read from. */
@@ -439,6 +451,21 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   "node.job_cancel": defineCommand(CancelNodeJobCommandSchema, cancelJob, (db, id) =>
     getJob(db, id),
   ),
+  "conversation.send": defineDepsCommand(
+    SendConversationMessageCommandSchema,
+    (deps, context, command) => deps.conversation.sendMessage(context, command),
+    (db, id) => getTurn(db, id),
+  ),
+  "conversation.cancel": defineDepsCommand(
+    CancelConversationTurnCommandSchema,
+    (deps, context, command) => deps.conversation.cancelTurn(context, command),
+    (db, id) => getTurnByJobId(db, id),
+  ),
+  "identity.set_default_model": defineCommand(
+    SetIdentityDefaultModelCommandSchema,
+    setDefaultModel,
+    (db, id) => defaultModelFor(db, id),
+  ),
 };
 
 function parseLimit(raw: string | null, max: number, fallback: number): number | undefined {
@@ -715,10 +742,66 @@ function handleRead(
     };
   }
 
+  if (segments.length === 1 && segments[0] === "threads") {
+    const identityId = ConversationalIdentityIdSchema.safeParse(url.searchParams.get("identityId"));
+    const objectiveId = url.searchParams.get("objectiveId");
+
+    if (
+      !identityId.success ||
+      (objectiveId !== null && !UuidSchema.safeParse(objectiveId).success)
+    ) {
+      return {
+        status: 400,
+        body: errorBody("invalid_request", "identityId is required; objectiveId must be a UUID"),
+      };
+    }
+
+    // A read creates nothing: the thread exists once a prompt has used it.
+    const thread = findThread(deps.kernel.db, identityId.data, objectiveId ?? undefined);
+
+    return thread === undefined
+      ? { status: 404, body: errorBody("not_found", "thread not found") }
+      : { status: 200, body: thread };
+  }
+
+  if (segments.length === 1 && segments[0] === "models") {
+    // ADR-0026: the catalogue is what connected nodes offer right now; the
+    // defaults are what Settings chose. Both are data, neither names a job.
+    const vesper = defaultModelFor(deps.kernel.db, "vesper");
+    const jester = defaultModelFor(deps.kernel.db, "jester");
+
+    return {
+      status: 200,
+      body: {
+        catalogue: catalogue(deps.kernel.db, (nodeId) => deps.dispatcher.isConnected(nodeId)),
+        defaults: {
+          ...(vesper === undefined ? {} : { vesper }),
+          ...(jester === undefined ? {} : { jester }),
+        },
+      },
+    };
+  }
+
   const [collection, id, sub] = segments;
 
   if (id === undefined || !UuidSchema.safeParse(id).success) {
     return { status: 404, body: errorBody("not_found", "No such resource") };
+  }
+
+  if (collection === "threads" && sub === "messages") {
+    return { status: 200, body: { messages: listMessages(deps.kernel.db, id, limit) } };
+  }
+
+  if (collection === "threads" && sub === "turns") {
+    return { status: 200, body: { turns: listTurns(deps.kernel.db, id, limit) } };
+  }
+
+  if (collection === "turns" && sub === undefined) {
+    const turn = getTurn(deps.kernel.db, id);
+
+    return turn === undefined
+      ? { status: 404, body: errorBody("not_found", "turn not found") }
+      : { status: 200, body: turn };
   }
 
   if (collection === "objectives" && sub === undefined) {

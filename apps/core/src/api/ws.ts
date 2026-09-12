@@ -136,6 +136,20 @@ export function attachClientSocket(deps: ApiDeps): SocketRealm {
       pending = [];
       deliver(missed);
 
+      // Deltas only once the client is streaming: no sequence, no replay, and
+      // nothing held aside for a client that has not subscribed (ADR-0022).
+      const stopEvents = unsubscribe;
+      const stopLive = deps.live.subscribe((live) => {
+        if (live.kind === "runtime_delta" && ws.readyState === ws.OPEN) {
+          ws.send(frame(live));
+        }
+      });
+
+      unsubscribe = () => {
+        stopEvents();
+        stopLive();
+      };
+
       logger.log("info", "client stream started", { afterSequence, resumedTo: delivered });
     }
 

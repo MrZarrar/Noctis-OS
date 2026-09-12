@@ -8,10 +8,14 @@ import type { ApiDeps } from "./api/http.js";
 import { handleRequest } from "./api/http.js";
 import { attachClientSocket, refuseUpgrade } from "./api/ws.js";
 import type { CoreConfig } from "./config/server.js";
+import type { ConversationService } from "./conversation/service.js";
+import { createConversationService } from "./conversation/service.js";
 import type { NoctisDatabase } from "./db/connection.js";
 import { openDatabase } from "./db/connection.js";
 import { migrate } from "./db/migrate.js";
 import { createEventBroker } from "./events/broker.js";
+import type { LiveBroker } from "./events/live.js";
+import { createLiveBroker } from "./events/live.js";
 import type { Dispatcher } from "./nodes/dispatch.js";
 import { createDispatcher } from "./nodes/dispatch.js";
 import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
@@ -52,6 +56,9 @@ export interface RunningCore {
   dispatcher: Dispatcher;
   /** Where stream, delta and ask frames from nodes fan out. */
   runtimeFrames: RuntimeFrameHub;
+  /** Token deltas on their way to clients. Ephemeral. */
+  live: LiveBroker;
+  conversation: ConversationService;
   close: () => Promise<void>;
 }
 
@@ -106,24 +113,32 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     logger.log("info", "vault root resolved", { live: vaultRoot.live });
   }
 
+  const runtimeFrames = createRuntimeFrameHub((error) => {
+    logger.log("error", "runtime frame subscriber threw", {
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  });
+  const live = createLiveBroker((error) => {
+    logger.log("error", "live listener threw", {
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  });
+  const conversation = createConversationService({ kernel, dispatcher, live, runtimeFrames });
+
   const deps: ApiDeps = {
     kernel,
     config,
     schemaVersion: currentSchemaVersion(db),
     startedAt: clock.now(),
     dispatcher,
+    conversation,
+    live,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     vaultEnv: env,
   };
 
   const server: Server = createServer((req, res) => {
     void handleRequest(deps, req, res);
-  });
-
-  const runtimeFrames = createRuntimeFrameHub((error) => {
-    logger.log("error", "runtime frame subscriber threw", {
-      reason: error instanceof Error ? error.message : "unknown",
-    });
   });
 
   const clients = attachClientSocket(deps);
@@ -168,7 +183,10 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     schemaVersion: deps.schemaVersion,
     dispatcher,
     runtimeFrames,
+    live,
+    conversation,
     async close() {
+      conversation.close();
       dispatcher.stop();
 
       for (const realm of [clients, nodes]) {
