@@ -4,8 +4,10 @@ A node is a machine that executes work for the core. It dials the core; the core
 the agent opens no listening socket of its own (`apps/node-agent/src/no-listener.test.ts` asserts this
 against the shipped source).
 
-Phase 3 grants three read-only capabilities: `environment.inspect`, `file.search`, and
-`verification.noop`.
+Phase 3 granted three read-only capabilities: `environment.inspect`, `file.search`, and
+`verification.noop`. Slice 1 adds `runtime.turn`: one conversational turn on a model runtime the node
+spawns (Codex App Server or Claude Code), with the consequential acts inside it asking through the
+authority boundary (ADR-0020, ADR-0021).
 
 ## Pairing a node
 
@@ -52,6 +54,43 @@ Pairing is a one-time code, redeemed once, expiring after 15 minutes.
    ```powershell
    node apps/node-agent/dist/main.js
    ```
+
+## Granting `runtime.turn`
+
+The grant names the runtimes the node may spawn and the folders they may see. Paths live on the grant;
+a turn names a grant id.
+
+```powershell
+$body = @{
+  idempotencyKey = [guid]::NewGuid().ToString()
+  nodeId = "<node id>"
+  capability = "runtime.turn"
+  constraints = @{
+    providers = @("codex", "claude")
+    roots = @(
+      @{ grantId = "jarvis-noctis"; path = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"; mode = "write" },
+      @{ grantId = "jarvis-donor";  path = "C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard"; mode = "read" },
+      @{ grantId = "downloads";     path = "C:\Users\mmush\Downloads"; mode = "write" },
+      @{ grantId = "documents";     path = "C:\Users\mmush\Documents"; mode = "write" },
+      @{ grantId = "vault";         path = "C:\Users\mmush\OneDrive\MindVault"; mode = "read" },
+      @{ grantId = "inbox";         path = "C:\Users\mmush\OneDrive\MindVault\inbox"; mode = "write" }
+    )
+  }
+} | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:7717/commands/node.grant_capability" ...
+```
+
+- `mode: "write"` roots become the runtime's writable sandbox when the turn's Objective is active;
+  otherwise the sandbox is read-only and every write asks. `mode: "read"` roots need nothing extra:
+  a workspace-write sandbox can read anywhere.
+- `localOnly: true` on a root means only a `local` auth-mode runtime (Slice 4's Hermes on LM
+  Studio) may be routed a turn that uses it.
+- The node reports what it found at start-up in its `hello` (`GET /nodes/<id>` shows
+  `providers[]` with auth mode and models). Only `chatgpt`, `claude_ai` and `local` auth modes
+  are routable; an `api_key` login is refused at dispatch (ADR-0023).
+- A turn is pinned to the node that holds its session; `GET /jobs/<id>` shows
+  `pinned_node_unavailable` while that node is offline.
+- Set `NOCTIS_RUNTIME=fake` on the agent to run the scripted fake runtime (CI and E2E only).
 
 ## What a request may name
 
@@ -102,11 +141,13 @@ by redeeming a fresh pairing code, which is an explicit act by you; the re-insta
 | `no_node_with_capability` | No node on the eligible hosts holds the capability.                |
 | `grant_expired`           | The capability is granted but the grant has lapsed or was revoked. |
 | `no_online_node`          | A capable node exists but nothing is connected.                    |
+| `pinned_node_unavailable` | The job is pinned to a node that is offline or revoked.            |
 
 ## Leases
 
 A leased job holds its lease for 30 seconds. A lapsed lease is swept every 5 seconds:
-`read_inspect` jobs are requeued up to 3 attempts and then cancelled; anything else stays `expired`,
+`read_inspect` jobs are requeued up to 3 attempts and then cancelled; anything else stays `expired`
+(`runtime.turn` included: a turn may have edited files before its lease lapsed),
 which means _somebody has to find out what actually happened_. That is deliberate — re-running a
 consequential operation blind is how one uncertain write becomes two.
 
@@ -118,5 +159,7 @@ consequential operation blind is how one uncertain write becomes two.
 - **No rate limiting** on `/node/pair` (ADR-0010, ADR-0014). A pairing code is 128 random bits with a
   15-minute life, which is not brute-forceable over a loopback bind, but it stops being the whole story
   the moment the core is reachable from elsewhere.
-- **Progress frames are validated, counted, and dropped.** Nothing renders progress yet.
+- **Progress frames are validated, counted, and dropped**, but every frame about a job renews its
+  lease, which is how a long turn stays alive. Stream, delta and ask frames go to the conversation
+  service; a `runtime.turn` job has a budget of 100 000 frames.
 - **No grant-level revocation command.** Revoke the node, or set `expiresAt` when you grant.
