@@ -119,6 +119,12 @@ export const ApprovalRecordSchema = z
     executedAt: UtcTimestampSchema.optional(),
     /** What the external system said, kept so a status claim can be checked against it. */
     executionEvidence: z.unknown().optional(),
+    /** Set when the human declined instead. A decline is a recorded fact, not an absence. */
+    declinedAt: UtcTimestampSchema.optional(),
+    declinedBy: z.string().trim().min(1).optional(),
+    /** Present when the request came from a runtime ask mid-turn. */
+    nodeJobId: UuidSchema.optional(),
+    askId: UuidSchema.optional(),
   })
   .strict();
 

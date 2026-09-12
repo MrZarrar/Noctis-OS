@@ -201,6 +201,10 @@ const verificationNoop: Adapter = async (payload, context) => {
   return Promise.resolve({ verified: true });
 };
 
+/** Placeholder until Task 1.7 lands the runtime host. Refuses rather than pretends. */
+const runtimeTurn: Adapter = () =>
+  Promise.reject(new AdapterRefused("runtime.turn is not available on this agent yet"));
+
 /**
  * Every capability this agent can execute. A job naming anything else is refused
  * before it runs, so the set of things a node can do is this object, not whatever
@@ -210,4 +214,5 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "environment.inspect": environmentInspect,
   "file.search": fileSearch,
   "verification.noop": verificationNoop,
+  "runtime.turn": runtimeTurn,
 };

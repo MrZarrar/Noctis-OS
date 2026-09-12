@@ -60,6 +60,13 @@ export const EVENT_NAMES = [
   "noir.hypothesis_added.v1",
   "noir.evidence_linked.v1",
   "noir.synthesis_updated.v1",
+  /** Phase 10: a turn is three facts, and a decline is its own. */
+  "identity.turn_started.v1",
+  "identity.turn_item.v1",
+  "identity.turn_completed.v1",
+  "authority.declined.v1",
+  "provider.decision_recorded.v1",
+  "identity.default_model_set.v1",
 ] as const;
 
 export const EventNameSchema = z.enum(EVENT_NAMES);
@@ -86,6 +93,8 @@ export const StreamTypeSchema = z.enum([
    */
   "source",
   "artifact",
+  /** Phase 10: which runtime was chosen, and why, is a fact about the provider. */
+  "provider",
 ]);
 
 export const ActorTypeSchema = z.enum(["user", "identity", "system", "node", "adapter"]);

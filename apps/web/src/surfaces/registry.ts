@@ -1,6 +1,18 @@
 import type { SurfaceSize } from "@noctis/contracts";
-import { ExternalToolFocusPayloadSchema, NativeFocusPayloadSchema } from "@noctis/contracts";
-import { z } from "zod";
+import {
+  ApprovalPayloadSchema,
+  ArtifactPayloadSchema,
+  AttentionPayloadSchema,
+  ConversationPayloadSchema,
+  DetailPayloadSchema,
+  EvidencePayloadSchema,
+  ExternalToolFocusPayloadSchema,
+  ListPayloadSchema,
+  NativeFocusPayloadSchema,
+  SourceStatePayloadSchema,
+  VaultRecallPayloadSchema,
+} from "@noctis/contracts";
+import type { z } from "zod";
 
 /**
  * The Surface registry (Section 5.3).
@@ -16,112 +28,10 @@ import { z } from "zod";
  * both halves, so they are here now: `requires` names the capability a Surface
  * needs, and `resolveSurface` refuses to render one whose capability the caller
  * does not hold — a `requires` array nothing checked would be worse than none.
+ *
+ * The payload schemas live in `@noctis/contracts` (surface-payloads.ts) so the
+ * core can validate a runtime's proposal against the same shape this renders.
  */
-
-const MessageSchema = z
-  .object({ id: z.string().min(1), author: z.string().min(1), text: z.string() })
-  .strict();
-
-const ConversationPayloadSchema = z.object({ messages: z.array(MessageSchema) }).strict();
-
-const ListPayloadSchema = z
-  .object({
-    items: z.array(
-      z
-        .object({ id: z.string().min(1), label: z.string().min(1), detail: z.string().optional() })
-        .strict(),
-    ),
-  })
-  .strict();
-
-const DetailPayloadSchema = z
-  .object({
-    fields: z.array(z.object({ label: z.string().min(1), value: z.string() }).strict()),
-  })
-  .strict();
-
-const EvidencePayloadSchema = z
-  .object({
-    items: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          claim: z.string().min(1),
-          source: z.string().min(1),
-          status: z.enum(["current", "stale", "unavailable", "unknown"]),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
-
-const AttentionPayloadSchema = z
-  .object({ headline: z.string().min(1), detail: z.string() })
-  .strict();
-
-const ApprovalPayloadSchema = z
-  .object({
-    id: z.string().min(1),
-    consequenceSummary: z.string().min(1),
-    operationClass: z.string().min(1),
-    capability: z.string().min(1),
-    targetType: z.string().min(1),
-    targetId: z.string().min(1),
-    reversibility: z.enum(["reversible", "partially_reversible", "irreversible"]),
-    outcome: z.enum(["allow", "deny", "require_confirmation", "require_typed_confirmation"]),
-    reasonCodes: z.array(z.string().min(1)),
-    estimatedCostGbp: z.number().nonnegative().optional(),
-    confirmationPhrase: z.string().min(1).optional(),
-    confirmedAt: z.string().min(1).optional(),
-    executedAt: z.string().min(1).optional(),
-  })
-  .strict();
-
-const ArtifactPayloadSchema = z
-  .object({
-    kind: z.enum(["local_artifact", "external_reference"]),
-    title: z.string().min(1),
-    uri: z.string().min(1),
-    mediaType: z.string().min(1).optional(),
-    hostId: z.string().min(1).optional(),
-    checksum: z.string().min(1).optional(),
-    derivedFromArtifactId: z.string().min(1).optional(),
-    importedAs: z.string().min(1).optional(),
-  })
-  .strict();
-
-const SourceStatePayloadSchema = z
-  .object({
-    /** Carried so the refresh action has something to name. */
-    sourceId: z.string().min(1),
-    sourceType: z.string().min(1),
-    externalId: z.string().min(1),
-    status: z.enum(["current", "stale", "unavailable", "unknown"]),
-    ageSeconds: z.number().nonnegative().optional(),
-    conflicted: z.boolean(),
-    observed: z.string().optional(),
-    remembered: z.string().optional(),
-  })
-  .strict();
-
-/** Section 7's focused recall, as a Surface payload. */
-const VaultRecallPayloadSchema = z
-  .object({
-    query: z.string().min(1),
-    freshness: z.enum(["current", "stale", "unavailable", "unknown"]),
-    evidence: z.array(
-      z
-        .object({
-          itemId: z.string().min(1),
-          entityId: z.string().min(1),
-          path: z.string().min(1),
-          quote: z.string(),
-          freshness: z.enum(["current", "stale", "unavailable", "unknown"]),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
 
 export type SurfaceKind = keyof typeof REGISTRY;
 

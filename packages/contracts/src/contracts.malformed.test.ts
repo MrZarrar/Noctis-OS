@@ -10,6 +10,7 @@ import {
 import {
   ActivateIdentityCommandSchema,
   ComposeSurfacesCommandSchema,
+  SendConversationMessageCommandSchema,
   UpsertSurfaceIntentCommandSchema,
 } from "./command.js";
 import { OrchestrationEventSchema } from "./events.js";
@@ -624,5 +625,45 @@ describe("every schema enforces .strict() against unknown fields", () => {
     };
 
     expect(CompositionPlanSchema.safeParse(fixture).success).toBe(false);
+  });
+});
+
+describe("Phase 10: runtime frames fail closed", () => {
+  const UUID = "0199a000-0000-7000-8000-000000000001";
+
+  it("a runtime_delta over the text bound is refused", () => {
+    expect(
+      ServerFrameSchema.safeParse({
+        kind: "runtime_delta",
+        envelopeVersion: 1,
+        threadId: UUID,
+        jobId: UUID,
+        itemId: "m1",
+        text: "x".repeat(2_001),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("a stream frame carrying an item kind nothing registered is refused", () => {
+    expect(
+      NodeFrameSchema.safeParse({
+        kind: "stream",
+        envelopeVersion: 1,
+        jobId: UUID,
+        sequence: 0,
+        item: { kind: "telepathy", itemId: "t1", status: "completed" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("conversation.send naming an unknown provider is refused", () => {
+    expect(
+      SendConversationMessageCommandSchema.safeParse({
+        idempotencyKey: "send-1",
+        identityId: "vesper",
+        text: "hello",
+        model: { providerId: "gemini", model: "x" },
+      }).success,
+    ).toBe(false);
   });
 });

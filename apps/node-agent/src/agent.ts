@@ -245,6 +245,8 @@ export function startAgent(options: AgentOptions): RunningAgent {
         envelopeVersion: NODE_ENVELOPE_VERSION,
         agentVersion,
         capabilities: Object.keys(adapters) as NodeJobAssignment["capability"][],
+        // Nothing probed yet. Task 1.7 fills this from the runtime probes.
+        providers: [],
       });
     });
 

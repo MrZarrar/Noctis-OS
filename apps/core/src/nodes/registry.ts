@@ -11,6 +11,7 @@ import {
   CapabilityGrantSchema,
   FileSearchConstraintsSchema,
   NodeDescriptorSchema,
+  RuntimeGrantConstraintsSchema,
 } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
 import { conflict, ok } from "@noctis/domain";
@@ -567,7 +568,9 @@ export function grantCapability(
   const constraints =
     command.capability === "file.search"
       ? FileSearchConstraintsSchema.parse(command.constraints)
-      : (command.constraints ?? {});
+      : command.capability === "runtime.turn"
+        ? RuntimeGrantConstraintsSchema.parse(command.constraints)
+        : (command.constraints ?? {});
 
   return runCommand<CapabilityGrant>(
     kernel,

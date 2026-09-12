@@ -8,6 +8,15 @@ import {
   UtcTimestampSchema,
   UuidSchema,
 } from "./primitives.js";
+import {
+  RuntimeAnswerSchema,
+  RuntimeAskSchema,
+  RuntimeDeltaSchema,
+  RuntimeItemSchema,
+  RuntimeProbeSchema,
+  RuntimeTurnEvidenceSchema,
+  RuntimeTurnPayloadSchema,
+} from "./runtime.js";
 
 export const NodeStatusSchema = z.enum(["pending", "paired", "online", "offline", "revoked"]);
 
@@ -78,6 +87,8 @@ export const NODE_CAPABILITIES = [
   "environment.inspect",
   "file.search",
   "verification.noop",
+  /** Phase 10: one conversational turn on a spawned runtime. */
+  "runtime.turn",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -96,6 +107,11 @@ export const CAPABILITY_OPERATION_CLASS = {
   "environment.inspect": "read_inspect",
   "file.search": "read_inspect",
   "verification.noop": "read_inspect",
+  /**
+   * A turn reads and talks. Anything consequential the runtime wants mid-turn
+   * arrives as an `ask` and is classed by its own capability, not by this one.
+   */
+  "runtime.turn": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
 /** No parameters: the adapter reports the environment it is already running in. */
@@ -166,6 +182,7 @@ export const CAPABILITY_CONTRACTS = {
     payload: VerificationNoopPayloadSchema,
     evidence: VerificationNoopEvidenceSchema,
   },
+  "runtime.turn": { payload: RuntimeTurnPayloadSchema, evidence: RuntimeTurnEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**
@@ -222,6 +239,8 @@ export const NodeFrameSchema = z.discriminatedUnion("kind", [
       agentVersion: z.string().trim().min(1).max(64),
       /** What the agent can actually run. The core intersects it with the grants. */
       capabilities: z.array(NodeCapabilitySchema).max(NODE_CAPABILITIES.length),
+      /** What it probed. A mode string per provider, never a token. */
+      providers: z.array(RuntimeProbeSchema).max(8).default([]),
     })
     .strict(),
   z
@@ -242,6 +261,34 @@ export const NodeFrameSchema = z.discriminatedUnion("kind", [
       /** Parsed against the job's capability evidence schema, never trusted as-is. */
       evidence: z.unknown(),
       failureReason: z.string().trim().min(1).max(500).optional(),
+    })
+    .strict(),
+  /** One item of a turn. `sequence` orders items within the job; the core persists them. */
+  z
+    .object({
+      kind: z.literal("stream"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      sequence: z.int().nonnegative(),
+      item: RuntimeItemSchema,
+    })
+    .strict(),
+  /** A token delta. Forwarded to clients, never persisted. */
+  z
+    .object({
+      kind: z.literal("delta"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      delta: RuntimeDeltaSchema,
+    })
+    .strict(),
+  /** The runtime is blocked on a consequential act until `answer` arrives. */
+  z
+    .object({
+      kind: z.literal("ask"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      ask: RuntimeAskSchema,
     })
     .strict(),
 ]);
@@ -282,6 +329,15 @@ export const NodeServerFrameSchema = z.discriminatedUnion("kind", [
       kind: z.literal("cancel"),
       envelopeVersion: NodeEnvelopeVersionSchema,
       jobId: UuidSchema,
+    })
+    .strict(),
+  /** The core's decision on an `ask`. The node forwards it; the runtime never decides. */
+  z
+    .object({
+      kind: z.literal("answer"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      answer: RuntimeAnswerSchema,
     })
     .strict(),
 ]);

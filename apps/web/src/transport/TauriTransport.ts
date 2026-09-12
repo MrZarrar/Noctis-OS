@@ -82,6 +82,11 @@ export class TauriTransport implements CoreTransport {
         return;
       }
 
+      // Ephemeral and unsequenced: nothing here consumes deltas yet (Task 1.9).
+      if (frame.kind === "runtime_delta") {
+        return;
+      }
+
       // A reconnect resumes from the cursor Rust holds, which can be behind
       // this one for frames already handed over.
       if (frame.event.sequence <= delivered) {

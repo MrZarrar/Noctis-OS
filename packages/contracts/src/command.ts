@@ -26,6 +26,7 @@ import {
   UtcTimestampSchema,
   UuidSchema,
 } from "./primitives.js";
+import { ModelRefSchema } from "./runtime.js";
 import { UnavailableSemanticsSchema } from "./source.js";
 import { SurfaceDisplaySchema, SurfaceRegionSchema, SurfaceSizeSchema } from "./surface.js";
 
@@ -109,8 +110,49 @@ export const RequestAuthorityCommandSchema = z
     consequenceSummary: z.string().trim().min(1).max(2000),
     reversibility: ReversibilitySchema,
     estimatedCostGbp: z.number().nonnegative().optional(),
+    /** Set when a runtime ask raised the request, so the answer can find its way back. */
+    nodeJobId: UuidSchema.optional(),
+    askId: UuidSchema.optional(),
   })
   .strict();
+
+/* -------------------------------------------------------------------------- */
+/* Phase 10: conversational turns on spawned runtimes.                        */
+/* -------------------------------------------------------------------------- */
+
+export const SendConversationMessageCommandSchema = z
+  .object({
+    ...CommandBase,
+    identityId: ConversationalIdentityIdSchema,
+    /** Not trimmed: the user's whitespace is the user's. */
+    text: z.string().min(1).max(20_000),
+    /** Absent means the identity's default model. */
+    model: ModelRefSchema.optional(),
+    objectiveId: UuidSchema.optional(),
+  })
+  .strict();
+
+export const CancelConversationTurnCommandSchema = z
+  .object({ ...CommandBase, jobId: UuidSchema })
+  .strict();
+
+/** The human says no. Separate from `deny`: a policy denies, a person declines. */
+export const DeclineAuthorityCommandSchema = z
+  .object({
+    ...CommandBase,
+    requestId: UuidSchema,
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const SetIdentityDefaultModelCommandSchema = z
+  .object({ ...CommandBase, identityId: ConversationalIdentityIdSchema, model: ModelRefSchema })
+  .strict();
+
+export type SendConversationMessageCommand = z.infer<typeof SendConversationMessageCommandSchema>;
+export type CancelConversationTurnCommand = z.infer<typeof CancelConversationTurnCommandSchema>;
+export type DeclineAuthorityCommand = z.infer<typeof DeclineAuthorityCommandSchema>;
+export type SetIdentityDefaultModelCommand = z.infer<typeof SetIdentityDefaultModelCommandSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Phase 6: Surface intents, user overrides, and composition.                 */
@@ -367,6 +409,10 @@ export const COMMAND_NAMES = [
   "node.grant_capability",
   "node.job_enqueue",
   "node.job_cancel",
+  "conversation.send",
+  "conversation.cancel",
+  "authority.decline",
+  "identity.set_default_model",
 ] as const;
 
 export const CommandNameSchema = z.enum(COMMAND_NAMES);

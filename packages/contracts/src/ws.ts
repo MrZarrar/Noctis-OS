@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { OrchestrationEventSchema } from "./events.js";
+import { UuidSchema } from "./primitives.js";
 
 /** Bumping this is a breaking protocol change; unknown versions fail closed. */
 export const ENVELOPE_VERSION = 1;
@@ -38,6 +39,17 @@ export const ServerFrameSchema = z.discriminatedUnion("kind", [
       envelopeVersion: EnvelopeVersionSchema,
       fromSequence: z.int().nonnegative(),
       toSequence: z.int().positive(),
+    })
+    .strict(),
+  /** A token delta. Ephemeral: no sequence, never replayed, never in the event log. */
+  z
+    .object({
+      kind: z.literal("runtime_delta"),
+      envelopeVersion: EnvelopeVersionSchema,
+      threadId: UuidSchema,
+      jobId: UuidSchema,
+      itemId: z.string().trim().min(1).max(128),
+      text: z.string().min(1).max(2000),
     })
     .strict(),
 ]);
