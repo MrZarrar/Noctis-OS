@@ -224,6 +224,13 @@ function conflictResponse(domainConflict: DomainConflict): { status: number; bod
           reasonCodes: domainConflict.reasonCodes,
         }),
       };
+    case "unavailable":
+      return {
+        status: 503,
+        body: errorBody("unavailable", `${domainConflict.entity} is unavailable`, {
+          reason: domainConflict.reason,
+        }),
+      };
     case "idempotent_replay":
       // Handled by the command dispatcher, which answers with the original
       // result. Reaching here means a command claimed a key it cannot replay.

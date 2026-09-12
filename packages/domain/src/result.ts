@@ -17,7 +17,12 @@ export type DomainConflict =
       requestId: string;
       outcome: string;
       reasonCodes: readonly string[];
-    };
+    }
+  /**
+   * A dependency is missing right now — no model, no node — and the caller may
+   * retry later. Not a refusal of the act itself, so never a 4xx.
+   */
+  | { kind: "unavailable"; entity: string; reason: string };
 
 export type Result<T> = { ok: true; value: T } | { ok: false; conflict: DomainConflict };
 

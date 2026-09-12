@@ -41,4 +41,18 @@ describe("Result", () => {
 
     expect(result.ok ? undefined : result.conflict.kind).toBe("idempotent_replay");
   });
+
+  it("wraps an unavailable dependency as a conflict, not a refusal", () => {
+    const result = conflict<number>({
+      kind: "unavailable",
+      entity: "model",
+      reason: "no paired node reports claude",
+    });
+
+    expect(result.ok ? undefined : result.conflict).toEqual({
+      kind: "unavailable",
+      entity: "model",
+      reason: "no paired node reports claude",
+    });
+  });
 });

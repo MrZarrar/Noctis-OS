@@ -258,8 +258,9 @@ describe("headless kernel loop", () => {
     expect(diagnostics.body.latestSequence).toBe(4);
     // 0002 added node pairing and job results; 0003 the Surface uniqueness;
     // 0004 the six Vault tables Section 4.1 lists; 0005 the consequence
-    // boundary columns, source semantics, and artifact lineage.
-    expect(diagnostics.body.schemaVersion).toBe(5);
+    // boundary columns, source semantics, and artifact lineage; 0006 turns,
+    // sessions, provider decisions, and one thread per Objective.
+    expect(diagnostics.body.schemaVersion).toBe(6);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {

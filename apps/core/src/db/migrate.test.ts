@@ -103,7 +103,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 33 tables", () => {
+  it("applies every migration and creates all 37 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -112,8 +112,46 @@ describe("migrate", () => {
         "SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
       )
       .get() as { c: number };
+    const names = (type: string) =>
+      (db.prepare("SELECT name FROM sqlite_master WHERE type=?").all(type) as { name: string }[])
+        .map((r) => r.name)
+        .sort();
+    const columns = (table: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((r) => r.name);
+    const tables = names("table");
+    const indexes = names("index");
+    const approvals = columns("approvals");
+    const nodeJobs = columns("node_jobs");
+    const nodes = columns("nodes");
+    const threads = columns("identity_threads");
+    const version = db.prepare("SELECT MAX(version) v FROM schema_migrations").get() as {
+      v: number;
+    };
     db.close();
 
-    expect(row.c).toBe(33);
+    expect(row.c).toBe(37);
+    expect(tables).toEqual(
+      expect.arrayContaining([
+        "identity_message_content",
+        "identity_sessions",
+        "identity_turns",
+        "provider_decisions",
+      ]),
+    );
+    expect(indexes).toEqual(
+      expect.arrayContaining([
+        "idx_approvals_ask",
+        "idx_identity_turns_thread",
+        "idx_identity_threads_objective",
+        "idx_identity_threads_free",
+      ]),
+    );
+    expect(approvals).toEqual(
+      expect.arrayContaining(["node_job_id", "ask_id", "declined_at", "declined_by"]),
+    );
+    expect(nodeJobs).toContain("pinned_node_id");
+    expect(nodes).toContain("providers_json");
+    expect(threads).toContain("objective_id");
+    expect(version.v).toBe(6);
   });
 });
