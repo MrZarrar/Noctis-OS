@@ -125,13 +125,12 @@ async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
     return unavailable("claude", "unknown", "claude_not_logged_in");
   }
 
-  // Honest about both halves: the login is a subscription, and the adapter
-  // that could use it is not built yet.
+  // A claude.ai login is a subscription; claude.ts drives it through the Agent SDK.
+  // ponytail: the two aliases the SDK accepts; exact ids come from Settings later.
   return {
     providerId: "claude",
-    available: false,
+    available: true,
     authMode: "claude_ai",
-    reason: "runtime_lands_in_task_1_10",
     models: [
       { providerId: "claude", model: "sonnet", label: "Claude Sonnet" },
       { providerId: "claude", model: "opus", label: "Claude Opus" },
@@ -158,6 +157,11 @@ export function probeInstalledProviders(
 /** The codex runtime's own probe: this machine, one provider. */
 export function probeCodexInstalled(env: NodeJS.ProcessEnv = process.env): Promise<RuntimeProbe> {
   return probeCodex(installedDeps(env));
+}
+
+/** The claude runtime's own probe: `claude auth status` on PATH, never a token. */
+export function probeClaudeInstalled(env: NodeJS.ProcessEnv = process.env): Promise<RuntimeProbe> {
+  return probeClaude(installedDeps(env));
 }
 
 function installedDeps(env: NodeJS.ProcessEnv): ProbeDeps {

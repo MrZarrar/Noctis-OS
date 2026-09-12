@@ -5,6 +5,7 @@ import type { RuntimeProbe, RuntimeProviderId } from "@noctis/contracts";
 
 import type { Runtime } from "./Runtime.js";
 import { resolveCodexCommand } from "./codex-command.js";
+import { createClaudeRuntime } from "./claude.js";
 import { createCodexRuntime } from "./codex.js";
 import { createFakeRuntime } from "./fake.js";
 import { probeInstalledProviders } from "./probe.js";
@@ -28,8 +29,9 @@ export function selectProbes(
  *
  * `NOCTIS_RUNTIME=fake` puts the scripted runtime behind the `codex` slot for
  * E2E. Otherwise codex is wired only when a `codex.exe` is actually on this
- * machine; claude lands in Task 1.10, hermes in Slice 4. An absent slot
- * refuses the turn; nothing here ever guesses.
+ * machine; claude is always wired, because the Agent SDK ships its own CLI and
+ * its probe says whether the login is usable; hermes lands in Slice 4. An
+ * absent slot refuses the turn; nothing here ever guesses.
  */
 export function selectRuntimes(
   env: NodeJS.ProcessEnv,
@@ -39,21 +41,21 @@ export function selectRuntimes(
   }
 
   const command = resolveCodexCommand({ env });
-
-  if (command === undefined) {
-    return {};
-  }
-
   const home = env.NOCTIS_NODE_HOME?.trim();
 
   return {
-    codex: createCodexRuntime({
-      command,
-      env,
-      proposalsDir: join(
-        home === undefined || home === "" ? join(tmpdir(), "noctis") : home,
-        "proposals",
-      ),
-    }),
+    claude: createClaudeRuntime({ env }),
+    ...(command === undefined
+      ? {}
+      : {
+          codex: createCodexRuntime({
+            command,
+            env,
+            proposalsDir: join(
+              home === undefined || home === "" ? join(tmpdir(), "noctis") : home,
+              "proposals",
+            ),
+          }),
+        }),
   };
 }

@@ -24,7 +24,13 @@ describe("selectRuntimes", () => {
 
     expect(runtimes.codex?.providerId).toBe("codex");
     expect(runtimes.codex?.probe).not.toBe(undefined);
-    expect(runtimes.claude).toBe(undefined);
+    expect(runtimes.claude?.providerId).toBe("claude");
     expect(runtimes.hermes).toBe(undefined);
+  });
+
+  it("wires claude whatever the machine has: the Agent SDK carries its own CLI", () => {
+    const runtimes = selectRuntimes({ PATH: "" });
+
+    expect(runtimes.claude?.providerId).toBe("claude");
   });
 });

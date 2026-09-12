@@ -147,14 +147,13 @@ describe("probeProviders", () => {
     });
   });
 
-  it("reports a claude.ai login as claude_ai but not yet available", async () => {
+  it("reports a claude.ai login as claude_ai and available", async () => {
     const [, claude] = await probeProviders(deps({ claude: LOGGED_IN_CLAUDE }));
 
     expect(claude).toEqual({
       providerId: "claude",
-      available: false,
+      available: true,
       authMode: "claude_ai",
-      reason: "runtime_lands_in_task_1_10",
       models: [
         { providerId: "claude", model: "sonnet", label: "Claude Sonnet" },
         { providerId: "claude", model: "opus", label: "Claude Opus" },

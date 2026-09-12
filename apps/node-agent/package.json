@@ -9,6 +9,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.270",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@noctis/contracts": "0.0.0",
     "@noctis/domain": "0.0.0",
