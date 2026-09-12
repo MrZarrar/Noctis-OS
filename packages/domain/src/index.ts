@@ -16,3 +16,5 @@ export * from "./vault/markdown.js";
 export * from "./vault/layout.js";
 export * from "./vault/view.js";
 export * from "./tools/route.js";
+export * from "./runtime/route.js";
+export * from "./runtime/classify.js";
