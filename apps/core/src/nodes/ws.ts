@@ -392,6 +392,16 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
         return;
       }
 
+      if (deps.dispatcher.isConnected(nodeId)) {
+        // This socket was replaced rather than lost: one node has one
+        // connection, so a reconnect (or an operator handing the agent from one
+        // terminal to another) closes the older one *after* the newer is
+        // registered. Writing `offline` here would describe a socket that is
+        // open, and `unregister` has already declined to touch the live entry.
+        logger.log("info", "a replaced connection closed; the node is still connected");
+        return;
+      }
+
       const marked = disconnectNode(deps.kernel, context(), { nodeId, connectionId });
 
       if (!marked.ok) {

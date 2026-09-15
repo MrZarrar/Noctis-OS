@@ -735,6 +735,32 @@ describe("pairing", () => {
     expect(second.welcome()?.generation).toBe((first.welcome()?.generation ?? 0) + 1);
   });
 
+  /**
+   * From handing a live agent from one terminal to another: the new socket
+   * connects, the core closes the old one as replaced, and the *old* socket's
+   * close handler then wrote `offline` for a node whose newer connection was
+   * already registered. Routing was unaffected — it reads the socket map, not
+   * the row — so the only symptom was `GET /nodes` calling a working node dead.
+   */
+  it("stays online when a connection is replaced rather than lost", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const first = await openFake(core, paired);
+    const second = await openFake(core, {
+      nodeId: paired.nodeId,
+      credential: first.welcome()?.credential ?? "",
+    });
+
+    expect(second.welcome()).toBeDefined();
+
+    // The core closes the older socket itself; wait for that to land.
+    await waitFor(() => first.closed() !== undefined, "the replaced socket to close");
+
+    const node = await read(core, `/nodes/${paired.nodeId}`);
+
+    expect(node.body.status).toBe("online");
+  });
+
   it("renews rather than duplicates a node that re-pairs on the same fingerprint", async () => {
     const core = await startTestCore();
     const first = await pairFake(core, { code: await issueCode(core, "workstation", "c1") });
