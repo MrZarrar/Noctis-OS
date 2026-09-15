@@ -93,6 +93,7 @@ function TurnRow({ turn, onCancel }: { turn: Turn; onCancel: () => void }): JSX.
 
   return (
     <li
+      data-entry="turn"
       data-turn-status={turn.status}
       style={{
         border: `1px solid ${material.border}`,
@@ -126,6 +127,40 @@ function TurnRow({ turn, onCancel }: { turn: Turn; onCancel: () => void }): JSX.
       )}
     </li>
   );
+}
+
+type Message = ConversationState["messages"][number];
+type Approval = ConversationState["pendingApprovals"][number];
+
+type Entry =
+  | { kind: "message"; at: string; message: Message }
+  | { kind: "turn"; at: string; turn: Turn }
+  | { kind: "approval"; at: string; approval: Approval };
+
+/**
+ * One conversation in the order it happened.
+ *
+ * Messages, turns and approvals were three stacked lists, so the newest reply
+ * sat at the top of the page and a turn's raw command output sat at the bottom
+ * beside the prompt box — the first live run made that unreadable within three
+ * exchanges. Merging on timestamp puts each turn's work between the question
+ * that caused it and the answer it produced, and puts the newest thing nearest
+ * the input, which is where a conversation belongs.
+ */
+function timelineOf(
+  messages: readonly Message[],
+  turns: readonly Turn[],
+  approvals: readonly Approval[],
+): Entry[] {
+  return [
+    ...messages.map((message): Entry => ({ kind: "message", at: message.createdAt, message })),
+    ...turns.map((turn): Entry => ({ kind: "turn", at: turn.startedAt, turn })),
+    ...approvals.map((approval): Entry => ({
+      kind: "approval",
+      at: approval.requestedAt,
+      approval,
+    })),
+  ].sort((left, right) => left.at.localeCompare(right.at));
 }
 
 /**
@@ -168,47 +203,44 @@ export function Chat({ identityId, conversation, connected }: ChatProps): JSX.El
         </span>
       </header>
 
-      <ul aria-label="Messages" style={{ ...listStyle, gap: spacing.sm }}>
-        {messages.map((message) => (
-          <li key={message.id} data-role={message.role} style={{ maxWidth: typography.measurePx }}>
-            <span style={{ color: typography.color.muted }}>{roleLabel(message.role)}: </span>
-            <span style={{ whiteSpace: "pre-wrap" }}>{message.body}</span>
-          </li>
-        ))}
-        {[...streaming.entries()].map(([itemId, text]) => (
-          <li
-            key={`streaming-${itemId}`}
-            data-streaming={itemId}
-            aria-live="polite"
-            style={{ maxWidth: typography.measurePx, color: typography.color.muted }}
-          >
-            <span>{displayName} (typing): </span>
-            <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>
-          </li>
-        ))}
-      </ul>
+      <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.sm }}>
+        {timelineOf(messages, turns, pendingApprovals).map((entry) => {
+          if (entry.kind === "message") {
+            return (
+              <li
+                key={entry.message.id}
+                data-entry="message"
+                data-role={entry.message.role}
+                style={{ maxWidth: typography.measurePx }}
+              >
+                <span style={{ color: typography.color.muted }}>
+                  {roleLabel(entry.message.role)}:{" "}
+                </span>
+                <span style={{ whiteSpace: "pre-wrap" }}>{entry.message.body}</span>
+              </li>
+            );
+          }
 
-      {turns.length > 0 && (
-        <ul aria-label="Turns" style={{ ...listStyle, gap: spacing.sm }}>
-          {turns.map((turn) => (
-            <TurnRow
-              key={turn.id}
-              turn={turn}
-              onCancel={() => {
-                if (turn.jobId !== undefined) {
-                  void conversation.cancel(turn.jobId);
-                }
-              }}
-            />
-          ))}
-        </ul>
-      )}
+          if (entry.kind === "turn") {
+            return (
+              <TurnRow
+                key={entry.turn.id}
+                turn={entry.turn}
+                onCancel={() => {
+                  if (entry.turn.jobId !== undefined) {
+                    void conversation.cancel(entry.turn.jobId);
+                  }
+                }}
+              />
+            );
+          }
 
-      {pendingApprovals.length > 0 && (
-        <ul aria-label="Approvals waiting" style={{ ...listStyle, gap: spacing.sm }}>
-          {pendingApprovals.map((approval) => (
+          const { approval } = entry;
+
+          return (
             <li
               key={approval.id}
+              data-entry="approval"
               style={{
                 border: `1px solid ${semantic.approval}`,
                 borderRadius: corner.md,
@@ -239,9 +271,23 @@ export function Chat({ identityId, conversation, connected }: ChatProps): JSX.El
                 }}
               />
             </li>
-          ))}
-        </ul>
-      )}
+          );
+        })}
+
+        {/* In progress, so always last: it is the newest thing on the page. */}
+        {[...streaming.entries()].map(([itemId, text]) => (
+          <li
+            key={`streaming-${itemId}`}
+            data-entry="streaming"
+            data-streaming={itemId}
+            aria-live="polite"
+            style={{ maxWidth: typography.measurePx, color: typography.color.muted }}
+          >
+            <span>{displayName} (typing): </span>
+            <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>
+          </li>
+        ))}
+      </ul>
 
       {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
 

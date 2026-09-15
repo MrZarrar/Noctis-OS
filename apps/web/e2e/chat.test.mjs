@@ -177,8 +177,10 @@ function readPage() {
 
     return {
       heading: document.querySelector("h1")?.textContent ?? "",
-      messages: texts('ul[aria-label="Messages"] > li'),
-      turns: [...document.querySelectorAll('ul[aria-label="Turns"] > li')].map(
+      // One chronological list now, so each kind is read by its data-entry
+      // rather than by its own `ul`. Document order is still time order.
+      messages: texts('li[data-entry="message"]'),
+      turns: [...document.querySelectorAll('li[data-entry="turn"]')].map(
         (item) => item.dataset.turnStatus ?? "",
       ),
       items: [...document.querySelectorAll('ul[aria-label="Turn items"] > li')].map((item) => ({
@@ -186,7 +188,7 @@ function readPage() {
         status: item.dataset.itemStatus ?? "",
         text: item.textContent?.trim() ?? "",
       })),
-      approvals: texts('ul[aria-label="Approvals waiting"] > li'),
+      approvals: texts('li[data-entry="approval"]'),
       confirmDisabled: confirm === undefined ? null : confirm.disabled,
       // Visible only: Command stays mounted behind `display: none`, and its
       // Presence prompt carries a selector of its own.
