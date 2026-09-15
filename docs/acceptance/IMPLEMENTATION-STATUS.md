@@ -2269,3 +2269,49 @@ the thread resumes rather than restarting.
 **Not claimed.** Claude has still not run a live turn. Nor has the two-PC
 topology (1B), nor a decline answered from the page rather than the API, nor
 token streaming in a browser, which waits on Slice 2's SSE.
+
+#### 2026-09-15 Task 1.12 — two machines, and the boundary that is not a promise
+
+The authoritative core now runs on the work PC (`mushafzarrar`) behind
+`tailscale serve` (tailnet only, never funnel). The personal PC (`zarrarpc`)
+pairs to it as a worker over `wss://`. Both nodes report online.
+
+**The names were backwards in our own runbook.** `zarrarpc` is the _personal_
+machine (user `mmush`, MindVault, the donor repo); `mushafzarrar` is the _work_
+machine (user `mushaf.zarrar`). An earlier revision had them swapped, which would
+have put the authoritative core on the personal machine and granted the work
+machine every personal root — the exact inversion of decision 0.30. Caught by
+running `hostname` before acting rather than by reading. The runbooks now say to
+check first, and say why.
+
+**The proof.** A `conversation.send` issued on the work PC, naming
+`rootGrantId: "downloads"`, returned a turn whose `nodeId` was the personal
+node. Four `codex.exe` processes then appeared on the personal machine. The ask
+it raised was confirmed on the work PC, and the reply came back:
+
+| Where                          | `COMPUTERNAME` | `whoami`                     |
+| ------------------------------ | -------------- | ---------------------------- |
+| Through Noctis, sent from work | `ZARRARPC`     | `CodexSandboxOffline`        |
+| Natively on the work PC        | `MUSHAFZARRAR` | `mushafzarrar\mushaf.zarrar` |
+
+Nothing chose that host. The grant ids are disjoint — the work node holds
+`work-downloads`, the personal node holds `downloads` — so naming a root the work
+node cannot offer leaves exactly one eligible candidate. Decision 0.30 is
+therefore enforced by routing rather than by anyone remembering it: the work core
+holds a grant naming personal folders, and only the node standing on those
+folders can ever use it.
+
+**A second thing that output proves.** `whoami` returned `CodexSandboxOffline`,
+not `zarrarpc\mmush`. The owner's `~/.codex/config.toml` sets
+`sandbox_mode = "danger-full-access"` globally, and the turn plainly did not run
+with it: the per-spawn override held and the command ran sandboxed with
+networking off. The Isolation constraint has been asserted in comments since
+Slice 1 began; this is the first time the machine has confirmed it.
+
+**The gap this exposed.** Nothing in the page can name a `rootGrantId`, so a
+prompt sent from Chat routes by session affinity and then by lowest node id. On a
+two-node core that means work-first, and a question about personal files would be
+answered from the wrong machine — correctly, and uselessly. The pinning mechanism
+works; what is missing is any way for a person to reach it. That belongs in Slice
+2 beside the phone, because "which machine" and "which device am I on" are the
+same question asked twice.
