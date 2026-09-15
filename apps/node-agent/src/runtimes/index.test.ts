@@ -23,7 +23,7 @@ describe("selectRuntimes", () => {
     const runtimes = selectRuntimes({ NOCTIS_CODEX_PATH: "C:\\tools\\codex.exe" });
 
     expect(runtimes.codex?.providerId).toBe("codex");
-    expect(runtimes.codex?.probe).not.toBe(undefined);
+    expect(typeof runtimes.codex?.probe).toBe("function");
     expect(runtimes.claude?.providerId).toBe("claude");
     expect(runtimes.hermes).toBe(undefined);
   });

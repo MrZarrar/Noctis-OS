@@ -260,13 +260,20 @@ function toRuntimeItem(item: ThreadItem, phase: "started" | "completed"): Runtim
       return {
         ...base,
         kind: "tool_call",
-        tool: clip(String(item.tool ?? ""), 128),
+        // A tool name that is not a string is not a tool name. Codex's shapes
+        // are loose here, and `String()` would turn an object into the literal
+        // text "[object Object]" and call it a tool.
+        tool: clip(typeof item.tool === "string" ? item.tool : "", 128),
         ...(item.arguments === undefined ? {} : { input: item.arguments }),
         ...(output === undefined ? {} : { output }),
       };
     }
     case "collabAgentToolCall":
-      return { ...base, kind: "sub_agent", label: clip(String(item.tool ?? "collab"), 200) };
+      return {
+        ...base,
+        kind: "sub_agent",
+        label: clip(typeof item.tool === "string" ? item.tool : "collab", 200),
+      };
     case "subAgentActivity":
       return {
         ...base,

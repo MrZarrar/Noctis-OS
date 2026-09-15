@@ -3,7 +3,7 @@ import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts"
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
-import { FAKE_PROBE, createFakeRuntime } from "./fake.js";
+import { FAKE_ASK_COMMAND, FAKE_PROBE, createFakeRuntime } from "./fake.js";
 
 const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: [], localOnly: false };
 
@@ -87,11 +87,12 @@ describe("the fake runtime", () => {
       itemId: "c1",
       kind: "command",
       capability: "runtime.command",
-      // `echo hi` is a read-only head, so the classifier says read_inspect.
-      operationClass: "read_inspect",
-      reversibility: "reversible",
-      target: { type: "command", id: "echo hi" },
-      detail: { command: "echo hi", cwd: ROOTS.cwd },
+      // The point of this branch: a class the evaluator will not wave through.
+      // `read_inspect` here would mean the ask never reaches a human.
+      operationClass: "external_write",
+      reversibility: "partially_reversible",
+      target: { type: "command", id: FAKE_ASK_COMMAND },
+      detail: { command: FAKE_ASK_COMMAND, cwd: ROOTS.cwd },
     });
     expect(r.items.map((item) => [item.itemId, item.status])).toEqual([
       ["m1", "completed"],

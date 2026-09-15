@@ -33,6 +33,14 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const WEB_ROOT = join(REPO_ROOT, "apps/web");
 const AGENT_MAIN = join(REPO_ROOT, "apps/node-agent/dist/main.js");
 
+/**
+ * What the fake runtime's `ASK:` branch asks about (`FAKE_ASK_COMMAND` in
+ * `apps/node-agent/src/runtimes/fake.ts`). It must classify as `external_write`,
+ * or the evaluator allows it outright and no card ever appears — which is how
+ * this test caught the branch asking about `echo hi`, a read-only head.
+ */
+const ASK_COMMAND = "curl -X POST https://example.invalid/hook";
+
 const CORE_PORT = 8799;
 const WEB_PORT = 4185;
 const CORE_URL = `http://127.0.0.1:${CORE_PORT}`;
@@ -304,8 +312,8 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
         "the runtime's ask never became an approval card",
       );
 
-      assert.ok(asked.approvals[0].includes("run echo hi"), asked.approvals[0]);
-      assert.ok(asked.approvals[0].includes("command: echo hi"), asked.approvals[0]);
+      assert.ok(asked.approvals[0].includes(`run ${ASK_COMMAND}`), asked.approvals[0]);
+      assert.ok(asked.approvals[0].includes(`command: ${ASK_COMMAND}`), asked.approvals[0]);
       assert.equal(asked.confirmDisabled, false, "a plain confirmation is gated");
       assert.ok(
         asked.items.some((item) => item.kind === "command" && item.status === "in_progress"),
@@ -335,7 +343,7 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
 
       const command = done.items.find((item) => item.kind === "command");
 
-      assert.ok(command.text.includes("echo hi"), command.text);
+      assert.ok(command.text.includes(ASK_COMMAND), command.text);
       assert.ok(command.text.includes("→ hi"), `no output shown: ${command.text}`);
       assert.deepEqual(done.errors, []);
     },

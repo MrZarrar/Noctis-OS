@@ -15,6 +15,18 @@ export const FAKE_PROBE: RuntimeProbe = {
 
 const SLOW_STEP_MS = 200;
 
+/**
+ * The command the `ASK:` branch asks about.
+ *
+ * Deliberately one the classifier calls `external_write`, so the turn actually
+ * parks on a human. `echo hi` was the obvious choice and the wrong one: `echo`
+ * is a read-only head, so the evaluator allowed it outright and the branch
+ * proved nothing — which is precisely what the E2E caught. `.invalid` is
+ * reserved by IANA and can never resolve, so the fixture cannot reach anything
+ * even if something one day really ran it.
+ */
+export const FAKE_ASK_COMMAND = "curl -X POST https://example.invalid/hook";
+
 class Cancelled extends Error {}
 
 /**
@@ -70,7 +82,7 @@ export function createFakeRuntime(): Runtime {
         item({ itemId: "m1", kind: "agent_message", status: "completed", text: finalText });
 
         if (payload.prompt.includes("ASK:")) {
-          const command = "echo hi";
+          const command = FAKE_ASK_COMMAND;
 
           item({ itemId: "c1", kind: "command", status: "in_progress", command, cwd: roots.cwd });
 
