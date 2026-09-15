@@ -39,7 +39,15 @@ const DESTRUCTIVE: readonly Rule[] = [
   ["git push --force", /\bgit\s+push\b.*(?:--force\b|\s-f\b)/],
   ["git reset --hard", /\bgit\s+reset\b.*--hard\b/],
   ["git clean -f", /\bgit\s+clean\b.*\s-[a-z]*f/],
-  ["format", new RegExp(HEAD + String.raw`format(?:\.com|\.exe)?\b`)],
+  /**
+   * `(?=\s|$)` rather than `\b`, because `\b` also sits between "format" and a
+   * hyphen — so `Get-ChildItem | Format-List` matched the disk formatter and a
+   * directory listing was classed `destructive`, demanding a typed DESTROY.
+   * `Format-List`, `Format-Table` and `Format-Wide` end half the read-only
+   * PowerShell pipelines there are, and an approval that cries wolf teaches
+   * people to type the phrase without reading it.
+   */
+  ["format", new RegExp(HEAD + String.raw`format(?:\.com|\.exe)?(?=\s|$)`)],
   ["diskpart", new RegExp(HEAD + String.raw`diskpart\b`)],
   ["mkfs", new RegExp(HEAD + String.raw`mkfs\b`)],
   ["Clear-Content", /\bclear-content\b/],
@@ -60,9 +68,21 @@ const EXTERNAL: readonly Rule[] = [
   ["cloud deploy", /\b(?:az|aws|gcloud)\b.*\bdeploy\b/],
 ];
 
-/** Heads that only read. Applied per chained segment; a redirect disqualifies the lot. */
+/**
+ * Heads that only read. Applied per chained segment; a redirect disqualifies
+ * the lot.
+ *
+ * The trailing group is PowerShell's pure pipeline stages. Without them a plain
+ * `Get-ChildItem | Sort-Object | Format-List` is not a read, because one
+ * unrecognised segment demotes the whole pipeline — and nearly every read
+ * pipeline a model writes ends in a formatter. They are safe to name here only
+ * because the destructive and external tables are scanned across the entire
+ * command first, so `... | Where-Object { Remove-Item x }` is caught before
+ * this is consulted. Deliberately absent: `Out-File` and `Set-Content`, which
+ * write, and `ForEach-Object`, which runs whatever it is handed.
+ */
 const READ_ONLY_HEAD =
-  /^(?:dir|ls|type|cat|get-childitem|gci|get-content|gc|echo|findstr|grep|rg|where|which|pwd|select-string|test-path|git\s+(?:status|log|diff|show)|node\s+--version|npm\s+ls)\b/;
+  /^(?:dir|ls|type|cat|get-childitem|gci|get-content|gc|echo|findstr|grep|rg|where|which|pwd|select-string|test-path|git\s+(?:status|log|diff|show)|node\s+--version|npm\s+ls|format-(?:list|table|wide)|select-object|sort-object|measure-object|out-string)\b/;
 
 function lower(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();

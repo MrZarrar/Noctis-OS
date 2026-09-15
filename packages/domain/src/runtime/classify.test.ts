@@ -73,6 +73,27 @@ const ROWS: Row[] = [
     "reversible",
     CMD,
   ],
+  /**
+   * From the first live turn: a read-only listing was classed `destructive` and
+   * demanded a typed DESTROY, because `\b` sits between "format" and a hyphen.
+   */
+  ["Format-List is not format", command("dir | Format-List"), "read_inspect", "reversible", CMD],
+  [
+    "Format-Table is not format",
+    command("Get-ChildItem | Format-Table"),
+    "read_inspect",
+    "reversible",
+    CMD,
+  ],
+  [
+    "a PowerShell read pipeline ending in Format-List",
+    command(
+      `powershell.exe -Command "Get-ChildItem -LiteralPath C:\\Users\\me\\Downloads -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name,Length | Format-List"`,
+    ),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
 
   ["git push", command("git push origin feature"), "external_write", "partially_reversible", CMD],
   ["gh pr create", command("gh pr create --fill"), "external_write", "partially_reversible", CMD],
