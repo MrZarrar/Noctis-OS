@@ -239,6 +239,7 @@ Full runbook in [work-pc-core.md](work-pc-core.md). Short form, once sections 0�
 | ---------- | ---- | ------------------------------ | ------------------ | -------------------------------------------------- |
 | 2026-09-15 | home | codex / chatgpt / gpt-5.6-luna | Checkpoint 1A (§4) | failed, `lease_expired` (agent restarted mid-turn) |
 | 2026-09-15 | home | codex / chatgpt / gpt-5.6-luna | Checkpoint 1A (§4) | completed, read real Downloads, moved nothing      |
+| 2026-09-15 | home | codex / chatgpt / gpt-5.6-luna | Checkpoint 1A (§4) | completed, **moved a real screenshot**, audited    |
 
 ### 2026-09-15 — the first live turn
 
@@ -265,8 +266,27 @@ Two things happened on the way, both recorded because they are the evidence:
   was rejected before it ran, so I'm retrying with a narrower command."_ The decline reached the
   runtime and changed its behaviour, which is the ask boundary working in the direction that matters.
 
-Still unproven after this run, and not claimed:
+### 2026-09-15 — the move, and the audit behind it
 
-- **The move.** Nothing in `Downloads` was a screenshot, so the `file_change` path never ran. Put a
-  `.png` there and repeat to exercise it.
-- **Claude**, token streaming in a browser (Slice 2), and the two-PC topology (§5).
+Same thread, same model, with one real screenshot now in `Downloads`. Vesper listed the three newest
+files, identified `Screenshot 2026-09-15 165831.png` as the screenshot, created
+`Documents\Screenshots`, and moved it there. Confirmed on disk by the owner and by
+`ls Documents\Screenshots`.
+
+**Noctis touched the owner's files for the first time.** Three approvals were written for that turn,
+each `local_reversible_edit` with outcome `allow` and reason code `objective_active_scope`:
+
+| operationClass          | outcome | reasonCodes              |
+| ----------------------- | ------- | ------------------------ |
+| `local_reversible_edit` | `allow` | `objective_active_scope` |
+
+That reason code is the whole of owner decision 0.4 made checkable. The edit was auto-allowed
+**because an Objective was active and the path sat inside a granted write root**, and it was recorded
+anyway — so "why did it move my file" is a query, not a reconstruction. Under no Objective the same
+edit produces a card instead; the reason code is what tells the two cases apart afterwards.
+
+Still unproven after these runs, and not claimed:
+
+- **Claude.** No live turn on the `claude` route yet; the probe reports it available.
+- **Token streaming in a browser** (Slice 2 adds SSE; the desktop shell streams today).
+- **The two-PC topology** (§5), and a deliberate decline answered from the page rather than the API.

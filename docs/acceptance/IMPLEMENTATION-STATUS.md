@@ -2239,3 +2239,33 @@ silently re-run.
 **Still not claimed.** The `file_change` path has never executed: there were no
 screenshots to move. Claude has not run a live turn. Neither has the two-PC
 topology, and the browser still has no token deltas until Slice 2.
+
+#### 2026-09-15 Checkpoint 1A closed — Noctis moved a file
+
+The prompt was re-sent with one real screenshot in `Downloads`. Vesper listed the
+three newest files, identified the screenshot, created `Documents\Screenshots`,
+and moved it there. Verified on disk.
+
+That is the first time Noctis has changed anything the owner owns, and the part
+that matters is not that it worked. It is the row it left behind:
+
+```
+local_reversible_edit | allow | reasonCodes: objective_active_scope
+```
+
+Three of them, one per command in the turn. Owner decision 0.4 says local edits
+inside granted folders are auto-allowed under an active Objective **and audited**,
+and `objective_active_scope` is that sentence made checkable after the fact. The
+same edit with no Objective active produces a card instead, and the reason code
+is what distinguishes the two cases in the ledger months later. An allow that
+left no row would have been indistinguishable from an allow that should have
+asked.
+
+Checkpoint 1A is closed: prompt → turn → Codex App Server on the node → real
+commands against real files → an edit inside a granted root → items, reply and
+audit persisted → history that survives a restart, with the session id stored so
+the thread resumes rather than restarting.
+
+**Not claimed.** Claude has still not run a live turn. Nor has the two-PC
+topology (1B), nor a decline answered from the page rather than the API, nor
+token streaming in a browser, which waits on Slice 2's SSE.
