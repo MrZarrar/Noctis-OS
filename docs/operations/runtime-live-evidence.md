@@ -12,10 +12,15 @@ work PC and pairs the home PC as its worker.
 ```powershell
 foreach ($g in "format:check","lint","typecheck","test:unit","test:integration","test:migrations","build","build:web","test:boundary","test:e2e") {
   Write-Host "=== $g ===" -ForegroundColor Cyan
-  npm run $g
+  npm.cmd run $g
   if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: $g" -ForegroundColor Red; break }
 }
 ```
+
+`npm.cmd`, not `npm`: PowerShell's default execution policy refuses to load the `npm.ps1` shim, and
+the resulting `PSSecurityException` does not set `$LASTEXITCODE`, so a loop written with bare `npm`
+reports nine identical failures and never breaks. `npm.cmd` is a real process and works whatever the
+policy is. The alternative is `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, once.
 
 Expected: all green. `test:e2e` needs Playwright Chromium (installed) or
 `$env:NOCTIS_E2E_BROWSER_CHANNEL="msedge"`. `chat.test.mjs` drives the fake runtime end to end: a
