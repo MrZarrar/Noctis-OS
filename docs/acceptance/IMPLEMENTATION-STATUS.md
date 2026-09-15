@@ -2149,3 +2149,40 @@ document lists them.
 
 ADRs 0020–0027 are recorded. Revision 1's step text for Tasks 1.4–1.9 had been overwritten by
 revision 2; those tasks were implemented from Part B's file table and the interfaces in Part C.
+
+#### 2026-09-15 The first full gate sweep, and the two things it found
+
+Every gate was run together for the first time since Task 1.6, because the last
+four tasks were verified only against their own targeted tests. Eight of ten
+passed untouched: 1555 unit tests across 79 files, 170 integration tests, 30
+migration tests, both builds, the donor boundary, and formatting.
+
+Two failed, and both were in the verification I had trimmed.
+
+**`lint`: three errors.** Two mattered. The Codex item mapper called `String()`
+on `item.tool`, which Codex's own shapes type loosely — so a `tool_call` item
+whose tool name arrived as an object would have been recorded, persisted and
+rendered in Chat as the literal text `[object Object]`. It now accepts a string
+or nothing, because a tool name that is not a string is not a tool name. The
+third was a test asserting on an unbound method reference.
+
+**`test:e2e`: the gate test, and it was right to fail.** The fake runtime's
+`ASK:` branch exists to prove that a consequential action parks and waits for a
+person. It asked about `echo hi`. `echo` is a read-only head, so `classifyAsk`
+returned `read_inspect`, the evaluator allowed it outright, no card was ever
+proposed, and the command completed on its own. Every layer did exactly what it
+should. The fixture was asking permission for something that needs none.
+
+The unit test had frozen the mistake in place, asserting `operationClass:
+"read_inspect"` under a comment explaining the read-only head as though it were
+the intent. That is the failure mode worth naming: a test that documents what
+the code does rather than what the behaviour is for will hold a hole open
+indefinitely, and only the end-to-end test — which asserts a _person_ is asked —
+could see it. `FAKE_ASK_COMMAND` is now `curl -X POST https://example.invalid/hook`,
+which classifies `external_write` and genuinely blocks. `.invalid` is reserved by
+IANA and cannot resolve, so the fixture cannot reach anything even if something
+one day really ran it.
+
+Both fixed in `7aa959c`; all ten gates green afterwards. Nothing in the
+production path was wrong, and no live turn has still been run: the claim in the
+entry above is unchanged.
