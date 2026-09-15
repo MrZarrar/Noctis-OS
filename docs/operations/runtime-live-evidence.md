@@ -25,13 +25,23 @@ committed message, a `command` item, an approval card that Confirm turns into `â
 ## 1. Environment (once, user scope)
 
 ```powershell
-$token = -join ((48..57) + (97..122) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$token = ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
 [Environment]::SetEnvironmentVariable("NOCTIS_CORE_TOKEN", $token, "User")
 [Environment]::SetEnvironmentVariable("NOCTIS_DATABASE_PATH", "$env:LOCALAPPDATA\Noctis\core.db", "User")
 [Environment]::SetEnvironmentVariable("NOCTIS_ALLOWED_ORIGINS", "http://localhost:5173", "User")
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Noctis" | Out-Null
-$token
+"token set, $($token.Length) chars"
 ```
+
+Each machine gets its own token; they are never shared. Do not print or paste the token â€” every
+command below reads `$env:NOCTIS_CORE_TOKEN`, so you never need to see it. A token that has been
+shown on screen should be regenerated and every node re-paired (see
+[work-pc-core.md](work-pc-core.md#stop-rotate-recover)).
+
+Do not use a character-pool one-liner with `Get-Random -Count`: it samples without replacement, so a
+36-character pool silently caps the token at 36 characters however many you ask for.
 
 `NOCTIS_ALLOWED_ORIGINS` is the **web page's** origin, not the core's. The core emits no permissive
 CORS headers by design (Section 9.2), so a browser Origin it does not list is refused outright.
