@@ -2186,3 +2186,56 @@ one day really ran it.
 Both fixed in `7aa959c`; all ten gates green afterwards. Nothing in the
 production path was wrong, and no live turn has still been run: the claim in the
 entry above is unchanged.
+
+#### 2026-09-15 The first live turn, and the classifier bug it found
+
+The entry above ended "no live turn has still been run". That is no longer true.
+A prompt typed into Chat on the home PC reached Codex App Server on the node,
+ran a real command against real files, and came back. Evidence in
+`docs/operations/runtime-live-evidence.md`.
+
+**The classifier called a directory listing `destructive`.** The disk-format
+rule was `format\b`, and `\b` sits between "format" and a hyphen, so
+`Get-ChildItem | Format-List` matched the command that wipes a drive. The
+approval card demanded a typed `DESTROY`, and because the phrase is built from
+the target, it asked the owner to type two hundred characters of PowerShell.
+
+That is the worst shape an authority bug can take. It is not that something
+dangerous was allowed; it is that something harmless was refused _in the
+vocabulary reserved for the dangerous thing_. An approval that cries wolf, and
+then cannot be answered honestly because nobody types two hundred characters,
+teaches the one habit the whole boundary exists to prevent: answering without
+reading. `Format-List`, `Format-Table` and `Format-Wide` end a large share of
+every read-only PowerShell pipeline a model will ever write, so this would have
+fired constantly.
+
+The rule now requires whitespace or end-of-string after `format`. `format D: /q`
+still classifies destructive; three regression cases from the real command hold
+it. A third defect fell out of the same investigation: one unrecognised segment
+demotes a whole pipeline, so `dir | Format-List` was `local_reversible_edit`
+rather than a read. The pure pipeline stages — the three `Format-*` cmdlets plus
+`Select-Object`, `Sort-Object`, `Measure-Object`, `Out-String` — are now known
+heads. Deliberately absent: `Out-File` and `Set-Content`, which write, and
+`ForEach-Object`, which runs whatever it is handed. That is only safe because
+the destructive and external tables are scanned across the whole command before
+any head is consulted.
+
+**Two probe defects, found in the same sitting**, each of which reported a
+working login as no login at all. `codex login status` prints "Logged in using
+ChatGPT" on _stderr_ and exits 0, and the probe read only stdout. `claude` on
+Windows is an extensionless npm shim beside a `.cmd` wrapper, and Node can spawn
+neither — the exact problem the donor's Codex resolver was ported to solve, which
+the Claude probe did not use. Bare PATH names now go through `cmd.exe /c`, and
+both streams are read.
+
+**What the run proved that no fixture could.** Asked to list three files and move
+any screenshots, Vesper listed the three and moved nothing, because none were
+screenshots, and said so. It did not invent the conditional work. Its first
+command was declined mid-turn and it adapted rather than failing — "I'm retrying
+with a narrower command". A turn whose agent was restarted underneath it
+completed as `failed` with `lease_expired` named, rather than hanging or being
+silently re-run.
+
+**Still not claimed.** The `file_change` path has never executed: there were no
+screenshots to move. Claude has not run a live turn. Neither has the two-PC
+topology, and the browser still has no token deltas until Slice 2.

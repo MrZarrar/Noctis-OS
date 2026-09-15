@@ -235,6 +235,38 @@ Full runbook in [work-pc-core.md](work-pc-core.md). Short form, once sections 0�
 
 ## Evidence log
 
-| Date | Host | Core | Agent | Provider / auth / model | Prompt | Items | Asks and answers | Result |
-| ---- | ---- | ---- | ----- | ----------------------- | ------ | ----- | ---------------- | ------ |
-|      |      |      |       |                         |        |       |                  |        |
+| Date       | Host | Provider / auth / model        | Prompt             | Result                                             |
+| ---------- | ---- | ------------------------------ | ------------------ | -------------------------------------------------- |
+| 2026-09-15 | home | codex / chatgpt / gpt-5.6-luna | Checkpoint 1A (§4) | failed, `lease_expired` (agent restarted mid-turn) |
+| 2026-09-15 | home | codex / chatgpt / gpt-5.6-luna | Checkpoint 1A (§4) | completed, read real Downloads, moved nothing      |
+
+### 2026-09-15 — the first live turn
+
+Home PC, core `237df2b`+, node `home` online, Codex 0.154.0-alpha.6.2 on a ChatGPT login,
+model `gpt-5.6-luna`, under the active Objective "Qualify Phase 9 on Noctis-OS".
+
+Vesper read the Vault's `agent/brain.md` through the read-only `vault` root, listed the three newest
+files in `Downloads`, and reported them: two Roblox installers and a benefits PDF. **None were
+screenshots, so it moved nothing and did not create `Documents\Screenshots`.** It declined to invent
+the work it had been asked to do conditionally, which is the right answer and not one a fixture
+could have proved.
+
+What this establishes: prompt → turn → Codex App Server spawned on the node → a real command against
+real files → items and reply persisted → thread history. `identity_sessions` holds the Codex thread
+id, so the next prompt resumes rather than starting fresh. `provider_decisions` records
+`gpt-5.6-luna` with cost class `subscription`.
+
+Two things happened on the way, both recorded because they are the evidence:
+
+- **The first turn failed with `lease_expired`,** because its agent was restarted underneath it to
+  pick up a classifier fix. The turn completed as `failed` with the reason named, rather than hanging
+  or being silently retried — `runtime.turn` is deliberately never re-run blind.
+- **Its first command was `declined`,** and the runtime adapted: _"The first read-only shell check
+  was rejected before it ran, so I'm retrying with a narrower command."_ The decline reached the
+  runtime and changed its behaviour, which is the ask boundary working in the direction that matters.
+
+Still unproven after this run, and not claimed:
+
+- **The move.** Nothing in `Downloads` was a screenshot, so the `file_change` path never ran. Put a
+  `.png` there and repeat to exercise it.
+- **Claude**, token streaming in a browser (Slice 2), and the two-PC topology (§5).
