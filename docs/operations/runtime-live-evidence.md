@@ -51,7 +51,22 @@ Do not use a character-pool one-liner with `Get-Random -Count`: it samples witho
 `NOCTIS_ALLOWED_ORIGINS` is the **web page's** origin, not the core's. The core emits no permissive
 CORS headers by design (Section 9.2), so a browser Origin it does not list is refused outright.
 
-**Open a new terminal for every step below** so they inherit the variables.
+**Then run this at the top of every terminal below**, including ones you open later:
+
+```powershell
+foreach ($v in "NOCTIS_CORE_TOKEN", "NOCTIS_DATABASE_PATH", "NOCTIS_ALLOWED_ORIGINS") {
+  Set-Item -Path "Env:$v" -Value ([Environment]::GetEnvironmentVariable($v, "User"))
+}
+$env:NOCTIS_CORE_TOKEN.Length   # must print 64
+```
+
+"Open a new terminal" is not enough on Windows. A terminal inherits its environment from its parent,
+and VS Code's integrated terminal inherits from the VS Code process — which was started long before
+these variables existed. So a freshly opened tab can still show nothing, and `$null.Length` prints a
+perfectly innocent `0` rather than an error. The line above reads the values straight from the user
+environment, which is authoritative, and costs nothing when they are already present.
+
+The alternative is restarting VS Code, or the machine, every time a variable changes.
 
 ## 2. Start the core and a worker with the real runtimes
 
