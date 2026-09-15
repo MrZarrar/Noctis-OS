@@ -4,8 +4,10 @@ Fixture proof (fake runtime, real core, real node agent) is in the test suite. L
 signed-in Codex and Claude on a real machine, so it is run by the owner and recorded here. Record
 host, versions, auth modes, models, the prompt, the items that appeared, and what was refused.
 
-Sections 0–4 run on the home PC against the home development core. Section 5 moves the core to the
-work PC and pairs the home PC as its worker.
+Sections 0–4 run on the personal PC (`zarrarpc`, user `mmush`) against its local development core.
+Section 5 moves the authoritative core to the work PC (`mushafzarrar`, user `mushaf.zarrar`) and
+pairs the personal PC as its worker. The two hostnames read backwards from what you would guess;
+check `hostname` before acting on either.
 
 ## 0. Gates (once, before any live run)
 
@@ -216,15 +218,16 @@ Record: the Claude session id landed as `sessionRef`, the items, and any ask tha
 
 Full runbook in [work-pc-core.md](work-pc-core.md). Short form, once sections 0–4 are green:
 
-1. **Work PC:** clone at the same path, `npm ci`, `npm run build`, set the same three variables
-   (its own token), `node apps\core\dist\main.js`, then `tailscale serve --bg 7717`. Note the
-   `https://zarrarpc.<tailnet>.ts.net` URL it prints. Never `tailscale funnel`.
+1. **Work PC** (`mushafzarrar`, repo at `C:\Users\mushaf.zarrar\Documents\Noctis-OS`): `npm ci`,
+   `npm run build`, set the three variables (its **own** token), `node apps\core\dist\main.js`, then
+   `tailscale serve --bg 7717` → `https://mushafzarrar.tail9594ed.ts.net`. Never `tailscale funnel`.
 2. **Work PC:** pair its own node with `--host work` and grant `runtime.turn` with the work roots
    only.
-3. **Home PC:** stop the home core, then pair against the Serve URL with `--host home` and the same
-   six roots as section 2. The agent accepts `https://` and dials `wss://`.
-4. Re-run the section 4 prompt from the work PC's page. The turn must be pinned to the home node,
-   because only that node holds those roots. The work PC never receives a home-root grant (0.30).
+3. **Personal PC** (`zarrarpc`): stop its local core, then pair against the Serve URL with
+   `--host home` and the same six roots as section 2. The agent accepts `https://` and dials `wss://`.
+4. Re-run the section 4 prompt from the work PC's page. The turn must be pinned to the personal
+   node, because only that node holds those roots. The work PC never receives a personal-root grant
+   (0.30), so the pinning is what enforces the boundary rather than anyone's care.
 
 ## What is not proven yet, and is not claimed
 
