@@ -29,7 +29,8 @@ afterEach(() => {
 });
 
 interface Scripted {
-  codex?: { login: string; version?: string };
+  /** `loginOn` because the real CLI prints its answer on stderr and exits 0. */
+  codex?: { login: string; loginOn?: "stdout" | "stderr"; version?: string };
   claude?: string;
   cache?: string;
 }
@@ -54,14 +55,19 @@ function deps(script: Scripted): ProbeDeps & { calls: string[] } {
       calls.push(`${file} ${args.join(" ")}`);
 
       if (file.endsWith(BINARY) && script.codex !== undefined) {
+        const isLogin = args[0] === "login";
+        const text = isLogin ? script.codex.login : (script.codex.version ?? "");
+        const onStderr = isLogin && script.codex.loginOn === "stderr";
+
         return Promise.resolve({
-          stdout: args[0] === "login" ? script.codex.login : (script.codex.version ?? ""),
+          stdout: onStderr ? "" : text,
+          stderr: onStderr ? text : "",
           code: 0,
         });
       }
 
       if (file === "claude" && script.claude !== undefined) {
-        return Promise.resolve({ stdout: script.claude, code: 0 });
+        return Promise.resolve({ stdout: script.claude, stderr: "", code: 0 });
       }
 
       return Promise.reject(new Error(`spawn ${file} ENOENT`));
@@ -121,6 +127,20 @@ describe("probeProviders", () => {
       ],
     });
     expect(d.calls.some((call) => call.endsWith("login status"))).toBe(true);
+  });
+
+  it("THE GATE: reads the login line from stderr, which is where the CLI prints it", async () => {
+    // codex-cli 0.154 prints "Logged in using ChatGPT" on stderr and exits 0.
+    // A probe reading stdout alone reports a signed-in subscription as logged
+    // out, and the router then refuses every turn on a machine that was fine.
+    const [codex] = await probeProviders(
+      deps({
+        codex: { login: "Logged in using ChatGPT\n", loginOn: "stderr" },
+        cache: MODELS_CACHE,
+      }),
+    );
+
+    expect(codex).toMatchObject({ available: true, authMode: "chatgpt" });
   });
 
   it("refuses an API-key login as metered, while still reporting what it found", async () => {

@@ -10,7 +10,15 @@ import { resolveCodexCommand } from "./codex-command.js";
 import { childEnvironment } from "./env.js";
 
 export interface ProbeDeps {
-  exec(file: string, args: readonly string[]): Promise<{ stdout: string; code: number }>;
+  /**
+   * `stderr` is carried, not discarded: `codex login status` prints "Logged in
+   * using ChatGPT" there and exits 0, so a probe reading stdout alone concludes
+   * the owner is logged out and refuses a perfectly good subscription.
+   */
+  exec(
+    file: string,
+    args: readonly string[],
+  ): Promise<{ stdout: string; stderr: string; code: number }>;
   readFile(path: string): Promise<string>;
   env: NodeJS.ProcessEnv;
   home: string;
@@ -81,8 +89,13 @@ async function probeCodex(deps: ProbeDeps): Promise<RuntimeProbe> {
   let version: string | undefined;
 
   try {
-    login = (await deps.exec(exe, ["login", "status"])).stdout;
-    version = (await deps.exec(exe, ["--version"])).stdout.trim().slice(0, 64) || undefined;
+    const status = await deps.exec(exe, ["login", "status"]);
+    // Both streams: which one carries the answer is the CLI's business and has
+    // already changed once.
+    login = `${status.stdout}\n${status.stderr}`;
+
+    const reported = await deps.exec(exe, ["--version"]);
+    version = `${reported.stdout}\n${reported.stderr}`.trim().slice(0, 64) || undefined;
   } catch (error) {
     return unavailable(
       "codex",
@@ -111,14 +124,24 @@ async function probeCodex(deps: ProbeDeps): Promise<RuntimeProbe> {
 }
 
 async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
+  let printed: string;
+
+  try {
+    const result = await deps.exec("claude", ["auth", "status"]);
+
+    printed = result.stdout;
+  } catch {
+    return unavailable("claude", "unknown", "claude_not_found");
+  }
+
   let status: z.infer<typeof ClaudeAuthStatusSchema>;
 
   try {
-    status = ClaudeAuthStatusSchema.parse(
-      JSON.parse((await deps.exec("claude", ["auth", "status"])).stdout),
-    );
+    status = ClaudeAuthStatusSchema.parse(JSON.parse(printed));
   } catch {
-    return unavailable("claude", "unknown", "claude_not_found");
+    // It ran and said something this does not understand. Not the same fact as
+    // "not installed", and reporting it as such sent the last diagnosis astray.
+    return unavailable("claude", "unknown", "claude_auth_status_unreadable");
   }
 
   if (status.loggedIn !== true || status.authMethod !== "claude.ai") {
@@ -164,6 +187,26 @@ export function probeClaudeInstalled(env: NodeJS.ProcessEnv = process.env): Prom
   return probeClaude(installedDeps(env));
 }
 
+/**
+ * How to spawn a command named on PATH rather than by full path.
+ *
+ * On Windows an npm-installed CLI is an extensionless shell script plus a
+ * `.cmd` wrapper. Node can spawn neither: the first is not a PE image, and
+ * `.cmd` is refused without `shell: true` (CVE-2024-27980). So a bare name goes
+ * through `cmd.exe /c`, which does the PATHEXT resolution Windows itself would.
+ * Arguments stay a real argv array and every caller here passes literals, so
+ * there is no string a command line could be smuggled into.
+ *
+ * A file with a separator in it is already a path and is spawned as given.
+ */
+function spawnable(file: string, args: readonly string[]): { file: string; args: string[] } {
+  const isBareName = !file.includes("\\") && !file.includes("/");
+
+  return process.platform === "win32" && isBareName
+    ? { file: "cmd.exe", args: ["/c", file, ...args] }
+    : { file, args: [...args] };
+}
+
 function installedDeps(env: NodeJS.ProcessEnv): ProbeDeps {
   const childEnv = childEnvironment(env);
 
@@ -173,11 +216,13 @@ function installedDeps(env: NodeJS.ProcessEnv): ProbeDeps {
     readFile: (path) => readFile(path, "utf8"),
     exec: (file, args) =>
       new Promise((resolve, reject) => {
+        const spawn = spawnable(file, args);
+
         execFile(
-          file,
-          [...args],
+          spawn.file,
+          spawn.args,
           { env: childEnv, timeout: EXEC_TIMEOUT_MS, windowsHide: true },
-          (error, stdout) => {
+          (error, stdout, stderr) => {
             // A non-zero exit still has stdout worth reading (`login status` when
             // logged out); only a spawn failure is an error here.
             if (error !== null && typeof error.code !== "number") {
@@ -185,7 +230,7 @@ function installedDeps(env: NodeJS.ProcessEnv): ProbeDeps {
               return;
             }
 
-            resolve({ stdout, code: typeof error?.code === "number" ? error.code : 0 });
+            resolve({ stdout, stderr, code: typeof error?.code === "number" ? error.code : 0 });
           },
         );
       }),
