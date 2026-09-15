@@ -4,109 +4,197 @@ Fixture proof (fake runtime, real core, real node agent) is in the test suite. L
 signed-in Codex and Claude on a real machine, so it is run by the owner and recorded here. Record
 host, versions, auth modes, models, the prompt, the items that appeared, and what was refused.
 
-Everything below runs on the home PC against the home development core. Repeat on the work-PC
-topology once [work-pc-core.md](work-pc-core.md) is done.
+Sections 0–4 run on the home PC against the home development core. Section 5 moves the core to the
+work PC and pairs the home PC as its worker.
 
 ## 0. Gates (once, before any live run)
 
 ```powershell
-npm run format:check; npm run lint; npm run typecheck
-npm run test:unit; npm run test:integration; npm run build; npm run build:web
-npm run test:boundary
-npm run test:e2e          # needs Playwright Chromium; chat.test.mjs drives the fake runtime end to end
+foreach ($g in "format:check","lint","typecheck","test:unit","test:integration","test:migrations","build","build:web","test:boundary","test:e2e") {
+  Write-Host "=== $g ===" -ForegroundColor Cyan
+  npm run $g
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: $g" -ForegroundColor Red; break }
+}
 ```
 
-Expected: all green. `chat.test.mjs` asserts a committed message, a `command` item, an approval card
-that Confirm turns into `→ hi`, and a `proposal` item from `PROPOSE: plan`.
+Expected: all green. `test:e2e` needs Playwright Chromium (installed) or
+`$env:NOCTIS_E2E_BROWSER_CHANNEL="msedge"`. `chat.test.mjs` drives the fake runtime end to end: a
+committed message, a `command` item, an approval card that Confirm turns into `→ hi`, and a
+`proposal` item from `PROPOSE: plan`.
 
-## 1. Start the core and a worker with the real runtimes
-
-Terminal 1 (core; set the two variables in the user environment first, see work-pc-core.md):
+## 1. Environment (once, user scope)
 
 ```powershell
+$token = -join ((48..57) + (97..122) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
+[Environment]::SetEnvironmentVariable("NOCTIS_CORE_TOKEN", $token, "User")
+[Environment]::SetEnvironmentVariable("NOCTIS_DATABASE_PATH", "$env:LOCALAPPDATA\Noctis\core.db", "User")
+[Environment]::SetEnvironmentVariable("NOCTIS_ALLOWED_ORIGINS", "http://localhost:5173", "User")
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Noctis" | Out-Null
+$token
+```
+
+`NOCTIS_ALLOWED_ORIGINS` is the **web page's** origin, not the core's. The core emits no permissive
+CORS headers by design (Section 9.2), so a browser Origin it does not list is refused outright.
+
+**Open a new terminal for every step below** so they inherit the variables.
+
+## 2. Start the core and a worker with the real runtimes
+
+**Terminal A — the core.** Leave it running.
+
+```powershell
+cd C:\Users\mmush\Documents\Jarvis\Noctis-OS
 node apps\core\dist\main.js
 ```
 
-Terminal 2 (pair and grant, once):
+Expect `core listening` on port 7717 with `schemaVersion: 6`.
+
+**Terminal B — pair and grant.** Once per machine.
 
 ```powershell
+cd C:\Users\mmush\Documents\Jarvis\Noctis-OS
+$C = "http://127.0.0.1:7717"
 $H = @{ Authorization = "Bearer $env:NOCTIS_CORE_TOKEN"; "Content-Type" = "application/json" }
-$code = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:7717/commands/node.issue_pairing_code -Headers $H `
+
+$code = Invoke-RestMethod -Method Post -Uri "$C/commands/node.issue_pairing_code" -Headers $H `
   -Body (@{ idempotencyKey = [guid]::NewGuid().ToString(); hostId = "home" } | ConvertTo-Json)
-node apps\node-agent\dist\main.js pair --core http://127.0.0.1:7717 --code $code.code --host home
+
+$paired = node apps\node-agent\dist\main.js pair --core $C --code $code.code --host home
+$nodeId = ($paired -replace '.*Paired as node ', '').Trim()
+$nodeId
 ```
 
-Grant `runtime.turn` with the 0.18 roots exactly as in [nodes.md](nodes.md#granting-runtimeturn),
-`providers = @("codex", "claude")`. Then start the agent:
+Then the grant. Paths live on the grant; a turn only ever names a `grantId` (owner decision 0.18).
 
 ```powershell
+$grant = @{
+  idempotencyKey = [guid]::NewGuid().ToString()
+  nodeId = $nodeId
+  capability = "runtime.turn"
+  constraints = @{
+    providers = @("codex", "claude")
+    roots = @(
+      @{ grantId = "jarvis-noctis"; path = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"; mode = "write" },
+      @{ grantId = "jarvis-donor";  path = "C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard"; mode = "read" },
+      @{ grantId = "downloads";     path = "C:\Users\mmush\Downloads"; mode = "write" },
+      @{ grantId = "documents";     path = "C:\Users\mmush\Documents"; mode = "write" },
+      @{ grantId = "vault";         path = "C:\Users\mmush\OneDrive\MindVault"; mode = "read" },
+      @{ grantId = "inbox";         path = "C:\Users\mmush\OneDrive\MindVault\inbox"; mode = "write" }
+    )
+  }
+} | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Method Post -Uri "$C/commands/node.grant_capability" -Headers $H -Body $grant
+```
+
+**Terminal C — the agent.** Leave it running.
+
+```powershell
+cd C:\Users\mmush\Documents\Jarvis\Noctis-OS
 node apps\node-agent\dist\main.js
 ```
 
-Check `GET /nodes` (with the bearer): the node is `online` and `providers[]` shows
-`codex / chatgpt / available: true` with `gpt-5.6-sol` in its models, and
-`claude / claude_ai / available: true` with `sonnet` and `opus`. An `api_key` mode or
-`available: false` here is the probe telling you the login is wrong; fix it before sending anything.
-
-## 2. Pick the models
-
-In the web page (Settings → Default model) or over HTTP:
+**Check what it found**, back in terminal B:
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:7717/commands/identity.set_default_model -Headers $H `
-  -Body (@{ idempotencyKey = [guid]::NewGuid().ToString(); identityId = "vesper"; model = @{ providerId = "codex"; model = "gpt-5.6-sol" } } | ConvertTo-Json -Depth 4)
+Invoke-RestMethod "$C/nodes/$nodeId" -Headers $H | ConvertTo-Json -Depth 6
 ```
 
-`GET /models` should list the catalogue from the node and `defaults.vesper`.
+Expected: `status: "online"`, and `providers` showing `codex / chatgpt / available: true` with
+`gpt-5.6-sol` among its models, plus `claude / claude_ai / available: true` with `sonnet` and
+`opus`. An `api_key` mode, or `available: false`, is the probe telling you the login is wrong. Fix
+that before sending anything: a metered credential is refused at dispatch by design (ADR-0023).
 
-## 3. Checkpoint 1A — the recorded prompt, Codex, free chat (no Objective)
+## 3. Pick the models
 
-Web page: `cd apps/web; $env:VITE_CORE_URL="http://127.0.0.1:7717"; $env:VITE_CORE_TOKEN=$env:NOCTIS_CORE_TOKEN; npm run dev`
-(browser transport: items and messages arrive by polling; token deltas only show in the desktop
-shell). Or the desktop shell with `NOCTIS_CORE_URL=http://127.0.0.1:7717` for deltas.
+```powershell
+Invoke-RestMethod -Method Post -Uri "$C/commands/identity.set_default_model" -Headers $H `
+  -Body (@{ idempotencyKey = [guid]::NewGuid().ToString(); identityId = "vesper"; model = @{ providerId = "codex"; model = "gpt-5.6-sol" } } | ConvertTo-Json -Depth 4)
 
-Send, in Presence or Chat, with `gpt-5.6-sol` selected:
+Invoke-RestMethod "$C/models" -Headers $H | ConvertTo-Json -Depth 5
+```
+
+`GET /models` should list the catalogue assembled from the connected node, and `defaults.vesper`.
+
+## 4. Checkpoint 1A — the recorded prompt, Codex, free chat (no Objective)
+
+**Terminal D — the page.** The page talks to Vite, which proxies the core, so both share an origin.
+`VITE_CORE_URL` is therefore the **web** URL, not the core's.
+
+```powershell
+cd C:\Users\mmush\Documents\Jarvis\Noctis-OS\apps\web
+$env:NOCTIS_CORE_PROXY_TARGET = "http://127.0.0.1:7717"
+$env:VITE_CORE_URL = "http://localhost:5173"
+$env:VITE_CORE_TOKEN = $env:NOCTIS_CORE_TOKEN
+npm run dev
+```
+
+Open <http://localhost:5173>, go to Chat, confirm the model selector offers `GPT-5.6-Sol (codex)`.
+The browser transport polls, so items and messages arrive within about half a second but token
+deltas do not. For deltas, run the desktop shell with `NOCTIS_CORE_URL=http://127.0.0.1:7717`
+instead.
+
+Send, with `gpt-5.6-sol` selected and no Objective active:
 
 > Look at the newest three files in my Downloads folder, tell me what they are, and move any
 > screenshots into Documents\Screenshots (create it if needed).
 
-Expected, with no Objective active (sandbox read-only, so every write asks):
+Expected, because no Objective is active and the sandbox is therefore read-only:
 
-1. The turn appears as `running`; `command` items for the directory listing complete without asking
-   (read-only heads are `read_inspect`).
-2. The move is surfaced as a `command` or `file_change` ask. Because there is no active Objective,
-   an approval card appears in Chat (`require_confirmation`, reason `objective_not_active`). The
-   runtime is blocked until you answer; the job stays `running` (frames renew the lease).
-3. **Confirm** → the node receives `allow`, Codex performs the move, the item completes, the reply
-   message lands. **Decline** instead → the item shows `declined`, the reply explains, and
-   `GET /approvals` shows `declinedAt`.
-4. `GET /threads/<id>/turns`: the turn is `completed`, `model` is `codex/gpt-5.6-sol`,
-   `provider_decisions` (via the turn's `decision` or the DB) names the node and the reason codes.
-5. Restart the core and the agent. Chat reloads the same messages; the next prompt on the thread
-   carries `sessionRef` (the Codex thread id) and is pinned to the same node.
+1. The turn goes `running`. `command` items for the directory listing complete without asking:
+   read-only heads classify as `read_inspect`.
+2. The move is surfaced as an ask. An approval card appears in Chat with outcome
+   `require_confirmation` and reason code `objective_not_active`. The runtime is blocked until you
+   answer, and the job stays `running` because every frame renews its lease.
+3. **Confirm** sends `allow` to the node, Codex performs the move, the item completes, the reply
+   lands. **Decline** instead gives the item `declined` status and `GET /approvals` shows
+   `declinedAt`.
+4. `GET /threads/<id>/turns` shows the turn `completed` with model `codex / gpt-5.6-sol`.
+5. Stop and restart both the core and the agent. Chat reloads the same messages, and the next
+   prompt on that thread carries `sessionRef` and is pinned to the same node.
 
-Record: what the three files were, whether the move asked (it must), which ask kind it arrived as,
-and the exact reason codes.
+Record: what the three files were, that the move asked (it must), which ask kind it arrived as, and
+the exact reason codes.
 
-## 4. Same prompt, Claude, under a fresh active Objective
+### 4b. Same prompt, Claude, under an active Objective
 
-Create an Objective for Vesper (`objective.create` status `draft`, then `objective.change_status` to
-`active`), open Chat on it (the Objective's thread is created on first send), select `claude/sonnet`,
-send the same prompt.
+Create an Objective for Vesper and activate it:
 
-Expected: sandbox `workspaceWrite` on the granted roots; the listing runs; the move is classified
-`local_reversible_edit` inside `documents`/`downloads` and is **auto-allowed and audited** (an
-`approvals` row with outcome `allow`, no card). Anything outside the roots or reaching the network
-still asks. Deltas stream token by token in the desktop shell.
+```powershell
+$obj = Invoke-RestMethod -Method Post -Uri "$C/commands/objective.create" -Headers $H `
+  -Body (@{ idempotencyKey = [guid]::NewGuid().ToString(); title = "Tidy Downloads"; intent = "Sort the newest downloads and file screenshots"; status = "draft"; identityId = "vesper" } | ConvertTo-Json)
+Invoke-RestMethod -Method Post -Uri "$C/commands/objective.change_status" -Headers $H `
+  -Body (@{ idempotencyKey = [guid]::NewGuid().ToString(); objectiveId = $obj.id; expectedRevision = $obj.revision; status = "active" } | ConvertTo-Json)
+```
+
+Open Chat on that Objective, select `claude / sonnet`, send the same prompt.
+
+Expected: the sandbox is `workspaceWrite` on the granted roots, so the move classifies as
+`local_reversible_edit` inside `downloads`/`documents` and is **auto-allowed and audited** — an
+`approvals` row with outcome `allow`, no card (owner decision 0.4). Anything outside the roots, or
+reaching the network, still asks. In the desktop shell the reply streams token by token.
 
 Record: the Claude session id landed as `sessionRef`, the items, and any ask that did appear.
 
-## 5. What is not proven yet, and is not claimed
+## 5. The work PC core, the home PC as its worker
+
+Full runbook in [work-pc-core.md](work-pc-core.md). Short form, once sections 0–4 are green:
+
+1. **Work PC:** clone at the same path, `npm ci`, `npm run build`, set the same three variables
+   (its own token), `node apps\core\dist\main.js`, then `tailscale serve --bg 7717`. Note the
+   `https://zarrarpc.<tailnet>.ts.net` URL it prints. Never `tailscale funnel`.
+2. **Work PC:** pair its own node with `--host work` and grant `runtime.turn` with the work roots
+   only.
+3. **Home PC:** stop the home core, then pair against the Serve URL with `--host home` and the same
+   six roots as section 2. The agent accepts `https://` and dials `wss://`.
+4. Re-run the section 4 prompt from the work PC's page. The turn must be pinned to the home node,
+   because only that node holds those roots. The work PC never receives a home-root grant (0.30).
+
+## What is not proven yet, and is not claimed
 
 - Phone (Slice 2), Hermes/Jester (Slice 4; the probe reports `slice_4`), Windows desktop control
   (Slice 3).
-- Token deltas in a browser (Slice 2's SSE); the browser transport polls.
-- The two-PC topology: repeat 1–4 with the core on the work PC and this machine paired as `home`.
+- Token deltas in a browser (Slice 2's SSE). The browser transport polls; the desktop shell streams.
+- Anything about the work PC until section 5 is done.
 
 ## Evidence log
 
