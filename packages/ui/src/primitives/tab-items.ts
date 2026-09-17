@@ -25,7 +25,8 @@ export interface TabLayout {
  * active. Command and Chat are never the slot that gives way.
  */
 export function tabsFor(active: RailItem): TabLayout {
-  const overflow = RAIL_ITEMS.filter((item) => !TAB_ITEMS.includes(item as never));
+  const primary: readonly RailItem[] = TAB_ITEMS;
+  const overflow = RAIL_ITEMS.filter((item) => !primary.includes(item));
 
   if (!overflow.includes(active)) {
     return { tabs: TAB_ITEMS, overflow };

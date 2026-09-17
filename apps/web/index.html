@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Noctis</title>
+    <!--
+      The app's whole stylesheet. Without it the UA's 8px body margin makes
+      every `height: 100vh` shell overflow by 16px, and insets the page 8px
+      from each edge while a `position: fixed` bar spans the full width — so on
+      a phone the tab bar is 16px wider than the content above it.
+    -->
+    <style>
+      body {
+        margin: 0;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

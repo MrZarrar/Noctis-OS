@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { TAB_BAR_HEIGHT } from "@noctis/ui";
 import { chromium } from "playwright";
 
 import {
@@ -73,15 +74,24 @@ function readNav() {
     }
 
     const buttons = [...nav.querySelectorAll("button")];
+    // The shell the bar is fixed over, which has to reserve exactly the bar's
+    // height as padding or the last row of content goes under it.
+    const shell = nav.parentElement;
 
     return {
       present: true,
       // `position: fixed` is the tab bar's defining property, not decoration:
       // it is what keeps the bar under the thumb while the page scrolls.
       position: getComputedStyle(nav).position,
+      height: nav.getBoundingClientRect().height,
+      shellPaddingBottom: shell === null ? null : parseFloat(getComputedStyle(shell).paddingBottom),
       labels: buttons.map((button) => button.textContent?.trim() ?? ""),
       heights: buttons.map((button) => button.getBoundingClientRect().height),
       widths: buttons.map((button) => button.getBoundingClientRect().width),
+      // The declaration, not only the outcome: `align-items: stretch` on a
+      // 56px bar makes every button 48px tall whether or not it asks to be, so
+      // measuring the box alone would not notice the floor being deleted.
+      minHeights: buttons.map((button) => parseFloat(getComputedStyle(button).minHeight)),
     };
   });
 }
@@ -92,6 +102,7 @@ function readPage() {
     heading: document.querySelector("h1")?.textContent ?? "",
     body: document.body.textContent ?? "",
     scrollWidth: document.documentElement.scrollWidth,
+    scrollHeight: document.documentElement.scrollHeight,
     clientWidth: document.documentElement.clientWidth,
     approvals: [...document.querySelectorAll('li[data-entry="approval"]')].map(
       (item) => item.textContent?.trim() ?? "",
@@ -220,7 +231,23 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
           height >= MIN_TARGET,
           `"${bar.labels[index]}" is ${String(Math.round(height))}px tall, under the ${String(MIN_TARGET)}px touch floor`,
         );
+        assert.ok(
+          bar.minHeights[index] >= MIN_TARGET,
+          `"${bar.labels[index]}" declares min-height ${String(bar.minHeights[index])}px; it only measures ${String(Math.round(height))}px because the bar stretches it, which stops being true the moment the bar's own height changes`,
+        );
       }
+
+      // The bar's height and the padding the page reserves for it are one
+      // number in two files. There is no slack in it — the bar is 4 + 44 + 4 =
+      // 52 clamped up to 56, and the shell pads by 56 — so raising either the
+      // touch floor or `spacing.xs` slides content under the bar with nothing
+      // failing unless this is asserted.
+      assert.equal(bar.height, TAB_BAR_HEIGHT, "the bar is not the height it is exported as");
+      assert.equal(
+        bar.shellPaddingBottom,
+        TAB_BAR_HEIGHT,
+        "the page reserves a different amount of room than the bar occupies",
+      );
 
       // A bar whose own buttons overflow it is the horizontal scroll this
       // layout exists to remove, moved one element inward.
@@ -235,6 +262,14 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       assert.ok(
         chat.scrollWidth <= PHONE.width,
         `the page scrolls sideways: scrollWidth ${String(chat.scrollWidth)} at ${String(PHONE.width)}px`,
+      );
+
+      // And not vertically either. Without `body { margin: 0 }` the UA's 8px
+      // makes a `height: 100vh` shell overflow by 16px on every viewport, which
+      // reads on a phone as a shell that rubber-bands for no reason.
+      assert.ok(
+        chat.scrollHeight <= PHONE.height,
+        `the page scrolls vertically past the shell: scrollHeight ${String(chat.scrollHeight)} at ${String(PHONE.height)}px`,
       );
     },
   );

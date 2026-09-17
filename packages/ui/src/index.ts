@@ -4,7 +4,7 @@ export * from "./primitives/rail-items.js";
 export * from "./primitives/tab-items.js";
 export { Rail } from "./primitives/Rail.js";
 export type { RailProps } from "./primitives/Rail.js";
-export { TabBar, TAB_BAR_HEIGHT } from "./primitives/TabBar.js";
+export { TabBar, TAB_BAR_HEIGHT, TAB_TARGET } from "./primitives/TabBar.js";
 export type { TabBarProps } from "./primitives/TabBar.js";
 export { SurfaceFrame } from "./surfaces/SurfaceFrame.js";
 export type { SurfaceFrameProps } from "./surfaces/SurfaceFrame.js";
