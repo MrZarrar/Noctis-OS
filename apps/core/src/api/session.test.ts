@@ -6,7 +6,7 @@ import { openDatabase } from "../db/connection.js";
 import { migrate } from "../db/migrate.js";
 import { MIGRATIONS_DIRECTORY } from "../server.js";
 
-import { createSession, revokeSession, verifySession } from "./session.js";
+import { createSession, hashSecret, refreshCsrf, revokeSession, verifySession } from "./session.js";
 
 const HOUR_MS = 3_600_000;
 
@@ -76,6 +76,36 @@ describe("sessions", () => {
     expect(revokeSession(deps(0, db), cookie)).toBe(true);
     expect(verifySession(deps(0, db), cookie)).toBeUndefined();
     expect(revokeSession(deps(0, db), cookie)).toBe(false);
+  });
+
+  it("re-mints a csrf value for a session that already exists, without touching its cookie", () => {
+    const created = createSession(deps(0, db), 1);
+    const cookie = `noctis_session=${created.cookieValue}`;
+
+    const minted = refreshCsrf(deps(0, db), created.id);
+
+    expect(minted).not.toBe(created.csrf);
+    // The cookie is untouched: the browser keeps the credential it already has.
+    expect(verifySession(deps(0, db), cookie)?.id).toBe(created.id);
+    expect(verifySession(deps(0, db), cookie)?.csrfHash).toBe(hashSecret(minted));
+  });
+
+  it("stops the previous csrf value working, so a leaked one is not live forever", () => {
+    const created = createSession(deps(0, db), 1);
+
+    refreshCsrf(deps(0, db), created.id);
+
+    const stored = verifySession(deps(0, db), `noctis_session=${created.cookieValue}`);
+
+    expect(stored?.csrfHash).not.toBe(hashSecret(created.csrf));
+  });
+
+  it("never stores a re-minted csrf value in plaintext either", () => {
+    const created = createSession(deps(0, db), 1);
+    const minted = refreshCsrf(deps(0, db), created.id);
+    const row = db.prepare("SELECT * FROM sessions").get() as Record<string, string>;
+
+    expect(JSON.stringify(row)).not.toContain(minted);
   });
 
   it("deletes expired rows on the way past, so the table cannot grow without bound", () => {

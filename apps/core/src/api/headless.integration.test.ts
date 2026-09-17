@@ -21,6 +21,7 @@ import {
   PUSH_KEY_PATH,
   PUSH_SUBSCRIBE_PATH,
   PUSH_UNSUBSCRIBE_PATH,
+  SESSION_PATH,
 } from "./http.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
@@ -1607,6 +1608,87 @@ describe("the session realm", () => {
     expect(loggedOut.status).toBe(200);
 
     expect((await fetch(`${core.base}/objectives`, { headers: { cookie } })).status).toBe(401);
+  });
+
+  it("re-mints a csrf value from a cookie alone, so a reload does not ask for the token again", async () => {
+    const core = await startTestCore();
+    const first = await session(core);
+
+    // Exactly what a page does on boot: the cookie, and nothing else. No CSRF
+    // value — the reload is what destroyed it.
+    const resumed = await fetch(`${core.base}${SESSION_PATH}`, {
+      headers: { cookie: first.cookie },
+    });
+
+    expect(resumed.status).toBe(200);
+
+    const { csrf } = (await resumed.json()) as { csrf: string };
+
+    expect(csrf).not.toBe(first.csrf);
+    // A re-mint is not a new session: the browser keeps the cookie it had.
+    expect(resumed.headers.get("set-cookie")).toBe(null);
+
+    const body = (key: string): string =>
+      JSON.stringify({
+        idempotencyKey: newKey(key),
+        title: "After the reload",
+        intent: "The resumed session can still write",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      });
+
+    const withNew = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie: first.cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: body("resumed"),
+    });
+
+    expect(withNew.status).toBe(200);
+
+    // And the value it replaced is dead. A re-mint that left the old one live
+    // would turn a single leak of it into a permanent one.
+    const withOld = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: {
+        cookie: first.cookie,
+        "content-type": "application/json",
+        "x-noctis-csrf": first.csrf,
+      },
+      body: body("stale"),
+    });
+
+    expect(withOld.status).toBe(403);
+  });
+
+  it("refuses to resume for a bearer caller, which has no session to re-mint", async () => {
+    const core = await startTestCore();
+
+    const response = await fetch(`${core.base}${SESSION_PATH}`, { headers: authorized() });
+
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "session_required",
+    );
+  });
+
+  it("answers 401 with no cookie at all, which is what sends a page to the login screen", async () => {
+    const core = await startTestCore();
+
+    expect((await fetch(`${core.base}${SESSION_PATH}`)).status).toBe(401);
+  });
+
+  it("stops resuming a session that was logged out", async () => {
+    const core = await startTestCore();
+    const { cookie, csrf } = await session(core);
+
+    await fetch(`${core.base}${LOGOUT_PATH}`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: "{}",
+    });
+
+    expect((await fetch(`${core.base}${SESSION_PATH}`, { headers: { cookie } })).status).toBe(401);
   });
 
   it("leaves the bearer realm alone: a token still needs no csrf header, even carrying a cookie", async () => {

@@ -69,6 +69,33 @@ export function createSession(deps: SessionDeps, ttlHours: number): CreatedSessi
   return { id, cookieValue, csrf };
 }
 
+/**
+ * Mints a new CSRF value for a session that already exists, and forgets the old
+ * one.
+ *
+ * This is what makes "log in once" true. The cookie lives thirty days in the
+ * browser; the CSRF value lives in one page's memory, and a reload, an iOS tab
+ * eviction, a Home Screen cold start or a notification tap all destroy it. With
+ * no way to re-mint it, every one of those sent the owner back to the token
+ * prompt while a perfectly good session sat in the cookie jar.
+ *
+ * The old value stops working, rather than both being accepted: a re-mint that
+ * left the previous value live would turn a leak of it into a permanent one.
+ *
+ * ponytail: a direct UPDATE, no command, no event, no idempotency claim — the
+ * same reasoning `createSession` writes down. A replayed re-mint must produce a
+ * new secret, which is the opposite of what an idempotency key promises.
+ */
+export function refreshCsrf(deps: SessionDeps, sessionId: string): string {
+  const csrf = randomBytes(SECRET_BYTES).toString("base64url");
+
+  deps.db
+    .prepare("UPDATE sessions SET csrf_hash = ? WHERE id = ?")
+    .run(hashSecret(csrf), sessionId);
+
+  return csrf;
+}
+
 function presentedCookie(cookieHeader: string | undefined): string | undefined {
   const value = parseCookies(cookieHeader).get(SESSION_COOKIE);
 

@@ -134,7 +134,13 @@ import type { AuthorizeResult } from "./auth.js";
 import { authorize, isAuthorized, isOriginAllowed } from "./auth.js";
 import { serializeCookie } from "./cookie.js";
 import type { SessionDeps } from "./session.js";
-import { SESSION_COOKIE, createSession, revokeSession, verifySession } from "./session.js";
+import {
+  SESSION_COOKIE,
+  createSession,
+  refreshCsrf,
+  revokeSession,
+  verifySession,
+} from "./session.js";
 import { openEventStream } from "./sse.js";
 import { isApiPath, serveStatic } from "./static.js";
 
@@ -150,6 +156,8 @@ export const PAIR_PATH = "/node/pair";
 /** Exchanges the core token for a cookie. The other path that runs before the gate. */
 export const LOGIN_PATH = "/session/login";
 export const LOGOUT_PATH = "/session/logout";
+/** Re-mints the CSRF value from a cookie the browser still holds. Behind the gate. */
+export const SESSION_PATH = "/session";
 
 /** Web push. Behind the credential gate like everything else. */
 export const PUSH_KEY_PATH = "/push/key";
@@ -1198,6 +1206,33 @@ export async function handleRequest(
         },
         correlationId,
       );
+      return;
+    }
+
+    // Resuming a session the browser still holds. The cookie outlives the page
+    // by thirty days; the CSRF value dies with the JS heap on every reload, tab
+    // eviction, Home Screen cold start and notification tap — so without this
+    // the owner meets the token prompt again with a valid session in hand.
+    //
+    // Safe as a GET: `SameSite=Strict` keeps the cookie off every cross-site
+    // request, so a foreign page cannot make this call carry a credential at
+    // all, and the core emits no CORS headers, so it could not read the body if
+    // it did. Session-only, because a bearer caller has no session to re-mint.
+    if (req.method === "GET" && url.pathname === SESSION_PATH) {
+      if (authorized?.kind !== "session") {
+        send(
+          res,
+          403,
+          errorBody(
+            "session_required",
+            "Only a browser session can be resumed. A bearer token needs no csrf value.",
+          ),
+          correlationId,
+        );
+        return;
+      }
+
+      send(res, 200, { csrf: refreshCsrf(sessionDeps(deps), authorized.id) }, correlationId);
       return;
     }
 
