@@ -102,10 +102,22 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
 
     // A production bundle, built in a shell with no `VITE_CORE_TOKEN` — which
     // `vite.config.ts` refuses to build with, because the core serves this
-    // directory unauthenticated. The build is skipped when there is already a
-    // page there, because it is the slowest thing in the suite;
-    // `NOCTIS_E2E_REBUILD` forces it.
-    if (process.env.NOCTIS_E2E_REBUILD !== undefined || !existsSync(join(DIST, "index.html"))) {
+    // directory unauthenticated.
+    //
+    // Built every run, and the skip is opt-in rather than automatic. Skipping
+    // by default would mean anyone who had run `build:web` once — for Tauri, or
+    // for `test:desktop` — and then edited `Login.tsx` or `SessionTransport.ts`
+    // would have this suite serve the *old* bundle and pass. That is a suite
+    // that cannot fail, on the only proof the tokenless path has.
+    //
+    // ponytail: the ceiling on `NOCTIS_E2E_SKIP_BUILD` is exactly that stale
+    // bundle, so it is for someone who just built and knows it. The upgrade
+    // path is hashing the sources into the decision, which is a build system,
+    // which Vite already is — so the honest default is simply to run it.
+    const fresh =
+      process.env.NOCTIS_E2E_SKIP_BUILD !== undefined && existsSync(join(DIST, "index.html"));
+
+    if (!fresh) {
       const env = { ...process.env };
 
       delete env.VITE_CORE_TOKEN;
@@ -342,11 +354,16 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
     // But only outside `API_SEGMENTS`. `/missions` is an API collection, so it
     // is claimed by the credential gate and answers 401 rather than the shell.
     // Harmless today — the app has no client-side router and every URL but
-    // `/` is unused — and a trap the day one is added, because six of the
-    // eight rail destinations share a name with a top-level collection.
+    // `/` is unused — and a trap the day one is added, because four of the
+    // eight rail destinations (Missions, Artifacts, Vault, Nodes) share a name
+    // with a top-level collection. Recorded in `static.ts` beside the list.
     assert.equal((await fetch(`${CORE_URL}/missions`)).status, 401);
     assert.equal((await fetch(`${CORE_URL}/assets/not-here.js`)).status, 404);
-    assert.equal((await fetch(`${CORE_URL}/../package.json`)).status, 404);
+
+    // Escaped, not spelled: `fetch` normalises a literal `/../` away before the
+    // request leaves, so only the encoded form actually asks the core to
+    // resolve a traversal. (The exhaustive cases live in `static.test.ts`.)
+    assert.equal((await fetch(`${CORE_URL}/%2e%2e%2fpackage.json`)).status, 404);
 
     // Static must not have swallowed the API: these still answer as routes,
     // and still require a credential.
