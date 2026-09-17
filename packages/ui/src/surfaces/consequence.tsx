@@ -15,6 +15,10 @@ import { corner, material, semantic, spacing, typography } from "../tokens/index
 const listReset = { listStyle: "none", margin: 0, padding: 0 } as const;
 
 const buttonStyle = {
+  // A 25px target for the one control that agrees to an irreversible
+  // consequence is the wrong place to be short of the touch floor. Shared by
+  // Confirm, Decline, and Execute now, because they are equally answers.
+  minHeight: 44,
   background: material.fillElevated,
   color: "inherit",
   border: `1px solid ${material.border}`,

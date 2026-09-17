@@ -1,11 +1,22 @@
 import type { ModelRef } from "@noctis/contracts";
-import { Rail, depth, typography } from "@noctis/ui";
+import {
+  Rail,
+  TAB_BAR_HEIGHT,
+  TabBar,
+  corner,
+  depth,
+  material,
+  spacing,
+  tabsFor,
+  typography,
+} from "@noctis/ui";
 import type { RailItem } from "@noctis/ui";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
+import { useIsMobile } from "./layout/useIsMobile.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Chat } from "./pages/Chat.js";
 import { Command } from "./pages/Command.js";
@@ -56,6 +67,12 @@ export function App(): JSX.Element {
 function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX.Element {
   const [active, setActive] = useState<RailItem>("Command");
   const [handoff, setHandoff] = useState<VaultHandoff>();
+  const isMobile = useIsMobile();
+  // No `open` state beside it: a `<dialog>` already knows whether it is open,
+  // and `showModal` gives the focus trap and Escape-to-close that a hand-rolled
+  // sheet would otherwise need a library for.
+  const moreRef = useRef<HTMLDialogElement>(null);
+  const { overflow } = tabsFor(active);
 
   // Identity and conversation live here, above Command and Chat, so Presence's
   // prompt and Chat's history are one thread with one subscription (0.12).
@@ -73,26 +90,38 @@ function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX
     setActive("Chat");
   };
 
+  const select = (item: RailItem): void => {
+    if (item !== "Vault") {
+      setHandoff(undefined);
+    }
+
+    setActive(item);
+  };
+
   return (
     <div
       style={{
         display: "flex",
+        // Side by side where there is width for it, stacked where there is
+        // not: the rail's 72px column is 18% of a 400px phone.
+        flexDirection: isMobile ? "column" : "row",
+        boxSizing: "border-box",
         height: "100vh",
+        // The bar is fixed, so it is out of flow and would otherwise sit on top
+        // of the last row of whatever page is showing. The inset is in the sum
+        // because the bar pads by it too — without it a phone with a home
+        // indicator covers the last 34px of content.
+        ...(isMobile
+          ? {
+              paddingBottom: `calc(${String(TAB_BAR_HEIGHT)}px + env(safe-area-inset-bottom))`,
+            }
+          : {}),
         background: depth.floor,
         color: typography.color.primary,
         fontFamily: typography.family,
       }}
     >
-      <Rail
-        active={active}
-        onSelect={(item) => {
-          if (item !== "Vault") {
-            setHandoff(undefined);
-          }
-
-          setActive(item);
-        }}
-      />
+      {!isMobile && <Rail active={active} onSelect={select} />}
 
       {/* Command stays mounted while the Vault is showing, so returning to it
           finds the composition it had rather than a fresh one. */}
@@ -146,9 +175,78 @@ function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX
               justifyContent: "center",
             }}
           >
-            {active} is not built yet — later phases add it behind this same rail.
+            {active} is not built yet — later phases add it behind this same navigation.
           </section>
         )}
+
+      {/* After the pages in source order, never before them: a bottom bar that
+          comes first is the first thing a screen reader announces on every
+          page it visits. Fixed positioning puts it back at the bottom. */}
+      {isMobile && (
+        <>
+          <TabBar
+            active={active}
+            onSelect={select}
+            onMore={() => {
+              moreRef.current?.showModal();
+            }}
+          />
+
+          <dialog
+            ref={moreRef}
+            aria-label="More"
+            style={{
+              margin: "auto auto 0",
+              width: "min(100%, 480px)",
+              border: `1px solid ${material.border}`,
+              borderRadius: `${String(corner.lg)}px ${String(corner.lg)}px 0 0`,
+              background: depth.layers[1],
+              color: typography.color.primary,
+              fontFamily: typography.family,
+              padding: spacing.md,
+              paddingBottom: `calc(${String(spacing.md)}px + env(safe-area-inset-bottom))`,
+            }}
+          >
+            <div style={{ display: "grid", gap: spacing.xs }}>
+              {overflow.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => {
+                    select(item);
+                    moreRef.current?.close();
+                  }}
+                  style={moreButtonStyle}
+                >
+                  {item}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => {
+                  moreRef.current?.close();
+                }}
+                style={moreButtonStyle}
+              >
+                Close
+              </button>
+            </div>
+          </dialog>
+        </>
+      )}
     </div>
   );
 }
+
+const moreButtonStyle = {
+  minHeight: 44,
+  font: `${String(typography.scale.sm)}px ${typography.family}`,
+  textAlign: "left",
+  color: "inherit",
+  background: material.fill,
+  border: `1px solid ${material.border}`,
+  borderRadius: corner.md,
+  padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
+  cursor: "pointer",
+} as const;

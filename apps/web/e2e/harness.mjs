@@ -1,10 +1,15 @@
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Shared E2E plumbing: starting the core and the dev server, waiting for them,
- * and the Tab-key assertion. Extracted when the Vault suite needed the same
- * four helpers the workbench suite already had — two copies of a process
- * teardown that is this fiddly on Windows is one copy too many.
+ * the Tab-key assertion, and the paired fake node. Extracted when the Vault
+ * suite needed the same four helpers the workbench suite already had — two
+ * copies of a process teardown that is this fiddly on Windows is one copy too
+ * many, and the same went for the node pairing once the phone suite needed a
+ * node that answers.
  */
 
 export const TOKEN = "0123456789abcdef0123456789abcdef";
@@ -155,4 +160,126 @@ export async function waitFor(read, predicate, label, timeoutMs = 20_000) {
 
     await new Promise((resolveTimer) => setTimeout(resolveTimer, 100));
   }
+}
+
+/** Runs a one-shot command to completion and returns what it printed. */
+export function runOnce(command, args, options) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolveRun(output);
+      } else {
+        reject(new Error(`${command} ${args.join(" ")} exited ${String(code)}: ${output}`));
+      }
+    });
+  });
+}
+
+/** A bearer-authenticated command against a core, for seeding a suite's fixtures. */
+export async function coreCommand(coreUrl, name, body) {
+  const response = await fetch(`${coreUrl}/commands/${name}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  return { status: response.status, body: await response.json() };
+}
+
+/** A bearer-authenticated read, the mirror of `coreCommand`. */
+export async function coreRead(coreUrl, path) {
+  const response = await fetch(`${coreUrl}${path}`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+
+  return { status: response.status, body: await response.json() };
+}
+
+/**
+ * Pairs a node the way an operator does — code from the core, `pair` on the
+ * agent's CLI — then grants it the runtime with one writable root and starts it
+ * with the scripted runtime behind the codex slot.
+ *
+ * Shared rather than copied: two suites now need a node that answers, and the
+ * hello/probe assertion below is the one that caught `main.js` sending the
+ * machine's real providers instead of the fake probe.
+ */
+export async function startFakeNode({
+  coreUrl,
+  repoRoot,
+  agentMain,
+  nodeHome,
+  scratch,
+  keyPrefix,
+}) {
+  const issued = await coreCommand(coreUrl, "node.issue_pairing_code", {
+    idempotencyKey: `${keyPrefix}-pairing`,
+    hostId: "e2e",
+  });
+
+  assert.equal(issued.status, 200, JSON.stringify(issued.body));
+
+  const agentEnv = { ...process.env, NOCTIS_NODE_HOME: nodeHome, NOCTIS_RUNTIME: "fake" };
+
+  await runOnce(
+    process.execPath,
+    [agentMain, "pair", "--core", coreUrl, "--code", issued.body.code, "--host", "e2e"],
+    { cwd: repoRoot, env: agentEnv },
+  );
+
+  const credential = JSON.parse(readFileSync(join(nodeHome, "node.json"), "utf8"));
+
+  const granted = await coreCommand(coreUrl, "node.grant_capability", {
+    idempotencyKey: `${keyPrefix}-grant`,
+    nodeId: credential.nodeId,
+    capability: "runtime.turn",
+    constraints: {
+      providers: ["codex"],
+      roots: [{ grantId: "scratch", path: scratch, mode: "write" }],
+    },
+  });
+
+  assert.equal(granted.status, 200, JSON.stringify(granted.body));
+
+  const agent = startProcess(process.execPath, [agentMain], { cwd: repoRoot, env: agentEnv });
+
+  const online = await waitFor(
+    () => coreRead(coreUrl, `/nodes/${credential.nodeId}`),
+    (node) => node.status === 200 && node.body.status === "online" && node.body.connected,
+    `the fake node never came online; it last said: ${agent.output.join("")}`,
+    30_000,
+  );
+
+  // The router only sends a turn to a node whose `hello` offered the model
+  // (ADR-0023), so the fake runtime's probe has to have travelled with it.
+  const codex = online.body.providers.find((probe) => probe.providerId === "codex");
+
+  assert.ok(
+    codex?.available === true && codex.models.some((model) => model.model === "fake-model"),
+    `the node agent did not report the fake runtime's probe in hello; with NOCTIS_RUNTIME=fake ` +
+      `main.js must send FAKE_PROBE, not the machine's installed providers. It reported: ` +
+      JSON.stringify(online.body.providers),
+  );
+
+  // 0.3: the default is Settings data. Set through the API here; the Settings
+  // control that writes it is the same command.
+  const defaulted = await coreCommand(coreUrl, "identity.set_default_model", {
+    idempotencyKey: `${keyPrefix}-default-model`,
+    identityId: "vesper",
+    model: { providerId: "codex", model: "fake-model" },
+  });
+
+  assert.equal(defaulted.status, 200, JSON.stringify(defaulted.body));
+
+  return { agent, nodeId: credential.nodeId };
 }

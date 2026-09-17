@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -11,6 +10,7 @@ import { chromium } from "playwright";
 import {
   TOKEN,
   launchOptions,
+  startFakeNode,
   startProcess,
   stopProcess,
   tabTo,
@@ -54,103 +54,6 @@ let page;
 let databaseDirectory;
 let nodeHome;
 let scratch;
-
-async function coreCommand(name, body) {
-  const response = await fetch(`${CORE_URL}/commands/${name}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  return { status: response.status, body: await response.json() };
-}
-
-async function coreRead(path) {
-  const response = await fetch(`${CORE_URL}${path}`, {
-    headers: { authorization: `Bearer ${TOKEN}` },
-  });
-
-  return { status: response.status, body: await response.json() };
-}
-
-/** Runs a one-shot command to completion and returns what it printed. */
-function runOnce(command, args, options) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-
-    child.stdout.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolveRun(output);
-      } else {
-        reject(new Error(`${command} ${args.join(" ")} exited ${String(code)}: ${output}`));
-      }
-    });
-  });
-}
-
-/**
- * Pairs a node the way an operator does — code from the core, `pair` on the
- * agent's CLI — then grants it the runtime with one writable root and starts it
- * with the scripted runtime behind the codex slot.
- */
-async function startFakeNode() {
-  const issued = await coreCommand("node.issue_pairing_code", {
-    idempotencyKey: "e2e-chat-pairing",
-    hostId: "e2e",
-  });
-
-  assert.equal(issued.status, 200, JSON.stringify(issued.body));
-
-  const agentEnv = { ...process.env, NOCTIS_NODE_HOME: nodeHome, NOCTIS_RUNTIME: "fake" };
-
-  await runOnce(
-    process.execPath,
-    [AGENT_MAIN, "pair", "--core", CORE_URL, "--code", issued.body.code, "--host", "e2e"],
-    { cwd: REPO_ROOT, env: agentEnv },
-  );
-
-  const credential = JSON.parse(readFileSync(join(nodeHome, "node.json"), "utf8"));
-
-  const granted = await coreCommand("node.grant_capability", {
-    idempotencyKey: "e2e-chat-grant",
-    nodeId: credential.nodeId,
-    capability: "runtime.turn",
-    constraints: {
-      providers: ["codex"],
-      roots: [{ grantId: "scratch", path: scratch, mode: "write" }],
-    },
-  });
-
-  assert.equal(granted.status, 200, JSON.stringify(granted.body));
-
-  agent = startProcess(process.execPath, [AGENT_MAIN], { cwd: REPO_ROOT, env: agentEnv });
-
-  const online = await waitFor(
-    () => coreRead(`/nodes/${credential.nodeId}`),
-    (node) => node.status === 200 && node.body.status === "online" && node.body.connected,
-    `the fake node never came online; it last said: ${agent.output.join("")}`,
-    30_000,
-  );
-
-  // The router only sends a turn to a node whose `hello` offered the model
-  // (ADR-0023), so the fake runtime's probe has to have travelled with it.
-  const codex = online.body.providers.find((probe) => probe.providerId === "codex");
-
-  assert.ok(
-    codex?.available === true && codex.models.some((model) => model.model === "fake-model"),
-    `the node agent did not report the fake runtime's probe in hello; with NOCTIS_RUNTIME=fake ` +
-      `main.js must send FAKE_PROBE, not the machine's installed providers. It reported: ` +
-      JSON.stringify(online.body.providers),
-  );
-}
 
 /** Reloads and walks to Chat with the keyboard. */
 async function openChat() {
@@ -247,17 +150,14 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
     );
 
     await waitForHttp(`${CORE_URL}/health`, "the core", core);
-    await startFakeNode();
-
-    // 0.3: the default is Settings data. Set through the API here; the Settings
-    // control that writes it is the same command.
-    const defaulted = await coreCommand("identity.set_default_model", {
-      idempotencyKey: "e2e-chat-default-model",
-      identityId: "vesper",
-      model: { providerId: "codex", model: "fake-model" },
-    });
-
-    assert.equal(defaulted.status, 200, JSON.stringify(defaulted.body));
+    ({ agent } = await startFakeNode({
+      coreUrl: CORE_URL,
+      repoRoot: REPO_ROOT,
+      agentMain: AGENT_MAIN,
+      nodeHome,
+      scratch,
+      keyPrefix: "e2e-chat",
+    }));
 
     await waitForHttp(WEB_URL, "the web app", web);
 

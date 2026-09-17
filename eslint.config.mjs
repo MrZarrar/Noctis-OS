@@ -60,6 +60,7 @@ export default tseslint.config(
         setTimeout: "readonly",
         fetch: "readonly",
         document: "readonly",
+        getComputedStyle: "readonly",
       },
     },
   },
