@@ -104,8 +104,21 @@ describe("pushFor", () => {
     expect(pushFor(malformed as OrchestrationEvent)).toBeUndefined();
   });
 
-  it("tags by stream so a second push about the same thing replaces the first", () => {
+  // What replacement a tag buys is the browser's business and unreachable from
+  // here, so this asserts only what it can see: the tag is the stream id.
+  //
+  // And the coalescing is worth being exact about, because the two events
+  // differ. For `identity.turn_completed.v1` the stream is the thread, so a
+  // second failed turn in the same thread does replace the first notification.
+  // For `authority.decision_recorded.v1` the stream is a fresh per-request id
+  // (`authority/service.ts`: `streamId: id`), so two pending approvals never
+  // share a tag and neither ever replaces the other — which is the behaviour
+  // you want, since they are two different decisions to make.
+  it("tags by stream id", () => {
     expect(pushFor(decision("require_confirmation"))?.tag).toBe(
+      "00000000-0000-4000-8000-0000000000aa",
+    );
+    expect(pushFor(event("identity.turn_completed.v1", { status: "failed" }))?.tag).toBe(
       "00000000-0000-4000-8000-0000000000aa",
     );
   });

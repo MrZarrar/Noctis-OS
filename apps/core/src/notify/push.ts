@@ -58,11 +58,43 @@ export interface NotifierDeps {
   logger: Logger;
 }
 
-/** The body a browser POSTs to `/push/subscribe`, exactly as `PushSubscription.toJSON()` writes it. */
+/**
+ * Base64url, padded or not: `PushSubscription.toJSON()` is unpadded in every
+ * browser that ships it, but the padded form decodes to the same bytes and
+ * refusing it would be a rule about spelling rather than about keys.
+ */
+const BASE64URL = /^[A-Za-z0-9_-]+=*$/;
+
+/** True when `value` is base64url that decodes to exactly `bytes` bytes. */
+function decodesTo(value: string, bytes: number): boolean {
+  // The charset first: `Buffer.from(…, "base64url")` silently drops what it
+  // cannot read, so garbage with a few valid characters decodes to whatever
+  // length it likes.
+  return BASE64URL.test(value) && Buffer.from(value, "base64url").length === bytes;
+}
+
+/**
+ * The body a browser POSTs to `/push/subscribe`, exactly as
+ * `PushSubscription.toJSON()` writes it.
+ *
+ * The key material is checked for shape, not merely for presence. A row with
+ * unusable keys is a row nothing can ever prune: `web-push` refuses it before
+ * it reaches the network, so it rejects with no `statusCode`, the sender
+ * rethrows, `notify` logs a warning and keeps the row — forever, once per
+ * event. The lengths are the P-256 point (65 bytes) and the auth secret (16),
+ * both fixed by RFC 8291.
+ */
 export const PushSubscriptionSchema = z
   .object({
-    endpoint: z.url(),
-    keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }).strict(),
+    // `https:` specifically: a push service is a public HTTPS endpoint, and an
+    // `http:` or `file:` endpoint is something that was never going to deliver.
+    endpoint: z.url({ protocol: /^https$/ }),
+    keys: z
+      .object({
+        p256dh: z.string().refine((value) => decodesTo(value, 65), "not a P-256 public key"),
+        auth: z.string().refine((value) => decodesTo(value, 16), "not a 16-byte auth secret"),
+      })
+      .strict(),
   })
   .strict();
 

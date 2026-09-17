@@ -150,9 +150,12 @@ describe("loadCoreConfig", () => {
 });
 
 describe("loadCoreConfig: web push", () => {
+  // Shape-valid and worthless: the right decoded lengths (65 and 32 bytes) in
+  // url-safe base64, and all zeroes. A real pair in a repository would be a
+  // credential in a repository, whatever its comment said.
   const VAPID = {
-    NOCTIS_VAPID_PUBLIC_KEY: "BPublicKey",
-    NOCTIS_VAPID_PRIVATE_KEY: "PrivateKey",
+    NOCTIS_VAPID_PUBLIC_KEY: Buffer.alloc(65).toString("base64url"),
+    NOCTIS_VAPID_PRIVATE_KEY: Buffer.alloc(32).toString("base64url"),
     NOCTIS_VAPID_SUBJECT: "mailto:owner@example.com",
   };
 
@@ -162,8 +165,8 @@ describe("loadCoreConfig: web push", () => {
 
   it("reads all three together", () => {
     expect(loadCoreConfig(env(VAPID)).vapid).toEqual({
-      publicKey: "BPublicKey",
-      privateKey: "PrivateKey",
+      publicKey: VAPID.NOCTIS_VAPID_PUBLIC_KEY,
+      privateKey: VAPID.NOCTIS_VAPID_PRIVATE_KEY,
       subject: "mailto:owner@example.com",
     });
   });
@@ -185,7 +188,40 @@ describe("loadCoreConfig: web push", () => {
     ).toThrow(/mailto:/);
   });
 
-  it("never repeats the private key in the refusal, because an error message gets pasted around", () => {
+  it.each([
+    ["a truncated public key", { ...VAPID, NOCTIS_VAPID_PUBLIC_KEY: "BShortKey" }],
+    ["a truncated private key", { ...VAPID, NOCTIS_VAPID_PRIVATE_KEY: "short" }],
+    [
+      "a padded key, which no VAPID tool prints",
+      { ...VAPID, NOCTIS_VAPID_PUBLIC_KEY: `${Buffer.alloc(65).toString("base64")}` },
+    ],
+    [
+      "a key with a character base64url has no room for",
+      { ...VAPID, NOCTIS_VAPID_PRIVATE_KEY: `${Buffer.alloc(31).toString("base64url")}!!` },
+    ],
+  ])(
+    "refuses %s at config load, so it fails like every other misconfiguration",
+    (_case, overrides) => {
+      // Without this it reaches `setVapidDetails` inside `startCore` and throws a
+      // raw Error from a library instead. Both stop the process; only one of
+      // them is recognisable next to the rest of the config refusals.
+      expect(() => loadCoreConfig(env(overrides))).toThrow(ConfigurationError);
+      expect(() => loadCoreConfig(env(overrides))).toThrow(/VAPID key/);
+    },
+  );
+
+  it("never repeats a key in the refusal, because an error message gets pasted around", () => {
+    const secret = Buffer.from("super-secret-private-key-that-is-too-short").toString("base64url");
+
+    try {
+      loadCoreConfig(env({ ...VAPID, NOCTIS_VAPID_PRIVATE_KEY: secret }));
+      expect.unreachable("expected a ConfigurationError");
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+  });
+
+  it("never repeats the private key when only it is set, either", () => {
     try {
       loadCoreConfig(env({ NOCTIS_VAPID_PRIVATE_KEY: "super-secret-private-key" }));
       expect.unreachable("expected a ConfigurationError");

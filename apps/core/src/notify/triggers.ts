@@ -29,7 +29,13 @@ export interface PushPayload {
    * navigates to whatever this says.
    */
   url: string;
-  /** A second push about the same request or thread replaces the first. */
+  /**
+   * The stream the event belongs to. For a turn that is the thread, so a second
+   * failure in the same conversation replaces the first notification rather
+   * than stacking. For an authority decision it is a fresh per-request id, so
+   * two waiting approvals never collapse into one — they are two different
+   * decisions to make.
+   */
   tag: string;
 }
 
@@ -51,11 +57,29 @@ function text(value: unknown): string | undefined {
 }
 
 /**
- * The payloads are read field by field rather than parsed through a strict
- * schema. A `.strict()` parse here would have to re-declare every optional
- * field each emitter may add — `askId`, `objectiveId`, `missionId`, `jobId` —
- * and the day one more is added the parse fails and the phone silently stops
- * ringing. A missing field degrades the wording; it never suppresses the push.
+ * ponytail: the payloads are read field by field, not parsed through a schema,
+ * which is a deliberate exception to "every Zod object schema ends in
+ * `.strict()`".
+ *
+ * The ceiling: nothing here proves a payload's shape, so a field that changes
+ * type produces wrong wording on a lock screen rather than a failed parse.
+ *
+ * Why the exception, and it is narrow. This is not a trust boundary — the
+ * broker is an in-process `Set` fed by this same process two stack frames
+ * earlier, not a socket — and a `.strict()` parse would turn the rule's own
+ * failure mode into the thing the rule exists to prevent.
+ * `authority.decision_recorded.v1` already spreads four optional fields
+ * conditionally (`objectiveId`, `missionId`, `nodeJobId`, `askId`), and the
+ * first emitter to add a fifth would silence the phone with no error, no log
+ * line, and no failing test — a strict parse of a payload you do not own fails
+ * closed, and "closed" here means nobody is told their approval is waiting.
+ *
+ * Upgrade path: a deliberately loose schema declaring only the five fields
+ * actually read (`outcome`, `capability`, `target`, `status`, `failureReason`)
+ * and passing everything else through — which is exactly what the project's
+ * blanket `.strict()` rule currently forbids. Recording the tension rather
+ * than pretending it is absent: the day that rule grows an exception for
+ * payloads a module consumes but does not define, this is its first customer.
  */
 export function pushFor(event: OrchestrationEvent): PushPayload | undefined {
   const payload = record(event.payload);

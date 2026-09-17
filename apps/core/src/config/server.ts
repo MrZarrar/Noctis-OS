@@ -182,6 +182,30 @@ function parseWebRoot(
  * private key is a credential, and an error message is a place text goes to be
  * copied into a terminal, a screenshot, and an issue.
  */
+/**
+ * A P-256 key pair, url-safe base64 and unpadded, as every VAPID tool prints it
+ * and as `web-push` requires: 65 bytes for the public point, 32 for the scalar.
+ *
+ * Checked here rather than left to `setVapidDetails` so a truncated paste looks
+ * like every other misconfiguration — a `ConfigurationError` from config load —
+ * instead of a raw `Error` thrown from inside a library halfway through
+ * `startCore`. Both stop the process; only one of them is recognisable at 7am.
+ *
+ * The name is named, never the value.
+ */
+const URL_SAFE_BASE64 = /^[A-Za-z0-9_-]+$/;
+
+function assertVapidKey(name: string, value: string, bytes: number): void {
+  // `Buffer.from(…, "base64url")` silently drops anything it cannot read, so the
+  // charset is checked first — otherwise a key with a stray character decodes to
+  // the right length and passes.
+  if (!URL_SAFE_BASE64.test(value) || Buffer.from(value, "base64url").length !== bytes) {
+    throw new ConfigurationError(
+      `${name} is not a VAPID key: it must be url-safe base64, unpadded, and ${String(bytes)} bytes when decoded. Generate a pair with \`npx web-push generate-vapid-keys\` and copy it whole.`,
+    );
+  }
+}
+
 function parseVapid(env: Readonly<Record<string, string | undefined>>): VapidKeys | undefined {
   const keys = ["NOCTIS_VAPID_PUBLIC_KEY", "NOCTIS_VAPID_PRIVATE_KEY", "NOCTIS_VAPID_SUBJECT"];
   const present = keys.filter((key) => (env[key]?.trim() ?? "") !== "");
@@ -209,11 +233,13 @@ function parseVapid(env: Readonly<Record<string, string | undefined>>): VapidKey
     );
   }
 
-  return {
-    publicKey: required(env, "NOCTIS_VAPID_PUBLIC_KEY"),
-    privateKey: required(env, "NOCTIS_VAPID_PRIVATE_KEY"),
-    subject,
-  };
+  const publicKey = required(env, "NOCTIS_VAPID_PUBLIC_KEY");
+  const privateKey = required(env, "NOCTIS_VAPID_PRIVATE_KEY");
+
+  assertVapidKey("NOCTIS_VAPID_PUBLIC_KEY", publicKey, 65);
+  assertVapidKey("NOCTIS_VAPID_PRIVATE_KEY", privateKey, 32);
+
+  return { publicKey, privateKey, subject };
 }
 
 /**

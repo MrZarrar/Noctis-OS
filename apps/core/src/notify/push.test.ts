@@ -82,7 +82,15 @@ describe("push notifier", () => {
   }
 
   function store(notify: ReturnType<typeof notifier>, endpoint: string): void {
-    notify.subscribe(sessionId, { endpoint, keys: { p256dh: "p", auth: "a" } });
+    notify.subscribe(sessionId, {
+      endpoint,
+      // The shapes `PushSubscriptionSchema` enforces at the route, so these
+      // rows look like the ones a browser actually produces.
+      keys: {
+        p256dh: Buffer.alloc(65).toString("base64url"),
+        auth: Buffer.alloc(16).toString("base64url"),
+      },
+    });
   }
 
   it("has no public key and sends nothing when no VAPID keys are configured", async () => {
@@ -194,6 +202,37 @@ describe("push notifier", () => {
     push.unsubscribe("https://push.example/never");
 
     expect(subscriptionRows()).toEqual([]);
+  });
+
+  it("rebinds an endpoint to the session that re-registers it", () => {
+    const push = notifier(VAPID, recorder(() => 201).send);
+
+    store(push, "https://push.example/1");
+
+    // The phone logs in again — a new session, the same browser and the same
+    // endpoint. Without the ON CONFLICT rebind this is either a duplicate row
+    // or a row still pointing at a session that is about to be swept, and the
+    // sweep takes the phone's only subscription with it.
+    const next = createSession({ db, clock, ids: createIdFactory(clock) }, 1).id;
+
+    push.subscribe(next, {
+      endpoint: "https://push.example/1",
+      keys: {
+        p256dh: Buffer.alloc(65).toString("base64url"),
+        auth: Buffer.alloc(16).toString("base64url"),
+      },
+    });
+
+    const rows = db.prepare("SELECT session_id AS sessionId FROM push_subscriptions").all() as {
+      sessionId: string;
+    }[];
+
+    expect(rows).toEqual([{ sessionId: next }]);
+
+    // And the row survives the old session going away, which is the whole point.
+    db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+
+    expect(subscriptionRows()).toHaveLength(1);
   });
 
   it("loses a phone's subscription with the session it belongs to", () => {

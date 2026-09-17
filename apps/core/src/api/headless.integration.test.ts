@@ -1944,9 +1944,15 @@ describe("the push realm", () => {
   // which is the behaviour we want in production and a nuisance here.
   const VAPID = { ...webpush.generateVAPIDKeys(), subject: "mailto:owner@example.com" };
 
+  // The shapes RFC 8291 fixes: a 65-byte P-256 point and a 16-byte secret,
+  // base64url. Zeroes, because these are a browser's public key material and
+  // there is nothing here worth being real.
   const SUBSCRIPTION = {
     endpoint: "https://push.example/endpoint-1",
-    keys: { p256dh: "p256dh-value", auth: "auth-value" },
+    keys: {
+      p256dh: Buffer.alloc(65).toString("base64url"),
+      auth: Buffer.alloc(16).toString("base64url"),
+    },
   };
 
   async function post(
@@ -2021,6 +2027,20 @@ describe("the push realm", () => {
       { endpoint: "not-a-url", keys: SUBSCRIPTION.keys },
       { endpoint: SUBSCRIPTION.endpoint },
       {},
+      // Not HTTPS: a push service is a public HTTPS endpoint, and this one was
+      // never going to deliver.
+      { endpoint: "http://push.example/endpoint-1", keys: SUBSCRIPTION.keys },
+      // Key material of the wrong shape. Stored, it would be a row nothing can
+      // prune: `web-push` refuses it before the network, so no status ever
+      // comes back to say the subscription is dead.
+      {
+        endpoint: SUBSCRIPTION.endpoint,
+        keys: { p256dh: "not-a-key", auth: SUBSCRIPTION.keys.auth },
+      },
+      {
+        endpoint: SUBSCRIPTION.endpoint,
+        keys: { p256dh: SUBSCRIPTION.keys.p256dh, auth: "short" },
+      },
     ]) {
       const refused = await post(core, PUSH_SUBSCRIBE_PATH, body, headers);
 
