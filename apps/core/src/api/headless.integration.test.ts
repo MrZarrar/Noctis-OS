@@ -6,6 +6,7 @@ import type { MissionRecord, ObjectiveRecord, ServerFrame } from "@noctis/contra
 import { createTestVault } from "@noctis/test-kit";
 import { ENVELOPE_VERSION } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
+import webpush from "web-push";
 import { WebSocket } from "ws";
 
 import { getApprovalByAskId } from "../authority/service.js";
@@ -14,7 +15,13 @@ import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
 
-import { LOGIN_PATH, LOGOUT_PATH } from "./http.js";
+import {
+  LOGIN_PATH,
+  LOGOUT_PATH,
+  PUSH_KEY_PATH,
+  PUSH_SUBSCRIBE_PATH,
+  PUSH_UNSUBSCRIBE_PATH,
+} from "./http.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -285,8 +292,9 @@ describe("headless kernel loop", () => {
     // 0004 the six Vault tables Section 4.1 lists; 0005 the consequence
     // boundary columns, source semantics, and artifact lineage; 0006 turns,
     // sessions, provider decisions, and one thread per Objective; 0007 the
-    // browser sessions a cookie is verified against.
-    expect(diagnostics.body.schemaVersion).toBe(7);
+    // browser sessions a cookie is verified against; 0008 the push
+    // subscriptions that die with the session they belong to.
+    expect(diagnostics.body.schemaVersion).toBe(8);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -1919,6 +1927,160 @@ describe("the core as the front door", () => {
         expect(response.status, path).toBe(404);
         expect(await response.text(), path).not.toContain("noctis-os");
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Decision 0.25: the phone hears about it. These cover the realm the endpoints
+ * live in — who may subscribe, and what a core without keys says — not the
+ * delivery itself, which `notify/push.test.ts` covers with an injected sender.
+ */
+describe("the push realm", () => {
+  // Generated per run, never written down: `web-push` validates the key lengths
+  // in `setVapidDetails`, so a made-up pair would stop the core at startup --
+  // which is the behaviour we want in production and a nuisance here.
+  const VAPID = { ...webpush.generateVAPIDKeys(), subject: "mailto:owner@example.com" };
+
+  const SUBSCRIPTION = {
+    endpoint: "https://push.example/endpoint-1",
+    keys: { p256dh: "p256dh-value", auth: "auth-value" },
+  };
+
+  async function post(
+    core: TestCore,
+    path: string,
+    body: unknown,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${core.base}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  }
+
+  it("says push is unavailable when the core has no VAPID keys", async () => {
+    const core = await startTestCore();
+    const response = await read(core, PUSH_KEY_PATH);
+
+    expect(response.status).toBe(404);
+    expect((response.body as { error: { code: string } }).error.code).toBe("push_unavailable");
+  });
+
+  it("offers the public key, and never the private one", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const response = await read(core, PUSH_KEY_PATH);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ publicKey: VAPID.publicKey });
+    expect(JSON.stringify(response.body)).not.toContain(VAPID.privateKey);
+  });
+
+  it("stores a subscription against the session that presented it", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie, csrf } = await session(core);
+
+    const stored = await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, {
+      cookie,
+      "content-type": "application/json",
+      "x-noctis-csrf": csrf,
+    });
+
+    expect(stored.status).toBe(200);
+
+    const row = core.core.kernel.db
+      .prepare("SELECT session_id AS sessionId, endpoint FROM push_subscriptions")
+      .get() as { sessionId: string; endpoint: string };
+
+    expect(row.endpoint).toBe(SUBSCRIPTION.endpoint);
+    expect(
+      core.core.kernel.db.prepare("SELECT id FROM sessions WHERE id = ?").get(row.sessionId),
+    ).toBeDefined();
+  });
+
+  it("refuses a bearer-authenticated subscription, which would outlive every session", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const refused = await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, authorized());
+
+    expect(refused.status).toBe(400);
+    expect((refused.body as { error: { code: string } }).error.code).toBe("session_required");
+    expect(core.core.kernel.db.prepare("SELECT * FROM push_subscriptions").all()).toEqual([]);
+  });
+
+  it("refuses a subscription that is not a PushSubscription", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie, csrf } = await session(core);
+    const headers = { cookie, "content-type": "application/json", "x-noctis-csrf": csrf };
+
+    for (const body of [
+      { endpoint: "not-a-url", keys: SUBSCRIPTION.keys },
+      { endpoint: SUBSCRIPTION.endpoint },
+      {},
+    ]) {
+      const refused = await post(core, PUSH_SUBSCRIBE_PATH, body, headers);
+
+      expect(refused.status, JSON.stringify(body)).toBe(400);
+    }
+  });
+
+  it("refuses a subscription with a session cookie but no csrf header", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie } = await session(core);
+
+    const refused = await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, {
+      cookie,
+      "content-type": "application/json",
+    });
+
+    expect(refused.status).toBe(403);
+  });
+
+  it("forgets an endpoint on unsubscribe, and says the same for one it never held", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie, csrf } = await session(core);
+    const headers = { cookie, "content-type": "application/json", "x-noctis-csrf": csrf };
+
+    await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, headers);
+
+    const gone = await post(
+      core,
+      PUSH_UNSUBSCRIBE_PATH,
+      { endpoint: SUBSCRIPTION.endpoint },
+      headers,
+    );
+    const never = await post(
+      core,
+      PUSH_UNSUBSCRIBE_PATH,
+      { endpoint: "https://push.example/never" },
+      headers,
+    );
+
+    expect([gone.status, never.status]).toEqual([200, 200]);
+    expect(core.core.kernel.db.prepare("SELECT * FROM push_subscriptions").all()).toEqual([]);
+  });
+
+  it("keeps the push paths out of the static handler when the core serves the page", async () => {
+    const root = mkdtempSync(join(tmpdir(), "noctis-web-"));
+    writeFileSync(join(root, "index.html"), "<!doctype html><title>Noctis</title>");
+
+    try {
+      const core = await startTestCore({
+        webRoot: root,
+        allowedOrigins: ["http://127.0.0.1"],
+        vapid: VAPID,
+      });
+
+      // Without `push` in `static.ts`'s API segments this answers 200 with the
+      // app shell, and the page's key fetch parses HTML as JSON.
+      const anonymous = await fetch(`${core.base}${PUSH_KEY_PATH}`);
+
+      expect(anonymous.status).toBe(401);
+      expect(anonymous.headers.get("content-type") ?? "").toContain("application/json");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

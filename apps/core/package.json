@@ -14,10 +14,12 @@
   "dependencies": {
     "@noctis/contracts": "0.0.0",
     "@noctis/domain": "0.0.0",
+    "web-push": "3.6.7",
     "ws": "8.21.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@noctis/test-kit": "0.0.0"
+    "@noctis/test-kit": "0.0.0",
+    "@types/web-push": "3.6.4"
   }
 }

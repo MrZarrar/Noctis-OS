@@ -148,3 +148,49 @@ describe("loadCoreConfig", () => {
     }
   });
 });
+
+describe("loadCoreConfig: web push", () => {
+  const VAPID = {
+    NOCTIS_VAPID_PUBLIC_KEY: "BPublicKey",
+    NOCTIS_VAPID_PRIVATE_KEY: "PrivateKey",
+    NOCTIS_VAPID_SUBJECT: "mailto:owner@example.com",
+  };
+
+  it("has no push configuration when none of the three is set", () => {
+    expect(loadCoreConfig(env()).vapid).toBeUndefined();
+  });
+
+  it("reads all three together", () => {
+    expect(loadCoreConfig(env(VAPID)).vapid).toEqual({
+      publicKey: "BPublicKey",
+      privateKey: "PrivateKey",
+      subject: "mailto:owner@example.com",
+    });
+  });
+
+  it.each([
+    ["only the public key", { NOCTIS_VAPID_PUBLIC_KEY: VAPID.NOCTIS_VAPID_PUBLIC_KEY }],
+    ["only the private key", { NOCTIS_VAPID_PRIVATE_KEY: VAPID.NOCTIS_VAPID_PRIVATE_KEY }],
+    ["only the subject", { NOCTIS_VAPID_SUBJECT: VAPID.NOCTIS_VAPID_SUBJECT }],
+    ["a missing subject", { ...VAPID, NOCTIS_VAPID_SUBJECT: undefined }],
+    ["a blank private key", { ...VAPID, NOCTIS_VAPID_PRIVATE_KEY: "   " }],
+  ])("refuses %s, because a typo and a deliberate absence look identical", (_case, overrides) => {
+    expect(() => loadCoreConfig(env(overrides))).toThrow(ConfigurationError);
+    expect(() => loadCoreConfig(env(overrides))).toThrow(/all three/);
+  });
+
+  it("refuses a subject that is not a mailto: or https:// URL", () => {
+    expect(() =>
+      loadCoreConfig(env({ ...VAPID, NOCTIS_VAPID_SUBJECT: "owner@example.com" })),
+    ).toThrow(/mailto:/);
+  });
+
+  it("never repeats the private key in the refusal, because an error message gets pasted around", () => {
+    try {
+      loadCoreConfig(env({ NOCTIS_VAPID_PRIVATE_KEY: "super-secret-private-key" }));
+      expect.unreachable("expected a ConfigurationError");
+    } catch (error) {
+      expect(String(error)).not.toContain("super-secret-private-key");
+    }
+  });
+});

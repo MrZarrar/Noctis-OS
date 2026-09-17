@@ -58,6 +58,7 @@ const API_SEGMENTS = new Set([
   "nodes",
   "objectives",
   "permissions",
+  "push",
   "ready",
   "session",
   "sources",

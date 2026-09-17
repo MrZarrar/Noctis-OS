@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import type { LogLevel } from "../logging.js";
+import type { VapidKeys } from "../notify/push.js";
 import { assertNoLegacyJarvisVariables } from "./environment.js";
 
 export class ConfigurationError extends Error {}
@@ -29,6 +30,12 @@ export interface CoreConfig {
    * ADR-0028's `SameSite=Strict` cookie needs the page on the core's own origin.
    */
   webRoot?: string;
+  /**
+   * Web push credentials, or absent — and absent is the default. A core without
+   * them is quietly without push: `/push/key` answers 404 and the Settings card
+   * says so. The private key is a credential and lives only here, in memory.
+   */
+  vapid?: VapidKeys;
 }
 
 /** Noctis-only default. Deliberately not a port the donor or any common tool uses. */
@@ -164,6 +171,52 @@ function parseWebRoot(
 }
 
 /**
+ * All three VAPID variables or none of them.
+ *
+ * One or two set is a misconfiguration and stops the process, because a core
+ * that silently has no push is indistinguishable from one whose key was
+ * mistyped — and the symptom in both cases is a phone that simply never rings,
+ * which nobody investigates for weeks.
+ *
+ * The message names which variables are missing and never their values: the
+ * private key is a credential, and an error message is a place text goes to be
+ * copied into a terminal, a screenshot, and an issue.
+ */
+function parseVapid(env: Readonly<Record<string, string | undefined>>): VapidKeys | undefined {
+  const keys = ["NOCTIS_VAPID_PUBLIC_KEY", "NOCTIS_VAPID_PRIVATE_KEY", "NOCTIS_VAPID_SUBJECT"];
+  const present = keys.filter((key) => (env[key]?.trim() ?? "") !== "");
+
+  if (present.length === 0) {
+    return undefined;
+  }
+
+  if (present.length !== keys.length) {
+    throw new ConfigurationError(
+      `Web push needs all three of ${keys.join(", ")} or none of them. Missing: ${keys
+        .filter((key) => !present.includes(key))
+        .join(", ")}. Generate a pair with \`npx web-push generate-vapid-keys\`.`,
+    );
+  }
+
+  const subject = required(env, "NOCTIS_VAPID_SUBJECT");
+
+  // `web-push` signs the VAPID JWT with this as the `sub` claim, and push
+  // services reject anything that is not a mailto: or https: URL — at delivery
+  // time, silently, long after the core started.
+  if (!subject.startsWith("mailto:") && !subject.startsWith("https://")) {
+    throw new ConfigurationError(
+      "NOCTIS_VAPID_SUBJECT must be a mailto: or https:// URL, for example mailto:you@example.com",
+    );
+  }
+
+  return {
+    publicKey: required(env, "NOCTIS_VAPID_PUBLIC_KEY"),
+    privateKey: required(env, "NOCTIS_VAPID_PRIVATE_KEY"),
+    subject,
+  };
+}
+
+/**
  * Reads configuration and refuses to produce a usable value for anything
  * unsafe. There is no permissive fallback: an unset token, an unexplained
  * non-loopback bind, or an unparseable value stops the process here rather
@@ -189,6 +242,7 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
   }
 
   const webRoot = parseWebRoot(env.NOCTIS_WEB_ROOT, parseOrigins(env.NOCTIS_ALLOWED_ORIGINS));
+  const vapid = parseVapid(env);
   const logLevel = env.NOCTIS_LOG_LEVEL?.trim() ?? "info";
 
   if (!LOG_LEVELS.has(logLevel)) {
@@ -204,5 +258,6 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     logLevel: logLevel as LogLevel,
     sessionTtlHours: parseSessionTtlHours(env.NOCTIS_SESSION_TTL_HOURS),
     ...(webRoot === undefined ? {} : { webRoot }),
+    ...(vapid === undefined ? {} : { vapid }),
   };
 }

@@ -128,6 +128,9 @@ import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
 import { writesEnabled } from "../vault/writes.js";
 import type { CoreConfig } from "../config/server.js";
+import type { Notifier } from "../notify/push.js";
+import { PushSubscriptionSchema } from "../notify/push.js";
+import type { AuthorizeResult } from "./auth.js";
 import { authorize, isAuthorized, isOriginAllowed } from "./auth.js";
 import { serializeCookie } from "./cookie.js";
 import type { SessionDeps } from "./session.js";
@@ -148,7 +151,13 @@ export const PAIR_PATH = "/node/pair";
 export const LOGIN_PATH = "/session/login";
 export const LOGOUT_PATH = "/session/logout";
 
+/** Web push. Behind the credential gate like everything else. */
+export const PUSH_KEY_PATH = "/push/key";
+export const PUSH_SUBSCRIBE_PATH = "/push/subscribe";
+export const PUSH_UNSUBSCRIBE_PATH = "/push/unsubscribe";
+
 const LoginBodySchema = z.object({ token: z.string().min(1) }).strict();
+const UnsubscribeBodySchema = z.object({ endpoint: z.url() }).strict();
 
 export interface ApiDeps {
   kernel: Kernel;
@@ -160,6 +169,8 @@ export interface ApiDeps {
   conversation: ConversationService;
   /** Token deltas for streaming clients. Never persisted. */
   live: LiveBroker;
+  /** Web push. Present always; without VAPID keys its `publicKey()` is undefined. */
+  notifier: Notifier;
   /** Absent when no Vault is configured, which is the default. */
   vaultRoot?: VaultRoot;
   /** The environment the Vault write switch is read from. */
@@ -1005,6 +1016,67 @@ function handlePair(
 }
 
 /**
+ * A browser registering or forgetting its push endpoint.
+ *
+ * A subscription belongs to a *session*, because `push_subscriptions.session_id`
+ * references `sessions(id)` with `ON DELETE CASCADE` — that cascade is the only
+ * thing that ever reaps a dead phone. A bearer-authenticated caller has no
+ * session to hang one off, so it is refused rather than given an invented one
+ * that would outlive every session and never be cleaned up.
+ *
+ * Unsubscribing takes either credential: the endpoint is the browser's own
+ * unguessable URL, and a phone whose session has just been replaced must still
+ * be able to turn its own notifications off.
+ */
+function handlePush(
+  deps: ApiDeps,
+  action: "subscribe" | "unsubscribe",
+  authorized: AuthorizeResult | undefined,
+  body: unknown,
+): { status: number; body: unknown } {
+  if (action === "unsubscribe") {
+    const parsed = UnsubscribeBodySchema.safeParse(body);
+
+    if (!parsed.success) {
+      return { status: 400, body: errorBody("invalid_request", "Body must be {endpoint}") };
+    }
+
+    deps.notifier.unsubscribe(parsed.data.endpoint);
+
+    // Unconditionally 200: an endpoint that was already gone is the outcome the
+    // caller asked for, and saying "no such subscription" would confirm which
+    // endpoints this core holds.
+    return { status: 200, body: { status: "unsubscribed" } };
+  }
+
+  if (authorized?.kind !== "session") {
+    return {
+      status: 400,
+      body: errorBody(
+        "session_required",
+        "A push subscription belongs to a browser session. Log in for a session cookie first.",
+      ),
+    };
+  }
+
+  const parsed = PushSubscriptionSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return {
+      status: 400,
+      body: errorBody(
+        "invalid_request",
+        "Body must be a PushSubscription: {endpoint, keys: {p256dh, auth}}",
+      ),
+    };
+  }
+
+  deps.notifier.subscribe(authorized.id, parsed.data);
+
+  return { status: 200, body: { status: "subscribed" } };
+}
+
+/**
  * Single entry point for the REST realm. Order matters: origin, then credential,
  * then routing. A caller that fails either check learns nothing about which
  * paths exist. Two paths sit between the two on purpose and no others:
@@ -1061,6 +1133,10 @@ export async function handleRequest(
     const isLogin = req.method === "POST" && url.pathname === LOGIN_PATH;
     const isLogout = req.method === "POST" && url.pathname === LOGOUT_PATH;
 
+    // Kept rather than discarded: `/push/subscribe` needs the session id, and
+    // the only place it exists is the result of the check that just ran.
+    let authorized: AuthorizeResult | undefined;
+
     if (!isLogin && !isPair) {
       const decision = authorize({
         method: req.method ?? "GET",
@@ -1083,6 +1159,25 @@ export async function handleRequest(
         );
         return;
       }
+
+      authorized = decision;
+    }
+
+    // The public half of the VAPID pair, which a browser needs before it can
+    // subscribe. 404 when no keys are configured: a core without push says so
+    // once, here, rather than accepting subscriptions it can never deliver to.
+    if (req.method === "GET" && url.pathname === PUSH_KEY_PATH) {
+      const publicKey = deps.notifier.publicKey();
+
+      send(
+        res,
+        publicKey === undefined ? 404 : 200,
+        publicKey === undefined
+          ? errorBody("push_unavailable", "This core is not configured for web push")
+          : { publicKey },
+        correlationId,
+      );
+      return;
     }
 
     if (req.method === "GET" && url.pathname === "/ready") {
@@ -1149,17 +1244,27 @@ export async function handleRequest(
 
     const isCommand = req.method === "POST" && segments[0] === "commands" && segments.length === 2;
     const isSession = isLogin || isLogout;
+    const pushAction =
+      req.method === "POST" && url.pathname === PUSH_SUBSCRIBE_PATH
+        ? "subscribe"
+        : req.method === "POST" && url.pathname === PUSH_UNSUBSCRIBE_PATH
+          ? "unsubscribe"
+          : undefined;
 
-    if (!isCommand && !isPair && !isSession) {
+    if (!isCommand && !isPair && !isSession && pushAction === undefined) {
       send(res, 404, errorBody("not_found", "No such resource"), correlationId);
       return;
     }
 
     const name = segments[1] ?? "";
     const route =
-      isPair || isSession ? undefined : Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+      isPair || isSession || pushAction !== undefined
+        ? undefined
+        : Object.hasOwn(COMMANDS, name)
+          ? COMMANDS[name]
+          : undefined;
 
-    if (!isPair && !isSession && route === undefined) {
+    if (!isPair && !isSession && pushAction === undefined && route === undefined) {
       send(res, 404, errorBody("not_found", "No such command"), correlationId);
       return;
     }
@@ -1189,6 +1294,18 @@ export async function handleRequest(
       body = JSON.parse(raw.toString("utf8")) as unknown;
     } catch {
       send(res, 400, errorBody("invalid_request", "Body is not valid JSON"), correlationId);
+      return;
+    }
+
+    if (pushAction !== undefined) {
+      const result = handlePush(deps, pushAction, authorized, body);
+
+      // The endpoint is the browser's own URL and goes in no log line.
+      logger.log("info", "push subscription handled", {
+        action: pushAction,
+        status: result.status,
+      });
+      send(res, result.status, result.body, correlationId);
       return;
     }
 

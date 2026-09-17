@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import type { Clock } from "@noctis/domain";
 import { createIdFactory, systemClock } from "@noctis/domain";
+import webpush from "web-push";
 
 import type { ApiDeps } from "./api/http.js";
 import { handleRequest } from "./api/http.js";
@@ -24,6 +25,8 @@ import { attachNodeSocket } from "./nodes/ws.js";
 import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
 import { createLogger } from "./logging.js";
+import type { SendPush, VapidKeys } from "./notify/push.js";
+import { createNotifier } from "./notify/push.js";
 import { resolveVaultRoot } from "./vault/root.js";
 
 /**
@@ -60,6 +63,43 @@ export interface RunningCore {
   live: LiveBroker;
   conversation: ConversationService;
   close: () => Promise<void>;
+}
+
+/**
+ * The one place `web-push` is called, and the one place the VAPID private key
+ * is handed to anything.
+ *
+ * It returns a status code rather than throwing one: `web-push` rejects with a
+ * `WebPushError` carrying `statusCode` for every answer the push service gave,
+ * which is a delivery *result*, not a failure of ours. Anything without a
+ * status code is a real transport failure and stays a rejection, so the
+ * notifier keeps the subscription instead of pruning a phone over a flaky
+ * network.
+ */
+function webPushSender(vapid: VapidKeys): SendPush {
+  webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
+
+  return async (subscription, payload) => {
+    try {
+      const result = await webpush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+        },
+        payload,
+      );
+
+      return { statusCode: result.statusCode };
+    } catch (error) {
+      const status: unknown = (error as { statusCode?: unknown }).statusCode;
+
+      if (typeof status === "number") {
+        return { statusCode: status };
+      }
+
+      throw error;
+    }
+  };
 }
 
 function currentSchemaVersion(db: NoctisDatabase): number {
@@ -125,6 +165,30 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
   });
   const conversation = createConversationService({ kernel, dispatcher, live, runtimeFrames });
 
+  const notifier = createNotifier({
+    db,
+    clock,
+    ids: kernel.ids,
+    vapid: config.vapid,
+    // A core with no keys never sends, so it never needs a sender. Building one
+    // anyway would call `setVapidDetails` with nothing to set.
+    send:
+      config.vapid === undefined
+        ? () => Promise.resolve({ statusCode: 0 })
+        : webPushSender(config.vapid),
+    logger,
+  });
+
+  // After the commit, never inside it: `kernel.broker` publishes only committed
+  // events, so a push can never describe state a rollback erased.
+  kernel.broker.subscribe((events) => {
+    void notifier.notify(events).catch((error: unknown) => {
+      logger.log("warn", "push delivery failed", {
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    });
+  });
+
   const deps: ApiDeps = {
     kernel,
     config,
@@ -133,6 +197,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     dispatcher,
     conversation,
     live,
+    notifier,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     vaultEnv: env,
   };
