@@ -36,15 +36,23 @@ export function hashSecret(value: string): string {
  * Mints a session. The plaintext is returned exactly once — to the response that
  * sets the cookie — and only its digest is written down, so a stolen database
  * yields nothing a browser could present.
+ *
+ * ponytail: a direct INSERT, no command, no event, no idempotency claim. A
+ * session is transport state, not domain state: replaying a login must mint a
+ * new secret, never return the old one, which is the opposite of what an
+ * idempotency key promises. If logins ever need an audit trail, add a
+ * `session.established.v1` carrying the session id and never its secret.
  */
 export function createSession(deps: SessionDeps, ttlHours: number): CreatedSession {
   const nowMs = deps.clock.now();
   const now = new Date(nowMs).toISOString();
   const expiresAt = new Date(nowMs + ttlHours * 3_600_000).toISOString();
 
-  // Opportunistic: a core that is never logged into again never grows this
-  // table, and one that is cleans it on the way past. No scheduler for one
-  // DELETE.
+  // ponytail: swept opportunistically on login, not on a schedule. A core that
+  // is never logged into again never grows this table, and one that is cleans
+  // it on the way past — so the only unbounded case is a core logged into once
+  // and then left, which holds a single dead row. Add a startup sweep or a
+  // timer if a deployment ever accumulates sessions faster than it logs in.
   deps.db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(now);
 
   const cookieValue = randomBytes(SECRET_BYTES).toString("base64url");
@@ -97,6 +105,15 @@ export function verifySession(
   return row;
 }
 
+/**
+ * Ends a session. True if a row was deleted; false means the presented cookie
+ * named no session, which a caller reports as `no_session` rather than an error.
+ *
+ * ponytail: a direct DELETE, no command, no event, no idempotency claim — the
+ * mirror of `createSession`, and deliberately unconditional: logging out must
+ * never be refused because a ledger write failed. If revocations ever need to
+ * be auditable, add a `session.revoked.v1` after the row is gone.
+ */
 export function revokeSession(deps: SessionDeps, cookieHeader: string | undefined): boolean {
   const presented = presentedCookie(cookieHeader);
 

@@ -1601,18 +1601,26 @@ describe("the session realm", () => {
     expect((await fetch(`${core.base}/objectives`, { headers: { cookie } })).status).toBe(401);
   });
 
-  it("leaves the bearer realm alone: a token still needs no cookie and no csrf header", async () => {
+  it("leaves the bearer realm alone: a token still needs no csrf header, even carrying a cookie", async () => {
     const core = await startTestCore();
-    await session(core);
+    // A session belonging to someone else, attached to a bearer mutation that
+    // sends no CSRF header. The token is answered on its own merits, so the
+    // cookie neither helps nor hinders.
+    const foreign = await session(core);
 
-    const created = await command(core, "objective.create", {
-      idempotencyKey: newKey("bearer-still-works"),
-      title: "Ship the kernel",
-      intent: "The native shell is unaffected",
-      status: "draft",
-      identityId: "vesper",
-      protocolIds: [],
-    });
+    const created = await command(
+      core,
+      "objective.create",
+      {
+        idempotencyKey: newKey("bearer-still-works"),
+        title: "Ship the kernel",
+        intent: "The native shell is unaffected",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      },
+      authorized({ cookie: foreign.cookie }),
+    );
 
     expect(created.status).toBe(200);
   });
@@ -1640,5 +1648,78 @@ describe("the session realm", () => {
     });
 
     expect(crossed.status).toBe(403);
+  });
+});
+
+describe("the session realm in its deployed shape", () => {
+  // Every other test in this file reaches the core through Node's `fetch`,
+  // which sends no Origin header, so the origin gate never fires. A real page
+  // sends one on every request — including its own same-origin POST — and the
+  // gate runs before the login exemption. These two cases are the only ones
+  // that exercise the configuration the front door actually ships under.
+  const ORIGIN = "https://noctis.example";
+
+  async function loginFrom(core: TestCore, origin: string): Promise<Response> {
+    return fetch(`${core.base}${LOGIN_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+  }
+
+  it("logs a browser in when it sends the Origin the core allows", async () => {
+    const core = await startTestCore({ allowedOrigins: [ORIGIN] });
+
+    const response = await loginFrom(core, ORIGIN);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie") ?? "").toContain("HttpOnly");
+
+    const { csrf } = (await response.json()) as { csrf: string };
+    const cookie = (response.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+
+    // And the session it issued works from that origin for the whole round
+    // trip, read and gated mutation alike.
+    const objectives = await fetch(`${core.base}/objectives`, {
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(objectives.status).toBe(200);
+
+    const created = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-noctis-csrf": csrf,
+      },
+      body: JSON.stringify({
+        idempotencyKey: newKey("origin-objective"),
+        title: "Ship the front door",
+        intent: "Prove the realm under its real origin policy",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      }),
+    });
+    expect(created.status).toBe(200);
+  });
+
+  it("refuses a login from an origin that is not allowlisted, before the login exemption", async () => {
+    const core = await startTestCore({ allowedOrigins: [ORIGIN] });
+
+    const response = await loginFrom(core, "https://evil.example");
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("set-cookie")).toBe(null);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "forbidden_origin",
+    );
+  });
+
+  it("refuses a browser entirely when no origin is allowlisted, which is the default", async () => {
+    const core = await startTestCore();
+
+    expect((await loginFrom(core, ORIGIN)).status).toBe(403);
   });
 });

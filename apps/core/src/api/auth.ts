@@ -6,14 +6,23 @@ import { hashSecret } from "./session.js";
 const BEARER = /^Bearer (.+)$/;
 
 /**
- * Constant-time bearer check.
+ * Constant-time equality for two secrets of any length, and the module's one
+ * way to compare one.
  *
- * The presented value is compared as a SHA-256 digest rather than raw bytes,
+ * Both sides are reduced to a SHA-256 digest rather than compared as raw bytes,
  * because `timingSafeEqual` throws on a length mismatch — and an exception
- * thrown only for wrong-length tokens is itself a timing signal that leaks the
- * token's length. Digests are always 32 bytes, so every comparison takes the
+ * thrown only for wrong-length input is itself a timing signal that leaks the
+ * secret's length. Digests are always 32 bytes, so every comparison takes the
  * same path.
  */
+function secretsMatch(presented: string, expected: string): boolean {
+  return timingSafeEqual(
+    createHash("sha256").update(presented, "utf8").digest(),
+    createHash("sha256").update(expected, "utf8").digest(),
+  );
+}
+
+/** Constant-time bearer check. */
 export function isAuthorized(header: string | undefined, token: string): boolean {
   const match = header === undefined ? null : BEARER.exec(header);
 
@@ -21,10 +30,7 @@ export function isAuthorized(header: string | undefined, token: string): boolean
     return false;
   }
 
-  return timingSafeEqual(
-    createHash("sha256").update(match[1], "utf8").digest(),
-    createHash("sha256").update(token, "utf8").digest(),
-  );
+  return secretsMatch(match[1], token);
 }
 
 /**
@@ -86,7 +92,13 @@ export function authorize(input: AuthorizeInput): AuthorizeResult {
     return { kind: "session", id: session.id };
   }
 
-  if (input.csrfHeader === undefined || hashSecret(input.csrfHeader) !== session.csrfHash) {
+  // Compared the same way the bearer token is, for the same reason: the header
+  // is attacker-supplied, and `===` on two strings stops at the first differing
+  // character.
+  if (
+    input.csrfHeader === undefined ||
+    !secretsMatch(hashSecret(input.csrfHeader), session.csrfHash)
+  ) {
     return { kind: "denied", reason: "csrf" };
   }
 

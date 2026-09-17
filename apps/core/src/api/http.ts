@@ -186,11 +186,19 @@ function sessionDeps(deps: ApiDeps): SessionDeps {
   return { db: deps.kernel.db, clock: deps.kernel.clock, ids: deps.kernel.ids };
 }
 
-/** The attributes every session cookie carries. Only the value and lifetime vary. */
+/**
+ * The attributes every session cookie carries. Only the value and lifetime vary,
+ * so a logout clears exactly what a login set.
+ *
+ * ponytail: `Secure` is unconditional. Tailscale Serve terminates TLS, so the
+ * browser always sees HTTPS and the front door this is built for is never plain
+ * HTTP — but a page served over plain HTTP on loopback would be handed a cookie
+ * it then refuses to send back, and fail to log in with no visible reason. Make
+ * it conditional on the deployment if a plain-HTTP browser ever has to work.
+ */
 function sessionCookie(value: string, maxAgeSeconds: number): string {
   return serializeCookie(SESSION_COOKIE, value, {
     httpOnly: true,
-    // Tailscale Serve terminates TLS, so the browser always sees HTTPS.
     secure: true,
     sameSite: "Strict",
     path: "/",

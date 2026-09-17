@@ -8,9 +8,15 @@ export interface CookieAttributes {
 
 /**
  * A `Cookie` header is a semicolon-separated list the client controls entirely.
- * The first occurrence of a name wins: a request that presents the name twice is
- * either confused or an attempt to shadow the real value with a forged one, and
- * taking the first is the only reading a forged suffix cannot change.
+ * A name that appears twice is dropped entirely rather than resolved.
+ *
+ * Neither reading of a duplicate is safe. RFC 6265 has the browser send the
+ * longer path first, so a cookie planted at `Path=/commands` arrives *ahead* of
+ * the real one and first-wins hands over the forged value; last-wins loses to a
+ * shorter path just the same. `HttpOnly` does not help: it stops a script
+ * overwriting this cookie, not a sibling origin creating a different
+ * (name, path) tuple. So the rule is the one `headerValue` applies to duplicated
+ * request headers — a credential presented twice is not a credential.
  */
 export function parseCookies(header: string | undefined): ReadonlyMap<string, string> {
   const pairs = new Map<string, string>();
@@ -18,6 +24,8 @@ export function parseCookies(header: string | undefined): ReadonlyMap<string, st
   if (header === undefined || header === "") {
     return pairs;
   }
+
+  const duplicated = new Set<string>();
 
   for (const part of header.split(";")) {
     const separator = part.indexOf("=");
@@ -29,9 +37,17 @@ export function parseCookies(header: string | undefined): ReadonlyMap<string, st
     const name = part.slice(0, separator).trim();
     const value = part.slice(separator + 1).trim();
 
-    if (name !== "" && !pairs.has(name)) {
-      pairs.set(name, value);
+    if (name === "") {
+      continue;
     }
+
+    if (pairs.has(name) || duplicated.has(name)) {
+      pairs.delete(name);
+      duplicated.add(name);
+      continue;
+    }
+
+    pairs.set(name, value);
   }
 
   return pairs;

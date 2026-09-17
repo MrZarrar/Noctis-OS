@@ -26,8 +26,20 @@ describe("parseCookies", () => {
     expect(parseCookies("novalue").size).toBe(0);
   });
 
-  it("takes the first of a duplicated name, so a shadowing cookie cannot win", () => {
-    expect(parseCookies("s=real; s=forged").get("s")).toBe("real");
+  it("drops a duplicated name entirely, because neither occurrence can be trusted", () => {
+    // A cookie planted at a longer Path arrives first, so first-wins would hand
+    // over the forgery and last-wins would lose to a shorter path.
+    expect(parseCookies("s=forged; s=real").has("s")).toBe(false);
+    expect(parseCookies("s=real; s=forged").has("s")).toBe(false);
+    expect(parseCookies("s=a; s=b; s=c").has("s")).toBe(false);
+  });
+
+  it("keeps the other cookies when one name is duplicated", () => {
+    const parsed = parseCookies("a=1; s=real; s=forged; b=2");
+
+    expect(parsed.has("s")).toBe(false);
+    expect(parsed.get("a")).toBe("1");
+    expect(parsed.get("b")).toBe("2");
   });
 });
 
