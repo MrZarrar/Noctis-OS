@@ -9,7 +9,9 @@ import type { LiveBroker } from "../events/live.js";
 /**
  * The read API's own page size (`readEventsAfter` / `MAX_PAGE_SIZE`). Replay
  * pages through it in a loop — see the loop below — rather than truncating at
- * one page, the way `/ws/clients`'s `startStream` does.
+ * one page, which is what this stream used to do. `/ws/clients`'s `startStream`
+ * (`ws.ts`) runs the same paging loop and always has; saying otherwise here
+ * would eventually get the correct half "fixed" to match the broken one.
  */
 const REPLAY_PAGE_SIZE = 500;
 
@@ -22,6 +24,19 @@ export interface StreamDeps {
   /** The highest committed sequence, for clamping a cursor the caller could not have. */
   latestSequence: () => number;
   frames: FrameSource;
+  /**
+   * Whether the credential that opened this stream is still good, asked once
+   * per heartbeat.
+   *
+   * The gate in `http.ts` runs once, at connect; after it the stream holds a
+   * broker subscription for the life of the TCP connection, and the heartbeat
+   * below keeps that connection alive through a proxy indefinitely. So a
+   * `revokeSession` deleted the row and the open stream carried on delivering
+   * the entire event ledger to it until the core restarted, and an expiring
+   * session did the same. A bearer stream passes `() => true`: its credential
+   * is the configured token, which cannot be revoked without a restart anyway.
+   */
+  stillAuthorized: () => boolean;
   heartbeatMs: number;
   setInterval: typeof setInterval;
   clearInterval: typeof clearInterval;
@@ -181,7 +196,18 @@ export function openEventStream(
 
     // A comment line keeps the connection alive through a proxy that would time an
     // idle one out. Clients ignore it.
+    //
+    // And the same tick re-checks the credential, because the thing keeping the
+    // connection alive is the only thing that runs on it: a stream nobody
+    // re-authenticates outlives the session that opened it. The client's own
+    // `EventSource` reconnects on its own, so a stream closed here becomes a
+    // fresh connect attempt that meets the gate in `http.ts` and is refused.
     heartbeat = deps.setInterval(() => {
+      if (!deps.stillAuthorized()) {
+        close();
+        return;
+      }
+
       write(": ping\n\n");
     }, deps.heartbeatMs);
   } catch (error) {

@@ -81,6 +81,7 @@ describe("openEventStream", () => {
         readEvents,
         latestSequence: () => 10,
         frames: idleFrames,
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -109,6 +110,7 @@ describe("openEventStream", () => {
         readEvents,
         latestSequence: () => 501,
         frames: idleFrames,
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -134,6 +136,7 @@ describe("openEventStream", () => {
         readEvents,
         latestSequence: () => 5,
         frames: idleFrames,
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -169,6 +172,7 @@ describe("openEventStream", () => {
         readEvents: () => [event(4)],
         latestSequence: () => 10,
         frames: idleFrames,
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -199,6 +203,7 @@ describe("openEventStream", () => {
             return () => undefined;
           },
         },
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -228,6 +233,7 @@ describe("openEventStream", () => {
             return () => undefined;
           },
         },
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -251,6 +257,7 @@ describe("openEventStream", () => {
         readEvents: () => [event(4)],
         latestSequence: () => 10,
         frames: idleFrames,
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 0) as never,
         clearInterval: () => undefined,
@@ -274,6 +281,7 @@ describe("openEventStream", () => {
         readEvents: () => [],
         latestSequence: () => 0,
         frames: { subscribe: () => stopFrames },
+        stillAuthorized: () => true,
         heartbeatMs: 15_000,
         setInterval: (() => 7) as never,
         clearInterval: stopHeartbeat,
@@ -305,6 +313,7 @@ describe("openEventStream", () => {
               throw new Error("boom");
             },
           },
+          stillAuthorized: () => true,
           heartbeatMs: 15_000,
           setInterval: (() => 7) as never,
           clearInterval: () => undefined,
@@ -316,5 +325,70 @@ describe("openEventStream", () => {
 
     expect(stopEvents).toHaveBeenCalledOnce();
     expect(end).toHaveBeenCalledOnce();
+  });
+
+  it("closes a stream whose session has been revoked, instead of streaming to it until the core restarts", () => {
+    const { res, end } = fakeResponse();
+    const stopEvents = vi.fn();
+    const stopFrames = vi.fn();
+    const stopHeartbeat = vi.fn();
+    let tick: (() => void) | undefined;
+    let live = true;
+
+    openEventStream(
+      {
+        broker: { subscribe: () => stopEvents, publish: () => undefined, listenerCount: 0 },
+        readEvents: () => [],
+        latestSequence: () => 0,
+        frames: { subscribe: () => stopFrames },
+        stillAuthorized: () => live,
+        heartbeatMs: 15_000,
+        setInterval: ((handler: () => void) => {
+          tick = handler;
+          return 7;
+        }) as never,
+        clearInterval: stopHeartbeat,
+      },
+      res,
+      0,
+    );
+
+    live = false;
+    tick?.();
+
+    expect(end).toHaveBeenCalledOnce();
+    expect(stopEvents).toHaveBeenCalledOnce();
+    expect(stopFrames).toHaveBeenCalledOnce();
+    expect(stopHeartbeat).toHaveBeenCalledWith(7);
+  });
+
+  it("keeps a live session's stream open across several ticks, and keeps sending the heartbeat", () => {
+    const { res, chunks, end } = fakeResponse();
+    let tick: (() => void) | undefined;
+
+    openEventStream(
+      {
+        broker: { subscribe: () => () => undefined, publish: () => undefined, listenerCount: 0 },
+        readEvents: () => [],
+        latestSequence: () => 0,
+        frames: idleFrames,
+        stillAuthorized: () => true,
+        heartbeatMs: 15_000,
+        setInterval: ((handler: () => void) => {
+          tick = handler;
+          return 7;
+        }) as never,
+        clearInterval: () => undefined,
+      },
+      res,
+      0,
+    );
+
+    tick?.();
+    tick?.();
+    tick?.();
+
+    expect(chunks.filter((chunk) => chunk === ": ping\n\n")).toHaveLength(3);
+    expect(end).not.toHaveBeenCalled();
   });
 });

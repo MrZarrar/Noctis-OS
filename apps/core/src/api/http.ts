@@ -1258,6 +1258,14 @@ export async function handleRequest(
           readEvents: (after, limit) => readEventsAfter(deps.kernel.db, after, limit),
           latestSequence: () => latestSequence(deps.kernel.db),
           frames: deps.live,
+          // Re-read on every heartbeat, not captured: the row this looks up is
+          // what a logout deletes and what expiry retires, and the whole point
+          // is to notice that on a connection that is already open.
+          stillAuthorized:
+            authorized?.kind === "session"
+              ? () =>
+                  verifySession(sessionDeps(deps), headerValue(req.headers.cookie)) !== undefined
+              : () => true,
           heartbeatMs: SSE_HEARTBEAT_MS,
           setInterval,
           clearInterval,
