@@ -12,6 +12,7 @@ import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused } from "./Runtime.js";
 import type { ClaudeQuery } from "./claude.js";
 import { createClaudeRuntime } from "./claude.js";
+import { PLAYWRIGHT_SERVER } from "./mcp-config.js";
 
 const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: ["C:\\ref"], localOnly: false };
 const SESSION = "0199a000-0000-7000-8000-00000000c1a0";
@@ -406,6 +407,47 @@ describe("the Claude Agent SDK runtime", () => {
 
       expect(r.asks).toEqual([]);
     });
+
+    it("asks about an allowlisted browser tool and refuses the rest of that server outright", async () => {
+      const { r, ask } = await permission("allow");
+
+      await expect(
+        ask("mcp__playwright__browser_navigate", { url: "https://example.com" }),
+      ).resolves.toMatchObject({ behavior: "allow" });
+      await expect(
+        ask("mcp__playwright__browser_evaluate", { function: "() => 1" }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "mcp__playwright__browser_evaluate is not a tool Noctis lends",
+      });
+
+      // One ask, for the navigate. The refusal is never a decision the owner is handed.
+      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
+        ["tool_call", "external_write", "mcp__playwright__browser_navigate"],
+      ]);
+    });
+  });
+
+  it("gives the browser its own profile per thread, so two threads do not share cookies", async () => {
+    const env = { PATH: "C:\\bin", NOCTIS_NODE_HOME: "C:\\noctis" };
+    const { query, calls } = scripted(list(init(), result()));
+    const runtime = createClaudeRuntime({ query });
+    const other = "0199a000-0000-7000-8000-0000000000e9";
+
+    await runtime.turn(input({}, undefined, env), recorder().sink);
+    await runtime.turn(input({ threadId: other }, undefined, env), recorder().sink);
+
+    const dirs = calls.map((call) => {
+      const server = call.options?.mcpServers?.[PLAYWRIGHT_SERVER];
+      const args = server !== undefined && "args" in server ? (server.args ?? []) : [];
+
+      return args[args.indexOf("--user-data-dir") + 1];
+    });
+
+    expect(dirs).toEqual([
+      join("C:\\noctis", "browser", payload().threadId),
+      join("C:\\noctis", "browser", other),
+    ]);
   });
 
   it("marks a tool the core declined as declined when its result comes back as an error", async () => {

@@ -14,6 +14,7 @@ import { AGENT_VERSION } from "../agent.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
+import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
 import { probeClaudeInstalled } from "./probe.js";
 
 /**
@@ -297,6 +298,13 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         toolInput,
         ctx,
       ): Promise<PermissionResult> => {
+        // Refused, not asked: a browser tool outside the allowlist is not a
+        // decision the owner should be handed. `browser_evaluate` and
+        // `browser_run_code_unsafe` are on the same server as the five.
+        if (refusedBrowserTool(toolName)) {
+          return { behavior: "deny", message: `${toolName} is not a tool Noctis lends` };
+        }
+
         const ask = askFor(toolName, toolInput, clip(ctx.toolUseID, 128), roots);
 
         if (ask === undefined) {
@@ -360,6 +368,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         ],
       });
 
+      // One browser profile per thread, and only on this route: see mcp-config.
+      const browser = playwrightServer(input.env, payload.threadId);
+
       // The SDK does not split read from write access: `additionalDirectories`
       // grants both, so writes into a read root are caught by canUseTool +
       // classifyAsk (a path outside every writable root is external_write).
@@ -376,7 +387,12 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         strictMcpConfig: true,
         includePartialMessages: true,
         abortController: controller,
-        mcpServers: { noctis },
+        mcpServers: {
+          noctis,
+          ...(browser === undefined
+            ? {}
+            : { [PLAYWRIGHT_SERVER]: { type: "stdio" as const, ...browser } }),
+        },
         canUseTool,
         ...(payload.sessionRef === undefined ? {} : { resume: payload.sessionRef }),
       };

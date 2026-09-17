@@ -151,6 +151,24 @@ A leased job holds its lease for 30 seconds. A lapsed lease is swept every 5 sec
 which means _somebody has to find out what actually happened_. That is deliberate — re-running a
 consequential operation blind is how one uncertain write becomes two.
 
+## The browser a runtime is lent
+
+`@playwright/mcp` ships with the node agent, so nothing is installed per node — but it drives a
+real browser, and the node PC needs one: `npx playwright install chrome` (or an installed Chrome).
+Without it the first `browser_navigate` fails with Playwright's own message; the tools still exist.
+
+- **One profile per thread**, at `%NOCTIS_NODE_HOME%\browser\<threadId>` (`~\.noctis\browser\…`
+  when the variable is unset). A site signed into inside one thread is signed in for that thread's
+  later turns and nowhere else. Deleting the folder signs that thread out.
+- **Screenshots and traces** go to `…\<threadId>\output`, never the granted root, so a file arriving
+  on disk is still a file something asked about.
+- **Five tools**: `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`,
+  `browser_take_screenshot`. Every one of them is an ask, classed `external_write`. Everything else
+  the server offers — `browser_evaluate`, `browser_run_code_unsafe`, the storage and cookie tools —
+  is refused by the node without asking you.
+- **Claude turns only.** Codex's app-server raises no approval for an MCP tool call (verified against
+  its 0.154 protocol schema), so attaching a browser there would be a browser nothing asks about.
+
 ## Limits in this phase
 
 - **The core is loopback-only by default.** A node on another machine needs
