@@ -167,11 +167,15 @@ describe("loadCoreConfig", () => {
 });
 
 describe("loadCoreConfig: web push", () => {
-  // Shape-valid and worthless: the right decoded lengths (65 and 32 bytes) in
-  // url-safe base64, and all zeroes. A real pair in a repository would be a
-  // credential in a repository, whatever its comment said.
+  // The public half is a real point on the P-256 curve, because the loader now
+  // checks that and all-zero bytes are not one. It is still not a credential:
+  // it was generated for this file and the private key that made it was thrown
+  // away, so no key that opens anything exists anywhere. The private half stays
+  // all zeroes — it is only ever length-checked, and a real one in a repository
+  // would be a credential in a repository, whatever its comment said.
   const VAPID = {
-    NOCTIS_VAPID_PUBLIC_KEY: Buffer.alloc(65).toString("base64url"),
+    NOCTIS_VAPID_PUBLIC_KEY:
+      "BN2YQKPxzCbH0akEcJPoBIxoLxN55XxRkqWUlO0lpSh8JFGx4Ohc1II9xWqqEleyp2E_6RF07THLnnsFaJgche0",
     NOCTIS_VAPID_PRIVATE_KEY: Buffer.alloc(32).toString("base64url"),
     NOCTIS_VAPID_SUBJECT: "mailto:owner@example.com",
   };
@@ -244,6 +248,45 @@ describe("loadCoreConfig: web push", () => {
       expect.unreachable("expected a ConfigurationError");
     } catch (error) {
       expect(String(error)).not.toContain("super-secret-private-key");
+    }
+  });
+});
+
+describe("a VAPID public key that is the right length but the wrong key", () => {
+  // 65 bytes, url-safe base64, and not a point on the curve: one character of a
+  // real key changed. Every length and charset check passes it; only the push
+  // service on the device would ever have objected, at the last step of a
+  // subscription, on a phone, hours later.
+  const OFF_CURVE =
+    "BN2YQKPxzCbH0aDEcJPoBIxoLxN55XxRkqWUlO0lpSh8JFGx4Ohc1II9xWqqEleyp2E_6RF07THLnnsFaJgche0";
+  const ON_CURVE =
+    "BN2YQKPxzCbH0akEcJPoBIxoLxN55XxRkqWUlO0lpSh8JFGx4Ohc1II9xWqqEleyp2E_6RF07THLnnsFaJgche0";
+  const PRIVATE = Buffer.alloc(32).toString("base64url");
+
+  const withKey = (publicKey: string) =>
+    env({
+      NOCTIS_VAPID_PUBLIC_KEY: publicKey,
+      NOCTIS_VAPID_PRIVATE_KEY: PRIVATE,
+      NOCTIS_VAPID_SUBJECT: "mailto:someone@example.com",
+    });
+
+  it("is refused at config load rather than on a device", () => {
+    expect(Buffer.from(OFF_CURVE, "base64url")).toHaveLength(65);
+    expect(() => loadCoreConfig(withKey(OFF_CURVE))).toThrow(ConfigurationError);
+    expect(() => loadCoreConfig(withKey(OFF_CURVE))).toThrow(/P-256 curve/);
+  });
+
+  it("accepts the key that actually belongs to the private key beside it", () => {
+    expect(loadCoreConfig(withKey(ON_CURVE)).vapid?.publicKey).toBe(ON_CURVE);
+  });
+
+  it("names the variable and never the private key", () => {
+    try {
+      loadCoreConfig(withKey(OFF_CURVE));
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(String(error)).toContain("NOCTIS_VAPID_PUBLIC_KEY");
+      expect(String(error)).not.toContain(PRIVATE);
     }
   });
 });

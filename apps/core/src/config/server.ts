@@ -1,3 +1,4 @@
+import { ECDH } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -221,6 +222,29 @@ function assertVapidKey(name: string, value: string, bytes: number): void {
   }
 }
 
+/**
+ * The right length is not the same as a real key.
+ *
+ * A public key is a point on the P-256 curve, and one mistyped character leaves
+ * one that is still 65 bytes and still url-safe base64 — so every check above
+ * passes it, `/push/key` serves it, and the only thing that ever objects is the
+ * push service on the device itself, at the last step of a subscription, with
+ * an error the page had no reason to be holding on to.
+ *
+ * `setPublicKey` refuses a point that is not on the curve, which is exactly the
+ * question, and it asks it at config load where every other misconfiguration is
+ * already answered.
+ */
+function assertVapidPublicKeyIsOnCurve(value: string): void {
+  try {
+    ECDH.convertKey(value, "prime256v1", "base64url", "base64url", "uncompressed");
+  } catch {
+    throw new ConfigurationError(
+      "NOCTIS_VAPID_PUBLIC_KEY is the right length but is not a point on the P-256 curve, which means a character is wrong. Re-copy the pair from `npx web-push generate-vapid-keys`; a public key that does not belong to the private key beside it fails only on the device, never here.",
+    );
+  }
+}
+
 function parseVapid(env: Readonly<Record<string, string | undefined>>): VapidKeys | undefined {
   const keys = ["NOCTIS_VAPID_PUBLIC_KEY", "NOCTIS_VAPID_PRIVATE_KEY", "NOCTIS_VAPID_SUBJECT"];
   const present = keys.filter((key) => (env[key]?.trim() ?? "") !== "");
@@ -252,6 +276,7 @@ function parseVapid(env: Readonly<Record<string, string | undefined>>): VapidKey
   const privateKey = required(env, "NOCTIS_VAPID_PRIVATE_KEY");
 
   assertVapidKey("NOCTIS_VAPID_PUBLIC_KEY", publicKey, 65);
+  assertVapidPublicKeyIsOnCurve(publicKey);
   assertVapidKey("NOCTIS_VAPID_PRIVATE_KEY", privateKey, 32);
 
   return { publicKey, privateKey, subject };
