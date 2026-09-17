@@ -60,11 +60,18 @@ export default tseslint.config(
         setTimeout: "readonly",
         fetch: "readonly",
         document: "readonly",
+        getComputedStyle: "readonly",
       },
     },
   },
   {
     files: ["scripts/**/*.mjs"],
     languageOptions: { globals: { process: "readonly" } },
+  },
+  {
+    // The service worker is plain JavaScript executing in a worker, not in the
+    // page and not in Node. `self` is the whole of its global surface.
+    files: ["apps/web/public/*.js"],
+    languageOptions: { globals: { self: "readonly" } },
   },
 );

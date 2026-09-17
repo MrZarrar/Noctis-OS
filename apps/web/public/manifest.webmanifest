@@ -1,0 +1,14 @@
+{
+  "name": "Noctis",
+  "short_name": "Noctis",
+  "description": "The Noctis workbench, served by the core over the tailnet.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#050409",
+  "theme_color": "#0b0a12",
+  "icons": [
+    { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

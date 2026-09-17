@@ -2,11 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Noctis</title>
+    <!--
+      iOS delivers a web push only to a page that was added to the Home Screen
+      and opened from that icon, and an Add to Home Screen without a manifest
+      declaring `display: "standalone"` produces a bookmark rather than an
+      installed app — so the Settings card's advice ("add Noctis to the Home
+      Screen") had nothing behind it. The `apple-` meta tags are what older iOS
+      reads instead of the manifest; both are cheap, and only one of them is
+      enough on any given version.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="icon" type="image/png" href="/icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Noctis" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0b0a12" />
+    <script type="module" src="/src/main.tsx"></script>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -293,3 +293,53 @@ Still unproven after these runs, and not claimed:
 - **Claude.** No live turn on the `claude` route yet; the probe reports it available.
 - **Token streaming in a browser** (Slice 2 adds SSE; the desktop shell streams today).
 - **The two-PC topology** (§5), and a deliberate decline answered from the page rather than the API.
+
+### 2026-09-17 — the front door, from the owner's iPhone
+
+Slice 2 Part 1's gate, run on the real device over `tailscale serve`. The core on the work PC with
+`NOCTIS_WEB_ROOT` set to `apps\web\dist`, `NOCTIS_ALLOWED_ORIGINS` naming the Serve URL, and a VAPID
+pair in user-scope variables. The page installed to the Home Screen and opened from the icon.
+
+**Proven on hardware:**
+
+| Step                           | Result                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| The core serves the page       | The Serve URL answers the Noctis login screen, not a 404                     |
+| Log in once, with the token    | `POST /session/login` → `session established`; the workbench renders         |
+| The phone layout               | The eight-item rail is a five-item tab bar; Settings is usable at 400 px     |
+| Notifications, no button press | The card re-registered on mount and said "on for this device" unprompted     |
+| A push, to a locked phone      | `authority.request` → `require_confirmation` → the locked phone was notified |
+| The tap                        | Opened the workbench. **Not a token prompt** — the session survived the load |
+
+That last row is the one worth stating plainly: `client.navigate()` from the service worker is a full
+document load, so the page came back with its React state gone and its CSRF value with it, re-minted
+from the cookie alone, and landed on the workbench. The whole of the final review's C1 and C2 is that
+row.
+
+**What the phone found that nothing else could.** Three defects, each invisible to a green suite:
+
+1. **A VAPID public key that was 65 bytes and not a key.** One character had been transcribed wrong.
+   `assertVapidKey` checked charset and decoded length, both of which it passed; `/push/key` served
+   it; and the first thing on the path able to object was Apple's push service, at the last step of a
+   subscription, behind a `catch` that discarded the reason. `ECDH.convertKey` now refuses an
+   off-curve point at config load.
+2. **`PushSubscriptionSchema` was `.strict()` over two fields and a browser sends three.**
+   `PushSubscription.toJSON()` returns `{endpoint, expirationTime, keys}`. Every real subscription
+   was refused with a 400 while every test passed, because the fixtures were written by hand from the
+   two fields the core reads. No fixture is a browser.
+3. **The Settings card could not say why.** `enablePush` collapsed four different failures into one
+   sentence. It now names the step it stopped at, which is the only reason 1 and 2 were found at all.
+
+The first two share a shape: a validator strict about the wrong property. One checked a key's length
+but not whether it was a key; the other checked a payload against a shape nothing sends.
+
+**Still not proven, and not claimed:**
+
+- **A turn from the phone.** No node agent was running, so the model selector correctly read "No model
+  offered by any node" and no prompt was sent. Streaming to the phone over SSE is therefore unproven
+  on the device; the tokenless E2E proves it in Chromium against the core's own origin.
+- **Answering an approval from the phone.** The push arrives and the tap lands in the workbench; the
+  notification does not deep-link to the ask, because `PushPayload.url` is `/` while no client-side
+  router exists and `/approvals` is an API path. Marked `ponytail:` at the source.
+- **A turn that fails or blocks**, the second of the two events that push.
+- **Thirty-day session expiry**, and the push subscription the cascade takes with it.

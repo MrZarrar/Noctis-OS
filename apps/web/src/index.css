@@ -1,0 +1,14 @@
+/*
+ * The app's whole stylesheet. Without it the UA's 8px body margin makes every
+ * `height: 100vh` shell overflow by 16px, and insets the page 8px from each
+ * edge while a `position: fixed` bar spans the full width — so on a phone the
+ * tab bar is 16px wider than the content above it.
+ *
+ * A file rather than a `<style>` block in index.html, so the core's
+ * `Content-Security-Policy` can say `default-src 'self'` with no
+ * `'unsafe-inline'`. Everything else the app draws is a React `style` prop,
+ * which is a CSSOM write and outside CSP's reach.
+ */
+body {
+  margin: 0;
+}

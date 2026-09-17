@@ -38,7 +38,7 @@ import {
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
-import type { z } from "zod";
+import { z } from "zod";
 
 import {
   confirmAuthority,
@@ -128,14 +128,44 @@ import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
 import { writesEnabled } from "../vault/writes.js";
 import type { CoreConfig } from "../config/server.js";
-import { isAuthorized, isOriginAllowed } from "./auth.js";
+import type { Notifier } from "../notify/push.js";
+import { PushSubscriptionSchema } from "../notify/push.js";
+import type { AuthorizeResult } from "./auth.js";
+import { authorize, isAuthorized, isOriginAllowed } from "./auth.js";
+import { serializeCookie } from "./cookie.js";
+import type { SessionDeps } from "./session.js";
+import {
+  SESSION_COOKIE,
+  createSession,
+  refreshCsrf,
+  revokeSession,
+  verifySession,
+} from "./session.js";
+import { openEventStream } from "./sse.js";
+import { isApiPath, serveStatic } from "./static.js";
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_PAGE_SIZE = 500;
 const DEFAULT_PAGE_SIZE = 100;
+/** SSE heartbeat: a comment line often enough that a reverse proxy never times the connection out idle. */
+const SSE_HEARTBEAT_MS = 15_000;
 
 /** The one path that does not require the core bearer token. See `pairNode`. */
 export const PAIR_PATH = "/node/pair";
+
+/** Exchanges the core token for a cookie. The other path that runs before the gate. */
+export const LOGIN_PATH = "/session/login";
+export const LOGOUT_PATH = "/session/logout";
+/** Re-mints the CSRF value from a cookie the browser still holds. Behind the gate. */
+export const SESSION_PATH = "/session";
+
+/** Web push. Behind the credential gate like everything else. */
+export const PUSH_KEY_PATH = "/push/key";
+export const PUSH_SUBSCRIBE_PATH = "/push/subscribe";
+export const PUSH_UNSUBSCRIBE_PATH = "/push/unsubscribe";
+
+const LoginBodySchema = z.object({ token: z.string().min(1) }).strict();
+const UnsubscribeBodySchema = z.object({ endpoint: z.url() }).strict();
 
 export interface ApiDeps {
   kernel: Kernel;
@@ -147,6 +177,8 @@ export interface ApiDeps {
   conversation: ConversationService;
   /** Token deltas for streaming clients. Never persisted. */
   live: LiveBroker;
+  /** Web push. Present always; without VAPID keys its `publicKey()` is undefined. */
+  notifier: Notifier;
   /** Absent when no Vault is configured, which is the default. */
   vaultRoot?: VaultRoot;
   /** The environment the Vault write switch is read from. */
@@ -163,6 +195,38 @@ interface ErrorBody {
  */
 function errorBody(code: string, message: string, details?: unknown): ErrorBody {
   return { error: { code, message, ...(details === undefined ? {} : { details }) } };
+}
+
+/**
+ * A repeated request header arrives as an array. A credential presented twice is
+ * not a credential, so only the single-valued form is read.
+ */
+function headerValue(raw: string | string[] | undefined): string | undefined {
+  return typeof raw === "string" ? raw : undefined;
+}
+
+function sessionDeps(deps: ApiDeps): SessionDeps {
+  return { db: deps.kernel.db, clock: deps.kernel.clock, ids: deps.kernel.ids };
+}
+
+/**
+ * The attributes every session cookie carries. Only the value and lifetime vary,
+ * so a logout clears exactly what a login set.
+ *
+ * ponytail: `Secure` is unconditional. Tailscale Serve terminates TLS, so the
+ * browser always sees HTTPS and the front door this is built for is never plain
+ * HTTP — but a page served over plain HTTP on loopback would be handed a cookie
+ * it then refuses to send back, and fail to log in with no visible reason. Make
+ * it conditional on the deployment if a plain-HTTP browser ever has to work.
+ */
+function sessionCookie(value: string, maxAgeSeconds: number): string {
+  return serializeCookie(SESSION_COOKIE, value, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Strict",
+    path: "/",
+    maxAgeSeconds,
+  });
 }
 
 function send(res: ServerResponse, status: number, body: unknown, correlationId: string): void {
@@ -960,10 +1024,78 @@ function handlePair(
 }
 
 /**
- * Single entry point for the REST realm. Order matters: origin, then token, then
- * routing. A caller that fails either check learns nothing about which paths
- * exist. `/node/pair` sits between the two on purpose, and is the only path that
- * does.
+ * A browser registering or forgetting its push endpoint.
+ *
+ * A subscription belongs to a *session*, because `push_subscriptions.session_id`
+ * references `sessions(id)` with `ON DELETE CASCADE` — that cascade is the only
+ * thing that ever reaps a dead phone. A bearer-authenticated caller has no
+ * session to hang one off, so it is refused rather than given an invented one
+ * that would outlive every session and never be cleaned up.
+ *
+ * Unsubscribing takes either credential: the endpoint is the browser's own
+ * unguessable URL, and a phone whose session has just been replaced must still
+ * be able to turn its own notifications off.
+ */
+function handlePush(
+  deps: ApiDeps,
+  action: "subscribe" | "unsubscribe",
+  authorized: AuthorizeResult | undefined,
+  body: unknown,
+): { status: number; body: unknown; issues?: readonly string[] } {
+  if (action === "unsubscribe") {
+    const parsed = UnsubscribeBodySchema.safeParse(body);
+
+    if (!parsed.success) {
+      return { status: 400, body: errorBody("invalid_request", "Body must be {endpoint}") };
+    }
+
+    deps.notifier.unsubscribe(parsed.data.endpoint);
+
+    // Unconditionally 200: an endpoint that was already gone is the outcome the
+    // caller asked for, and saying "no such subscription" would confirm which
+    // endpoints this core holds.
+    return { status: 200, body: { status: "unsubscribed" } };
+  }
+
+  if (authorized?.kind !== "session") {
+    return {
+      status: 400,
+      body: errorBody(
+        "session_required",
+        "A push subscription belongs to a browser session. Log in for a session cookie first.",
+      ),
+    };
+  }
+
+  const parsed = PushSubscriptionSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return {
+      status: 400,
+      body: errorBody(
+        "invalid_request",
+        "Body must be a PushSubscription: {endpoint, keys: {p256dh, auth}}",
+      ),
+      // Which fields, never their contents. A refused subscription used to log
+      // only its status, so the one question worth asking — what about this
+      // browser's subscription is wrong — could be answered only by a debugger
+      // attached to the phone. The paths are field names the schema already
+      // declares; the endpoint and the key material stay out of the log.
+      issues: parsed.error.issues.map((issue) => issue.path.join(".") || "(root)"),
+    };
+  }
+
+  deps.notifier.subscribe(authorized.id, parsed.data);
+
+  return { status: 200, body: { status: "subscribed" } };
+}
+
+/**
+ * Single entry point for the REST realm. Order matters: origin, then credential,
+ * then routing. A caller that fails either check learns nothing about which
+ * paths exist. Two paths sit between the two on purpose and no others:
+ * `/node/pair`, which is how a node earns a credential, and `/session/login`,
+ * which is how a browser exchanges the token for one.
  */
 export async function handleRequest(
   deps: ApiDeps,
@@ -998,11 +1130,67 @@ export async function handleRequest(
       return;
     }
 
-    const isPair = req.method === "POST" && url.pathname === PAIR_PATH;
+    // The built page, when the core is the front door rather than Vite. Static
+    // is the last resort by path — `isApiPath` claims every route above and
+    // below this line — but it has to run before the credential gate, because
+    // the login screen has to load before there is a session to check. Assets
+    // carry no user data and the tailnet is the boundary; see `static.ts`.
+    if (deps.config.webRoot !== undefined && req.method === "GET" && !isApiPath(url.pathname)) {
+      await serveStatic(deps.config.webRoot, url.pathname, res);
+      return;
+    }
 
-    if (!isPair && !isAuthorized(req.headers.authorization, deps.config.token)) {
-      logger.log("warn", "rejected unauthenticated request");
-      send(res, 401, errorBody("unauthorized", "A valid bearer token is required"), correlationId);
+    const isPair = req.method === "POST" && url.pathname === PAIR_PATH;
+    // `/session/login` runs before the credential check, because presenting the
+    // token in the body is how a browser obtains one. It is a POST with no
+    // session, so the CSRF rule cannot apply to it either.
+    const isLogin = req.method === "POST" && url.pathname === LOGIN_PATH;
+    const isLogout = req.method === "POST" && url.pathname === LOGOUT_PATH;
+
+    // Kept rather than discarded: `/push/subscribe` needs the session id, and
+    // the only place it exists is the result of the check that just ran.
+    let authorized: AuthorizeResult | undefined;
+
+    if (!isLogin && !isPair) {
+      const decision = authorize({
+        method: req.method ?? "GET",
+        authorization: headerValue(req.headers.authorization),
+        cookie: headerValue(req.headers.cookie),
+        csrfHeader: headerValue(req.headers["x-noctis-csrf"]),
+        token: deps.config.token,
+        session: (cookie) => verifySession(sessionDeps(deps), cookie),
+      });
+
+      if (decision.kind === "denied") {
+        logger.log("warn", "rejected request", { reason: decision.reason });
+        send(
+          res,
+          decision.reason === "csrf" ? 403 : 401,
+          decision.reason === "csrf"
+            ? errorBody("csrf_required", "A matching X-Noctis-CSRF header is required")
+            : errorBody("unauthorized", "A valid bearer token or session is required"),
+          correlationId,
+        );
+        return;
+      }
+
+      authorized = decision;
+    }
+
+    // The public half of the VAPID pair, which a browser needs before it can
+    // subscribe. 404 when no keys are configured: a core without push says so
+    // once, here, rather than accepting subscriptions it can never deliver to.
+    if (req.method === "GET" && url.pathname === PUSH_KEY_PATH) {
+      const publicKey = deps.notifier.publicKey();
+
+      send(
+        res,
+        publicKey === undefined ? 404 : 200,
+        publicKey === undefined
+          ? errorBody("push_unavailable", "This core is not configured for web push")
+          : { publicKey },
+        correlationId,
+      );
       return;
     }
 
@@ -1018,12 +1206,88 @@ export async function handleRequest(
         {
           schemaVersion: deps.schemaVersion,
           latestSequence: latestSequence(deps.kernel.db),
-          connectedClients: deps.kernel.broker.listenerCount,
+          // Not "connected clients", which is what this was called while it
+          // was one: the core subscribes to its own broker twice now — the
+          // notifier in `server.ts` and the conversation service — so it reads
+          // 2 with nobody connected at all. Named for what it counts rather
+          // than corrected by subtracting a constant that the next permanent
+          // subscriber would silently invalidate.
+          eventSubscribers: deps.kernel.broker.listenerCount,
           connectedNodes: deps.dispatcher.connectedCount,
           uptimeMs: deps.kernel.clock.now() - deps.startedAt,
         },
         correlationId,
       );
+      return;
+    }
+
+    // Resuming a session the browser still holds. The cookie outlives the page
+    // by thirty days; the CSRF value dies with the JS heap on every reload, tab
+    // eviction, Home Screen cold start and notification tap — so without this
+    // the owner meets the token prompt again with a valid session in hand.
+    //
+    // Safe as a GET: `SameSite=Strict` keeps the cookie off every cross-site
+    // request, so a foreign page cannot make this call carry a credential at
+    // all, and the core emits no CORS headers, so it could not read the body if
+    // it did. Session-only, because a bearer caller has no session to re-mint.
+    if (req.method === "GET" && url.pathname === SESSION_PATH) {
+      if (authorized?.kind !== "session") {
+        send(
+          res,
+          403,
+          errorBody(
+            "session_required",
+            "Only a browser session can be resumed. A bearer token needs no csrf value.",
+          ),
+          correlationId,
+        );
+        return;
+      }
+
+      send(res, 200, { csrf: refreshCsrf(sessionDeps(deps), authorized.id) }, correlationId);
+      return;
+    }
+
+    // Session-authenticated, so it sits after the credential gate. It must also
+    // sit before the generic GET branch below: that branch answers with a
+    // single JSON body and would otherwise swallow this path.
+    if (req.method === "GET" && url.pathname === "/events/live") {
+      const cursor = Number(url.searchParams.get("afterSequence") ?? "0");
+
+      if (!Number.isInteger(cursor) || cursor < 0) {
+        send(
+          res,
+          400,
+          errorBody("invalid_request", "afterSequence must be a whole number"),
+          correlationId,
+        );
+        return;
+      }
+
+      const close = openEventStream(
+        {
+          broker: deps.kernel.broker,
+          readEvents: (after, limit) => readEventsAfter(deps.kernel.db, after, limit),
+          latestSequence: () => latestSequence(deps.kernel.db),
+          frames: deps.live,
+          // Re-read on every heartbeat, not captured: the row this looks up is
+          // what a logout deletes and what expiry retires, and the whole point
+          // is to notice that on a connection that is already open.
+          stillAuthorized:
+            authorized?.kind === "session"
+              ? () =>
+                  verifySession(sessionDeps(deps), headerValue(req.headers.cookie)) !== undefined
+              : () => true,
+          heartbeatMs: SSE_HEARTBEAT_MS,
+          setInterval,
+          clearInterval,
+        },
+        res,
+        cursor,
+      );
+
+      req.on("close", close);
+      req.on("error", close);
       return;
     }
 
@@ -1034,16 +1298,28 @@ export async function handleRequest(
     }
 
     const isCommand = req.method === "POST" && segments[0] === "commands" && segments.length === 2;
+    const isSession = isLogin || isLogout;
+    const pushAction =
+      req.method === "POST" && url.pathname === PUSH_SUBSCRIBE_PATH
+        ? "subscribe"
+        : req.method === "POST" && url.pathname === PUSH_UNSUBSCRIBE_PATH
+          ? "unsubscribe"
+          : undefined;
 
-    if (!isCommand && !isPair) {
+    if (!isCommand && !isPair && !isSession && pushAction === undefined) {
       send(res, 404, errorBody("not_found", "No such resource"), correlationId);
       return;
     }
 
     const name = segments[1] ?? "";
-    const route = isPair ? undefined : Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+    const route =
+      isPair || isSession || pushAction !== undefined
+        ? undefined
+        : Object.hasOwn(COMMANDS, name)
+          ? COMMANDS[name]
+          : undefined;
 
-    if (!isPair && route === undefined) {
+    if (!isPair && !isSession && pushAction === undefined && route === undefined) {
       send(res, 404, errorBody("not_found", "No such command"), correlationId);
       return;
     }
@@ -1073,6 +1349,56 @@ export async function handleRequest(
       body = JSON.parse(raw.toString("utf8")) as unknown;
     } catch {
       send(res, 400, errorBody("invalid_request", "Body is not valid JSON"), correlationId);
+      return;
+    }
+
+    if (pushAction !== undefined) {
+      const result = handlePush(deps, pushAction, authorized, body);
+
+      // The endpoint is the browser's own URL and goes in no log line.
+      logger.log("info", "push subscription handled", {
+        action: pushAction,
+        status: result.status,
+        ...(result.issues === undefined ? {} : { rejectedFields: result.issues }),
+      });
+      send(res, result.status, result.body, correlationId);
+      return;
+    }
+
+    if (isLogin) {
+      const parsed = LoginBodySchema.safeParse(body);
+
+      if (!parsed.success) {
+        send(res, 400, errorBody("invalid_request", "Body must be {token}"), correlationId);
+        return;
+      }
+
+      // The same constant-time comparison the bearer realm uses. A failed login
+      // says only that it failed.
+      if (!isAuthorized(`Bearer ${parsed.data.token}`, deps.config.token)) {
+        logger.log("warn", "rejected session login");
+        send(res, 401, errorBody("unauthorized", "The token is not valid"), correlationId);
+        return;
+      }
+
+      const created = createSession(sessionDeps(deps), deps.config.sessionTtlHours);
+
+      res.setHeader(
+        "set-cookie",
+        sessionCookie(created.cookieValue, deps.config.sessionTtlHours * 3600),
+      );
+
+      logger.log("info", "session established");
+      send(res, 200, { csrf: created.csrf }, correlationId);
+      return;
+    }
+
+    if (isLogout) {
+      const revoked = revokeSession(sessionDeps(deps), headerValue(req.headers.cookie));
+
+      res.setHeader("set-cookie", sessionCookie("", 0));
+
+      send(res, 200, { status: revoked ? "revoked" : "no_session" }, correlationId);
       return;
     }
 

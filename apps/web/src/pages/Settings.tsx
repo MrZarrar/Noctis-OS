@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { modelKey, modelLabel } from "../conversation/PromptForm.js";
+import type { PushState } from "../notify/subscribe.js";
+import { enablePush, initialPushState } from "../notify/subscribe.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 /**
@@ -63,9 +65,14 @@ function nextKey(): string {
 
 export interface SettingsProps {
   transport: CoreTransport | undefined;
+  /**
+   * Ends the browser session. Absent for the packaged shell and a token build,
+   * which hold no session and have nothing to sign out of.
+   */
+  onSignedOut?: () => void;
 }
 
-export function Settings({ transport }: SettingsProps): JSX.Element {
+export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element {
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
@@ -194,6 +201,93 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
     [transport],
   );
 
+  /** Decision 0.25: the phone is told, so it is not a screen you have to remember to look at. */
+  const [push, setPush] = useState<PushState | undefined>(initialPushState);
+  const [pushBusy, setPushBusy] = useState(false);
+  /**
+   * Why the last attempt ended where it did.
+   *
+   * `PUSH_STATUS` says which of four states this device is in; it cannot say
+   * which step produced it, and the four steps fail for entirely different
+   * reasons. A card that says only "it did not work" sends the owner to check
+   * the one thing they can see — permission — when the cause is usually a step
+   * further in that nothing surfaces.
+   */
+  const [pushDetail, setPushDetail] = useState<string>();
+
+  const turnOnPush = useCallback(async () => {
+    if (transport === undefined) {
+      return;
+    }
+
+    setPushBusy(true);
+    setPushDetail(undefined);
+    setPush(await enablePush(transport, globalThis, setPushDetail));
+    setPushBusy(false);
+  }, [transport]);
+
+  /**
+   * The client half of the cascade.
+   *
+   * `push_subscriptions.session_id` cascades from `sessions`, and a session
+   * lasts `NOCTIS_SESSION_TTL_HOURS` — thirty days by default. When it expires
+   * and the next login sweeps it, the core loses this device's subscription
+   * while the browser still holds a live `PushSubscription` and a granted
+   * permission. Nothing in the browser can notice: the phone simply stops
+   * ringing, and a card that read permission alone would still say it was on.
+   *
+   * So re-post it on every visit to this page. `pushManager.subscribe` returns
+   * the subscription the browser already has, and the core's
+   * `ON CONFLICT (endpoint) DO UPDATE SET session_id` rebinds the row to the
+   * current session. No prompt: permission is already granted, so
+   * `requestPermission` resolves without asking.
+   */
+  useEffect(() => {
+    if (transport === undefined || initialPushState() !== "enabled") {
+      return;
+    }
+
+    let cancelled = false;
+
+    void enablePush(transport, globalThis, (detail) => {
+      if (!cancelled) {
+        setPushDetail(detail);
+      }
+    }).then((state) => {
+      if (!cancelled) {
+        setPush(state);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [transport]);
+
+  /**
+   * `POST /session/logout` was implemented, tested, and called by nothing — so
+   * the only way off a borrowed or shared browser was to wait thirty days.
+   *
+   * The page returns to the login screen whether or not the core answered: the
+   * in-memory CSRF value is gone either way, and staying on a workbench that
+   * cannot write would be a worse answer than asking to log in again. A refusal
+   * does leave the cookie alive on this device, which is the honest ceiling — a
+   * lost phone is closed by deleting the row, not from the phone.
+   */
+  const signOut = useCallback(async () => {
+    if (onSignedOut === undefined) {
+      return;
+    }
+
+    try {
+      await transport?.request("POST", "/session/logout", {});
+    } catch {
+      /* the session is being abandoned regardless of what the core said */
+    }
+
+    onSignedOut();
+  }, [transport, onSignedOut]);
+
   const live = permissions.filter((permission) => permission.revokedAt === undefined);
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
@@ -274,6 +368,58 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
 
       <section style={{ display: "grid", gap: spacing.sm }}>
         <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
+          Notifications
+        </h2>
+        <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
+          This device is told when an approval is waiting and when a turn fails or is blocked —
+          those two, and nothing else. Per device: turning them on here does not turn them on
+          anywhere else you are logged in.
+        </p>
+        <p style={{ margin: 0 }}>{PUSH_STATUS[push ?? "off"]}</p>
+        {pushDetail !== undefined && (
+          <p
+            style={{
+              margin: 0,
+              maxWidth: typography.measurePx,
+              color: typography.color.muted,
+              font: `${String(typography.scale.sm)}px ${typography.monoFamily}`,
+            }}
+          >
+            Last attempt: {pushDetail}
+          </p>
+        )}
+        {/*
+          Still offered when it is already on. The core can lose this device's
+          subscription without the browser ever finding out — the session it
+          hung off expired — and while the page re-registers on its own each
+          time it opens, a person who thinks the phone has gone quiet needs
+          something to press rather than advice to clear their site data.
+        */}
+        {push !== "unsupported" && (
+          <div>
+            <button
+              type="button"
+              disabled={transport === undefined || pushBusy}
+              onClick={() => {
+                void turnOnPush();
+              }}
+              style={{
+                background: material.fillElevated,
+                color: "inherit",
+                border: `1px solid ${material.border}`,
+                borderRadius: corner.sm,
+                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
+                cursor: "pointer",
+              }}
+            >
+              {push === "enabled" ? "Re-register this device" : "Turn on notifications"}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section style={{ display: "grid", gap: spacing.sm }}>
+        <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
           Standing permissions
         </h2>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
@@ -317,10 +463,57 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
         </section>
       )}
 
+      {onSignedOut !== undefined && (
+        <section style={{ display: "grid", gap: spacing.sm }}>
+          <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
+            This browser
+          </h2>
+          <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
+            Signing out ends this browser&apos;s session and asks for the core token again. It
+            affects nothing anywhere else, and it does not turn notifications off — this device
+            stops being told when the core forgets the subscription that hung off the session.
+          </p>
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                void signOut();
+              }}
+              style={{
+                background: material.fillElevated,
+                color: "inherit",
+                border: `1px solid ${material.border}`,
+                borderRadius: corner.sm,
+                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
+                cursor: "pointer",
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        </section>
+      )}
+
       {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
     </section>
   );
 }
+
+/**
+ * Said plainly, because every one of these is a different thing to do next. The
+ * iOS sentence is the one that matters most: Safari has no `Notification` at
+ * all until the page is on the Home Screen, so "unsupported" there means "not
+ * yet" rather than "never".
+ */
+const PUSH_STATUS: Readonly<Record<PushState | "off", string>> = {
+  enabled: "Notifications are on for this device.",
+  denied: "Notifications are blocked in browser settings. Allow them there, then reload.",
+  unsupported:
+    "This browser does not support notifications. On an iPhone, add Noctis to the Home Screen and open it from there.",
+  failed:
+    "Notifications could not be turned on. The core refused the subscription or could not be reached — this browser is capable, so try again, and check the core has its VAPID keys.",
+  off: "Notifications are off for this device.",
+};
 
 const listStyle = {
   listStyle: "none",

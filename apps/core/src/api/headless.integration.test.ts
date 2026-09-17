@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +6,7 @@ import type { MissionRecord, ObjectiveRecord, ServerFrame } from "@noctis/contra
 import { createTestVault } from "@noctis/test-kit";
 import { ENVELOPE_VERSION } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
+import webpush from "web-push";
 import { WebSocket } from "ws";
 
 import { getApprovalByAskId } from "../authority/service.js";
@@ -13,6 +14,15 @@ import type { CoreConfig } from "../config/server.js";
 import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
+
+import {
+  LOGIN_PATH,
+  LOGOUT_PATH,
+  PUSH_KEY_PATH,
+  PUSH_SUBSCRIBE_PATH,
+  PUSH_UNSUBSCRIBE_PATH,
+  SESSION_PATH,
+} from "./http.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -36,6 +46,7 @@ async function startTestCore(
     databasePath: join(directory, "core.db"),
     allowedOrigins: [],
     logLevel: "error",
+    sessionTtlHours: 720,
     ...overrides,
   };
 
@@ -67,6 +78,27 @@ afterEach(async () => {
 
 function authorized(extra: Record<string, string> = {}): Record<string, string> {
   return { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...extra };
+}
+
+/**
+ * Exchanges the core token for a session cookie, the way a browser does. Returns
+ * the two halves a page then holds: the cookie the browser replays on its own,
+ * and the CSRF value it has to attach to every mutation by hand.
+ */
+async function login(core: TestCore, token: string = TOKEN): Promise<Response> {
+  return fetch(`${core.base}${LOGIN_PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+async function session(core: TestCore): Promise<{ cookie: string; csrf: string }> {
+  const response = await login(core);
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  const { csrf } = (await response.json()) as { csrf: string };
+
+  return { cookie: setCookie.split(";")[0] ?? "", csrf };
 }
 
 async function command(
@@ -260,8 +292,10 @@ describe("headless kernel loop", () => {
     // 0002 added node pairing and job results; 0003 the Surface uniqueness;
     // 0004 the six Vault tables Section 4.1 lists; 0005 the consequence
     // boundary columns, source semantics, and artifact lineage; 0006 turns,
-    // sessions, provider decisions, and one thread per Objective.
-    expect(diagnostics.body.schemaVersion).toBe(6);
+    // sessions, provider decisions, and one thread per Objective; 0007 the
+    // browser sessions a cookie is verified against; 0008 the push
+    // subscriptions that die with the session they belong to.
+    expect(diagnostics.body.schemaVersion).toBe(8);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -1513,5 +1547,652 @@ describe("THE GATE: a status cannot claim more than the evidence supports", () =
     const state = await read(core, `/sources/${String(source.body.id)}`);
 
     expect(state.body.conflicted).toBe(false);
+  });
+});
+
+describe("the session realm", () => {
+  it("refuses a page with no credential, issues one for the right token, then serves reads and gated mutations", async () => {
+    const core = await startTestCore();
+
+    const denied = await fetch(`${core.base}/objectives`);
+    expect(denied.status).toBe(401);
+
+    const bad = await login(core, "wrong");
+    expect(bad.status).toBe(401);
+    expect(bad.headers.get("set-cookie")).toBe(null);
+
+    const loginResponse = await login(core);
+    expect(loginResponse.status).toBe(200);
+
+    const setCookie = loginResponse.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+    expect(setCookie).toContain("Secure");
+    // The value itself is never readable by a page and never logged; only that
+    // the browser was handed one under the expected name.
+    //
+    // The `__Host-` prefix is the prevention `cookie.ts`'s drop-both rule can
+    // only mitigate: a browser refuses to store a cookie under this name unless
+    // it is Secure, Path=/, and names no Domain, so a sibling host on the
+    // tailnet cannot plant a duplicate at all. These three attributes are what
+    // make the name legal, so they are asserted together with it.
+    expect(setCookie.startsWith("__Host-noctis_session=")).toBe(true);
+    expect(setCookie).toContain("Path=/");
+    expect(setCookie.toLowerCase()).not.toContain("domain=");
+
+    const { csrf } = (await loginResponse.json()) as { csrf: string };
+    const cookie = setCookie.split(";")[0] ?? "";
+
+    expect((await fetch(`${core.base}/objectives`, { headers: { cookie } })).status).toBe(200);
+
+    const body = JSON.stringify({
+      idempotencyKey: newKey("session-objective"),
+      title: "Ship the front door",
+      intent: "Prove the cookie realm end to end",
+      status: "draft",
+      identityId: "vesper",
+      protocolIds: [],
+    });
+
+    const withoutCsrf = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body,
+    });
+    expect(withoutCsrf.status).toBe(403);
+
+    const withCsrf = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body,
+    });
+    expect(withCsrf.status).toBe(200);
+
+    const loggedOut = await fetch(`${core.base}${LOGOUT_PATH}`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: "{}",
+    });
+    expect(loggedOut.status).toBe(200);
+
+    expect((await fetch(`${core.base}/objectives`, { headers: { cookie } })).status).toBe(401);
+  });
+
+  it("re-mints a csrf value from a cookie alone, so a reload does not ask for the token again", async () => {
+    const core = await startTestCore();
+    const first = await session(core);
+
+    // Exactly what a page does on boot: the cookie, and nothing else. No CSRF
+    // value — the reload is what destroyed it.
+    const resumed = await fetch(`${core.base}${SESSION_PATH}`, {
+      headers: { cookie: first.cookie },
+    });
+
+    expect(resumed.status).toBe(200);
+
+    const { csrf } = (await resumed.json()) as { csrf: string };
+
+    expect(csrf).not.toBe(first.csrf);
+    // A re-mint is not a new session: the browser keeps the cookie it had.
+    expect(resumed.headers.get("set-cookie")).toBe(null);
+
+    const body = (key: string): string =>
+      JSON.stringify({
+        idempotencyKey: newKey(key),
+        title: "After the reload",
+        intent: "The resumed session can still write",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      });
+
+    const withNew = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie: first.cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: body("resumed"),
+    });
+
+    expect(withNew.status).toBe(200);
+
+    // And the value it replaced is dead. A re-mint that left the old one live
+    // would turn a single leak of it into a permanent one.
+    const withOld = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: {
+        cookie: first.cookie,
+        "content-type": "application/json",
+        "x-noctis-csrf": first.csrf,
+      },
+      body: body("stale"),
+    });
+
+    expect(withOld.status).toBe(403);
+  });
+
+  it("refuses to resume for a bearer caller, which has no session to re-mint", async () => {
+    const core = await startTestCore();
+
+    const response = await fetch(`${core.base}${SESSION_PATH}`, { headers: authorized() });
+
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "session_required",
+    );
+  });
+
+  it("answers 401 with no cookie at all, which is what sends a page to the login screen", async () => {
+    const core = await startTestCore();
+
+    expect((await fetch(`${core.base}${SESSION_PATH}`)).status).toBe(401);
+  });
+
+  it("stops resuming a session that was logged out", async () => {
+    const core = await startTestCore();
+    const { cookie, csrf } = await session(core);
+
+    await fetch(`${core.base}${LOGOUT_PATH}`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: "{}",
+    });
+
+    expect((await fetch(`${core.base}${SESSION_PATH}`, { headers: { cookie } })).status).toBe(401);
+  });
+
+  it("leaves the bearer realm alone: a token still needs no csrf header, even carrying a cookie", async () => {
+    const core = await startTestCore();
+    // A session belonging to someone else, attached to a bearer mutation that
+    // sends no CSRF header. The token is answered on its own merits, so the
+    // cookie neither helps nor hinders.
+    const foreign = await session(core);
+
+    const created = await command(
+      core,
+      "objective.create",
+      {
+        idempotencyKey: newKey("bearer-still-works"),
+        title: "Ship the kernel",
+        intent: "The native shell is unaffected",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      },
+      authorized({ cookie: foreign.cookie }),
+    );
+
+    expect(created.status).toBe(200);
+  });
+
+  it("refuses one session's csrf value presented with another session's cookie", async () => {
+    const core = await startTestCore();
+    const mine = await session(core);
+    const theirs = await session(core);
+
+    const crossed = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: {
+        cookie: mine.cookie,
+        "content-type": "application/json",
+        "x-noctis-csrf": theirs.csrf,
+      },
+      body: JSON.stringify({
+        idempotencyKey: newKey("crossed"),
+        title: "Never created",
+        intent: "The csrf value belongs to another session",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      }),
+    });
+
+    expect(crossed.status).toBe(403);
+  });
+});
+
+describe("the session realm in its deployed shape", () => {
+  // Every other test in this file reaches the core through Node's `fetch`,
+  // which sends no Origin header, so the origin gate never fires. A real page
+  // sends one on every request — including its own same-origin POST — and the
+  // gate runs before the login exemption. These two cases are the only ones
+  // that exercise the configuration the front door actually ships under.
+  const ORIGIN = "https://noctis.example";
+
+  async function loginFrom(core: TestCore, origin: string): Promise<Response> {
+    return fetch(`${core.base}${LOGIN_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+  }
+
+  it("logs a browser in when it sends the Origin the core allows", async () => {
+    const core = await startTestCore({ allowedOrigins: [ORIGIN] });
+
+    const response = await loginFrom(core, ORIGIN);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie") ?? "").toContain("HttpOnly");
+
+    const { csrf } = (await response.json()) as { csrf: string };
+    const cookie = (response.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+
+    // And the session it issued works from that origin for the whole round
+    // trip, read and gated mutation alike.
+    const objectives = await fetch(`${core.base}/objectives`, {
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(objectives.status).toBe(200);
+
+    const created = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-noctis-csrf": csrf,
+      },
+      body: JSON.stringify({
+        idempotencyKey: newKey("origin-objective"),
+        title: "Ship the front door",
+        intent: "Prove the realm under its real origin policy",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      }),
+    });
+    expect(created.status).toBe(200);
+  });
+
+  it("refuses a login from an origin that is not allowlisted, before the login exemption", async () => {
+    const core = await startTestCore({ allowedOrigins: [ORIGIN] });
+
+    const response = await loginFrom(core, "https://evil.example");
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("set-cookie")).toBe(null);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "forbidden_origin",
+    );
+  });
+
+  it("refuses a browser entirely when no origin is allowlisted, which is the default", async () => {
+    const core = await startTestCore();
+
+    expect((await loginFrom(core, ORIGIN)).status).toBe(403);
+  });
+});
+
+describe("the live stream", () => {
+  it("streams a committed event to a logged-in browser over SSE", async () => {
+    const core = await startTestCore();
+    const { cookie, csrf } = await session(core);
+    const controller = new AbortController();
+
+    const stream = await fetch(`${core.base}/events/live?afterSequence=0`, {
+      headers: { cookie, accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = stream.body?.getReader();
+    expect(reader).toBeDefined();
+
+    await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: JSON.stringify({
+        idempotencyKey: newKey("sse-stream"),
+        title: "Ship the front door",
+        intent: "Prove the SSE realm end to end",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      }),
+    });
+
+    const decoder = new TextDecoder();
+    let seen = "";
+
+    while (!seen.includes("objective.created.v1")) {
+      const chunk = await reader?.read();
+
+      if (chunk?.done === true) {
+        break;
+      }
+
+      seen += decoder.decode((chunk?.value as Uint8Array | undefined) ?? new Uint8Array(), {
+        stream: true,
+      });
+    }
+
+    expect(seen).toContain("event: event");
+    expect(seen).toContain("objective.created.v1");
+
+    controller.abort();
+  });
+
+  it("refuses the stream to a browser with no session", async () => {
+    const core = await startTestCore();
+
+    const response = await fetch(`${core.base}/events/live?afterSequence=0`);
+
+    expect(response.status).toBe(401);
+  });
+
+  it("refuses a non-numeric afterSequence", async () => {
+    const core = await startTestCore();
+    const { cookie } = await session(core);
+
+    const response = await fetch(`${core.base}/events/live?afterSequence=abc`, {
+      headers: { cookie },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a negative afterSequence", async () => {
+    const core = await startTestCore();
+    const { cookie } = await session(core);
+
+    const response = await fetch(`${core.base}/events/live?afterSequence=-1`, {
+      headers: { cookie },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("clamps a cursor far ahead of the ledger and announces a gap, rather than opening a stream that only ever heartbeats", async () => {
+    const core = await startTestCore();
+    const { cookie } = await session(core);
+    const controller = new AbortController();
+
+    // Passes `Number.isInteger` (it is one, just a very large one) and binds
+    // fine into `node:sqlite` — the bug this guards is a cursor accepted at
+    // the 400 check but never satisfied by any committed event.
+    const stream = await fetch(`${core.base}/events/live?afterSequence=1e21`, {
+      headers: { cookie, accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+
+    expect(stream.status).toBe(200);
+
+    const reader = stream.body?.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+
+    while (!seen.includes('"kind":"gap"')) {
+      const chunk = await reader?.read();
+
+      if (chunk?.done === true) {
+        break;
+      }
+
+      seen += decoder.decode((chunk?.value as Uint8Array | undefined) ?? new Uint8Array(), {
+        stream: true,
+      });
+    }
+
+    expect(seen).toContain("event: frame");
+    expect(seen).toContain('"kind":"gap"');
+
+    controller.abort();
+  });
+});
+
+describe("the core as the front door", () => {
+  function webRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), "noctis-web-"));
+
+    writeFileSync(join(root, "index.html"), "<!doctype html><title>Noctis</title>");
+    mkdirSync(join(root, "assets"));
+    writeFileSync(join(root, "assets", "app.js"), "export const app = 1;");
+
+    return root;
+  }
+
+  it("serves nothing but the API when no web root is configured", async () => {
+    const core = await startTestCore();
+    const response = await fetch(`${core.base}/`);
+
+    // The dev loop is unchanged: Vite serves the page, and an unauthenticated
+    // GET of anything still meets the credential gate first.
+    expect(response.status).toBe(401);
+  });
+
+  it("serves the page and its assets to a browser that has no session yet", async () => {
+    const root = webRoot();
+
+    try {
+      const core = await startTestCore({ webRoot: root });
+
+      const page = await fetch(`${core.base}/`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("content-type")).toContain("text/html");
+
+      const asset = await fetch(`${core.base}/assets/app.js`);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get("content-type")).toContain("text/javascript");
+
+      // A deep link is a route, not a file, so it gets the shell.
+      const route = await fetch(`${core.base}/settings`);
+      expect(route.status).toBe(200);
+      expect(await route.text()).toContain("Noctis");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never lets the page shadow an API route", async () => {
+    const root = webRoot();
+
+    try {
+      const core = await startTestCore({ webRoot: root });
+
+      // Unauthenticated: each of these must still meet the credential gate
+      // rather than being answered with index.html.
+      for (const path of ["/objectives", "/permissions", "/events/live", "/commands/x"]) {
+        const response = await fetch(`${core.base}${path}`);
+
+        expect([401, 404], path).toContain(response.status);
+        expect(response.headers.get("content-type") ?? "", path).toContain("application/json");
+      }
+
+      expect((await fetch(`${core.base}/health`)).status).toBe(200);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to read outside the web root", async () => {
+    const root = webRoot();
+
+    try {
+      const core = await startTestCore({ webRoot: root });
+
+      for (const path of ["/..%2f..%2fpackage.json", "/%2e%2e/%2e%2e/package.json"]) {
+        const response = await fetch(`${core.base}${path}`);
+
+        expect(response.status, path).toBe(404);
+        expect(await response.text(), path).not.toContain("noctis-os");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Decision 0.25: the phone hears about it. These cover the realm the endpoints
+ * live in — who may subscribe, and what a core without keys says — not the
+ * delivery itself, which `notify/push.test.ts` covers with an injected sender.
+ */
+describe("the push realm", () => {
+  // Generated per run, never written down: `web-push` validates the key lengths
+  // in `setVapidDetails`, so a made-up pair would stop the core at startup --
+  // which is the behaviour we want in production and a nuisance here.
+  const VAPID = { ...webpush.generateVAPIDKeys(), subject: "mailto:owner@example.com" };
+
+  // The shapes RFC 8291 fixes: a 65-byte P-256 point and a 16-byte secret,
+  // base64url. Zeroes, because these are a browser's public key material and
+  // there is nothing here worth being real.
+  const SUBSCRIPTION = {
+    endpoint: "https://push.example/endpoint-1",
+    keys: {
+      p256dh: Buffer.alloc(65).toString("base64url"),
+      auth: Buffer.alloc(16).toString("base64url"),
+    },
+  };
+
+  async function post(
+    core: TestCore,
+    path: string,
+    body: unknown,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${core.base}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  }
+
+  it("says push is unavailable when the core has no VAPID keys", async () => {
+    const core = await startTestCore();
+    const response = await read(core, PUSH_KEY_PATH);
+
+    expect(response.status).toBe(404);
+    expect((response.body as { error: { code: string } }).error.code).toBe("push_unavailable");
+  });
+
+  it("offers the public key, and never the private one", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const response = await read(core, PUSH_KEY_PATH);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ publicKey: VAPID.publicKey });
+    expect(JSON.stringify(response.body)).not.toContain(VAPID.privateKey);
+  });
+
+  it("stores a subscription against the session that presented it", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie, csrf } = await session(core);
+
+    const stored = await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, {
+      cookie,
+      "content-type": "application/json",
+      "x-noctis-csrf": csrf,
+    });
+
+    expect(stored.status).toBe(200);
+
+    const row = core.core.kernel.db
+      .prepare("SELECT session_id AS sessionId, endpoint FROM push_subscriptions")
+      .get() as { sessionId: string; endpoint: string };
+
+    expect(row.endpoint).toBe(SUBSCRIPTION.endpoint);
+    expect(
+      core.core.kernel.db.prepare("SELECT id FROM sessions WHERE id = ?").get(row.sessionId),
+    ).toBeDefined();
+  });
+
+  it("refuses a bearer-authenticated subscription, which would outlive every session", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const refused = await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, authorized());
+
+    expect(refused.status).toBe(400);
+    expect((refused.body as { error: { code: string } }).error.code).toBe("session_required");
+    expect(core.core.kernel.db.prepare("SELECT * FROM push_subscriptions").all()).toEqual([]);
+  });
+
+  it("refuses a subscription that is not a PushSubscription", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie, csrf } = await session(core);
+    const headers = { cookie, "content-type": "application/json", "x-noctis-csrf": csrf };
+
+    for (const body of [
+      { endpoint: "not-a-url", keys: SUBSCRIPTION.keys },
+      { endpoint: SUBSCRIPTION.endpoint },
+      {},
+      // Not HTTPS: a push service is a public HTTPS endpoint, and this one was
+      // never going to deliver.
+      { endpoint: "http://push.example/endpoint-1", keys: SUBSCRIPTION.keys },
+      // Key material of the wrong shape. Stored, it would be a row nothing can
+      // prune: `web-push` refuses it before the network, so no status ever
+      // comes back to say the subscription is dead.
+      {
+        endpoint: SUBSCRIPTION.endpoint,
+        keys: { p256dh: "not-a-key", auth: SUBSCRIPTION.keys.auth },
+      },
+      {
+        endpoint: SUBSCRIPTION.endpoint,
+        keys: { p256dh: SUBSCRIPTION.keys.p256dh, auth: "short" },
+      },
+    ]) {
+      const refused = await post(core, PUSH_SUBSCRIBE_PATH, body, headers);
+
+      expect(refused.status, JSON.stringify(body)).toBe(400);
+    }
+  });
+
+  it("refuses a subscription with a session cookie but no csrf header", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie } = await session(core);
+
+    const refused = await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, {
+      cookie,
+      "content-type": "application/json",
+    });
+
+    expect(refused.status).toBe(403);
+  });
+
+  it("forgets an endpoint on unsubscribe, and says the same for one it never held", async () => {
+    const core = await startTestCore({ vapid: VAPID });
+    const { cookie, csrf } = await session(core);
+    const headers = { cookie, "content-type": "application/json", "x-noctis-csrf": csrf };
+
+    await post(core, PUSH_SUBSCRIBE_PATH, SUBSCRIPTION, headers);
+
+    const gone = await post(
+      core,
+      PUSH_UNSUBSCRIBE_PATH,
+      { endpoint: SUBSCRIPTION.endpoint },
+      headers,
+    );
+    const never = await post(
+      core,
+      PUSH_UNSUBSCRIBE_PATH,
+      { endpoint: "https://push.example/never" },
+      headers,
+    );
+
+    expect([gone.status, never.status]).toEqual([200, 200]);
+    expect(core.core.kernel.db.prepare("SELECT * FROM push_subscriptions").all()).toEqual([]);
+  });
+
+  it("keeps the push paths out of the static handler when the core serves the page", async () => {
+    const root = mkdtempSync(join(tmpdir(), "noctis-web-"));
+    writeFileSync(join(root, "index.html"), "<!doctype html><title>Noctis</title>");
+
+    try {
+      const core = await startTestCore({
+        webRoot: root,
+        allowedOrigins: ["http://127.0.0.1"],
+        vapid: VAPID,
+      });
+
+      // Without `push` in `static.ts`'s API segments this answers 200 with the
+      // app shell, and the page's key fetch parses HTML as JSON.
+      const anonymous = await fetch(`${core.base}${PUSH_KEY_PATH}`);
+
+      expect(anonymous.status).toBe(401);
+      expect(anonymous.headers.get("content-type") ?? "").toContain("application/json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
