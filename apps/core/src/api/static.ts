@@ -31,6 +31,17 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
  * which matters less there (a missed path is proxied wrongly in dev, not
  * exposed). Upgrade path: make `handleRead`'s routes a table, export the set of
  * top-level segments from it, and derive both this and `CORE_PATHS` from that.
+ *
+ * The second ceiling on this list points the other way, and it is the one that
+ * will bite first: a *client* route whose first segment is named here never
+ * reaches the SPA fallback below, because the credential gate claims it. Four
+ * of the eight rail destinations collide — Missions, Artifacts, Vault, and
+ * Nodes — so the day `apps/web` grows a router, deep-linking to `/missions`
+ * answers 401 instead of loading the shell, and nothing in the router explains
+ * why. Harmless today: the app has no client-side routing and no URL but `/`
+ * is ever used. Upgrade path: prefix the API (`/api/...`), or prefix the client
+ * routes; either makes the two namespaces stop overlapping. Asserted as
+ * current behaviour in `apps/web/e2e/tokenless.test.mjs`.
  */
 const API_SEGMENTS = new Set([
   "approvals",
