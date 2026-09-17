@@ -80,4 +80,12 @@ describe("loadCoreConfig", () => {
       ConfigurationError,
     );
   });
+
+  it("serves no page unless a web root is named, so the dev loop is unchanged", () => {
+    expect(loadCoreConfig(env()).webRoot).toBeUndefined();
+    expect(loadCoreConfig(env({ NOCTIS_WEB_ROOT: "   " })).webRoot).toBeUndefined();
+    expect(loadCoreConfig(env({ NOCTIS_WEB_ROOT: " apps/web/dist " })).webRoot).toBe(
+      "apps/web/dist",
+    );
+  });
 });

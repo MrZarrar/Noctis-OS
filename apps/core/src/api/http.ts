@@ -133,6 +133,7 @@ import { serializeCookie } from "./cookie.js";
 import type { SessionDeps } from "./session.js";
 import { SESSION_COOKIE, createSession, revokeSession, verifySession } from "./session.js";
 import { openEventStream } from "./sse.js";
+import { isApiPath, serveStatic } from "./static.js";
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_PAGE_SIZE = 500;
@@ -1040,6 +1041,16 @@ export async function handleRequest(
     if (!isOriginAllowed(req.headers.origin, deps.config.allowedOrigins)) {
       logger.log("warn", "rejected request from disallowed origin", { origin: req.headers.origin });
       send(res, 403, errorBody("forbidden_origin", "Origin is not permitted"), correlationId);
+      return;
+    }
+
+    // The built page, when the core is the front door rather than Vite. Static
+    // is the last resort by path — `isApiPath` claims every route above and
+    // below this line — but it has to run before the credential gate, because
+    // the login screen has to load before there is a session to check. Assets
+    // carry no user data and the tailnet is the boundary; see `static.ts`.
+    if (deps.config.webRoot !== undefined && req.method === "GET" && !isApiPath(url.pathname)) {
+      await serveStatic(deps.config.webRoot, url.pathname, res);
       return;
     }
 

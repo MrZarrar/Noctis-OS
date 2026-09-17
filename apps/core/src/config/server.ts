@@ -19,6 +19,13 @@ export interface CoreConfig {
   logLevel: LogLevel;
   /** How long a browser session lasts. A phone should not be asked to log in weekly. */
   sessionTtlHours: number;
+  /**
+   * The built web app, served at `/` when set. Unset in development, where Vite
+   * serves the page and the core only allowlists its origin. Set where the core
+   * is the front door: `tailscale serve` maps one hostname to one port, and
+   * ADR-0028's `SameSite=Strict` cookie needs the page on the core's own origin.
+   */
+  webRoot?: string;
 }
 
 /** Noctis-only default. Deliberately not a port the donor or any common tool uses. */
@@ -135,6 +142,7 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     );
   }
 
+  const webRoot = env.NOCTIS_WEB_ROOT?.trim();
   const logLevel = env.NOCTIS_LOG_LEVEL?.trim() ?? "info";
 
   if (!LOG_LEVELS.has(logLevel)) {
@@ -149,5 +157,6 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     allowedOrigins: parseOrigins(env.NOCTIS_ALLOWED_ORIGINS),
     logLevel: logLevel as LogLevel,
     sessionTtlHours: parseSessionTtlHours(env.NOCTIS_SESSION_TTL_HOURS),
+    ...(webRoot === undefined || webRoot === "" ? {} : { webRoot }),
   };
 }

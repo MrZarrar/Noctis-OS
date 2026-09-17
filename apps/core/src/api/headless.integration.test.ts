@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1840,5 +1840,87 @@ describe("the live stream", () => {
     expect(seen).toContain('"kind":"gap"');
 
     controller.abort();
+  });
+});
+
+describe("the core as the front door", () => {
+  function webRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), "noctis-web-"));
+
+    writeFileSync(join(root, "index.html"), "<!doctype html><title>Noctis</title>");
+    mkdirSync(join(root, "assets"));
+    writeFileSync(join(root, "assets", "app.js"), "export const app = 1;");
+
+    return root;
+  }
+
+  it("serves nothing but the API when no web root is configured", async () => {
+    const core = await startTestCore();
+    const response = await fetch(`${core.base}/`);
+
+    // The dev loop is unchanged: Vite serves the page, and an unauthenticated
+    // GET of anything still meets the credential gate first.
+    expect(response.status).toBe(401);
+  });
+
+  it("serves the page and its assets to a browser that has no session yet", async () => {
+    const root = webRoot();
+
+    try {
+      const core = await startTestCore({ webRoot: root });
+
+      const page = await fetch(`${core.base}/`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("content-type")).toContain("text/html");
+
+      const asset = await fetch(`${core.base}/assets/app.js`);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get("content-type")).toContain("text/javascript");
+
+      // A deep link is a route, not a file, so it gets the shell.
+      const route = await fetch(`${core.base}/settings`);
+      expect(route.status).toBe(200);
+      expect(await route.text()).toContain("Noctis");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never lets the page shadow an API route", async () => {
+    const root = webRoot();
+
+    try {
+      const core = await startTestCore({ webRoot: root });
+
+      // Unauthenticated: each of these must still meet the credential gate
+      // rather than being answered with index.html.
+      for (const path of ["/objectives", "/permissions", "/events/live", "/commands/x"]) {
+        const response = await fetch(`${core.base}${path}`);
+
+        expect([401, 404], path).toContain(response.status);
+        expect(response.headers.get("content-type") ?? "", path).toContain("application/json");
+      }
+
+      expect((await fetch(`${core.base}/health`)).status).toBe(200);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to read outside the web root", async () => {
+    const root = webRoot();
+
+    try {
+      const core = await startTestCore({ webRoot: root });
+
+      for (const path of ["/..%2f..%2fpackage.json", "/%2e%2e/%2e%2e/package.json"]) {
+        const response = await fetch(`${core.base}${path}`);
+
+        expect(response.status, path).toBe(404);
+        expect(await response.text(), path).not.toContain("noctis-os");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
