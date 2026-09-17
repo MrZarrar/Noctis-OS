@@ -218,3 +218,63 @@ describe("initialPushState", () => {
     expect(initialPushState(scope({ navigator: {} }))).toBe("unsupported");
   });
 });
+
+describe("enablePush reports why it stopped", () => {
+  it("names the step that threw, not just that something did", async () => {
+    const details: string[] = [];
+    const refusing = scope({
+      navigator: {
+        serviceWorker: {
+          register: () =>
+            Promise.resolve({
+              pushManager: {
+                subscribe: () => Promise.reject(new Error("no push service available")),
+              },
+            }),
+        },
+      },
+    });
+
+    await expect(
+      enablePush(transport().transport, refusing, (detail) => details.push(detail)),
+    ).resolves.toBe("failed");
+
+    expect(details).toHaveLength(1);
+    expect(details[0]).toContain("subscribing with the push service");
+    expect(details[0]).toContain("no push service available");
+  });
+
+  it("distinguishes a service worker that will not register from a subscription that will not issue", async () => {
+    const details: string[] = [];
+    const refusing = scope({
+      navigator: {
+        serviceWorker: { register: () => Promise.reject(new Error("script load failed")) },
+      },
+    });
+
+    await enablePush(transport().transport, refusing, (detail) => details.push(detail));
+
+    expect(details[0]).toContain("registering the service worker");
+    expect(details[0]).not.toContain("subscribing");
+  });
+
+  it("names the core's status when the core is the one refusing", async () => {
+    const details: string[] = [];
+
+    await expect(
+      enablePush(transport(404).transport, scope(), (detail) => details.push(detail)),
+    ).resolves.toBe("failed");
+
+    expect(details[0]).toContain("404");
+  });
+
+  it("says nothing at all when it works", async () => {
+    const details: string[] = [];
+
+    await expect(
+      enablePush(transport().transport, scope(), (detail) => details.push(detail)),
+    ).resolves.toBe("enabled");
+
+    expect(details).toEqual([]);
+  });
+});

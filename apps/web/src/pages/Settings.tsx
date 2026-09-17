@@ -204,6 +204,16 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
   /** Decision 0.25: the phone is told, so it is not a screen you have to remember to look at. */
   const [push, setPush] = useState<PushState | undefined>(initialPushState);
   const [pushBusy, setPushBusy] = useState(false);
+  /**
+   * Why the last attempt ended where it did.
+   *
+   * `PUSH_STATUS` says which of four states this device is in; it cannot say
+   * which step produced it, and the four steps fail for entirely different
+   * reasons. A card that says only "it did not work" sends the owner to check
+   * the one thing they can see — permission — when the cause is usually a step
+   * further in that nothing surfaces.
+   */
+  const [pushDetail, setPushDetail] = useState<string>();
 
   const turnOnPush = useCallback(async () => {
     if (transport === undefined) {
@@ -211,7 +221,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
     }
 
     setPushBusy(true);
-    setPush(await enablePush(transport));
+    setPushDetail(undefined);
+    setPush(await enablePush(transport, globalThis, setPushDetail));
     setPushBusy(false);
   }, [transport]);
 
@@ -238,7 +249,11 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
 
     let cancelled = false;
 
-    void enablePush(transport).then((state) => {
+    void enablePush(transport, globalThis, (detail) => {
+      if (!cancelled) {
+        setPushDetail(detail);
+      }
+    }).then((state) => {
       if (!cancelled) {
         setPush(state);
       }
@@ -361,6 +376,18 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
           anywhere else you are logged in.
         </p>
         <p style={{ margin: 0 }}>{PUSH_STATUS[push ?? "off"]}</p>
+        {pushDetail !== undefined && (
+          <p
+            style={{
+              margin: 0,
+              maxWidth: typography.measurePx,
+              color: typography.color.muted,
+              font: `${String(typography.scale.sm)}px ${typography.monoFamily}`,
+            }}
+          >
+            Last attempt: {pushDetail}
+          </p>
+        )}
         {/*
           Still offered when it is already on. The core can lose this device's
           subscription without the browser ever finding out — the session it

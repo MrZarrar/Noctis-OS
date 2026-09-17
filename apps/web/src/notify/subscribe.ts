@@ -106,12 +106,24 @@ export function initialPushState(scope: PushScope = globalThis): PushState | und
 export async function enablePush(
   transport: CoreTransport,
   scope: PushScope = globalThis,
+  report: (detail: string) => void = () => undefined,
 ): Promise<PushState> {
   if (!supported(scope) || scope.navigator?.serviceWorker === undefined) {
+    report("this browser exposes no Notification API or no service worker");
     return "unsupported";
   }
 
   const serviceWorker = scope.navigator.serviceWorker;
+
+  // Which step we are on, so a refusal can name the step instead of the
+  // feature. Four of the lines below can fail, each meaning something
+  // different for the owner to do next, and the catch used to flatten all of
+  // them into one sentence that said only that it had not worked.
+  //
+  // ponytail: a reporter rather than a richer return type, because ten tests
+  // and one caller already agree on `PushState`. Return `{state, detail}` if a
+  // second caller ever needs the detail too.
+  let stage = "asking the core for its push key";
 
   try {
     // The key first, and before the permission prompt: a core with no VAPID
@@ -122,20 +134,29 @@ export async function enablePush(
     if (key.status !== 200) {
       // 404 here is a core with no VAPID keys — nothing to do with this
       // browser, which is why it is not `unsupported`.
+      report(`the core answered ${String(key.status)} for its push key`);
       return "failed";
     }
 
     const publicKey = (key.body as { publicKey?: unknown }).publicKey;
 
     if (typeof publicKey !== "string" || publicKey === "") {
+      report("the core sent no public key");
       return "failed";
     }
 
+    stage = "asking this device for permission";
+
     if ((await scope.Notification?.requestPermission()) !== "granted") {
+      report("this device refused permission");
       return "denied";
     }
 
+    stage = "registering the service worker";
+
     const registration = await serviceWorker.register("/sw.js");
+
+    stage = "subscribing with the push service";
     const subscription = await registration.pushManager.subscribe({
       // Required by every browser: a push that shows nothing is a push that can
       // be used to track someone silently.
@@ -143,17 +164,25 @@ export async function enablePush(
       applicationServerKey: applicationServerKey(publicKey),
     });
 
+    stage = "sending the subscription to the core";
+
     const stored = await transport.request("POST", "/push/subscribe", subscription.toJSON());
 
     // A 403 is the credential gate and a 500 is the core; neither is a browser
     // that does not support notifications, and telling the owner it was would
     // send them to add a Home Screen icon they already have.
+    if (stored.status !== 200) {
+      report(`the core answered ${String(stored.status)} for the subscription`);
+    }
+
     return stored.status === 200 ? "enabled" : "failed";
-  } catch {
+  } catch (error) {
     // A registration a browser refuses, a network that is not there, a push
     // service that will not issue an endpoint. None of them is worth an
     // exception the card has to decode — and none of them is the browser
     // lacking the API, which `supported` above already ruled out.
+    report(`${stage} failed: ${error instanceof Error ? error.message : String(error)}`);
+
     return "failed";
   }
 }
