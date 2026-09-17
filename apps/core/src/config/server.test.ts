@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -13,6 +14,7 @@ function builtPage(): string {
   const root = mkdtempSync(join(tmpdir(), "noctis-web-"));
 
   writeFileSync(join(root, "index.html"), "<!doctype html>");
+  mkdirSync(join(root, "assets"));
 
   return root;
 }
@@ -129,6 +131,21 @@ describe("loadCoreConfig", () => {
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
+  });
+
+  it("refuses the web app's own source tree, which is one missing /dist away", () => {
+    // `apps/web/index.html` is Vite's entry and really exists, so the index.html
+    // check alone passed this directory — and the core then served `/src/**`,
+    // `/vite.config.ts`, `/node_modules/**` and any `.env` beside them
+    // unauthenticated, ahead of the credential gate.
+    const source = resolve(fileURLToPath(new URL("../../../web", import.meta.url)));
+
+    expect(existsSync(join(source, "index.html"))).toBe(true);
+    expect(() =>
+      loadCoreConfig(
+        env({ NOCTIS_WEB_ROOT: source, NOCTIS_ALLOWED_ORIGINS: "https://noctis.example" }),
+      ),
+    ).toThrow(/assets/);
   });
 
   it("refuses to serve a page with no origin allowlist, which would load and do nothing", () => {

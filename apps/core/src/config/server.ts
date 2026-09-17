@@ -136,6 +136,15 @@ function parseOrigins(raw: string | undefined): string[] {
  * Two refusals, both of which are otherwise silent failures:
  *
  * - A directory with no index.html serves 404 for every request, including `/`.
+ * - A directory with an index.html and no `assets/` is the *source* tree, not a
+ *   build. `apps/web/index.html` exists as Vite's entry, so `NOCTIS_WEB_ROOT=
+ *   apps/web` — one missing `/dist` — used to start cleanly and serve `/src/**`,
+ *   `/vite.config.ts`, `/node_modules/**` (which does not match the `node` API
+ *   segment) and any `.env` sitting there, all unauthenticated and ahead of the
+ *   credential gate. That `.env` is exactly where `VITE_CORE_TOKEN` lives.
+ *   `refuseTokenInBundle` guards the token reaching `dist`; nothing guarded it
+ *   being served from beside the source. Every Vite build writes `assets/`, so
+ *   requiring it is the cheapest way to say "a build, not a source tree".
  * - An empty origin allowlist lets the page *load* — a browser sends no
  *   `Origin` on a same-origin GET navigation — and then refuses the login POST
  *   with 403, and `/events/live` too, because `EventSource` does send `Origin`
@@ -158,6 +167,12 @@ function parseWebRoot(
   if (!existsSync(join(root, "index.html"))) {
     throw new ConfigurationError(
       `NOCTIS_WEB_ROOT has no index.html: ${root}. Point it at a built web app (\`npm run build:web\` writes apps/web/dist).`,
+    );
+  }
+
+  if (!existsSync(join(root, "assets"))) {
+    throw new ConfigurationError(
+      `NOCTIS_WEB_ROOT has an index.html but no assets directory: ${root}. That is the web app's source tree, not its build, and serving it would publish the sources — and any .env beside them — to anyone who can reach the port. Point it at apps/web/dist (\`npm run build:web\`).`,
     );
   }
 
