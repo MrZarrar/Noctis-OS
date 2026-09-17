@@ -17,6 +17,13 @@ export interface CookieAttributes {
  * overwriting this cookie, not a sibling origin creating a different
  * (name, path) tuple. So the rule is the one `headerValue` applies to duplicated
  * request headers — a credential presented twice is not a credential.
+ *
+ * That is mitigation, and it turns a plant into a lockout rather than a
+ * takeover. The prevention is the cookie's own name: `SESSION_COOKIE` carries
+ * the `__Host-` prefix, which a browser will not store with a `Domain` or a
+ * path other than `/`, so a sibling origin cannot create the duplicate in the
+ * first place. This rule still stands for every other cookie a deployment might
+ * one day set, and for a browser old enough not to know the prefix.
  */
 export function parseCookies(header: string | undefined): ReadonlyMap<string, string> {
   const pairs = new Map<string, string>();

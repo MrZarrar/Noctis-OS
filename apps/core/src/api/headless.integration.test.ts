@@ -1570,7 +1570,15 @@ describe("the session realm", () => {
     expect(setCookie).toContain("Secure");
     // The value itself is never readable by a page and never logged; only that
     // the browser was handed one under the expected name.
-    expect(setCookie.startsWith("noctis_session=")).toBe(true);
+    //
+    // The `__Host-` prefix is the prevention `cookie.ts`'s drop-both rule can
+    // only mitigate: a browser refuses to store a cookie under this name unless
+    // it is Secure, Path=/, and names no Domain, so a sibling host on the
+    // tailnet cannot plant a duplicate at all. These three attributes are what
+    // make the name legal, so they are asserted together with it.
+    expect(setCookie.startsWith("__Host-noctis_session=")).toBe(true);
+    expect(setCookie).toContain("Path=/");
+    expect(setCookie.toLowerCase()).not.toContain("domain=");
 
     const { csrf } = (await loginResponse.json()) as { csrf: string };
     const cookie = setCookie.split(";")[0] ?? "";

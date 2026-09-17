@@ -6,7 +6,19 @@ import type { NoctisDatabase } from "../db/connection.js";
 
 import { parseCookies } from "./cookie.js";
 
-export const SESSION_COOKIE = "noctis_session";
+/**
+ * The `__Host-` prefix is not decoration: a browser refuses to store a cookie
+ * under this name unless it carries `Secure`, has `Path=/`, and names no
+ * `Domain` — which is exactly what `sessionCookie` in `http.ts` already sets.
+ *
+ * It is the prevention that `cookie.ts`'s drop-both rule can only mitigate. A
+ * sibling origin cannot plant a second `(name, path)` pair under a prefixed
+ * name at all, so the duplicate that turns a session into a lockout never
+ * arrives. That sibling is concrete here rather than hypothetical: every peer
+ * on the tailnet is a host under the same `*.<tailnet>.ts.net` parent, so the
+ * machine next door is the attacker this closes.
+ */
+export const SESSION_COOKIE = "__Host-noctis_session";
 
 /** 32 bytes → 43 url-safe characters. Unguessable, and short enough to send as a cookie. */
 const SECRET_BYTES = 32;

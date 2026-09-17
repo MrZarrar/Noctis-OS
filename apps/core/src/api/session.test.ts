@@ -6,7 +6,14 @@ import { openDatabase } from "../db/connection.js";
 import { migrate } from "../db/migrate.js";
 import { MIGRATIONS_DIRECTORY } from "../server.js";
 
-import { createSession, hashSecret, refreshCsrf, revokeSession, verifySession } from "./session.js";
+import {
+  SESSION_COOKIE,
+  createSession,
+  hashSecret,
+  refreshCsrf,
+  revokeSession,
+  verifySession,
+} from "./session.js";
 
 const HOUR_MS = 3_600_000;
 
@@ -42,7 +49,7 @@ describe("sessions", () => {
   it("verifies a presented cookie", () => {
     const created = createSession(deps(0, db), 1);
 
-    expect(verifySession(deps(0, db), `noctis_session=${created.cookieValue}`)?.id).toBe(
+    expect(verifySession(deps(0, db), `${SESSION_COOKIE}=${created.cookieValue}`)?.id).toBe(
       created.id,
     );
   });
@@ -51,16 +58,16 @@ describe("sessions", () => {
     const created = createSession(deps(0, db), 1);
 
     expect(
-      verifySession(deps(HOUR_MS + 1, db), `noctis_session=${created.cookieValue}`),
+      verifySession(deps(HOUR_MS + 1, db), `${SESSION_COOKIE}=${created.cookieValue}`),
     ).toBeUndefined();
   });
 
   it("refuses an unknown, absent, or empty cookie", () => {
     createSession(deps(0, db), 1);
 
-    expect(verifySession(deps(0, db), "noctis_session=nonsense")).toBeUndefined();
+    expect(verifySession(deps(0, db), `${SESSION_COOKIE}=nonsense`)).toBeUndefined();
     expect(verifySession(deps(0, db), undefined)).toBeUndefined();
-    expect(verifySession(deps(0, db), "noctis_session=")).toBeUndefined();
+    expect(verifySession(deps(0, db), `${SESSION_COOKIE}=`)).toBeUndefined();
   });
 
   it("refuses the value under a different cookie name", () => {
@@ -71,7 +78,7 @@ describe("sessions", () => {
 
   it("revokes a session so the same cookie stops working", () => {
     const created = createSession(deps(0, db), 1);
-    const cookie = `noctis_session=${created.cookieValue}`;
+    const cookie = `${SESSION_COOKIE}=${created.cookieValue}`;
 
     expect(revokeSession(deps(0, db), cookie)).toBe(true);
     expect(verifySession(deps(0, db), cookie)).toBeUndefined();
@@ -80,7 +87,7 @@ describe("sessions", () => {
 
   it("re-mints a csrf value for a session that already exists, without touching its cookie", () => {
     const created = createSession(deps(0, db), 1);
-    const cookie = `noctis_session=${created.cookieValue}`;
+    const cookie = `${SESSION_COOKIE}=${created.cookieValue}`;
 
     const minted = refreshCsrf(deps(0, db), created.id);
 
@@ -95,7 +102,7 @@ describe("sessions", () => {
 
     refreshCsrf(deps(0, db), created.id);
 
-    const stored = verifySession(deps(0, db), `noctis_session=${created.cookieValue}`);
+    const stored = verifySession(deps(0, db), `${SESSION_COOKIE}=${created.cookieValue}`);
 
     expect(stored?.csrfHash).not.toBe(hashSecret(created.csrf));
   });

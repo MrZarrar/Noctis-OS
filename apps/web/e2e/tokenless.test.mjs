@@ -67,7 +67,7 @@ function seed(name, body) {
 
 /** The session cookie as the browser holds it, or `undefined`. */
 async function sessionCookie() {
-  return (await context.cookies()).find((cookie) => cookie.name === "noctis_session");
+  return (await context.cookies()).find((cookie) => cookie.name === "__Host-noctis_session");
 }
 
 function readPage() {
