@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url";
+
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 /**
  * Everything the core answers. The web app itself serves only `/` and
@@ -34,12 +36,48 @@ const proxy = {
   },
 };
 
-export default defineConfig({
-  plugins: [react()],
-  server: { proxy },
-  preview: { proxy },
-  build: {
-    // Tauri's `frontendDist` reads this directory (apps/desktop/src-tauri/tauri.conf.json).
-    outDir: "dist",
-  },
+/**
+ * A production bundle must never carry a development token.
+ *
+ * Vite inlines every `VITE_`-prefixed variable into the output at build time.
+ * The dev loop and the E2E suites both set `VITE_CORE_TOKEN`, so a build run in
+ * one of those shells writes the full core token into a file in `dist/` — and
+ * the core serves `dist/` unauthenticated, before the credential gate, whenever
+ * `NOCTIS_WEB_ROOT` points at it. Nothing looks wrong when that happens:
+ * `needsLogin()` returns false, so the login screen never even appears.
+ *
+ * This is a throw rather than a warning on purpose. The operator most likely to
+ * hit it is the one whose shell already exports the variable, and that operator
+ * does not read warnings scrolling past a build.
+ *
+ * `loadEnv` rather than `process.env` so a `.env` file is caught too.
+ */
+function refuseTokenInBundle(mode: string): void {
+  const token = loadEnv(
+    mode,
+    fileURLToPath(new URL(".", import.meta.url)),
+    "VITE_",
+  ).VITE_CORE_TOKEN;
+
+  if (token !== undefined && token !== "") {
+    throw new Error(
+      "VITE_CORE_TOKEN is set, and `vite build` would inline it into apps/web/dist — which the core serves unauthenticated when NOCTIS_WEB_ROOT points at it. Build in a shell that does not have it: open a new terminal, or run `Remove-Item Env:VITE_CORE_TOKEN` (PowerShell) / `unset VITE_CORE_TOKEN` (sh) first. The dev server and the E2E suites are unaffected and still use it.",
+    );
+  }
+}
+
+export default defineConfig(({ command, mode }) => {
+  if (command === "build") {
+    refuseTokenInBundle(mode);
+  }
+
+  return {
+    plugins: [react()],
+    server: { proxy },
+    preview: { proxy },
+    build: {
+      // Tauri's `frontendDist` reads this directory (apps/desktop/src-tauri/tauri.conf.json).
+      outDir: "dist",
+    },
+  };
 });

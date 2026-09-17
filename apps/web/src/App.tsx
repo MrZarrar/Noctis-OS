@@ -1,7 +1,7 @@
 import type { ModelRef } from "@noctis/contracts";
 import { Rail, depth, typography } from "@noctis/ui";
 import type { RailItem } from "@noctis/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
@@ -39,14 +39,18 @@ interface VaultHandoff {
  */
 export function App(): JSX.Element {
   const [csrf, setCsrf] = useState<string>();
+  // The transport's identity is load-bearing, not an optimisation: it is the
+  // dependency of `useIdentityRuntime`'s effect and `useConversation`'s memo, so
+  // a fresh object on every render tears down and reopens the SSE subscription
+  // every time. It used to be a module-level `const`, which was maximally
+  // stable; this keeps that, keyed on the only thing that can change it.
+  const transport = useMemo(() => resolveCoreTransport(csrf), [csrf]);
 
   if (needsLogin() && csrf === undefined) {
     return <Login baseUrl={coreBaseUrl()} onAuthenticated={setCsrf} />;
   }
 
-  // Rebuilt only when `csrf` changes, because that is the only state this
-  // component holds; everything that re-renders often lives in `Workbench`.
-  return <Workbench transport={resolveCoreTransport(csrf)} />;
+  return <Workbench transport={transport} />;
 }
 
 function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX.Element {

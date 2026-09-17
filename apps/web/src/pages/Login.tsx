@@ -80,8 +80,8 @@ export function Login({ baseUrl, onAuthenticated }: LoginProps): JSX.Element {
           Noctis
         </h1>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
-          This page holds no credential. The token is exchanged once for a session this browser
-          keeps; it is never stored here.
+          The token is exchanged once for a session this browser keeps. Noctis does not store it —
+          your browser may offer to, the way it would any password.
         </p>
 
         <label style={{ display: "grid", gap: spacing.xs }}>
