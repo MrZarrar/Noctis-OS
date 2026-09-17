@@ -1,5 +1,6 @@
 export * from "./enums.js";
 export * from "./primitives.js";
+export * from "./api.js";
 export * from "./artifact.js";
 export * from "./authority.js";
 export * from "./command.js";

@@ -1,21 +1,8 @@
 import { fileURLToPath } from "node:url";
 
+import { CORE_PATH_PATTERN } from "@noctis/contracts";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
-
-/**
- * Everything the core answers. The web app itself serves only `/` and
- * `/assets`, so an explicit list is safer than a catch-all: a path added to the
- * core later is proxied on purpose, not by accident.
- *
- * The trailing group must accept `?`. Vite matches this against `req.url`,
- * which carries the query string, so a pattern anchored on `/` or end-of-string
- * alone silently misses `/objectives?limit=25` — and a missed core path is
- * served the SPA's index.html with a 200, which is far harder to spot than a
- * 404 would have been.
- */
-const CORE_PATHS =
-  /^\/(commands|objectives|identities|missions|nodes|jobs|events|vault|approvals|permissions|push|sources|artifacts|threads|turns|models|ready|diagnostics|health|ws)(\/|\?|$)/;
 
 /**
  * The dev and preview servers proxy the core so the page and the core share an
@@ -27,9 +14,14 @@ const CORE_PATHS =
  * `BrowserTransport` unusable for the local iteration `core-client.ts` says it
  * exists for. Same origin is the only arrangement that works, and it is also
  * what the packaged Tauri shell provides in production.
+ *
+ * The paths it claims come from `@noctis/contracts`, the same list the core's
+ * `isApiPath` uses. They were two hand-maintained copies until this one was
+ * found to be missing `session` — so `GET /session` was answered with the SPA's
+ * own index.html and a 200, and session resume quietly did not work in dev.
  */
 const proxy = {
-  [CORE_PATHS.source]: {
+  [CORE_PATH_PATTERN.source]: {
     target: process.env.NOCTIS_CORE_PROXY_TARGET ?? "http://127.0.0.1:8787",
     changeOrigin: false,
     ws: true,

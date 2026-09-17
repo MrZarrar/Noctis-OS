@@ -2,6 +2,8 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { API_SEGMENTS } from "@noctis/contracts";
+
 /**
  * Serving the built page from the core, for the one deployment where it has to
  * be: `tailscale serve` maps the whole tailnet hostname to a single port, so a
@@ -15,61 +17,22 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
  */
 
 /**
- * Every first path segment an API route answers. Static is consulted only for
- * paths outside this set, which is what makes it a last resort by path rather
- * than by position — it has to run before the credential gate, since the login
- * screen loads before there is a session to check.
+ * Static is consulted only for paths outside the API's first-segment set, which
+ * is what makes it a last resort by path rather than by position — it has to
+ * run before the credential gate, since the login screen loads before there is
+ * a session to check.
  *
- * ponytail: hand-maintained, and the ceiling is sharper than a stale list
- * usually is. Because static runs *before* the credential gate, a new top-level
- * collection added to `handleRead` and not added here does not merely get
- * index.html instead of JSON — it turns an unauthenticated 401 into a 200, so a
- * path that was meant to require a credential silently stops requiring one.
- *
- * `apps/web/vite.config.ts`'s `CORE_PATHS` is a third copy of the same idea and
- * is already out of step: it has 19 entries and omits `node` and `session`,
- * which matters less there (a missed path is proxied wrongly in dev, not
- * exposed). Upgrade path: make `handleRead`'s routes a table, export the set of
- * top-level segments from it, and derive both this and `CORE_PATHS` from that.
- *
- * The second ceiling on this list points the other way, and it is the one that
- * will bite first: a *client* route whose first segment is named here never
- * reaches the SPA fallback below, because the credential gate claims it. Four
- * of the eight rail destinations collide — Missions, Artifacts, Vault, and
- * Nodes — so the day `apps/web` grows a router, deep-linking to `/missions`
- * answers 401 instead of loading the shell, and nothing in the router explains
- * why. Harmless today: the app has no client-side routing and no URL but `/`
- * is ever used. Upgrade path: prefix the API (`/api/...`), or prefix the client
- * routes; either makes the two namespaces stop overlapping. Asserted as
- * current behaviour in `apps/web/e2e/tokenless.test.mjs`.
+ * The set itself lives in `@noctis/contracts` (`api.ts`), because
+ * `apps/web/vite.config.ts` needs the same one for its dev proxy and the two
+ * hand-maintained copies had already drifted apart — that one omitted `node`
+ * and `session`, which silently disabled session resume behind `vite dev`. Its
+ * remaining ceilings are recorded there; the client-route collision asserted as
+ * current behaviour is in `apps/web/e2e/tokenless.test.mjs`.
  */
-const API_SEGMENTS = new Set([
-  "approvals",
-  "artifacts",
-  "commands",
-  "diagnostics",
-  "events",
-  "health",
-  "identities",
-  "jobs",
-  "missions",
-  "models",
-  "node",
-  "nodes",
-  "objectives",
-  "permissions",
-  "push",
-  "ready",
-  "session",
-  "sources",
-  "threads",
-  "turns",
-  "vault",
-  "ws",
-]);
+const SEGMENTS: ReadonlySet<string> = new Set<string>(API_SEGMENTS);
 
 export function isApiPath(pathname: string): boolean {
-  return API_SEGMENTS.has(pathname.split("/")[1] ?? "");
+  return SEGMENTS.has(pathname.split("/")[1] ?? "");
 }
 
 /**
