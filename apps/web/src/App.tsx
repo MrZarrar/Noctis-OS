@@ -4,15 +4,15 @@ import type { RailItem } from "@noctis/ui";
 import { useState } from "react";
 
 import { useConversation } from "./conversation/useConversation.js";
-import { resolveCoreTransport } from "./core-client.js";
+import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Chat } from "./pages/Chat.js";
 import { Command } from "./pages/Command.js";
+import { Login } from "./pages/Login.js";
 import { Settings } from "./pages/Settings.js";
 import { Vault } from "./pages/Vault.js";
-
-const transport = resolveCoreTransport();
+import type { CoreTransport } from "./transport/CoreTransport.js";
 
 /**
  * Where the workbench came from when it jumped to the Vault.
@@ -28,7 +28,28 @@ interface VaultHandoff {
   returnTo: RailItem;
 }
 
+/**
+ * A page with no token cannot build a transport until it has a session, and it
+ * cannot run the hooks below until it has a transport — React forbids calling
+ * them conditionally. So the gate is a component split: `App` decides, and
+ * `Workbench` is everything that needs a reachable core.
+ *
+ * A dev build that was handed a token, and the packaged shell, never see the
+ * login screen: `needsLogin` is false and the transport exists immediately.
+ */
 export function App(): JSX.Element {
+  const [csrf, setCsrf] = useState<string>();
+
+  if (needsLogin() && csrf === undefined) {
+    return <Login baseUrl={coreBaseUrl()} onAuthenticated={setCsrf} />;
+  }
+
+  // Rebuilt only when `csrf` changes, because that is the only state this
+  // component holds; everything that re-renders often lives in `Workbench`.
+  return <Workbench transport={resolveCoreTransport(csrf)} />;
+}
+
+function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX.Element {
   const [active, setActive] = useState<RailItem>("Command");
   const [handoff, setHandoff] = useState<VaultHandoff>();
 
