@@ -1115,6 +1115,7 @@ export async function handleRequest(
         {
           broker: deps.kernel.broker,
           readEvents: (after, limit) => readEventsAfter(deps.kernel.db, after, limit),
+          latestSequence: () => latestSequence(deps.kernel.db),
           frames: deps.live,
           heartbeatMs: SSE_HEARTBEAT_MS,
           setInterval,

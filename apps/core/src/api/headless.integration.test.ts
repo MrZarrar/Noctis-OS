@@ -1782,4 +1782,63 @@ describe("the live stream", () => {
 
     expect(response.status).toBe(401);
   });
+
+  it("refuses a non-numeric afterSequence", async () => {
+    const core = await startTestCore();
+    const { cookie } = await session(core);
+
+    const response = await fetch(`${core.base}/events/live?afterSequence=abc`, {
+      headers: { cookie },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a negative afterSequence", async () => {
+    const core = await startTestCore();
+    const { cookie } = await session(core);
+
+    const response = await fetch(`${core.base}/events/live?afterSequence=-1`, {
+      headers: { cookie },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("clamps a cursor far ahead of the ledger and announces a gap, rather than opening a stream that only ever heartbeats", async () => {
+    const core = await startTestCore();
+    const { cookie } = await session(core);
+    const controller = new AbortController();
+
+    // Passes `Number.isInteger` (it is one, just a very large one) and binds
+    // fine into `node:sqlite` — the bug this guards is a cursor accepted at
+    // the 400 check but never satisfied by any committed event.
+    const stream = await fetch(`${core.base}/events/live?afterSequence=1e21`, {
+      headers: { cookie, accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+
+    expect(stream.status).toBe(200);
+
+    const reader = stream.body?.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+
+    while (!seen.includes('"kind":"gap"')) {
+      const chunk = await reader?.read();
+
+      if (chunk?.done === true) {
+        break;
+      }
+
+      seen += decoder.decode((chunk?.value as Uint8Array | undefined) ?? new Uint8Array(), {
+        stream: true,
+      });
+    }
+
+    expect(seen).toContain("event: frame");
+    expect(seen).toContain('"kind":"gap"');
+
+    controller.abort();
+  });
 });
