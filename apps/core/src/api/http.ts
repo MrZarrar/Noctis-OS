@@ -1041,7 +1041,7 @@ function handlePush(
   action: "subscribe" | "unsubscribe",
   authorized: AuthorizeResult | undefined,
   body: unknown,
-): { status: number; body: unknown } {
+): { status: number; body: unknown; issues?: readonly string[] } {
   if (action === "unsubscribe") {
     const parsed = UnsubscribeBodySchema.safeParse(body);
 
@@ -1076,6 +1076,12 @@ function handlePush(
         "invalid_request",
         "Body must be a PushSubscription: {endpoint, keys: {p256dh, auth}}",
       ),
+      // Which fields, never their contents. A refused subscription used to log
+      // only its status, so the one question worth asking — what about this
+      // browser's subscription is wrong — could be answered only by a debugger
+      // attached to the phone. The paths are field names the schema already
+      // declares; the endpoint and the key material stay out of the log.
+      issues: parsed.error.issues.map((issue) => issue.path.join(".") || "(root)"),
     };
   }
 
@@ -1353,6 +1359,7 @@ export async function handleRequest(
       logger.log("info", "push subscription handled", {
         action: pushAction,
         status: result.status,
+        ...(result.issues === undefined ? {} : { rejectedFields: result.issues }),
       });
       send(res, result.status, result.body, correlationId);
       return;

@@ -10,7 +10,7 @@ import { createLogger } from "../logging.js";
 import { MIGRATIONS_DIRECTORY } from "../server.js";
 
 import type { SendPush, StoredSubscription } from "./push.js";
-import { createNotifier } from "./push.js";
+import { PushSubscriptionSchema, createNotifier } from "./push.js";
 
 const VAPID = { publicKey: "public-key", privateKey: "private-key", subject: "mailto:a@b.c" };
 
@@ -242,5 +242,53 @@ describe("push notifier", () => {
     db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
 
     expect(subscriptionRows()).toEqual([]);
+  });
+});
+
+describe("the subscription a real browser actually sends", () => {
+  // `PushSubscription.toJSON()` returns the Push API's `PushSubscriptionJSON`
+  // dictionary, which is three fields, not two. Every fixture in this file was
+  // written by hand from the two the core reads — so the schema was `.strict()`
+  // against a shape no browser has ever sent, and every test passed while every
+  // real phone got a 400.
+  const FROM_A_BROWSER = {
+    endpoint: "https://web.push.apple.com/QF-abc123",
+    expirationTime: null,
+    keys: {
+      p256dh: Buffer.alloc(65, 7).toString("base64url"),
+      auth: Buffer.alloc(16, 9).toString("base64url"),
+    },
+  };
+
+  it("accepts expirationTime, which the spec sends and nothing here reads", () => {
+    const parsed = PushSubscriptionSchema.safeParse(FROM_A_BROWSER);
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts a numeric expirationTime as well as a null one", () => {
+    expect(
+      PushSubscriptionSchema.safeParse({ ...FROM_A_BROWSER, expirationTime: 1_767_225_600_000 })
+        .success,
+    ).toBe(true);
+  });
+
+  it("still refuses a field the spec does not define, so the closed set is not abandoned", () => {
+    expect(
+      PushSubscriptionSchema.safeParse({ ...FROM_A_BROWSER, somethingElse: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("still refuses an http endpoint and key material of the wrong length", () => {
+    expect(
+      PushSubscriptionSchema.safeParse({ ...FROM_A_BROWSER, endpoint: "http://push.example/x" })
+        .success,
+    ).toBe(false);
+    expect(
+      PushSubscriptionSchema.safeParse({
+        ...FROM_A_BROWSER,
+        keys: { ...FROM_A_BROWSER.keys, auth: Buffer.alloc(15, 9).toString("base64url") },
+      }).success,
+    ).toBe(false);
   });
 });

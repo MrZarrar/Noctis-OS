@@ -89,6 +89,24 @@ export const PushSubscriptionSchema = z
     // `https:` specifically: a push service is a public HTTPS endpoint, and an
     // `http:` or `file:` endpoint is something that was never going to deliver.
     endpoint: z.url({ protocol: /^https$/ }),
+    /**
+     * Declared because the browser sends it, not because anything reads it.
+     *
+     * `PushSubscription.toJSON()` returns `{endpoint, expirationTime, keys}` —
+     * `expirationTime` is in the Push API's `PushSubscriptionJSON` dictionary,
+     * and every browser includes it, usually as `null`. This object is
+     * `.strict()`, so leaving it undeclared rejected every real subscription
+     * with a 400 while every test passed: the fixtures were written by hand
+     * from the two fields the core uses, and no fixture is a browser.
+     *
+     * ponytail: the next field the spec adds breaks subscription again, the
+     * same way and just as invisibly. The upgrade path is to stop treating a
+     * browser-authored dictionary as a closed set — read the two fields and
+     * ignore the rest — which is a deliberate exception to the project's
+     * `.strict()` rule and wants its own decision rather than being smuggled
+     * in here.
+     */
+    expirationTime: z.number().nullable().optional(),
     keys: z
       .object({
         p256dh: z.string().refine((value) => decodesTo(value, 65), "not a P-256 public key"),
