@@ -17,3 +17,6 @@ apps/desktop/src-tauri/gen/
 
 # Fixture Vault written by scripts/fixtures/create-test-vault.mjs.
 .noctis-test-vault/
+
+# SDD scratch — per-plan ledgers, briefs, reports, review packages
+.superpowers/
