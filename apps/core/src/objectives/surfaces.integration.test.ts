@@ -103,6 +103,30 @@ async function read(
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
+/**
+ * A draft Objective: created, not activated.
+ *
+ * Activation is what makes the core propose the three seed Surfaces
+ * (`objectives/proposed-surfaces.ts`), and a test asserting on exactly the
+ * Surfaces it created itself needs a canvas nobody else has written to. A draft
+ * composes exactly like an active one — the compositor takes an Objective id and
+ * a display, and asks nothing about status.
+ */
+async function draftObjective(core: TestCore): Promise<string> {
+  const created = await command(core, "objective.create", {
+    idempotencyKey: key("create"),
+    title: "Ship the Phase 6 slice",
+    intent: "Compose Surfaces deterministically",
+    status: "draft",
+    identityId: "vesper",
+    protocolIds: [],
+  });
+
+  expect(created.status).toBe(200);
+
+  return created.body.id as string;
+}
+
 async function activeObjective(core: TestCore): Promise<string> {
   const created = await command(core, "objective.create", {
     idempotencyKey: key("create"),
@@ -190,7 +214,7 @@ describe("the Objective and Surface vertical slice", () => {
 
   it("upserts a Surface by identity instead of duplicating it", async () => {
     const core = await freshCore();
-    const objectiveId = await activeObjective(core);
+    const objectiveId = await draftObjective(core);
     const first = await upsert(core, objectiveId, { priority: 1 });
     const second = await upsert(core, objectiveId, { priority: 7 });
 
@@ -221,7 +245,7 @@ describe("the Objective and Surface vertical slice", () => {
 
   it("drops a dismissed Surface out of the composition", async () => {
     const core = await freshCore();
-    const objectiveId = await activeObjective(core);
+    const objectiveId = await draftObjective(core);
     const intent = await upsert(core, objectiveId);
 
     expect((await composed(core, objectiveId)).plan.slots).toHaveLength(1);
@@ -251,7 +275,7 @@ describe("the Objective and Surface vertical slice", () => {
 
   it("honours then releases a user override for this display", async () => {
     const core = await freshCore();
-    const objectiveId = await activeObjective(core);
+    const objectiveId = await draftObjective(core);
     const intent = await upsert(core, objectiveId);
 
     expect((await composed(core, objectiveId)).plan.slots[0]?.region).toBe("centre");
@@ -281,7 +305,7 @@ describe("the Objective and Surface vertical slice", () => {
 
   it("keeps an override on the display it was made on", async () => {
     const core = await freshCore();
-    const objectiveId = await activeObjective(core);
+    const objectiveId = await draftObjective(core);
     const intent = await upsert(core, objectiveId);
 
     await command(core, "surface.set_override", {

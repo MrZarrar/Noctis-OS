@@ -22,6 +22,7 @@ import { createDispatcher } from "./nodes/dispatch.js";
 import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { createRuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { attachNodeSocket } from "./nodes/ws.js";
+import { proposeSurfacesFromEvents } from "./objectives/proposed-surfaces.js";
 import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
 import { createLogger } from "./logging.js";
@@ -185,6 +186,11 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
         : webPushSender(config.vapid),
     logger,
   });
+
+  // Task 2.7: the core proposes the Surfaces an Objective is made of and the
+  // ones a pending decision needs, rather than whichever page happened to be
+  // open when it was activated.
+  proposeSurfacesFromEvents({ kernel, ...(vaultRoot === undefined ? {} : { vaultRoot }) });
 
   // After the commit, never inside it: `kernel.broker` publishes only committed
   // events, so a push can never describe state a rollback erased.

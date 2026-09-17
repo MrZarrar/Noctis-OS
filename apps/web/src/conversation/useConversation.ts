@@ -18,6 +18,7 @@ import {
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { z } from "zod";
 
+import { nextKey } from "../idempotency.js";
 import type { CoreTransport, Subscription } from "../transport/CoreTransport.js";
 
 /**
@@ -104,14 +105,6 @@ const PENDING_OUTCOMES: ReadonlySet<string> = new Set([
   "require_confirmation",
   "require_typed_confirmation",
 ]);
-
-let keySequence = 0;
-
-function nextKey(scope: string): string {
-  keySequence += 1;
-
-  return `web-${scope}-${String(keySequence)}-${String(Date.now())}`;
-}
 
 export interface ConversationSnapshot {
   thread: ConversationThread | undefined;

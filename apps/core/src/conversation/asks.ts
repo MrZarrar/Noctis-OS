@@ -4,12 +4,10 @@ import type {
   RuntimeAnswer,
   RuntimeAsk,
 } from "@noctis/contracts";
-import { ApprovalPayloadSchema } from "@noctis/contracts";
 
 import { getApproval, getApprovalByAskId, requestAuthority } from "../authority/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import type { Dispatcher } from "../nodes/dispatch.js";
-import { upsertSurfaceIntent } from "../objectives/surface-intents.js";
 import type { Turn } from "./service.js";
 
 /** An ask the human has not answered yet, keyed by approval id so either event finds it. */
@@ -78,13 +76,12 @@ export function handleAsk(
 
   // The human has to answer. The broker subscription in service.ts watches for
   // the confirm or decline and sends the answer then.
+  //
+  // Nothing puts a Surface on the canvas here. `objectives/proposed-surfaces.ts`
+  // does it from `authority.decision_recorded.v1`, which covers every pending
+  // decision rather than only the ones a runtime asked for — a placement the
+  // shell requested needs the same boundary and used to get it from the page.
   pending.set(approval.id, { nodeId, jobId, askId: ask.askId });
-
-  if (turn.objectiveId !== undefined) {
-    proposeApprovalSurface(kernel, context, turn.objectiveId, approval, ask.askId);
-  }
-  // A free-chat turn gets no Surface: there is no canvas, and Chat renders the
-  // pending approval from the authority.* events it already receives.
 }
 
 /** The answer the approval row already determines, or undefined while a human is needed. */
@@ -141,59 +138,4 @@ export function answerFromEvent(
     decision: "deny",
     reason,
   });
-}
-
-/**
- * Attention Required on the Objective's canvas while a human answer is pending.
- *
- * ponytail: `sourceIds: []` means one approval Surface per Objective — a second
- * pending ask replaces the first on the canvas. The approvals list and the
- * authority events still show both. Key the Surface by approval when two
- * simultaneous asks under one Objective become real.
- */
-function proposeApprovalSurface(
-  kernel: Kernel,
-  context: CommandContext,
-  objectiveId: string,
-  approval: ApprovalRecord,
-  askId: string,
-): void {
-  const payload = ApprovalPayloadSchema.parse({
-    id: approval.id,
-    consequenceSummary: approval.consequenceSummary,
-    operationClass: approval.operationClass,
-    capability: approval.capability,
-    targetType: approval.target.type,
-    targetId: approval.target.id,
-    reversibility: approval.reversibility,
-    outcome: approval.outcome,
-    reasonCodes: approval.reasonCodes,
-    ...(approval.estimatedCostGbp === undefined
-      ? {}
-      : { estimatedCostGbp: approval.estimatedCostGbp }),
-    ...(approval.confirmationPhrase === undefined
-      ? {}
-      : { confirmationPhrase: approval.confirmationPhrase }),
-  });
-
-  const upserted = upsertSurfaceIntent(kernel, context, {
-    idempotencyKey: `approval-surface:${askId}`,
-    objectiveId,
-    kind: "approval",
-    role: "attention",
-    persistence: "objective",
-    priority: 1000,
-    minSize: "compact",
-    sourceIds: [],
-    artifactIds: [],
-    payloadVersion: 1,
-    payload,
-  });
-
-  if (!upserted.ok && upserted.conflict.kind !== "idempotent_replay") {
-    kernel.logger.log("warn", "could not propose an approval Surface", {
-      approvalId: approval.id,
-      conflict: upserted.conflict.kind,
-    });
-  }
 }

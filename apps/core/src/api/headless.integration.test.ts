@@ -190,6 +190,28 @@ async function openClient(
 }
 
 /** Creates an active Objective and returns it. Used by several tests as setup. */
+/**
+ * A draft Objective: created, not activated.
+ *
+ * The socket tests below count ledger entries exactly, and activating is what
+ * makes the core propose an Objective's three seed Surfaces (task 2.7,
+ * `objectives/proposed-surfaces.ts`). They need an Objective to hang a Mission
+ * on, not a canvas — so they take the draft and the count stays a count of the
+ * thing each test is actually about.
+ */
+async function draftObjective(core: TestCore, suffix: string): Promise<ObjectiveRecord> {
+  const created = await command(core, "objective.create", {
+    idempotencyKey: `create-${suffix}`,
+    title: "Ship the kernel",
+    intent: "Prove the headless loop end to end",
+    status: "draft",
+    identityId: "vesper",
+    protocolIds: [],
+  });
+
+  return created.body as unknown as ObjectiveRecord;
+}
+
 async function activeObjective(core: TestCore, suffix: string): Promise<ObjectiveRecord> {
   const created = await command(core, "objective.create", {
     idempotencyKey: `create-${suffix}`,
@@ -279,16 +301,25 @@ describe("headless kernel loop", () => {
     expect(decision.body.policyId).toBe("baseline.v1");
 
     const events = await read(core, "/events?after=0");
+    // Four of the eight are the core proposing Surfaces for itself (task 2.7):
+    // three seeds when the Objective activates, and one when a decision needs a
+    // person. Each *follows* the event that caused it rather than accompanying
+    // it — `proposed-surfaces.ts` subscribes to committed events, so a Surface
+    // can never describe state a rollback erased.
     expect((events.body.events as Array<{ type: string }>).map((event) => event.type)).toEqual([
       "objective.created.v1",
       "objective.activated.v1",
+      "surface.intent_upserted.v1",
+      "surface.intent_upserted.v1",
+      "surface.intent_upserted.v1",
       "mission.created.v1",
       "authority.decision_recorded.v1",
+      "surface.intent_upserted.v1",
     ]);
-    expect(events.body.latestSequence).toBe(4);
+    expect(events.body.latestSequence).toBe(8);
 
     const diagnostics = await read(core, "/diagnostics");
-    expect(diagnostics.body.latestSequence).toBe(4);
+    expect(diagnostics.body.latestSequence).toBe(8);
     // 0002 added node pairing and job results; 0003 the Surface uniqueness;
     // 0004 the six Vault tables Section 4.1 lists; 0005 the consequence
     // boundary columns, source semantics, and artifact lineage; 0006 turns,
@@ -424,11 +455,13 @@ describe("identity activation", () => {
 describe("client replay over /ws/clients", () => {
   it("replays from the requested sequence and then streams live", async () => {
     const core = await startTestCore();
-    const objective = await activeObjective(core, "replay");
+    const objective = await draftObjective(core, "replay");
 
     const client = await openClient(core);
     client.subscribe(0);
-    await waitFor(() => client.events().length === 2, "backfill");
+    // One: the Objective's creation. A draft proposes no Surfaces, so the
+    // ledger holds exactly what this test put in it.
+    await waitFor(() => client.events().length === 1, "backfill");
 
     await command(core, "mission.create", {
       idempotencyKey: "m-live",
@@ -438,23 +471,23 @@ describe("client replay over /ws/clients", () => {
       hostPolicy: "core_only",
     });
 
-    await waitFor(() => client.events().length === 3, "live event");
+    await waitFor(() => client.events().length === 2, "live event");
 
     const sequences = client
       .events()
       .map((frame) => (frame.kind === "event" ? frame.event.sequence : -1));
 
-    expect(sequences).toEqual([1, 2, 3]);
+    expect(sequences).toEqual([1, 2]);
     client.close();
   });
 
   it("resumes from the last sequence a disconnected client saw", async () => {
     const core = await startTestCore();
-    const objective = await activeObjective(core, "resume");
+    const objective = await draftObjective(core, "resume");
 
     const first = await openClient(core);
     first.subscribe(0);
-    await waitFor(() => first.events().length === 2, "first backfill");
+    await waitFor(() => first.events().length === 1, "first backfill");
     first.close();
 
     // Committed while nothing is listening. The ledger, not a buffer, is what
@@ -468,18 +501,18 @@ describe("client replay over /ws/clients", () => {
     });
 
     const resumed = await openClient(core);
-    resumed.subscribe(2);
+    resumed.subscribe(1);
     await waitFor(() => resumed.events().length === 1, "resumed backfill");
 
     const frame = resumed.events()[0];
-    expect(frame?.kind === "event" && frame.event.sequence).toBe(3);
+    expect(frame?.kind === "event" && frame.event.sequence).toBe(2);
     expect(frame?.kind === "event" && frame.event.type).toBe("mission.created.v1");
     resumed.close();
   });
 
   it("reports a gap when a client's cursor is ahead of the ledger", async () => {
     const core = await startTestCore();
-    await activeObjective(core, "gap");
+    await draftObjective(core, "gap");
 
     const client = await openClient(core);
     client.subscribe(99);
@@ -488,7 +521,7 @@ describe("client replay over /ws/clients", () => {
     expect(client.frames[0]).toEqual({
       kind: "gap",
       envelopeVersion: ENVELOPE_VERSION,
-      fromSequence: 2,
+      fromSequence: 1,
       toSequence: 99,
     });
     client.close();
@@ -496,7 +529,7 @@ describe("client replay over /ws/clients", () => {
 
   it("delivers every committed event exactly once across a subscribe boundary", async () => {
     const core = await startTestCore();
-    const objective = await activeObjective(core, "once");
+    const objective = await draftObjective(core, "once");
 
     const client = await openClient(core);
     client.subscribe(0);
@@ -511,13 +544,13 @@ describe("client replay over /ws/clients", () => {
       });
     }
 
-    await waitFor(() => client.events().length === 7, "all events");
+    await waitFor(() => client.events().length === 6, "all events");
 
     const sequences = client
       .events()
       .map((frame) => (frame.kind === "event" ? frame.event.sequence : -1));
 
-    expect(sequences).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(sequences).toEqual([1, 2, 3, 4, 5, 6]);
     expect(new Set(sequences).size).toBe(sequences.length);
     client.close();
   });
@@ -794,16 +827,16 @@ describe("hostile sockets", () => {
 
   it("closes a socket that tries to subscribe twice", async () => {
     const core = await startTestCore();
-    await activeObjective(core, "double");
+    await draftObjective(core, "double");
 
     const client = await openClient(core);
     client.subscribe(0);
-    await waitFor(() => client.events().length === 2, "backfill");
+    await waitFor(() => client.events().length === 1, "backfill");
     client.subscribe(0);
 
     await waitFor(() => client.closed() !== undefined, "socket close");
     expect(client.closed()?.code).toBe(1008);
-    expect(client.events()).toHaveLength(2);
+    expect(client.events()).toHaveLength(1);
   });
 });
 
