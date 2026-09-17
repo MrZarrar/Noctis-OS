@@ -11,7 +11,7 @@ import {
   typography,
 } from "@noctis/ui";
 import type { RailItem } from "@noctis/ui";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
@@ -23,6 +23,7 @@ import { Command } from "./pages/Command.js";
 import { Login } from "./pages/Login.js";
 import { Settings } from "./pages/Settings.js";
 import { Vault } from "./pages/Vault.js";
+import { resumeSession } from "./session/login.js";
 import type { CoreTransport } from "./transport/CoreTransport.js";
 
 /**
@@ -50,6 +51,37 @@ interface VaultHandoff {
  */
 export function App(): JSX.Element {
   const [csrf, setCsrf] = useState<string>();
+  // "Log in once" is a promise about the cookie, not about this variable: the
+  // cookie lasts thirty days and the CSRF value dies with the page. So every
+  // boot asks the core to re-mint it before concluding anyone has to log in —
+  // otherwise a reload, an evicted tab, a Home Screen cold start or a tapped
+  // notification is a token prompt with a valid session already in hand.
+  const [resuming, setResuming] = useState(needsLogin);
+
+  useEffect(() => {
+    if (!needsLogin()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void resumeSession(coreBaseUrl()).then((resumed) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (resumed !== undefined) {
+        setCsrf(resumed);
+      }
+
+      setResuming(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // The transport's identity is load-bearing, not an optimisation: it is the
   // dependency of `useIdentityRuntime`'s effect and `useConversation`'s memo, so
   // a fresh object on every render tears down and reopens the SSE subscription
@@ -58,13 +90,38 @@ export function App(): JSX.Element {
   const transport = useMemo(() => resolveCoreTransport(csrf), [csrf]);
 
   if (needsLogin() && csrf === undefined) {
-    return <Login baseUrl={coreBaseUrl()} onAuthenticated={setCsrf} />;
+    // Nothing but the floor while the core is asked. Drawing the login screen
+    // first would flash a token prompt at an owner who does not need one.
+    return resuming ? (
+      <main style={{ height: "100vh", background: depth.floor }} aria-busy="true" />
+    ) : (
+      <Login baseUrl={coreBaseUrl()} onAuthenticated={setCsrf} />
+    );
   }
 
-  return <Workbench transport={transport} />;
+  return (
+    <Workbench
+      transport={transport}
+      {...(needsLogin()
+        ? {
+            onSignedOut: () => {
+              setCsrf(undefined);
+              setResuming(false);
+            },
+          }
+        : {})}
+    />
+  );
 }
 
-function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX.Element {
+function Workbench({
+  transport,
+  onSignedOut,
+}: {
+  transport: CoreTransport | undefined;
+  /** Absent for the packaged shell and a token build, which have no session to end. */
+  onSignedOut?: () => void;
+}): JSX.Element {
   const [active, setActive] = useState<RailItem>("Command");
   const [handoff, setHandoff] = useState<VaultHandoff>();
   const isMobile = useIsMobile();
@@ -160,7 +217,9 @@ function Workbench({ transport }: { transport: CoreTransport | undefined }): JSX
 
       {active === "Artifacts" && <Artifacts transport={transport} />}
 
-      {active === "Settings" && <Settings transport={transport} />}
+      {active === "Settings" && (
+        <Settings transport={transport} {...(onSignedOut === undefined ? {} : { onSignedOut })} />
+      )}
 
       {active !== "Command" &&
         active !== "Chat" &&

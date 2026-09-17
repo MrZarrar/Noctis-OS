@@ -316,6 +316,63 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
     },
   );
 
+  it(
+    "THE GATE: a reload keeps the session, and signing out ends it",
+    { timeout: 120_000 },
+    async () => {
+      const before = await sessionCookie();
+
+      assert.ok(before !== undefined, "the suite reached the reload with no session");
+
+      // The one thing the suite above deliberately never did. Every path that
+      // matters on a phone is this document load: pull-to-refresh, iOS Safari
+      // evicting a backgrounded tab, a Home Screen cold start — which is the
+      // only context in which iOS delivers a push at all — and the service
+      // worker's `client.navigate("/")` when a notification is tapped. All of
+      // them destroy the in-memory CSRF value while the cookie survives.
+      await page.reload();
+
+      const resumed = await waitFor(
+        readPage,
+        (state) => state.hasNav,
+        "a reload sent a page with a live session back to the token prompt",
+      );
+
+      assert.ok(!resumed.hasTokenField, "the login screen came back after a reload");
+
+      // Resumed, not logged in again: the browser is still holding the cookie
+      // the first login set, and no second one was issued.
+      const after = await sessionCookie();
+
+      assert.equal(after?.value, before.value, "the reload minted a new session");
+
+      // And the way off this browser, which until now no screen offered at all.
+      await tabTo(page, "Settings");
+      await page.keyboard.press("Enter");
+      await waitFor(readPage, (state) => state.heading === "Settings", "Settings never opened");
+
+      await tabTo(page, "Sign out");
+      await page.keyboard.press("Enter");
+
+      const out = await waitFor(
+        readPage,
+        (state) => state.hasTokenField,
+        "signing out did not return the page to the login screen",
+      );
+
+      assert.ok(!out.hasNav, "the workbench is still showing after a sign-out");
+      assert.equal(await sessionCookie(), undefined, "signing out left the session cookie behind");
+
+      // And the core agrees the session is gone, so a reload cannot resume it.
+      await page.reload();
+      await waitFor(
+        readPage,
+        (state) => state.hasTokenField,
+        "a signed-out browser resumed a session the core should have deleted",
+      );
+    },
+  );
+
   it("serves the built dist layout, and nothing outside it", { timeout: 60_000 }, async () => {
     const indexResponse = await fetch(CORE_URL);
 

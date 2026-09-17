@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LoginRefused, login } from "./login.js";
+import { LoginRefused, login, resumeSession } from "./login.js";
 
 interface Call {
   url: string;
@@ -86,5 +86,37 @@ describe("login", () => {
     await login("https://core.example", "secret-token", fetch);
 
     expect(calls[0]?.url).not.toContain("secret-token");
+  });
+});
+
+describe("resumeSession", () => {
+  it("asks the core for a fresh csrf value with the cookie the browser still holds", async () => {
+    const { fetch, calls } = scripted(200, { csrf: "re-minted" });
+
+    await expect(resumeSession("https://core.example", fetch)).resolves.toBe("re-minted");
+
+    expect(calls[0]?.url).toBe("https://core.example/session");
+    expect(calls[0]?.init.method).toBe("GET");
+    // Without this the cookie is not attached and the core answers 401, which
+    // would send an owner with a live session back to the token prompt.
+    expect(calls[0]?.init.credentials).toBe("include");
+  });
+
+  it("answers undefined for a 401, which is the page's cue to show the login screen", async () => {
+    await expect(
+      resumeSession("https://core.example", scripted(401, { error: {} }).fetch),
+    ).resolves.toBeUndefined();
+  });
+
+  it("answers undefined for a 200 with no csrf, rather than a transport every write refuses", async () => {
+    await expect(
+      resumeSession("https://core.example", scripted(200, {}).fetch),
+    ).resolves.toBeUndefined();
+  });
+
+  it("answers undefined when the core cannot be reached at all", async () => {
+    await expect(
+      resumeSession("https://core.example", () => Promise.reject(new Error("offline"))),
+    ).resolves.toBeUndefined();
   });
 });

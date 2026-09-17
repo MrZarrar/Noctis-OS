@@ -50,3 +50,37 @@ export async function login(
 
   return { csrf };
 }
+
+/**
+ * The CSRF value for a session this browser already has, or `undefined`.
+ *
+ * The cookie lasts thirty days; the value returned by `login` lasts until the
+ * page is destroyed — which iOS Safari does to a backgrounded tab within
+ * minutes, and which every reload, Home Screen cold start and notification tap
+ * does outright. Without this call each of those met the token prompt again,
+ * with a perfectly good session sitting in the cookie jar.
+ *
+ * Every refusal is `undefined` rather than a throw: the one caller's next move
+ * is the login screen in all of them, and a core that cannot be reached at boot
+ * is not a different answer from a session that has expired.
+ */
+export async function resumeSession(
+  baseUrl: string,
+  fetchImpl: Fetch = (url, init) => fetch(url, init),
+): Promise<string | undefined> {
+  const url = resolveCoreUrl(baseUrl, "/session");
+
+  try {
+    const response = await fetchImpl(url.href, { method: "GET", credentials: "include" });
+
+    if (response.status !== 200) {
+      return undefined;
+    }
+
+    const csrf = (parseCoreBody(await response.text()) as { csrf?: unknown }).csrf;
+
+    return typeof csrf === "string" && csrf !== "" ? csrf : undefined;
+  } catch {
+    return undefined;
+  }
+}

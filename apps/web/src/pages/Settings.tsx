@@ -65,9 +65,14 @@ function nextKey(): string {
 
 export interface SettingsProps {
   transport: CoreTransport | undefined;
+  /**
+   * Ends the browser session. Absent for the packaged shell and a token build,
+   * which hold no session and have nothing to sign out of.
+   */
+  onSignedOut?: () => void;
 }
 
-export function Settings({ transport }: SettingsProps): JSX.Element {
+export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element {
   const [permissions, setPermissions] = useState<readonly Permission[]>([]);
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
@@ -244,6 +249,30 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
     };
   }, [transport]);
 
+  /**
+   * `POST /session/logout` was implemented, tested, and called by nothing — so
+   * the only way off a borrowed or shared browser was to wait thirty days.
+   *
+   * The page returns to the login screen whether or not the core answered: the
+   * in-memory CSRF value is gone either way, and staying on a workbench that
+   * cannot write would be a worse answer than asking to log in again. A refusal
+   * does leave the cookie alive on this device, which is the honest ceiling — a
+   * lost phone is closed by deleting the row, not from the phone.
+   */
+  const signOut = useCallback(async () => {
+    if (onSignedOut === undefined) {
+      return;
+    }
+
+    try {
+      await transport?.request("POST", "/session/logout", {});
+    } catch {
+      /* the session is being abandoned regardless of what the core said */
+    }
+
+    onSignedOut();
+  }, [transport, onSignedOut]);
+
   const live = permissions.filter((permission) => permission.revokedAt === undefined);
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
@@ -404,6 +433,37 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
               <PermissionRow key={permission.id} permission={permission} />
             ))}
           </ul>
+        </section>
+      )}
+
+      {onSignedOut !== undefined && (
+        <section style={{ display: "grid", gap: spacing.sm }}>
+          <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
+            This browser
+          </h2>
+          <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
+            Signing out ends this browser&apos;s session and asks for the core token again. It
+            affects nothing anywhere else, and it does not turn notifications off — this device
+            stops being told when the core forgets the subscription that hung off the session.
+          </p>
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                void signOut();
+              }}
+              style={{
+                background: material.fillElevated,
+                color: "inherit",
+                border: `1px solid ${material.border}`,
+                borderRadius: corner.sm,
+                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
+                cursor: "pointer",
+              }}
+            >
+              Sign out
+            </button>
+          </div>
         </section>
       )}
 
