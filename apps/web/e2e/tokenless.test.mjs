@@ -380,6 +380,9 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
     assert.equal(indexResponse.headers.get("content-type"), "text/html; charset=utf-8");
     assert.equal(indexResponse.headers.get("x-content-type-options"), "nosniff");
     assert.equal(indexResponse.headers.get("cache-control"), "no-cache");
+    assert.match(indexResponse.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+    assert.equal(indexResponse.headers.get("x-frame-options"), "DENY");
+    assert.equal(indexResponse.headers.get("referrer-policy"), "no-referrer");
 
     // The hashed bundle, by the name the served index.html actually references.
     const html = await indexResponse.text();
@@ -433,6 +436,25 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
     assert.equal(worker.headers.get("content-type"), "text/javascript; charset=utf-8");
     assert.equal(worker.headers.get("cache-control"), "no-cache");
     assert.ok((await worker.text()).includes(`addEventListener("push"`));
+
+    // The manifest, without which iOS's Add to Home Screen produces a bookmark
+    // rather than an installed app — and an installed app is the only context
+    // in which iOS delivers a web push at all. `.webmanifest` was already in
+    // the content-type allowlist, serving a file that did not exist, while the
+    // Settings card told the owner to add Noctis to the Home Screen.
+    const manifest = await fetch(`${CORE_URL}/manifest.webmanifest`);
+
+    assert.equal(manifest.status, 200);
+    assert.equal(manifest.headers.get("content-type"), "application/manifest+json");
+
+    const declared = JSON.parse(await manifest.text());
+
+    assert.equal(declared.display, "standalone");
+    assert.equal(declared.start_url, "/");
+    assert.ok(declared.icons.length > 0, "the manifest declares no icon");
+    assert.ok(html.includes('rel="manifest"'), `index.html links no manifest: ${html}`);
+    assert.ok(html.includes("apple-mobile-web-app-capable"), "index.html has no Apple meta tags");
+    assert.equal((await fetch(`${CORE_URL}${declared.icons[0].src}`)).status, 200);
 
     // And the push paths are the API's, not static's: without `push` in
     // `API_SEGMENTS` this would answer 200 with the app shell, and the page

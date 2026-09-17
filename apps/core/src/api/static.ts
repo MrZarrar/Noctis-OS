@@ -183,6 +183,30 @@ function cacheControlFor(pathname: string): string {
   return pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
 }
 
+/**
+ * What the front door is allowed to be, said once for every answer this module
+ * gives — the 200, the SPA fallback, and the 404 alike, because they all go
+ * through `respond`.
+ *
+ * `frame-ancestors 'none'` is the one that closes a real hole. The origin gate
+ * in `http.ts` cannot help here: a top-level navigation and a cross-site
+ * `<iframe>` both send no `Origin`, so `isOriginAllowed` returns true and any
+ * page anywhere could frame this one. `SameSite=Strict` means the framed page
+ * shows the login form rather than a live session — which makes it clickjacking
+ * of a password field, and that field takes the credential owning two PCs.
+ *
+ * `default-src 'self'` covers scripts, styles, fonts, images, `fetch`, the
+ * `EventSource` and the service worker, all of which this page loads from its
+ * own origin and nowhere else. There is deliberately no `'unsafe-inline'`: the
+ * app's inline styles are React `style` props, which are CSSOM writes and
+ * outside CSP's reach, and the one hand-written `<style>` block in index.html
+ * was moved into a bundled stylesheet so the policy did not have to be widened
+ * to keep it. Adding a font CDN, an inline script, or an analytics endpoint
+ * means changing this line first, which is the point.
+ */
+const CONTENT_SECURITY_POLICY =
+  "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
+
 function respond(
   res: ServerResponse,
   status: number,
@@ -198,6 +222,13 @@ function respond(
     // the origin that holds the session cookie, so a browser talked into
     // treating one of these bodies as a script is a same-origin script.
     "x-content-type-options": "nosniff",
+    "content-security-policy": CONTENT_SECURITY_POLICY,
+    // For a browser too old to read `frame-ancestors`. Saying both is the whole
+    // cost of covering it.
+    "x-frame-options": "DENY",
+    // The URL of a tailnet-private core is not a thing to hand to whatever the
+    // page links out to, and a session path could carry a cursor.
+    "referrer-policy": "no-referrer",
   });
   res.end(body);
 }

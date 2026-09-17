@@ -165,6 +165,29 @@ describe("serveStatic", () => {
     }
   });
 
+  it("frames nowhere and loads nothing off-origin, on every answer", async () => {
+    // The 200, the SPA fallback and the 404 alike: all three go through the
+    // same `respond`, and a policy on only the first would leave the login
+    // screen frameable at any URL that happens to miss.
+    //
+    // The origin gate cannot cover this. A top-level navigation and a
+    // cross-site `<iframe>` both send no `Origin`, so `isOriginAllowed` says
+    // yes, and `SameSite=Strict` means what a frame gets is the login form —
+    // clickjacking of the field that takes the credential to two machines.
+    for (const pathname of ["/", "/assets/app.js", "/settings", "/missing.js"]) {
+      const headers = (await get(pathname)).headers;
+
+      expect(headers["content-security-policy"], pathname).toContain("frame-ancestors 'none'");
+      expect(headers["content-security-policy"], pathname).toContain("default-src 'self'");
+      // Not widened for the app's inline styles: React `style` props are CSSOM
+      // writes, which CSP does not govern, and index.html's one `<style>` block
+      // became a bundled stylesheet rather than an exception in this line.
+      expect(headers["content-security-policy"], pathname).not.toContain("unsafe-inline");
+      expect(headers["x-frame-options"], pathname).toBe("DENY");
+      expect(headers["referrer-policy"], pathname).toBe("no-referrer");
+    }
+  });
+
   it("caches a hashed asset forever and never the shell", async () => {
     // Vite puts the content hash in the /assets/ filename, so that URL can be
     // immutable; index.html has a stable URL and must be revalidated or a
