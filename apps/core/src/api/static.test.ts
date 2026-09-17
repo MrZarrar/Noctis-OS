@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -9,6 +9,8 @@ import { contentTypeFor, isApiPath, serveStatic } from "./static.js";
 
 let root: string;
 let outside: string;
+/** A real file one level above the root, so a traversal has something to reach. */
+let sibling: string;
 
 function capture(): {
   res: ServerResponse;
@@ -47,6 +49,12 @@ beforeAll(() => {
   outside = mkdtempSync(join(tmpdir(), "noctis-outside-"));
 
   writeFileSync(join(outside, "secret.txt"), "the-secret");
+
+  // Directly beside the root, so `/..%2f<name>` names a file that *exists*.
+  // Without this every traversal case 404s from ENOENT rather than from the
+  // containment check, and the suite would pass against a naive `path.join`.
+  sibling = `${basename(root)}-sibling.txt`;
+  writeFileSync(join(root, "..", sibling), "the-secret");
   writeFileSync(join(root, "index.html"), "<!doctype html><title>Noctis</title>");
   writeFileSync(join(root, "sw.js"), "self.addEventListener('install', () => {});");
   writeFileSync(join(root, "favicon.bin"), "not a known extension");
@@ -60,6 +68,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  rmSync(join(root, "..", sibling), { force: true });
   rmSync(root, { recursive: true, force: true });
   rmSync(outside, { recursive: true, force: true });
 });
@@ -148,6 +157,25 @@ describe("serveStatic", () => {
     expect(response.headers["content-type"]).toBe("application/octet-stream");
   });
 
+  it("tells the browser not to sniff a type, on every answer", async () => {
+    for (const pathname of ["/", "/assets/app.js", "/favicon.bin", "/settings", "/missing.js"]) {
+      // A declared type is only worth declaring if the browser is told to obey
+      // it. This origin holds the session cookie.
+      expect((await get(pathname)).headers["x-content-type-options"], pathname).toBe("nosniff");
+    }
+  });
+
+  it("caches a hashed asset forever and never the shell", async () => {
+    // Vite puts the content hash in the /assets/ filename, so that URL can be
+    // immutable; index.html has a stable URL and must be revalidated or a
+    // deploy strands a phone on asset URLs that no longer exist.
+    expect((await get("/assets/app.js")).headers["cache-control"]).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect((await get("/")).headers["cache-control"]).toBe("no-cache");
+    expect((await get("/settings")).headers["cache-control"]).toBe("no-cache");
+  });
+
   it("returns index.html for a route, so a deep link opens the app", async () => {
     const response = await get("/settings");
 
@@ -162,15 +190,27 @@ describe("serveStatic", () => {
     expect(response.body).not.toContain("<!doctype html>");
   });
 
-  it("refuses a traversal out of the root", async () => {
-    const response = await get("/../../etc/passwd");
+  it("refuses a traversal that reaches a file which really is there", async () => {
+    // Each of these resolves to `<tmp>/<sibling>`, which exists. A naive
+    // `join(root, pathname)` answers 200 with its contents; only a containment
+    // check on the resolved path refuses it. This is the case that gives the
+    // rest of the traversal tests their teeth.
+    for (const pathname of [
+      `/../${sibling}`,
+      `/%2e%2e/${sibling}`,
+      `/..%2f${sibling}`,
+      `/assets/../../${sibling}`,
+    ]) {
+      const response = await get(pathname);
 
-    expect(response.status).toBe(404);
+      expect(response.status, pathname).toBe(404);
+      expect(response.body, pathname).not.toContain("the-secret");
+    }
   });
 
-  it("refuses a traversal that only exists once the path is decoded", async () => {
+  it("refuses a traversal to a target that is not there either", async () => {
     for (const pathname of [
-      `/..%2f..%2f${encodeURIComponent(outside)}/secret.txt`,
+      "/../../etc/passwd",
       "/%2e%2e/%2e%2e/etc/passwd",
       "/assets/%2e%2e%2f%2e%2e%2fsecret.txt",
     ]) {
@@ -182,11 +222,22 @@ describe("serveStatic", () => {
   });
 
   it("refuses an absolute path, however it is spelled", async () => {
-    const encoded = join(outside, "secret.txt").replaceAll("\\", "/");
-    const response = await get(`/${encoded}`);
+    for (const pathname of [
+      // A POSIX-style absolute path to a file that exists.
+      `/${join(outside, "secret.txt").replaceAll("\\", "/")}`,
+      // Drive-relative on Windows: no separator after the colon, so a naive
+      // resolve can reinterpret it against the current directory of that drive.
+      "/C:Windows/win.ini",
+      "/c:/Windows/win.ini",
+      // A UNC path, which names a host rather than a directory.
+      "//server/share/secret.txt",
+      "/%5C%5Cserver%5Cshare%5Csecret.txt",
+    ]) {
+      const response = await get(pathname);
 
-    expect(response.status).toBe(404);
-    expect(response.body).not.toContain("the-secret");
+      expect(response.status, pathname).toBe(404);
+      expect(response.body, pathname).not.toContain("the-secret");
+    }
   });
 
   it("refuses a symlink that leaves the root, which no string filter would catch", async () => {

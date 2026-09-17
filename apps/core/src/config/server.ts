@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+
 import type { LogLevel } from "../logging.js";
 import { assertNoLegacyJarvisVariables } from "./environment.js";
 
@@ -118,6 +121,49 @@ function parseOrigins(raw: string | undefined): string[] {
 }
 
 /**
+ * Where the built page lives, resolved absolute so it does not move with the
+ * process's working directory, and checked hard enough that a misconfiguration
+ * stops the process instead of producing a front door that looks fine and does
+ * nothing.
+ *
+ * Two refusals, both of which are otherwise silent failures:
+ *
+ * - A directory with no index.html serves 404 for every request, including `/`.
+ * - An empty origin allowlist lets the page *load* — a browser sends no
+ *   `Origin` on a same-origin GET navigation — and then refuses the login POST
+ *   with 403, and `/events/live` too, because `EventSource` does send `Origin`
+ *   even same-origin. The page appears, cannot log in, and cannot stream.
+ *   There is no deployment where serving the page is wanted and an allowlist
+ *   is not.
+ */
+function parseWebRoot(
+  raw: string | undefined,
+  allowedOrigins: readonly string[],
+): string | undefined {
+  const trimmed = raw?.trim();
+
+  if (trimmed === undefined || trimmed === "") {
+    return undefined;
+  }
+
+  const root = resolve(trimmed);
+
+  if (!existsSync(join(root, "index.html"))) {
+    throw new ConfigurationError(
+      `NOCTIS_WEB_ROOT has no index.html: ${root}. Point it at a built web app (\`npm run build:web\` writes apps/web/dist).`,
+    );
+  }
+
+  if (allowedOrigins.length === 0) {
+    throw new ConfigurationError(
+      "NOCTIS_WEB_ROOT is set but NOCTIS_ALLOWED_ORIGINS is empty, so the page would load and then be unable to log in or stream. Set NOCTIS_ALLOWED_ORIGINS to the origin the page is served from, for example https://noctis.tailnet-name.ts.net",
+    );
+  }
+
+  return root;
+}
+
+/**
  * Reads configuration and refuses to produce a usable value for anything
  * unsafe. There is no permissive fallback: an unset token, an unexplained
  * non-loopback bind, or an unparseable value stops the process here rather
@@ -142,7 +188,7 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     );
   }
 
-  const webRoot = env.NOCTIS_WEB_ROOT?.trim();
+  const webRoot = parseWebRoot(env.NOCTIS_WEB_ROOT, parseOrigins(env.NOCTIS_ALLOWED_ORIGINS));
   const logLevel = env.NOCTIS_LOG_LEVEL?.trim() ?? "info";
 
   if (!LOG_LEVELS.has(logLevel)) {
@@ -157,6 +203,6 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     allowedOrigins: parseOrigins(env.NOCTIS_ALLOWED_ORIGINS),
     logLevel: logLevel as LogLevel,
     sessionTtlHours: parseSessionTtlHours(env.NOCTIS_SESSION_TTL_HOURS),
-    ...(webRoot === undefined || webRoot === "" ? {} : { webRoot }),
+    ...(webRoot === undefined ? {} : { webRoot }),
   };
 }

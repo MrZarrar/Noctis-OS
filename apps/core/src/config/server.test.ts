@@ -1,8 +1,21 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { ConfigurationError, DEFAULT_PORT, loadCoreConfig } from "./server.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
+
+/** A directory that looks like `apps/web/dist` does after a build. */
+function builtPage(): string {
+  const root = mkdtempSync(join(tmpdir(), "noctis-web-"));
+
+  writeFileSync(join(root, "index.html"), "<!doctype html>");
+
+  return root;
+}
 
 function env(overrides: Record<string, string | undefined> = {}): Record<string, string> {
   const base: Record<string, string | undefined> = {
@@ -84,8 +97,54 @@ describe("loadCoreConfig", () => {
   it("serves no page unless a web root is named, so the dev loop is unchanged", () => {
     expect(loadCoreConfig(env()).webRoot).toBeUndefined();
     expect(loadCoreConfig(env({ NOCTIS_WEB_ROOT: "   " })).webRoot).toBeUndefined();
-    expect(loadCoreConfig(env({ NOCTIS_WEB_ROOT: " apps/web/dist " })).webRoot).toBe(
-      "apps/web/dist",
-    );
+  });
+
+  it("resolves the web root absolute, so it does not move with the working directory", () => {
+    const root = builtPage();
+
+    try {
+      const config = loadCoreConfig(
+        env({
+          NOCTIS_WEB_ROOT: ` ${relative(process.cwd(), root)} `,
+          NOCTIS_ALLOWED_ORIGINS: "https://noctis.example",
+        }),
+      );
+
+      expect(config.webRoot).toBe(root);
+      expect(isAbsolute(config.webRoot ?? "")).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a web root with no index.html rather than 404ing every request", () => {
+    const empty = mkdtempSync(join(tmpdir(), "noctis-empty-"));
+
+    try {
+      expect(() =>
+        loadCoreConfig(
+          env({ NOCTIS_WEB_ROOT: empty, NOCTIS_ALLOWED_ORIGINS: "https://noctis.example" }),
+        ),
+      ).toThrow(/index\.html/);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to serve a page with no origin allowlist, which would load and do nothing", () => {
+    const root = builtPage();
+
+    try {
+      // The page loads (no Origin on a same-origin GET navigation) and then
+      // cannot log in or stream, because both the POST and the EventSource do
+      // send Origin. Failing at startup beats a front door that silently works
+      // for exactly one request.
+      expect(() => loadCoreConfig(env({ NOCTIS_WEB_ROOT: root }))).toThrow(
+        /NOCTIS_ALLOWED_ORIGINS/,
+      );
+      expect(() => loadCoreConfig(env({ NOCTIS_WEB_ROOT: root }))).toThrow(ConfigurationError);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -20,11 +20,17 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
  * than by position — it has to run before the credential gate, since the login
  * screen loads before there is a session to check.
  *
- * ponytail: hand-maintained, and a new top-level collection added to
- * `handleRead` must be added here too or the SPA fallback will answer it with
- * index.html. The same list already exists as `CORE_PATHS` in
- * `apps/web/vite.config.ts`. Upgrade path: make `handleRead`'s routes a table
- * and derive both from it.
+ * ponytail: hand-maintained, and the ceiling is sharper than a stale list
+ * usually is. Because static runs *before* the credential gate, a new top-level
+ * collection added to `handleRead` and not added here does not merely get
+ * index.html instead of JSON — it turns an unauthenticated 401 into a 200, so a
+ * path that was meant to require a credential silently stops requiring one.
+ *
+ * `apps/web/vite.config.ts`'s `CORE_PATHS` is a third copy of the same idea and
+ * is already out of step: it has 19 entries and omits `node` and `session`,
+ * which matters less there (a missed path is proxied wrongly in dev, not
+ * exposed). Upgrade path: make `handleRead`'s routes a table, export the set of
+ * top-level segments from it, and derive both this and `CORE_PATHS` from that.
  */
 const API_SEGMENTS = new Set([
   "approvals",
@@ -155,10 +161,31 @@ function looksLikeRoute(pathname: string): boolean {
   return extname(pathname) === "" && !pathname.endsWith("/");
 }
 
-function respond(res: ServerResponse, status: number, contentType: string, body: Buffer): void {
+/**
+ * Vite writes a content hash into every `/assets/` filename, so the URL changes
+ * whenever the bytes do and the old one can be cached forever. Everything else
+ * — index.html above all — must be revalidated, or a deploy leaves a phone on
+ * the previous build pointing at asset URLs that no longer exist.
+ */
+function cacheControlFor(pathname: string): string {
+  return pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+}
+
+function respond(
+  res: ServerResponse,
+  status: number,
+  contentType: string,
+  cacheControl: string,
+  body: Buffer,
+): void {
   res.writeHead(status, {
     "content-type": contentType,
     "content-length": String(body.byteLength),
+    "cache-control": cacheControl,
+    // The same header every JSON response sets (`send` in `http.ts`). This is
+    // the origin that holds the session cookie, so a browser talked into
+    // treating one of these bodies as a script is a same-origin script.
+    "x-content-type-options": "nosniff",
   });
   res.end(body);
 }
@@ -186,8 +213,14 @@ export async function serveStatic(
   const target = pathname.endsWith("/") ? join(candidate, "index.html") : candidate;
   const file = await readWithin(root, target);
 
+  // ponytail: `no-cache` with no `etag` or `last-modified` means a revalidation
+  // is a full re-download, so index.html costs its whole size on every load.
+  // Upgrade by hashing the buffer into an `etag` and answering 304 to a
+  // matching `if-none-match`; the body is already in memory when that is
+  // decided. The hashed assets, which are the bulk of the bytes, are already
+  // never re-fetched.
   if (file !== undefined) {
-    respond(res, 200, contentTypeFor(target), file);
+    respond(res, 200, contentTypeFor(target), cacheControlFor(pathname), file);
     return;
   }
 
@@ -195,7 +228,7 @@ export async function serveStatic(
     const index = await readWithin(root, join(root, "index.html"));
 
     if (index !== undefined) {
-      respond(res, 200, "text/html; charset=utf-8", index);
+      respond(res, 200, "text/html; charset=utf-8", "no-cache", index);
       return;
     }
   }
@@ -204,5 +237,5 @@ export async function serveStatic(
 }
 
 function notFound(res: ServerResponse): void {
-  respond(res, 404, "text/plain; charset=utf-8", Buffer.from("not found"));
+  respond(res, 404, "text/plain; charset=utf-8", "no-store", Buffer.from("not found"));
 }
