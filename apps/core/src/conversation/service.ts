@@ -388,6 +388,22 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           localOnly,
         });
 
+        // Task 2.6: a host that is merely asleep is a different answer from a
+        // host that could never run this. Refusing before anything is written
+        // means the owner can wake the machine and send the same prompt again,
+        // rather than finding a failed turn in the thread they have to read
+        // past — and the page can offer the same prompt somewhere else, which
+        // it can only do if the send did not already happen.
+        if (
+          decision.selected === undefined &&
+          decision.candidates.some(
+            (candidate) =>
+              candidate.reasonCodes.length === 1 && candidate.reasonCodes[0] === "not_connected",
+          )
+        ) {
+          return conflict({ kind: "unavailable", entity: "node", reason: "node_offline" });
+        }
+
         let selected = decision.selected;
         let reasonCodes = decision.reasonCodes;
         let primaryRootGrantId = command.rootGrantId;

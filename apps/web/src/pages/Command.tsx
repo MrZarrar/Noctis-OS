@@ -1,6 +1,5 @@
 import type {
   ExternalToolPayload,
-  ModelRef,
   MonitorRole,
   NativeApplicationPayload,
   ObjectiveRecord,
@@ -14,7 +13,7 @@ import { IDENTITY_PROFILES, corner, material, semantic, spacing, typography } fr
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import type { ConversationState } from "../conversation/useConversation.js";
+import type { ConversationState, SendOptions } from "../conversation/useConversation.js";
 import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { ExternalToolBridge, SurveyedTool } from "../transport/ExternalToolBridge.js";
@@ -111,9 +110,9 @@ export interface CommandProps {
    */
   identity: IdentityRuntimeState;
   /** The identity's conversation, for Presence's model selector. */
-  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach">;
+  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots">;
   /** Presence's prompt: sends on the thread and takes the rail to Chat. */
-  onSend: (text: string, model?: ModelRef) => void;
+  onSend: (text: string, options: SendOptions) => void;
   /** Handoff to the dedicated Vault view, from a recall Surface. */
   onOpenInVault?: (entityId: string) => void;
 }

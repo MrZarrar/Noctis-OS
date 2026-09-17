@@ -362,7 +362,7 @@ describe("createConversation", () => {
       body: { ...thread, objectiveId: OBJECTIVE_ID },
     });
 
-    await store.send("ASK: hello", { providerId: "claude", model: "sonnet" });
+    await store.send("ASK: hello", { model: { providerId: "claude", model: "sonnet" } });
 
     const sent = scripted.calls.find((call) => call.path === "/commands/conversation.send");
 

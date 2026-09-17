@@ -1,4 +1,3 @@
-import type { ModelRef } from "@noctis/contracts";
 import {
   Rail,
   TAB_BAR_HEIGHT,
@@ -13,6 +12,7 @@ import {
 import type { RailItem } from "@noctis/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { SendOptions } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
@@ -135,15 +135,27 @@ function Workbench({
   // prompt and Chat's history are one thread with one subscription (0.12).
   const identity = useIdentityRuntime(transport);
   const identityId = identity.activeIdentityId ?? "vesper";
-  const conversation = useConversation(transport, identityId, identity.activeObjectiveId);
+  /**
+   * Which of the identity's two threads is being talked on.
+   *
+   * Slice 1 left free chat unreachable: an active Objective made
+   * `activeObjectiveId` the only thread anything could name, so a question that
+   * had nothing to do with the work in progress had to be asked inside it — or
+   * the Objective had to be paused first. The flag lives here rather than in
+   * Chat because Presence sends on the same thread Chat shows (0.12), and two
+   * copies of "which thread" could disagree.
+   */
+  const [freeThread, setFreeThread] = useState(false);
+  const objectiveId = freeThread ? undefined : identity.activeObjectiveId;
+  const conversation = useConversation(transport, identityId, objectiveId);
 
   const openInVault = (entityId: string): void => {
     setHandoff({ entityId, returnTo: active });
     setActive("Vault");
   };
 
-  const sendAndShow = (text: string, model?: ModelRef): void => {
-    void conversation.send(text, model);
+  const sendAndShow = (text: string, options: SendOptions): void => {
+    void conversation.send(text, options);
     setActive("Chat");
   };
 
@@ -197,6 +209,11 @@ function Workbench({
           identityId={identityId}
           conversation={conversation}
           connected={transport !== undefined}
+          // Only offered when there is a second thread to go to. Without an
+          // active Objective, free chat is the only thread there is.
+          {...(identity.activeObjectiveId === undefined
+            ? {}
+            : { freeThread, onUseFreeThread: setFreeThread })}
         />
       )}
 

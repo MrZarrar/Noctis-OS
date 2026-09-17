@@ -10,6 +10,8 @@ import {
 } from "@noctis/ui";
 import { useState } from "react";
 
+import type { RuntimeRootOption, SendOptions } from "./useConversation.js";
+
 export interface PromptFormProps {
   identityId: ConversationalIdentityId;
   /** What connected nodes offer right now (`GET /models`). */
@@ -23,8 +25,13 @@ export interface PromptFormProps {
    * hidden rather than offered and then failing (`CoreTransport.upload`).
    */
   canAttach?: boolean;
-  /** `model` is present only when the selector overrides the default. */
-  onSend: (text: string, model?: ModelRef, files?: readonly File[]) => void;
+  /**
+   * The granted folders this turn could be pinned to. Empty means the core
+   * chooses, which is what every send did before Slice 2 Part 2 — the page had
+   * no way to name a root at all.
+   */
+  roots?: readonly RuntimeRootOption[];
+  onSend: (text: string, options: SendOptions) => void;
 }
 
 /** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
@@ -50,6 +57,33 @@ const attachedItemStyle = {
   fontSize: typography.scale.sm,
 } as const;
 
+const selectStyle = {
+  background: material.fill,
+  border: `1px solid ${material.border}`,
+  borderRadius: corner.sm,
+  color: "inherit",
+  padding: spacing.xs,
+} as const;
+
+/**
+ * A folder named the way the owner thinks of it: the machine, the last path
+ * segment, and whether that machine is awake.
+ *
+ * The offline ones are listed rather than hidden (task 2.6). Picking one is
+ * how the owner finds out the machine is asleep — the core refuses the send
+ * with `node_offline` and writes nothing — and hiding it would leave them
+ * looking for the only root they wanted.
+ */
+export function rootLabel(root: RuntimeRootOption): string {
+  const leaf =
+    root.path
+      .split(/[\\/]+/)
+      .filter((part) => part !== "")
+      .at(-1) ?? root.path;
+
+  return `${leaf} on ${root.hostId}${root.connected ? "" : " (offline)"}${root.mode === "read" ? " — read only" : ""}`;
+}
+
 export function modelKey(model: ModelRef): string {
   return `${model.providerId}:${model.model}`;
 }
@@ -69,11 +103,13 @@ export function PromptForm({
   defaultModel,
   disabled,
   canAttach = false,
+  roots = [],
   onSend,
 }: PromptFormProps): JSX.Element {
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string>();
   const [files, setFiles] = useState<readonly File[]>([]);
+  const [rootGrantId, setRootGrantId] = useState("");
 
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
@@ -95,11 +131,13 @@ export function PromptForm({
 
     const override = options.find((model) => modelKey(model) === selectedKey);
 
-    onSend(
-      text,
-      override !== undefined && selectedKey !== defaultKey ? override : undefined,
-      files.length === 0 ? undefined : files,
-    );
+    const model = override !== undefined && selectedKey !== defaultKey ? override : undefined;
+
+    onSend(text, {
+      ...(model === undefined ? {} : { model }),
+      ...(files.length === 0 ? {} : { files }),
+      ...(rootGrantId === "" ? {} : { rootGrantId }),
+    });
     setText("");
     setFiles([]);
   };
@@ -204,13 +242,7 @@ export function PromptForm({
             onChange={(event) => {
               setChosen(event.target.value);
             }}
-            style={{
-              background: material.fill,
-              border: `1px solid ${material.border}`,
-              borderRadius: corner.sm,
-              color: "inherit",
-              padding: spacing.xs,
-            }}
+            style={selectStyle}
           >
             {options.length === 0 && <option value="">No model offered by any node</option>}
             {options.map((model) => (
@@ -220,6 +252,28 @@ export function PromptForm({
             ))}
           </select>
         </label>
+        {roots.length > 0 && (
+          <label style={{ display: "flex", alignItems: "center", gap: spacing.xs }}>
+            <span style={{ color: typography.color.muted }}>Where</span>
+            <select
+              value={rootGrantId}
+              disabled={disabled}
+              onChange={(event) => {
+                setRootGrantId(event.target.value);
+              }}
+              style={selectStyle}
+            >
+              {/* The core's own rule when nothing is named: the chosen node's
+                  first writable root. Said out loud rather than left blank. */}
+              <option value="">Wherever Noctis chooses</option>
+              {roots.map((root) => (
+                <option key={root.grantId} value={root.grantId}>
+                  {rootLabel(root)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <span style={{ flex: 1 }} />
         <button
           type="submit"

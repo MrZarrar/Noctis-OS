@@ -66,12 +66,28 @@ const ApprovalsSchema = z.object({ approvals: z.array(ApprovalRecordSchema) }).s
 const LedgerHeadSchema = z
   .object({ events: z.array(z.unknown()), latestSequence: z.int().nonnegative() })
   .strict();
+/** A granted folder a turn can be pinned to. Offline hosts are listed, deliberately. */
+export const RuntimeRootOptionSchema = z
+  .object({
+    grantId: z.string().min(1),
+    path: z.string().min(1),
+    mode: z.enum(["read", "write"]),
+    localOnly: z.boolean(),
+    nodeId: z.string().min(1),
+    hostId: z.string().min(1),
+    connected: z.boolean(),
+  })
+  .strict();
+
+export type RuntimeRootOption = z.infer<typeof RuntimeRootOptionSchema>;
+
 const ModelsSchema = z
   .object({
     catalogue: z.array(ModelRefSchema),
     defaults: z
       .object({ vesper: ModelRefSchema.optional(), jester: ModelRefSchema.optional() })
       .strict(),
+    roots: z.array(RuntimeRootOptionSchema).default([]),
   })
   .strict();
 
@@ -106,21 +122,43 @@ export interface ConversationSnapshot {
   pendingApprovals: readonly ApprovalRecord[];
   models: readonly ModelRef[];
   defaultModel: ModelRef | undefined;
+  /** The granted folders a turn may be pinned to, including ones on an offline host. */
+  roots: readonly RuntimeRootOption[];
+  /**
+   * A send the core refused because the machine holding the pinned folder is
+   * asleep (task 2.6). Nothing was written, so the same prompt can be sent
+   * again unpinned — which is what `retryElsewhere` does.
+   */
+  offlineRetry: { text: string; options: SendOptions } | undefined;
   /** Whether this transport can upload a file at all. See `CoreTransport.upload`. */
   canAttach: boolean;
   error: string | undefined;
 }
 
 export interface ConversationActions {
+  /** Re-sends the refused prompt without its root pin. No-op when nothing is pending. */
+  retryElsewhere: () => Promise<void>;
   /**
    * `files` are uploaded first and sent as `attachmentIds`. A failed upload
    * refuses the whole send: a prompt that names a screenshot and arrives
    * without it gets an answer about a file the model never saw.
+   *
+   * `rootGrantId` pins the turn to one granted folder. When the host holding
+   * it is asleep the core refuses with `node_offline` and writes nothing, so
+   * the same prompt can be sent again unpinned.
    */
-  send: (text: string, model?: ModelRef, files?: readonly File[]) => Promise<void>;
+  send: (text: string, options?: SendOptions) => Promise<void>;
   cancel: (jobId: string) => Promise<void>;
   confirm: (requestId: string, typedConfirmation?: string) => Promise<void>;
   decline: (requestId: string, reason?: string) => Promise<void>;
+}
+
+export interface SendOptions {
+  /** Present only when the selector overrides the identity's default. */
+  model?: ModelRef;
+  files?: readonly File[];
+  /** Absent means the chosen node's first writable root, which the core picks. */
+  rootGrantId?: string;
 }
 
 export type ConversationState = ConversationSnapshot & ConversationActions;
@@ -141,6 +179,8 @@ const EMPTY: ConversationSnapshot = {
   pendingApprovals: [],
   models: [],
   defaultModel: undefined,
+  roots: [],
+  offlineRetry: undefined,
   canAttach: false,
   error: undefined,
 };
@@ -256,7 +296,11 @@ export function createConversation(
     const models = await read("/models", ModelsSchema, "the model catalogue");
 
     if (models !== undefined) {
-      set({ models: models.catalogue, defaultModel: models.defaults[identityId] });
+      set({
+        models: models.catalogue,
+        defaultModel: models.defaults[identityId],
+        roots: models.roots,
+      });
     }
   }
 
@@ -501,18 +545,33 @@ export function createConversation(
     return ids;
   }
 
+  /**
+   * Why the last command was refused, when it was.
+   *
+   * Held beside the store rather than in it: the snapshot is what the page
+   * renders, and a reason code nothing draws would be state for its own sake.
+   * `send` reads it one line after setting it, which is the only consumer.
+   */
+  let lastRefusal: { status: number; reason?: string } | undefined;
+
   async function command(name: string, body: Record<string, unknown>): Promise<unknown> {
     const response = await transport.request("POST", `/commands/${name}`, {
       idempotencyKey: nextKey(name),
       ...body,
     });
 
-    if (response.status !== 200) {
-      const detail = (response.body as { error?: { message?: string } } | undefined)?.error
-        ?.message;
+    lastRefusal = undefined;
 
+    if (response.status !== 200) {
+      const error = (
+        response.body as
+          { error?: { message?: string; details?: { reason?: unknown } } } | undefined
+      )?.error;
+      const reason = typeof error?.details?.reason === "string" ? error.details.reason : undefined;
+
+      lastRefusal = { status: response.status, ...(reason === undefined ? {} : { reason }) };
       fail(
-        `${name} was refused (${String(response.status)})${detail === undefined ? "" : `: ${detail}`}`,
+        `${name} was refused (${String(response.status)})${error?.message === undefined ? "" : `: ${error.message}`}`,
       );
       return undefined;
     }
@@ -522,7 +581,7 @@ export function createConversation(
     return response.body;
   }
 
-  return {
+  const store: ConversationStore = {
     getState: () => state,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -542,8 +601,8 @@ export function createConversation(
       subscription?.close();
       subscription = undefined;
     },
-    send: async (text, model, files) => {
-      const attachmentIds = await uploadAll(files ?? []);
+    send: async (text, options) => {
+      const attachmentIds = await uploadAll(options?.files ?? []);
 
       if (attachmentIds === undefined) {
         return;
@@ -553,13 +612,27 @@ export function createConversation(
         identityId,
         text,
         ...(objectiveId === undefined ? {} : { objectiveId }),
-        ...(model === undefined ? {} : { model }),
+        ...(options?.model === undefined ? {} : { model: options.model }),
+        ...(options?.rootGrantId === undefined ? {} : { rootGrantId: options.rootGrantId }),
         ...(attachmentIds.length === 0 ? {} : { attachmentIds }),
       });
 
       if (body === undefined) {
+        // Task 2.6: the core wrote nothing, so the same prompt is still
+        // sendable. Offered rather than retried automatically — "run this on a
+        // different machine" is a decision about where the owner's files are,
+        // and it is not one to make on their behalf.
+        if (lastRefusal?.reason === "node_offline") {
+          set({
+            offlineRetry: { text, options: options ?? {} },
+            error: "That machine is offline. The same prompt can run elsewhere.",
+          });
+        }
+
         return;
       }
+
+      set({ offlineRetry: undefined });
 
       const turn = TurnSchema.safeParse(body);
 
@@ -577,6 +650,24 @@ export function createConversation(
 
       // First prompt on this thread: the core created it inside the send.
       await loadThread();
+    },
+    retryElsewhere: async () => {
+      const pending = state.offlineRetry;
+
+      if (pending === undefined) {
+        return;
+      }
+
+      // The pin is what was refused, so the pin is what is dropped. The files
+      // are already uploaded and their ids still resolve, so `send` re-uploads
+      // nothing: it only re-runs the command.
+      const unpinned: SendOptions = {
+        ...(pending.options.model === undefined ? {} : { model: pending.options.model }),
+        ...(pending.options.files === undefined ? {} : { files: pending.options.files }),
+      };
+
+      set({ offlineRetry: undefined });
+      await store.send(pending.text, unpinned);
     },
     cancel: async (jobId) => {
       if ((await command("conversation.cancel", { jobId })) !== undefined && state.thread) {
@@ -596,6 +687,8 @@ export function createConversation(
       });
     },
   };
+
+  return store;
 }
 
 const noSubscribe = (): (() => void) => () => undefined;
@@ -637,6 +730,7 @@ export function useConversation(
   return {
     ...snapshot,
     send: store?.send ?? noTransport,
+    retryElsewhere: store?.retryElsewhere ?? noTransport,
     cancel: store?.cancel ?? noTransport,
     confirm: store?.confirm ?? noTransport,
     decline: store?.decline ?? noTransport,

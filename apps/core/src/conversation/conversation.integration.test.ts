@@ -592,14 +592,20 @@ describe("conversation service", () => {
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
 
     const empty = await read(core, "/models");
-    expect(empty.body).toEqual({ catalogue: [], defaults: {} });
+    expect(empty.body).toEqual({ catalogue: [], defaults: {}, roots: [] });
 
     await connectFake(core, directory);
     await setDefault(core);
 
     const models = await read(core, "/models");
     expect(models.status).toBe(200);
-    expect(models.body).toEqual({ catalogue: [MODEL], defaults: { vesper: MODEL } });
+    expect(models.body).toMatchObject({ catalogue: [MODEL], defaults: { vesper: MODEL } });
+
+    // The roots a turn can be pinned to. `path` is the fake node's temp
+    // directory, so it is matched by shape rather than by value.
+    expect(models.body.roots).toEqual([
+      expect.objectContaining({ grantId: "d", mode: "write", connected: true }),
+    ]);
 
     rmSync(directory, { recursive: true, force: true });
   });
@@ -618,5 +624,37 @@ describe("conversation service", () => {
     expect(types).toContain("provider.decision_recorded.v1");
     expect(types).toContain("identity.turn_completed.v1");
     expect(types).not.toContain("identity.turn_started.v1");
+  });
+
+  it("a host that is merely asleep refuses the send and writes nothing", async () => {
+    // Task 2.6. Distinct from the test above on purpose: a node that could run
+    // this and happens to be disconnected is a different answer from a node
+    // that never could, and the difference is what makes "send it elsewhere"
+    // an offer the page can make.
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+
+    await connectFake(core, directory);
+    await setDefault(core);
+
+    // The socket goes; the grant and the probe stay. That is exactly a machine
+    // the owner shut the lid on.
+    openSockets.pop()?.terminate();
+    await waitFor(() => core.core.dispatcher.connectedCount === 0, "the node to disconnect");
+
+    const refused = await send(core, "asleep");
+
+    expect(refused.status).toBe(503);
+    expect(
+      (refused.body as unknown as { error: { details: { reason: string } } }).error.details,
+    ).toEqual({ reason: "node_offline" });
+
+    // Nothing written: no turn to read past, and the same prompt is still
+    // sendable once the machine wakes — or somewhere else, unpinned.
+    const types = await eventTypes(core);
+    expect(types).not.toContain("provider.decision_recorded.v1");
+    expect(types).not.toContain("identity.turn_completed.v1");
+
+    rmSync(directory, { recursive: true, force: true });
   });
 });

@@ -221,6 +221,56 @@ export function listRuntimeCandidates(
   return candidates;
 }
 
+/** A granted root a turn can be pinned to, named for a person rather than for a router. */
+export interface RuntimeRootOption {
+  grantId: string;
+  path: string;
+  mode: "read" | "write";
+  localOnly: boolean;
+  nodeId: string;
+  hostId: string;
+  connected: boolean;
+}
+
+/**
+ * Every root a turn could name, across every node.
+ *
+ * Offline nodes are included, and that is the point (task 2.6): a folder that
+ * exists on a machine which happens to be asleep is still the folder the owner
+ * means, and answering "that machine is offline" is more useful than quietly
+ * omitting the only root they were looking for.
+ *
+ * Deduplicated by grant id. One grant is one root; two probes on the same node
+ * both carry it, and listing it twice would make the page show it twice.
+ */
+export function listRuntimeRoots(
+  db: NoctisDatabase,
+  isConnected: (nodeId: string) => boolean,
+  now: number,
+): RuntimeRootOption[] {
+  const seen = new Map<string, RuntimeRootOption>();
+
+  for (const candidate of listRuntimeCandidates(db, isConnected, [], now)) {
+    for (const root of candidate.roots) {
+      if (!seen.has(root.grantId)) {
+        seen.set(root.grantId, {
+          grantId: root.grantId,
+          path: root.path,
+          mode: root.mode,
+          localOnly: root.localOnly,
+          nodeId: candidate.nodeId,
+          hostId: candidate.hostId,
+          connected: candidate.connected,
+        });
+      }
+    }
+  }
+
+  return [...seen.values()].sort(
+    (left, right) => left.hostId.localeCompare(right.hostId) || left.path.localeCompare(right.path),
+  );
+}
+
 export interface IssuedPairingCode {
   pairingCodeId: string;
   /** Returned exactly once. Only its digest is stored, so no replay can repeat it. */

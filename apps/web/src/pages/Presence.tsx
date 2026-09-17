@@ -1,4 +1,3 @@
-import type { ModelRef } from "@noctis/contracts";
 import {
   IDENTITY_PROFILES,
   IntelligenceRenderer,
@@ -10,7 +9,7 @@ import {
 } from "@noctis/ui";
 
 import { PromptForm } from "../conversation/PromptForm.js";
-import type { ConversationState } from "../conversation/useConversation.js";
+import type { ConversationState, SendOptions } from "../conversation/useConversation.js";
 import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
@@ -23,9 +22,9 @@ export interface PresenceProps {
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
   /** The same conversation Chat shows; Presence only needs its model catalogue. */
-  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach">;
+  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots">;
   /** Sends on the active identity's thread and takes the rail to Chat. */
-  onSend: (text: string, model?: ModelRef) => void;
+  onSend: (text: string, options: SendOptions) => void;
 }
 
 /** Phase 5's outcome: "Presence renders Vesper" and switches to Jester on command. */
@@ -61,6 +60,7 @@ export function Presence({
           defaultModel={conversation.defaultModel}
           disabled={transport === undefined}
           canAttach={conversation.canAttach}
+          roots={conversation.roots}
           onSend={onSend}
         />
       </div>

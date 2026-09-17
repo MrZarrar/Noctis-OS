@@ -96,6 +96,7 @@ import {
   issuePairingCode,
   listGrants,
   listNodes,
+  listRuntimeRoots,
   pairNode,
   revokeNode,
 } from "../nodes/registry.js";
@@ -853,6 +854,15 @@ function handleRead(
           ...(vesper === undefined ? {} : { vesper }),
           ...(jester === undefined ? {} : { jester }),
         },
+        // The roots a turn may be pinned to (Slice 1 left the page unable to
+        // name one). Offline hosts are listed, so "that machine is asleep" is
+        // something the owner reads rather than a folder that silently is not
+        // there.
+        roots: listRuntimeRoots(
+          deps.kernel.db,
+          (nodeId) => deps.dispatcher.isConnected(nodeId),
+          deps.kernel.clock.now(),
+        ),
       },
     };
   }

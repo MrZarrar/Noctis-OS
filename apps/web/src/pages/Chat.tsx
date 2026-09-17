@@ -17,6 +17,13 @@ export interface ChatProps {
   conversation: ConversationState;
   /** Absent in a browser with no core configured; the prompt is then disabled. */
   connected: boolean;
+  /**
+   * Whether the free thread is showing instead of the active Objective's.
+   * Both absent means there is no active Objective, so there is nothing to
+   * switch between and no control is drawn.
+   */
+  freeThread?: boolean;
+  onUseFreeThread?: (free: boolean) => void;
 }
 
 const listStyle = { listStyle: "none", margin: 0, padding: 0, display: "grid" } as const;
@@ -172,7 +179,13 @@ function timelineOf(
  * only until the message it was streaming commits. Approval cards are the same
  * Surface the canvas uses, so a typed phrase is typed here too.
  */
-export function Chat({ identityId, conversation, connected }: ChatProps): JSX.Element {
+export function Chat({
+  identityId,
+  conversation,
+  connected,
+  freeThread,
+  onUseFreeThread,
+}: ChatProps): JSX.Element {
   const { thread, messages, turns, streaming, pendingApprovals, models, defaultModel, error } =
     conversation;
   const displayName =
@@ -203,6 +216,21 @@ export function Chat({ identityId, conversation, connected }: ChatProps): JSX.El
               ? `${displayName} · free chat`
               : `${displayName} · Objective thread`}
         </span>
+        {/* An Objective being active used to mean every question went into it.
+            A question that has nothing to do with the work in progress now has
+            somewhere to go that does not require pausing the Objective. */}
+        {onUseFreeThread !== undefined && (
+          <button
+            type="button"
+            aria-pressed={freeThread === true}
+            onClick={() => {
+              onUseFreeThread(freeThread !== true);
+            }}
+            style={buttonStyle}
+          >
+            {freeThread === true ? "Back to the Objective" : "Ask something else"}
+          </button>
+        )}
       </header>
 
       <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.sm }}>
@@ -291,7 +319,33 @@ export function Chat({ identityId, conversation, connected }: ChatProps): JSX.El
         ))}
       </ul>
 
-      {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
+      {error !== undefined && (
+        <p
+          style={{
+            color: semantic.error,
+            margin: 0,
+            display: "flex",
+            gap: spacing.sm,
+            alignItems: "center",
+          }}
+        >
+          <span>{error}</span>
+          {/* Task 2.6: a pinned host that is asleep refused the send before
+              anything was written, so the offer is real — the same prompt, on
+              whichever machine can take it. */}
+          {conversation.offlineRetry !== undefined && (
+            <button
+              type="button"
+              onClick={() => {
+                void conversation.retryElsewhere();
+              }}
+              style={buttonStyle}
+            >
+              Send it elsewhere
+            </button>
+          )}
+        </p>
+      )}
 
       <span style={{ flex: 1 }} />
 
@@ -301,8 +355,9 @@ export function Chat({ identityId, conversation, connected }: ChatProps): JSX.El
         defaultModel={defaultModel}
         disabled={!connected}
         canAttach={conversation.canAttach}
-        onSend={(text, model, files) => {
-          void conversation.send(text, model, files);
+        roots={conversation.roots}
+        onSend={(text, options) => {
+          void conversation.send(text, options);
         }}
       />
     </section>
