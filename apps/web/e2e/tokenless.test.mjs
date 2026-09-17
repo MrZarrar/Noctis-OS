@@ -365,6 +365,23 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
     // resolve a traversal. (The exhaustive cases live in `static.test.ts`.)
     assert.equal((await fetch(`${CORE_URL}/%2e%2e%2fpackage.json`)).status, 404);
 
+    // The service worker, at the web root and unauthenticated like the rest of
+    // the shell. Scope is the whole point: a worker served from a subdirectory
+    // cannot control the pages above it, so a push would reach nothing. Served
+    // as a script, and revalidated rather than cached forever — a stale worker
+    // outlives every deploy.
+    const worker = await fetch(`${CORE_URL}/sw.js`);
+
+    assert.equal(worker.status, 200);
+    assert.equal(worker.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assert.equal(worker.headers.get("cache-control"), "no-cache");
+    assert.ok((await worker.text()).includes(`addEventListener("push"`));
+
+    // And the push paths are the API's, not static's: without `push` in
+    // `API_SEGMENTS` this would answer 200 with the app shell, and the page
+    // would parse HTML looking for a VAPID key.
+    assert.equal((await fetch(`${CORE_URL}/push/key`)).status, 401);
+
     // Static must not have swallowed the API: these still answer as routes,
     // and still require a credential.
     assert.equal((await fetch(`${CORE_URL}/objectives`)).status, 401);

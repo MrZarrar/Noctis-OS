@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { modelKey, modelLabel } from "../conversation/PromptForm.js";
+import type { PushState } from "../notify/subscribe.js";
+import { enablePush, initialPushState } from "../notify/subscribe.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 /**
@@ -194,6 +196,20 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
     [transport],
   );
 
+  /** Decision 0.25: the phone is told, so it is not a screen you have to remember to look at. */
+  const [push, setPush] = useState<PushState | undefined>(initialPushState);
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const turnOnPush = useCallback(async () => {
+    if (transport === undefined) {
+      return;
+    }
+
+    setPushBusy(true);
+    setPush(await enablePush(transport));
+    setPushBusy(false);
+  }, [transport]);
+
   const live = permissions.filter((permission) => permission.revokedAt === undefined);
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
@@ -274,6 +290,39 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
 
       <section style={{ display: "grid", gap: spacing.sm }}>
         <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
+          Notifications
+        </h2>
+        <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
+          This device is told when an approval is waiting and when a turn fails or is blocked —
+          those two, and nothing else. Per device: turning them on here does not turn them on
+          anywhere else you are logged in.
+        </p>
+        <p style={{ margin: 0 }}>{PUSH_STATUS[push ?? "off"]}</p>
+        {push !== "enabled" && push !== "unsupported" && (
+          <div>
+            <button
+              type="button"
+              disabled={transport === undefined || pushBusy}
+              onClick={() => {
+                void turnOnPush();
+              }}
+              style={{
+                background: material.fillElevated,
+                color: "inherit",
+                border: `1px solid ${material.border}`,
+                borderRadius: corner.sm,
+                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
+                cursor: "pointer",
+              }}
+            >
+              Turn on notifications
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section style={{ display: "grid", gap: spacing.sm }}>
+        <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
           Standing permissions
         </h2>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
@@ -321,6 +370,20 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
     </section>
   );
 }
+
+/**
+ * Said plainly, because every one of these is a different thing to do next. The
+ * iOS sentence is the one that matters most: Safari has no `Notification` at
+ * all until the page is on the Home Screen, so "unsupported" there means "not
+ * yet" rather than "never".
+ */
+const PUSH_STATUS: Readonly<Record<PushState | "off", string>> = {
+  enabled: "Notifications are on for this device.",
+  denied: "Notifications are blocked in browser settings. Allow them there, then reload.",
+  unsupported:
+    "This browser does not support notifications. On an iPhone, add Noctis to the Home Screen and open it from there.",
+  off: "Notifications are off for this device.",
+};
 
 const listStyle = {
   listStyle: "none",
