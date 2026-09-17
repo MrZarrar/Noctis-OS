@@ -1723,3 +1723,63 @@ describe("the session realm in its deployed shape", () => {
     expect((await loginFrom(core, ORIGIN)).status).toBe(403);
   });
 });
+
+describe("the live stream", () => {
+  it("streams a committed event to a logged-in browser over SSE", async () => {
+    const core = await startTestCore();
+    const { cookie, csrf } = await session(core);
+    const controller = new AbortController();
+
+    const stream = await fetch(`${core.base}/events/live?afterSequence=0`, {
+      headers: { cookie, accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = stream.body?.getReader();
+    expect(reader).toBeDefined();
+
+    await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: JSON.stringify({
+        idempotencyKey: newKey("sse-stream"),
+        title: "Ship the front door",
+        intent: "Prove the SSE realm end to end",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      }),
+    });
+
+    const decoder = new TextDecoder();
+    let seen = "";
+
+    while (!seen.includes("objective.created.v1")) {
+      const chunk = await reader?.read();
+
+      if (chunk?.done === true) {
+        break;
+      }
+
+      seen += decoder.decode((chunk?.value as Uint8Array | undefined) ?? new Uint8Array(), {
+        stream: true,
+      });
+    }
+
+    expect(seen).toContain("event: event");
+    expect(seen).toContain("objective.created.v1");
+
+    controller.abort();
+  });
+
+  it("refuses the stream to a browser with no session", async () => {
+    const core = await startTestCore();
+
+    const response = await fetch(`${core.base}/events/live?afterSequence=0`);
+
+    expect(response.status).toBe(401);
+  });
+});

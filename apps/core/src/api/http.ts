@@ -132,10 +132,13 @@ import { authorize, isAuthorized, isOriginAllowed } from "./auth.js";
 import { serializeCookie } from "./cookie.js";
 import type { SessionDeps } from "./session.js";
 import { SESSION_COOKIE, createSession, revokeSession, verifySession } from "./session.js";
+import { openEventStream } from "./sse.js";
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_PAGE_SIZE = 500;
 const DEFAULT_PAGE_SIZE = 100;
+/** SSE heartbeat: a comment line often enough that a reverse proxy never times the connection out idle. */
+const SSE_HEARTBEAT_MS = 15_000;
 
 /** The one path that does not require the core bearer token. See `pairNode`. */
 export const PAIR_PATH = "/node/pair";
@@ -1089,6 +1092,40 @@ export async function handleRequest(
         },
         correlationId,
       );
+      return;
+    }
+
+    // Session-authenticated, so it sits after the credential gate. It must also
+    // sit before the generic GET branch below: that branch answers with a
+    // single JSON body and would otherwise swallow this path.
+    if (req.method === "GET" && url.pathname === "/events/live") {
+      const cursor = Number(url.searchParams.get("afterSequence") ?? "0");
+
+      if (!Number.isInteger(cursor) || cursor < 0) {
+        send(
+          res,
+          400,
+          errorBody("invalid_request", "afterSequence must be a whole number"),
+          correlationId,
+        );
+        return;
+      }
+
+      const close = openEventStream(
+        {
+          broker: deps.kernel.broker,
+          readEvents: (after, limit) => readEventsAfter(deps.kernel.db, after, limit),
+          frames: deps.live,
+          heartbeatMs: SSE_HEARTBEAT_MS,
+          setInterval,
+          clearInterval,
+        },
+        res,
+        cursor,
+      );
+
+      req.on("close", close);
+      req.on("error", close);
       return;
     }
 
