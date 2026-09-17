@@ -483,6 +483,8 @@ const PUSH_STATUS: Readonly<Record<PushState | "off", string>> = {
   denied: "Notifications are blocked in browser settings. Allow them there, then reload.",
   unsupported:
     "This browser does not support notifications. On an iPhone, add Noctis to the Home Screen and open it from there.",
+  failed:
+    "Notifications could not be turned on. The core refused the subscription or could not be reached — this browser is capable, so try again, and check the core has its VAPID keys.",
   off: "Notifications are off for this device.",
 };
 

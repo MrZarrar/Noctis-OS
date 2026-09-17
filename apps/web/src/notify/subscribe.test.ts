@@ -109,7 +109,7 @@ describe("enablePush", () => {
     await expect(enablePush(core.transport, withoutNotification)).resolves.toBe("unsupported");
   });
 
-  it("is unsupported when the core has no VAPID keys, and never asks for permission", async () => {
+  it("reports a failure, not an unsupported browser, when the core has no VAPID keys", async () => {
     const core = transport(404);
     let asked = false;
 
@@ -126,7 +126,7 @@ describe("enablePush", () => {
       }),
     );
 
-    expect(result).toBe("unsupported");
+    expect(result).toBe("failed");
     expect(asked).toBe(false);
     expect(core.calls.map((call) => call.path)).toEqual(["/push/key"]);
   });
@@ -145,7 +145,7 @@ describe("enablePush", () => {
     expect(core.calls.map((call) => call.path)).toEqual(["/push/key"]);
   });
 
-  it("reports unsupported rather than throwing when the browser refuses to subscribe", async () => {
+  it("reports a failure rather than throwing when the browser refuses to register the worker", async () => {
     const core = transport();
 
     const result = await enablePush(
@@ -157,7 +157,29 @@ describe("enablePush", () => {
       }),
     );
 
-    expect(result).toBe("unsupported");
+    expect(result).toBe("failed");
+  });
+
+  it("reports a failure when the core refuses the subscription it was posted", async () => {
+    const calls: Call[] = [];
+    const refusing: CoreTransport = {
+      request: (method, path, body) => {
+        calls.push({ method, path, body });
+
+        return Promise.resolve(
+          path === "/push/key"
+            ? { status: 200, body: { publicKey: PUBLIC_KEY } }
+            : { status: 403, body: { error: { code: "csrf_required" } } },
+        );
+      },
+      subscribe: () => Promise.reject(new Error("not used")),
+    };
+
+    // The browser did everything right — worker registered, permission granted,
+    // endpoint issued — and the core said no. Calling that "unsupported" told
+    // the owner their browser could not do the thing it had just done.
+    await expect(enablePush(refusing, scope())).resolves.toBe("failed");
+    expect(calls.map((call) => call.path)).toEqual(["/push/key", "/push/subscribe"]);
   });
 });
 

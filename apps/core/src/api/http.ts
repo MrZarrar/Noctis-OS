@@ -1200,7 +1200,13 @@ export async function handleRequest(
         {
           schemaVersion: deps.schemaVersion,
           latestSequence: latestSequence(deps.kernel.db),
-          connectedClients: deps.kernel.broker.listenerCount,
+          // Not "connected clients", which is what this was called while it
+          // was one: the core subscribes to its own broker twice now — the
+          // notifier in `server.ts` and the conversation service — so it reads
+          // 2 with nobody connected at all. Named for what it counts rather
+          // than corrected by subtracting a constant that the next permanent
+          // subscriber would silently invalidate.
+          eventSubscribers: deps.kernel.broker.listenerCount,
           connectedNodes: deps.dispatcher.connectedCount,
           uptimeMs: deps.kernel.clock.now() - deps.startedAt,
         },

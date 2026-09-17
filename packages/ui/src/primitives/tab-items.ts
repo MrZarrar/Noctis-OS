@@ -32,8 +32,17 @@ export function tabsFor(active: RailItem): TabLayout {
     return { tabs: TAB_ITEMS, overflow };
   }
 
+  const displaced = TAB_ITEMS[TAB_ITEMS.length - 1];
+
   return {
     tabs: [...TAB_ITEMS.slice(0, TAB_ITEMS.length - 1), active],
-    overflow: overflow.filter((item) => item !== active),
+    // The displaced item moves into the overflow rather than vanishing. It used
+    // to do neither: while an overflow destination was active, Vault was
+    // missing from the bar and from the More sheet at the same time, so the one
+    // way back to it was to leave first.
+    overflow: [
+      ...overflow.filter((item) => item !== active),
+      ...(displaced === undefined ? [] : [displaced]),
+    ],
   };
 }

@@ -4,10 +4,18 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
  * Turning notifications on for this device.
  *
  * Every step can fail for a reason that is not a bug — an old browser, a
- * refusal, a core with no keys — so nothing here throws. The three outcomes are
- * exactly what the Settings card has to say out loud.
+ * refusal, a core with no keys — so nothing here throws. The four outcomes are
+ * exactly what the Settings card has to say out loud, and each one is a
+ * different thing for the owner to do next.
+ *
+ * `unsupported` means this browser cannot, which on an iPhone means "not from a
+ * tab" and is the only case where the Home Screen advice helps. `failed` means
+ * it could and something did not: the core refused the subscription, holds no
+ * VAPID keys, or could not be reached. Collapsing the second into the first
+ * sent the owner of a perfectly capable phone off to install an app they had
+ * installed already.
  */
-export type PushState = "enabled" | "denied" | "unsupported";
+export type PushState = "enabled" | "denied" | "unsupported" | "failed";
 
 interface SubscriptionLike {
   toJSON(): unknown;
@@ -112,13 +120,15 @@ export async function enablePush(
     const key = await transport.request("GET", "/push/key");
 
     if (key.status !== 200) {
-      return "unsupported";
+      // 404 here is a core with no VAPID keys — nothing to do with this
+      // browser, which is why it is not `unsupported`.
+      return "failed";
     }
 
     const publicKey = (key.body as { publicKey?: unknown }).publicKey;
 
     if (typeof publicKey !== "string" || publicKey === "") {
-      return "unsupported";
+      return "failed";
     }
 
     if ((await scope.Notification?.requestPermission()) !== "granted") {
@@ -135,11 +145,15 @@ export async function enablePush(
 
     const stored = await transport.request("POST", "/push/subscribe", subscription.toJSON());
 
-    return stored.status === 200 ? "enabled" : "unsupported";
+    // A 403 is the credential gate and a 500 is the core; neither is a browser
+    // that does not support notifications, and telling the owner it was would
+    // send them to add a Home Screen icon they already have.
+    return stored.status === 200 ? "enabled" : "failed";
   } catch {
     // A registration a browser refuses, a network that is not there, a push
     // service that will not issue an endpoint. None of them is worth an
-    // exception the card has to decode.
-    return "unsupported";
+    // exception the card has to decode — and none of them is the browser
+    // lacking the API, which `supported` above already ruled out.
+    return "failed";
   }
 }
