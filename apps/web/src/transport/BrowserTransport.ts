@@ -5,7 +5,7 @@ import type {
   SubscribeOptions,
   Subscription,
 } from "./CoreTransport.js";
-import { isEvent, parseCoreBody, resolveCoreUrl } from "./CoreTransport.js";
+import { headerSafeFilename, isEvent, parseCoreBody, resolveCoreUrl } from "./CoreTransport.js";
 
 /** The core caps a page at 500 (`MAX_PAGE_SIZE`); asking for more is a 400. */
 const PAGE_SIZE = 500;
@@ -72,6 +72,21 @@ export class BrowserTransport implements CoreTransport {
           ? { authorization: `Bearer ${this.#token}` }
           : { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    return { status: response.status, body: parseCoreBody(await response.text()) };
+  }
+
+  async upload(file: File): Promise<CoreResponse> {
+    const url = resolveCoreUrl(this.#baseUrl, "/attachments");
+    const response = await this.#fetch(url.href, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.#token}`,
+        "content-type": file.type,
+        "x-noctis-filename": headerSafeFilename(file.name),
+      },
+      body: file,
     });
 
     return { status: response.status, body: parseCoreBody(await response.text()) };

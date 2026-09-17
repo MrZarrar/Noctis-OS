@@ -21,6 +21,7 @@ import {
 
 import type { Runtime, RuntimeSink } from "./runtimes/Runtime.js";
 import { AdapterRefused } from "./runtimes/Runtime.js";
+import { promptWithAttachments, stageAttachments } from "./runtimes/attachments.js";
 import { childEnvironment } from "./runtimes/env.js";
 import { resolveRoots } from "./runtimes/roots.js";
 
@@ -39,6 +40,14 @@ export interface AdapterContext {
   /** The agent's own environment. Stripped of billing keys before any child sees it. */
   env: NodeJS.ProcessEnv;
   runtimes: Partial<Record<RuntimeProviderId, Runtime>>;
+  /**
+   * One attachment's bytes from the core, over HTTP with the node credential.
+   *
+   * A closure rather than the credential itself: an adapter that held the
+   * credential could sign its own job assignments, and the only thing any of
+   * them actually needs is the ability to fetch a file the core already named.
+   */
+  fetchAttachment(id: string): Promise<Uint8Array>;
 }
 
 export type Adapter = (payload: unknown, context: AdapterContext) => Promise<unknown>;
@@ -253,18 +262,40 @@ const runtimeTurn: Adapter = async (payload, context) => {
     ask: (ask) => context.ask(ask),
   };
 
+  // Staged before the runtime starts, so a turn whose files could not be
+  // fetched fails saying so rather than answering about a file nobody has.
+  const staged = await stageAttachments(request.attachments ?? [], (id) =>
+    context.fetchAttachment(id),
+  );
   const heartbeat = setInterval(() => context.progress(0, "turn in progress"), TURN_HEARTBEAT_MS);
   heartbeat.unref();
 
   try {
     return RuntimeTurnEvidenceSchema.parse(
       await runtime.turn(
-        { payload: request, roots, env: childEnvironment(context.env), signal: context.signal },
+        {
+          payload: {
+            ...request,
+            prompt: promptWithAttachments(request.prompt, staged.files),
+          },
+          // The temp directory joins the readable roots rather than the
+          // writable ones. That is what makes the sandbox let the runtime open
+          // the files — and what stops it treating the staging area as
+          // somewhere it may write, which would make `classifyAsk` read a write
+          // outside every granted root as an ordinary local edit.
+          roots:
+            staged.files.length === 0
+              ? roots
+              : { ...roots, readable: [...roots.readable, staged.directory] },
+          env: childEnvironment(context.env),
+          signal: context.signal,
+        },
         sink,
       ),
     );
   } finally {
     clearInterval(heartbeat);
+    await staged.discard();
   }
 };
 

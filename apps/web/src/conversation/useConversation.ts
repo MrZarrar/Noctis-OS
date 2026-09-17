@@ -9,6 +9,7 @@ import type {
 } from "@noctis/contracts";
 import {
   ApprovalRecordSchema,
+  AttachmentRecordSchema,
   ConversationThreadSchema,
   ConversationalIdentityIdSchema,
   ModelRefSchema,
@@ -105,11 +106,18 @@ export interface ConversationSnapshot {
   pendingApprovals: readonly ApprovalRecord[];
   models: readonly ModelRef[];
   defaultModel: ModelRef | undefined;
+  /** Whether this transport can upload a file at all. See `CoreTransport.upload`. */
+  canAttach: boolean;
   error: string | undefined;
 }
 
 export interface ConversationActions {
-  send: (text: string, model?: ModelRef) => Promise<void>;
+  /**
+   * `files` are uploaded first and sent as `attachmentIds`. A failed upload
+   * refuses the whole send: a prompt that names a screenshot and arrives
+   * without it gets an answer about a file the model never saw.
+   */
+  send: (text: string, model?: ModelRef, files?: readonly File[]) => Promise<void>;
   cancel: (jobId: string) => Promise<void>;
   confirm: (requestId: string, typedConfirmation?: string) => Promise<void>;
   decline: (requestId: string, reason?: string) => Promise<void>;
@@ -133,6 +141,7 @@ const EMPTY: ConversationSnapshot = {
   pendingApprovals: [],
   models: [],
   defaultModel: undefined,
+  canAttach: false,
   error: undefined,
 };
 
@@ -163,7 +172,7 @@ export function createConversation(
   identityId: ConversationalIdentityId,
   objectiveId: string | undefined,
 ): ConversationStore {
-  let state: ConversationSnapshot = EMPTY;
+  let state: ConversationSnapshot = { ...EMPTY, canAttach: transport.upload !== undefined };
   let generation = 0;
   let subscription: Subscription | undefined;
   const listeners = new Set<() => void>();
@@ -451,6 +460,47 @@ export function createConversation(
     await Promise.all([loadModels(), loadThread()]);
   }
 
+  /**
+   * Uploads every attached file, or refuses the send.
+   *
+   * Sequential rather than parallel: eight files at 10 MB each over a phone's
+   * uplink is not something to start all at once, and the first failure should
+   * stop the rest rather than race them.
+   */
+  async function uploadAll(files: readonly File[]): Promise<string[] | undefined> {
+    if (files.length === 0) {
+      return [];
+    }
+
+    if (transport.upload === undefined) {
+      fail("This client cannot attach files");
+      return undefined;
+    }
+
+    const ids: string[] = [];
+
+    for (const file of files) {
+      const response = await transport.upload(file);
+      const parsed = AttachmentRecordSchema.safeParse(response.body);
+
+      if (response.status !== 200 || !parsed.success) {
+        const detail = (response.body as { error?: { message?: string } } | undefined)?.error
+          ?.message;
+
+        fail(
+          `${file.name} could not be attached (${String(response.status)})${detail === undefined ? "" : `: ${detail}`}`,
+        );
+        return undefined;
+      }
+
+      ids.push(parsed.data.id);
+    }
+
+    set({ error: undefined });
+
+    return ids;
+  }
+
   async function command(name: string, body: Record<string, unknown>): Promise<unknown> {
     const response = await transport.request("POST", `/commands/${name}`, {
       idempotencyKey: nextKey(name),
@@ -492,12 +542,19 @@ export function createConversation(
       subscription?.close();
       subscription = undefined;
     },
-    send: async (text, model) => {
+    send: async (text, model, files) => {
+      const attachmentIds = await uploadAll(files ?? []);
+
+      if (attachmentIds === undefined) {
+        return;
+      }
+
       const body = await command("conversation.send", {
         identityId,
         text,
         ...(objectiveId === undefined ? {} : { objectiveId }),
         ...(model === undefined ? {} : { model }),
+        ...(attachmentIds.length === 0 ? {} : { attachmentIds }),
       });
 
       if (body === undefined) {

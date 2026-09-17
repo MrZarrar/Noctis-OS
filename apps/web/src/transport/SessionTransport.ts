@@ -5,7 +5,13 @@ import type {
   SubscribeOptions,
   Subscription,
 } from "./CoreTransport.js";
-import { isEvent, parseCoreBody, readServerFrame, resolveCoreUrl } from "./CoreTransport.js";
+import {
+  headerSafeFilename,
+  isEvent,
+  parseCoreBody,
+  readServerFrame,
+  resolveCoreUrl,
+} from "./CoreTransport.js";
 
 type Fetch = (
   url: string,
@@ -69,6 +75,24 @@ export class SessionTransport implements CoreTransport {
       credentials: "include",
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    return { status: response.status, body: parseCoreBody(await response.text()) };
+  }
+
+  async upload(file: File): Promise<CoreResponse> {
+    const url = resolveCoreUrl(this.#baseUrl, "/attachments");
+    const response = await this.#fetch(url.href, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "x-noctis-csrf": this.#csrf,
+        // The file's own type, because that is what the core's allowlist is
+        // checked against. An empty one is refused there rather than guessed at.
+        "content-type": file.type,
+        "x-noctis-filename": headerSafeFilename(file.name),
+      },
+      body: file,
     });
 
     return { status: response.status, body: parseCoreBody(await response.text()) };

@@ -49,6 +49,7 @@ function context(overrides: Partial<AdapterContext> = {}): AdapterContext {
     ask: () => Promise.reject(new Error("no ask expected")),
     env: {},
     runtimes: {},
+    fetchAttachment: () => Promise.reject(new Error("no attachment expected")),
     ...overrides,
   };
 }

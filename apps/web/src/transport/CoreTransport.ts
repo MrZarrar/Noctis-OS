@@ -10,6 +10,34 @@ import { ServerFrameSchema } from "@noctis/contracts";
 export interface CoreTransport {
   request: (method: CoreMethod, path: string, body?: unknown) => Promise<CoreResponse>;
   subscribe: (options: SubscribeOptions) => Promise<Subscription>;
+  /**
+   * Uploads one file to `POST /attachments`. Raw bytes with the file's own
+   * content type, so it cannot go through `request`, which sends JSON.
+   *
+   * ponytail: optional, and `TauriTransport` does not implement it. The shell
+   * proxies every call through a Rust command that takes a JSON body, so binary
+   * upload means changing Rust as well — and the front door attachments exist
+   * for is the phone and the browser, which both have it. The composer hides
+   * the control when this is absent rather than offering a button that fails.
+   * Upgrade path: a `core_upload` Tauri command taking bytes.
+   */
+  upload?: (file: File) => Promise<CoreResponse>;
+}
+
+/**
+ * A filename an HTTP header can carry.
+ *
+ * `X-Noctis-Filename` is a header value, and `fetch` throws on a byte outside
+ * latin-1 — so a screenshot named with an emoji or a non-Latin script would
+ * fail the upload in the network layer with an error about the header rather
+ * than about the file. The core's own schema is broader; this narrows it to
+ * what the wire can carry, and keeps the extension, which is the part a
+ * runtime uses to decide what it is looking at.
+ */
+export function headerSafeFilename(name: string): string {
+  const cleaned = name.replaceAll(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "");
+
+  return (cleaned === "" ? "attachment" : cleaned).slice(0, 255);
 }
 
 /** The core answers reads with GET and commands with POST. Nothing else. */

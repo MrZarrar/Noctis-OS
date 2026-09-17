@@ -111,7 +111,7 @@ export interface CommandProps {
    */
   identity: IdentityRuntimeState;
   /** The identity's conversation, for Presence's model selector. */
-  conversation: Pick<ConversationState, "models" | "defaultModel">;
+  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach">;
   /** Presence's prompt: sends on the thread and takes the rail to Chat. */
   onSend: (text: string, model?: ModelRef) => void;
   /** Handoff to the dedicated Vault view, from a recall Surface. */

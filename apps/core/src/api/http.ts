@@ -35,6 +35,7 @@ import {
   SetSurfaceOverrideCommandSchema,
   SurfaceDisplaySchema,
   UpsertSurfaceIntentCommandSchema,
+  MAX_ATTACHMENT_BYTES,
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
@@ -60,6 +61,7 @@ import {
   listArtifacts,
   recordArtifact,
 } from "../artifacts/service.js";
+import { getAttachment, readAttachmentBytes, uploadAttachment } from "../attachments/service.js";
 import { catalogue, defaultModelFor, setDefaultModel } from "../conversation/models.js";
 import type { ConversationService } from "../conversation/service.js";
 import { getTurn, getTurnByJobId, listMessages, listTurns } from "../conversation/service.js";
@@ -83,8 +85,10 @@ import {
 import type { Dispatcher } from "../nodes/dispatch.js";
 import { explainQueued } from "../nodes/dispatch.js";
 import { cancelJob, enqueueJob, getJob } from "../nodes/jobs.js";
+import { parseNodeAuthorization, verifyCredential } from "../nodes/credentials.js";
 import {
   currentCredential,
+  getCredentialGeneration,
   getGrant,
   getNode,
   getPairingCode,
@@ -152,6 +156,13 @@ const SSE_HEARTBEAT_MS = 15_000;
 
 /** The one path that does not require the core bearer token. See `pairNode`. */
 export const PAIR_PATH = "/node/pair";
+
+/** Uploads a file for a prompt (task 2.4). Client realm, so it is behind the gate and needs CSRF. */
+export const ATTACHMENT_UPLOAD_PATH = "/attachments";
+/** `GET /node/attachments/:id` — the node realm, with a node credential, not the core token. */
+const NODE_ATTACHMENT_PREFIX = "/node/attachments/";
+/** The filename a browser sends alongside the bytes. There is no multipart parser here by design. */
+export const ATTACHMENT_FILENAME_HEADER = "x-noctis-filename";
 
 /** Exchanges the core token for a cookie. The other path that runs before the gate. */
 export const LOGIN_PATH = "/session/login";
@@ -980,6 +991,58 @@ function handleRead(
  * one-time code is the whole credential, and it is single-use, expiring, bound
  * to a host, and stored only as a digest.
  */
+/**
+ * Serves one attachment's bytes to the node that was given a job naming it.
+ *
+ * The credential is checked here rather than trusted from the socket, because
+ * this is a different connection from the one the job arrived on and nothing
+ * ties the two together. What it deliberately does *not* check is whether this
+ * particular node holds a job naming this particular attachment: the core hands
+ * attachment ids only to the node it pinned the turn to, ids are UUIDv7 rather
+ * than guessable, and the alternative is a per-job grant table whose only
+ * customer is this route.
+ *
+ * ponytail: any paired node may fetch any attachment. The ceiling is a second
+ * node on the tailnet reading a file it was not sent — which is the same trust
+ * boundary pairing already crosses, since a paired node is handed granted roots
+ * on the same machine. Upgrade path, if a node is ever paired for someone else:
+ * check `turn_attachments` against a job assigned to this node.
+ */
+function handleNodeAttachment(
+  deps: ApiDeps,
+  id: string,
+  authorization: string | undefined,
+): { status: number; body?: unknown; bytes?: Uint8Array; mediaType?: string } {
+  const presented = parseNodeAuthorization(authorization);
+
+  if (presented === undefined) {
+    return { status: 401, body: errorBody("unauthorized", "A node credential is required") };
+  }
+
+  const generation = getCredentialGeneration(deps.kernel.db, presented.nodeId);
+
+  if (
+    generation === undefined ||
+    !verifyCredential({
+      coreToken: deps.config.token,
+      nodeId: presented.nodeId,
+      generation,
+      presented: presented.credential,
+    })
+  ) {
+    return { status: 401, body: errorBody("unauthorized", "A node credential is required") };
+  }
+
+  const record = UuidSchema.safeParse(id).success ? getAttachment(deps.kernel.db, id) : undefined;
+  const bytes = record === undefined ? undefined : readAttachmentBytes(deps.kernel.db, id);
+
+  if (record === undefined || bytes === undefined) {
+    return { status: 404, body: errorBody("not_found", "No such attachment") };
+  }
+
+  return { status: 200, bytes, mediaType: record.mediaType };
+}
+
 function handlePair(
   deps: ApiDeps,
   context: CommandContext,
@@ -1140,6 +1203,35 @@ export async function handleRequest(
       return;
     }
 
+    // The node realm, and the only route in it that is not a WebSocket frame.
+    // It runs before the client credential gate because a node presents its own
+    // derived credential (`Bearer <nodeId>.<hex>`), which that gate would reject
+    // as a bad core token — and it verifies that credential itself rather than
+    // borrowing anyone else's answer.
+    if (req.method === "GET" && url.pathname.startsWith(NODE_ATTACHMENT_PREFIX)) {
+      const result = handleNodeAttachment(
+        deps,
+        url.pathname.slice(NODE_ATTACHMENT_PREFIX.length),
+        headerValue(req.headers.authorization),
+      );
+
+      if (result.bytes === undefined) {
+        logger.log("warn", "node attachment refused", { status: result.status });
+        send(res, result.status, result.body, correlationId);
+        return;
+      }
+
+      res.writeHead(200, {
+        "content-type": result.mediaType,
+        "content-length": result.bytes.length,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+        "x-correlation-id": correlationId,
+      });
+      res.end(result.bytes);
+      return;
+    }
+
     const isPair = req.method === "POST" && url.pathname === PAIR_PATH;
     // `/session/login` runs before the credential check, because presenting the
     // token in the body is how a browser obtains one. It is a POST with no
@@ -1288,6 +1380,64 @@ export async function handleRequest(
 
       req.on("close", close);
       req.on("error", close);
+      return;
+    }
+
+    // The one POST that is not `application/json`, so it sits above the check
+    // that insists every other one is. Raw bytes with the file's own content
+    // type and the name in a header: a multipart parser would be a dependency
+    // and a second place for a filename to be smuggled through, for a form
+    // Noctis never renders.
+    if (req.method === "POST" && url.pathname === ATTACHMENT_UPLOAD_PATH) {
+      const raw = await readBody(req, MAX_ATTACHMENT_BYTES);
+
+      if (raw === "too_large") {
+        send(
+          res,
+          413,
+          errorBody("payload_too_large", "That file is larger than an attachment may be"),
+          correlationId,
+        );
+        return;
+      }
+
+      const context: CommandContext = { correlationId, actorType: "user", actorId: "local" };
+      const outcome = uploadAttachment(deps.kernel, context, {
+        filename: headerValue(req.headers[ATTACHMENT_FILENAME_HEADER]) ?? "",
+        // Split on `;` so `text/plain; charset=utf-8` is judged by its type.
+        mediaType: (req.headers["content-type"] ?? "").split(";")[0]?.trim() ?? "",
+        bytes: raw,
+      });
+
+      if (!outcome.ok) {
+        // A rejected name, type or size is the caller's mistake, not a core
+        // that is temporarily unavailable — and `unavailable` is the only
+        // `DomainConflict` kind that carries a reason string, which is the one
+        // thing the page has to show. Mapped here rather than by widening
+        // `DomainConflict`, which every exhaustive switch in the core would
+        // then have to grow a case for.
+        const refusal =
+          outcome.conflict.kind === "unavailable" && outcome.conflict.entity === "attachment"
+            ? {
+                status: 400,
+                body: errorBody("invalid_attachment", "That file cannot be attached", {
+                  reason: outcome.conflict.reason,
+                }),
+              }
+            : conflictResponse(outcome.conflict);
+
+        // The filename is the owner's and goes in no log line; the reason does.
+        logger.log("warn", "attachment refused", { status: refusal.status });
+        send(res, refusal.status, refusal.body, correlationId);
+        return;
+      }
+
+      logger.log("info", "attachment stored", {
+        attachmentId: outcome.value.id,
+        mediaType: outcome.value.mediaType,
+        sizeBytes: outcome.value.sizeBytes,
+      });
+      send(res, 200, outcome.value, correlationId);
       return;
     }
 

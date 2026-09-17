@@ -1,4 +1,5 @@
 import type { ConversationalIdentityId, ModelRef } from "@noctis/contracts";
+import { ATTACHMENT_MEDIA_TYPES } from "@noctis/contracts";
 import {
   IDENTITY_PROFILES,
   corner,
@@ -16,9 +17,38 @@ export interface PromptFormProps {
   /** The identity's Settings default; preselected, and sent implicitly when kept. */
   defaultModel: ModelRef | undefined;
   disabled: boolean;
+  /**
+   * Whether this transport can upload at all. False in the packaged shell,
+   * which proxies through a Rust command that takes JSON — so the control is
+   * hidden rather than offered and then failing (`CoreTransport.upload`).
+   */
+  canAttach?: boolean;
   /** `model` is present only when the selector overrides the default. */
-  onSend: (text: string, model?: ModelRef) => void;
+  onSend: (text: string, model?: ModelRef, files?: readonly File[]) => void;
 }
+
+/** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
+const MAX_FILES = 8;
+
+const attachedListStyle = {
+  listStyle: "none",
+  margin: 0,
+  padding: 0,
+  display: "flex",
+  flexWrap: "wrap",
+  gap: spacing.xs,
+} as const;
+
+const attachedItemStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: spacing.xs,
+  padding: `0 ${String(spacing.xs)}px`,
+  background: material.fill,
+  border: `1px solid ${material.border}`,
+  borderRadius: corner.sm,
+  fontSize: typography.scale.sm,
+} as const;
 
 export function modelKey(model: ModelRef): string {
   return `${model.providerId}:${model.model}`;
@@ -38,10 +68,12 @@ export function PromptForm({
   models,
   defaultModel,
   disabled,
+  canAttach = false,
   onSend,
 }: PromptFormProps): JSX.Element {
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string>();
+  const [files, setFiles] = useState<readonly File[]>([]);
 
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
@@ -63,8 +95,13 @@ export function PromptForm({
 
     const override = options.find((model) => modelKey(model) === selectedKey);
 
-    onSend(text, override !== undefined && selectedKey !== defaultKey ? override : undefined);
+    onSend(
+      text,
+      override !== undefined && selectedKey !== defaultKey ? override : undefined,
+      files.length === 0 ? undefined : files,
+    );
     setText("");
+    setFiles([]);
   };
 
   return (
@@ -103,7 +140,62 @@ export function PromptForm({
           resize: "vertical",
         }}
       />
+      {files.length > 0 && (
+        // Named and removable before the send, because an attachment the owner
+        // cannot see is one they cannot take back — and the upload only happens
+        // on submit, so removing one here costs nothing.
+        <ul aria-label="Attached files" style={{ ...attachedListStyle }}>
+          {files.map((file) => (
+            <li key={`${file.name}:${String(file.size)}`} style={attachedItemStyle}>
+              <span>{file.name}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${file.name}`}
+                onClick={() => {
+                  setFiles(files.filter((candidate) => candidate !== file));
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: typography.color.muted,
+                  cursor: "pointer",
+                }}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "center" }}>
+        {canAttach && (
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: spacing.xs,
+              cursor: disabled ? "default" : "pointer",
+            }}
+          >
+            <span style={{ color: typography.color.muted }}>Attach</span>
+            <input
+              type="file"
+              multiple
+              // The same allowlist the core enforces, so the picker does not
+              // offer a file the upload would refuse. It is a convenience, not
+              // the check: `accept` is a hint a browser is free to ignore.
+              accept={ATTACHMENT_MEDIA_TYPES.join(",")}
+              disabled={disabled}
+              onChange={(event) => {
+                setFiles([...files, ...Array.from(event.target.files ?? [])].slice(0, MAX_FILES));
+                // Cleared so picking the same file twice in a row still fires.
+                event.target.value = "";
+              }}
+              style={{ maxWidth: 160, color: typography.color.muted }}
+            />
+          </label>
+        )}
         <label style={{ display: "flex", alignItems: "center", gap: spacing.xs }}>
           <span style={{ color: typography.color.muted }}>Model</span>
           <select

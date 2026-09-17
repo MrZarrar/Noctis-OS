@@ -298,8 +298,9 @@ export function Chat({ identityId, conversation, connected }: ChatProps): JSX.El
         models={models}
         defaultModel={defaultModel}
         disabled={!connected}
-        onSend={(text, model) => {
-          void conversation.send(text, model);
+        canAttach={conversation.canAttach}
+        onSend={(text, model, files) => {
+          void conversation.send(text, model, files);
         }}
       />
     </section>

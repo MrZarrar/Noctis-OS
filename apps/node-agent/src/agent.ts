@@ -126,6 +126,27 @@ export function startAgent(options: AgentOptions): RunningAgent {
     }
   }
 
+  /**
+   * One attachment's bytes, over HTTP with this node's credential.
+   *
+   * Read from `credential` at call time rather than captured, because the core
+   * rotates the credential on every `welcome` and a turn can outlive a
+   * reconnect. The generation before the current one is still accepted
+   * (`credentials.ts`), so a rotation that lands mid-fetch costs nothing.
+   */
+  async function fetchAttachment(id: string, signal: AbortSignal): Promise<Uint8Array> {
+    const response = await fetch(new URL(`/node/attachments/${id}`, credential.coreUrl), {
+      headers: { authorization: `Bearer ${credential.nodeId}.${credential.credential}` },
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new AdapterRefused(`the core refused attachment ${id} with ${String(response.status)}`);
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   function rejectAsks(jobId: string, reason: string): void {
     for (const pending of pendingAsks.get(jobId)?.values() ?? []) {
       pending.reject(new AdapterRefused(reason));
@@ -149,6 +170,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
       signal: controller.signal,
       env,
       runtimes,
+      fetchAttachment: (id) => fetchAttachment(id, controller.signal),
       progress(percent, note) {
         send({ kind: "progress", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, percent, note });
       },

@@ -131,6 +131,13 @@ export const SendConversationMessageCommandSchema = z
     objectiveId: UuidSchema.optional(),
     /** A grant id the turn must run inside. Absent means the chosen node's first writable root. */
     rootGrantId: z.string().trim().min(1).max(128).optional(),
+    /**
+     * Files already uploaded through `POST /attachments`, in the order the
+     * prompt should name them. Ids rather than bytes: a command is a small JSON
+     * body that is retried on idempotency, and re-uploading 10 MB on a retry is
+     * not a thing a phone on a train should be asked to do.
+     */
+    attachmentIds: z.array(UuidSchema).max(8).optional(),
   })
   .strict();
 

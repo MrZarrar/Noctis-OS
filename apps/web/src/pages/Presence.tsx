@@ -23,7 +23,7 @@ export interface PresenceProps {
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
   /** The same conversation Chat shows; Presence only needs its model catalogue. */
-  conversation: Pick<ConversationState, "models" | "defaultModel">;
+  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach">;
   /** Sends on the active identity's thread and takes the rail to Chat. */
   onSend: (text: string, model?: ModelRef) => void;
 }
@@ -60,6 +60,7 @@ export function Presence({
           models={conversation.models}
           defaultModel={conversation.defaultModel}
           disabled={transport === undefined}
+          canAttach={conversation.canAttach}
           onSend={onSend}
         />
       </div>

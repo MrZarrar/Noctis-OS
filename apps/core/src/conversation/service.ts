@@ -21,6 +21,7 @@ import {
 import type { Result } from "@noctis/domain";
 import { chooseProvider, conflict, ok } from "@noctis/domain";
 
+import { attachmentRefs, linkTurnAttachments } from "../attachments/service.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import type { EventDraft } from "../db/events.js";
 import type { LiveBroker } from "../events/live.js";
@@ -341,6 +342,21 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         // Carried to the node so it can choose auto-allow behaviour honestly;
         // the evaluator still makes the actual decision on each ask.
         const objectiveActive = objective?.status === "active";
+
+        // Resolved before anything is written. An id that names no attachment
+        // is a client bug, and sending the turn without the file the prompt
+        // refers to would produce an answer about a file the model never saw.
+        const attachmentIds = command.attachmentIds ?? [];
+        const attachments = attachmentRefs(tx, attachmentIds);
+
+        if (attachments.length !== attachmentIds.length) {
+          const missing = attachmentIds.find(
+            (id) => !attachments.some((attachment) => attachment.id === id),
+          );
+
+          return conflict({ kind: "not_found", entity: "attachment", id: missing ?? "unknown" });
+        }
+
         const thread = threadFor(tx, kernel, identityId, command.objectiveId, at);
         const userMessageId = insertMessage(tx, kernel, thread.id, "user", command.text, at);
 
@@ -407,6 +423,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
             ...(sessionRef === undefined ? {} : { sessionRef }),
             ...(command.objectiveId === undefined ? {} : { objectiveId: command.objectiveId }),
             objectiveActive,
+            ...(attachments.length === 0 ? {} : { attachments }),
           };
           const enqueued = enqueueJobInTransaction(tx, kernel, context, {
             capability: "runtime.turn",
@@ -445,6 +462,11 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           at,
           job === undefined ? at : null,
         );
+
+        // After the turn row, because of the foreign key. Recorded even when no
+        // node could be found: the turn failed *with* these files attached, and
+        // a retry that re-sent them would otherwise look like a different ask.
+        linkTurnAttachments(tx, turnId, attachmentIds);
 
         tx.prepare(
           `INSERT INTO provider_decisions

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { AttachmentRefSchema } from "./attachment.js";
 import { AuthorityTargetSchema, ReversibilitySchema } from "./authority.js";
 import {
   ConversationalIdentityIdSchema,
@@ -92,6 +93,12 @@ export const RuntimeTurnPayloadSchema = z
     sessionRef: z.string().trim().min(1).max(512).optional(),
     objectiveId: UuidSchema.optional(),
     objectiveActive: z.boolean(),
+    /**
+     * Files the node fetches from the core before the runtime starts. Resolved
+     * by the core from `attachmentIds`, so a node never sees an id the core did
+     * not confirm exists — and never sees a path, because it makes its own.
+     */
+    attachments: z.array(AttachmentRefSchema).max(8).optional(),
   })
   .strict();
 

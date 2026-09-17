@@ -94,7 +94,8 @@ export function importOf(db: NoctisDatabase, artifactId: string): ArtifactRecord
   return row === undefined ? undefined : toArtifact(row);
 }
 
-function insert(
+/** Exported so the attachment upload can record its `external_reference` in the same transaction. */
+export function insertArtifact(
   tx: NoctisDatabase,
   artifact: {
     id: string;
@@ -163,7 +164,7 @@ export function recordArtifact(
         return conflict({ kind: "not_found", entity: "source", id: command.sourceId });
       }
 
-      insert(tx, {
+      insertArtifact(tx, {
         id,
         kind: command.kind,
         title: command.title,
@@ -257,7 +258,7 @@ export function importArtifact(
         });
       }
 
-      insert(tx, {
+      insertArtifact(tx, {
         id,
         kind: "local_artifact",
         title: external.title,

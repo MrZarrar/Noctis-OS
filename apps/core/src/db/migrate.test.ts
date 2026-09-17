@@ -103,7 +103,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 39 tables", () => {
+  it("applies every migration and creates all 41 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -129,7 +129,7 @@ describe("migrate", () => {
     };
     db.close();
 
-    expect(row.c).toBe(39);
+    expect(row.c).toBe(41);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -138,6 +138,8 @@ describe("migrate", () => {
         "provider_decisions",
         "sessions",
         "push_subscriptions",
+        "attachments",
+        "turn_attachments",
       ]),
     );
     expect(indexes).toEqual(
@@ -157,6 +159,6 @@ describe("migrate", () => {
     expect(nodeJobs).toContain("pinned_node_id");
     expect(nodes).toContain("providers_json");
     expect(threads).toContain("objective_id");
-    expect(version.v).toBe(8);
+    expect(version.v).toBe(9);
   });
 });
