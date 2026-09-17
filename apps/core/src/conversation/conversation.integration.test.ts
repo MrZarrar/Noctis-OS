@@ -132,6 +132,12 @@ interface FakeNode {
   jobs: () => Array<Extract<NodeServerFrame, { kind: "job" }>>;
   answers: () => Array<Extract<NodeServerFrame, { kind: "answer" }>>;
   frame: (body: Record<string, unknown>) => void;
+  /**
+   * Dials again on the same credential, the way the real agent does after its
+   * socket drops. A fresh `connectFake` would pair a *second* node, which is a
+   * different machine and answers a different question.
+   */
+  reconnect: () => Promise<FakeNode>;
 }
 
 /** Pairs, grants `runtime.turn` on `directory`, connects, and says hello with Codex. */
@@ -151,6 +157,7 @@ async function connectFake(core: TestCore, directory: string): Promise<FakeNode>
     }),
   });
   const paired = (await pairResponse.json()) as { nodeId: string; credential: string };
+  let credential = paired.credential;
 
   const granted = await command(core, "node.grant_capability", {
     idempotencyKey: `grant-${paired.nodeId}`,
@@ -163,44 +170,57 @@ async function connectFake(core: TestCore, directory: string): Promise<FakeNode>
   });
   expect(granted.status).toBe(200);
 
-  const socket = new WebSocket(`${core.socketUrl}/ws/nodes`, {
-    headers: { authorization: `Bearer ${paired.nodeId}.${paired.credential}` },
-  });
-  openSockets.push(socket);
+  async function dial(): Promise<FakeNode> {
+    const socket = new WebSocket(`${core.socketUrl}/ws/nodes`, {
+      headers: { authorization: `Bearer ${paired.nodeId}.${credential}` },
+    });
+    openSockets.push(socket);
 
-  const frames: NodeServerFrame[] = [];
-  socket.on("message", (data: Buffer) => {
-    frames.push(JSON.parse(data.toString("utf8")) as NodeServerFrame);
-  });
-  socket.on("error", () => undefined);
+    const frames: NodeServerFrame[] = [];
+    socket.on("message", (data: Buffer) => {
+      frames.push(JSON.parse(data.toString("utf8")) as NodeServerFrame);
+    });
+    socket.on("error", () => undefined);
 
-  await new Promise<void>((resolve, reject) => {
-    socket.once("open", resolve);
-    socket.once("error", reject);
-  });
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
 
-  socket.send(
-    JSON.stringify({
-      kind: "hello",
-      envelopeVersion: NODE_ENVELOPE_VERSION,
-      agentVersion: "0.0.0-test",
-      capabilities: ["runtime.turn"],
-      providers: [CODEX_PROBE],
-    }),
-  );
+    socket.send(
+      JSON.stringify({
+        kind: "hello",
+        envelopeVersion: NODE_ENVELOPE_VERSION,
+        agentVersion: "0.0.0-test",
+        capabilities: ["runtime.turn"],
+        providers: [CODEX_PROBE],
+      }),
+    );
 
-  const fake: FakeNode = {
-    nodeId: paired.nodeId,
-    frames,
-    jobs: () => frames.filter((frame) => frame.kind === "job"),
-    answers: () => frames.filter((frame) => frame.kind === "answer"),
-    frame: (body) =>
-      socket.send(JSON.stringify({ envelopeVersion: NODE_ENVELOPE_VERSION, ...body })),
-  };
+    const fake: FakeNode = {
+      nodeId: paired.nodeId,
+      frames,
+      jobs: () => frames.filter((frame) => frame.kind === "job"),
+      answers: () => frames.filter((frame) => frame.kind === "answer"),
+      frame: (body) =>
+        socket.send(JSON.stringify({ envelopeVersion: NODE_ENVELOPE_VERSION, ...body })),
+      reconnect: dial,
+    };
 
-  await waitFor(() => frames.some((frame) => frame.kind === "welcome"), "welcome frame");
+    await waitFor(() => frames.some((frame) => frame.kind === "welcome"), "welcome frame");
 
-  return fake;
+    // The core rotates on every connection, so the next dial must present what
+    // the last welcome handed over (`nodes/credentials.ts`).
+    const welcome = frames.find((frame) => frame.kind === "welcome");
+
+    if (welcome?.kind === "welcome") {
+      credential = welcome.credential;
+    }
+
+    return fake;
+  }
+
+  return dial();
 }
 
 async function openClient(core: TestCore): Promise<{ frames: ServerFrame[] }> {
@@ -624,6 +644,74 @@ describe("conversation service", () => {
     expect(types).toContain("provider.decision_recorded.v1");
     expect(types).toContain("identity.turn_completed.v1");
     expect(types).not.toContain("identity.turn_started.v1");
+  });
+
+  it("a node that reconnects and re-asks gets the decision already recorded", async () => {
+    // Task 2.6, and the case a green suite is least likely to find: the socket
+    // that carried an ask dies while a person is reading the question. The node
+    // reconnects and asks again, because from its side nothing was answered.
+    //
+    // ADR-0025 is what makes that safe: the ask id *is* the idempotency key of
+    // the authority request, so the second ask claims a key the first already
+    // claimed and reads back the same approval. A second decision would be a
+    // second consequence boundary over one act — and if the human had already
+    // said yes, it would be one they were never asked about.
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const first = await connectFake(core, directory);
+
+    await setDefault(core);
+    await send(core, "turn-reask");
+    await waitFor(() => first.jobs().length === 1, "the turn");
+
+    const jobId = lastTurnJob(first).assignment.jobId;
+
+    first.frame({ kind: "ask", jobId, ask: ASK });
+
+    let original: Body | undefined;
+
+    await waitFor(() => {
+      void read(core, "/approvals").then((response) => {
+        original = (response.body.approvals as Body[]).find((a) => a.askId === ASK.askId);
+      });
+
+      return original !== undefined;
+    }, "the first approval");
+
+    if (original === undefined) {
+      throw new Error("no approval was recorded for the ask");
+    }
+
+    expect(original.outcome).toBe("require_confirmation");
+
+    // The socket dies mid-question. The node's own pending ask rejects; the
+    // core's approval row does not care.
+    openSockets.pop()?.terminate();
+    await waitFor(() => core.core.dispatcher.connectedCount === 0, "the node to disconnect");
+
+    const second = await first.reconnect();
+
+    second.frame({ kind: "ask", jobId, ask: ASK });
+
+    // Confirming once answers the re-asking connection, and there is still one
+    // approval — not two.
+    const confirmed = await command(core, "authority.confirm", {
+      idempotencyKey: "confirm-reask",
+      requestId: original.id,
+    });
+    expect(confirmed.status).toBe(200);
+
+    await waitFor(() => second.answers().length === 1, "the answer on the new socket");
+    expect(second.answers()[0]?.answer).toMatchObject({
+      askId: ASK.askId,
+      approvalId: original.id,
+      decision: "allow",
+    });
+
+    const after = (await read(core, "/approvals")).body.approvals as Body[];
+    expect(after.filter((a) => a.askId === ASK.askId)).toHaveLength(1);
+
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("a host that is merely asleep refuses the send and writes nothing", async () => {
