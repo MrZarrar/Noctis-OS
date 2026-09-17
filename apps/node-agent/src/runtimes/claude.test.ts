@@ -450,6 +450,7 @@ describe("the Claude Agent SDK runtime", () => {
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "noctis_propose_objective",
       "noctis_propose_surface",
+      "noctis_remember_preference",
     ]);
 
     const called = await client.callTool({

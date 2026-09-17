@@ -4,7 +4,15 @@ import { SURFACE_PAYLOAD_SCHEMAS } from "@noctis/contracts";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { createObjective, getObjective } from "../objectives/service.js";
 import { upsertSurfaceIntent } from "../objectives/surface-intents.js";
+import { rememberPreference } from "../vault/brain.js";
+import type { VaultRoot } from "../vault/root.js";
 import type { Turn } from "./service.js";
+
+/** What applying a proposal may reach beyond the kernel. Absent when no Vault is configured. */
+export interface ProposalDeps {
+  vaultRoot?: VaultRoot;
+  vaultEnv?: Readonly<Record<string, string | undefined>>;
+}
 
 /**
  * ADR-0024: a model's proposal is data until the core turns it into one of the
@@ -22,6 +30,7 @@ export function applyProposal(
   turn: Turn,
   proposal: RuntimeProposal,
   idempotencyKey: string,
+  deps: ProposalDeps = {},
 ): void {
   const skip = (reason: string, fields: Record<string, unknown> = {}): void => {
     kernel.logger.log("warn", "runtime proposal skipped", {
@@ -31,6 +40,25 @@ export function applyProposal(
       ...fields,
     });
   };
+
+  if (proposal.kind === "preference") {
+    // No command and no event: the Agent Brain is a file in the owner's Vault,
+    // not orchestration state. A refusal is logged with its reason rather than
+    // raised — a turn that learned something and could not write it down is
+    // still a turn that did its work.
+    const outcome = rememberPreference(
+      { root: deps.vaultRoot, env: deps.vaultEnv ?? {} },
+      proposal.bullet,
+    );
+
+    if (outcome.ok) {
+      kernel.logger.log("info", "agent brain appended", { turnId: turn.id });
+    } else {
+      skip(outcome.refusal);
+    }
+
+    return;
+  }
 
   if (proposal.kind === "objective") {
     const created = createObjective(kernel, context, {

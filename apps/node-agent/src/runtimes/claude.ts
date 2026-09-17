@@ -321,9 +321,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         }
       };
 
-      const [surface, objective] = RuntimeProposalSchema.options;
+      const [surface, objective, preference] = RuntimeProposalSchema.options;
 
-      function record(kind: "surface" | "objective", args: unknown) {
+      function record(kind: "surface" | "objective" | "preference", args: unknown) {
         proposals += 1;
         emit({
           itemId: `proposal-${String(proposals)}`,
@@ -350,6 +350,12 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
             "Propose an objective for the operator to consider. It is recorded as a suggestion, never started.",
             objective.omit({ kind: true }).shape,
             (args) => record("objective", args),
+          ),
+          tool(
+            "noctis_remember_preference",
+            "Record one durable thing learned about how to work with the owner. Noctis applies its own rules to the Agent Brain and may refuse; nothing is written by this call.",
+            preference.omit({ kind: true }).shape,
+            (args) => record("preference", args),
           ),
         ],
       });

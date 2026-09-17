@@ -163,7 +163,14 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
       reason: error instanceof Error ? error.message : "unknown",
     });
   });
-  const conversation = createConversationService({ kernel, dispatcher, live, runtimeFrames });
+  const conversation = createConversationService({
+    kernel,
+    dispatcher,
+    live,
+    runtimeFrames,
+    ...(vaultRoot === undefined ? {} : { vaultRoot }),
+    vaultEnv: env,
+  });
 
   const notifier = createNotifier({
     db,

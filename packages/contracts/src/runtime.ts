@@ -125,6 +125,21 @@ export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
       intent: z.string().trim().min(1).max(4000),
     })
     .strict(),
+  /**
+   * One durable thing learned about how to work with the owner, for the Agent
+   * Brain (`agent/brain.md` in the Vault). A proposal like every other kind
+   * here: the runtime says it, the core applies the rules and writes the file —
+   * or refuses, when writes are off, the brain is full, or it is already there.
+   *
+   * Capped at one bullet's worth of text. A paragraph in a file whose whole
+   * value is that it stays short is how that file stops being read.
+   */
+  z
+    .object({
+      kind: z.literal("preference"),
+      bullet: z.string().trim().min(8).max(300),
+    })
+    .strict(),
 ]);
 
 const ItemBase = { itemId: ShortId, status: RuntimeItemStatusSchema };

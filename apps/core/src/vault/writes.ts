@@ -20,9 +20,14 @@ export class VaultWriteRefused extends Error {}
  * Section 7: "Add atomic write/conflict primitives but keep automated writes
  * disabled" and "no automatic bulk rewrite of user notes".
  *
- * The primitives are here and tested; the switch is off. `NOCTIS_VAULT_ALLOW_WRITES`
+ * The switch is off by default and stays that way. `NOCTIS_VAULT_ALLOW_WRITES`
  * is separate from `NOCTIS_VAULT_ALLOW_LIVE` on purpose — reading a real Vault
- * and writing to one are different consequences, and neither implies the other.
+ * and writing to one are different consequences, and neither implies the other,
+ * which is why Slice 2 turns live *reading* on without touching this.
+ *
+ * Even when it is on, nothing here rewrites a note the owner wrote: the
+ * conflict check below refuses a file that changed since it was read, and the
+ * only caller that appends is `vault/brain.ts`, under the Agent Brain's rules.
  */
 const ACTIVATION = "true";
 
@@ -99,7 +104,7 @@ export class VaultConflict extends Error {
 export function writeNoteAtomically(context: VaultWriteContext, write: AtomicWrite): string {
   if (!writesEnabled(context.env)) {
     throw new VaultWriteRefused(
-      "Vault writes are disabled. Section 7 keeps automated writes off; set NOCTIS_VAULT_ALLOW_WRITES=true only behind the Phase 14 approval gate.",
+      "Vault writes are disabled. Automated writes stay off by default; NOCTIS_VAULT_ALLOW_WRITES=true opens exactly two things and nothing else — the inbox grant a runtime writes through, and the Agent Brain append in vault/brain.ts.",
     );
   }
 

@@ -24,7 +24,7 @@ if (flag === -1 || target === undefined) {
 
 // Narrowed here; a closure below would not see the guard.
 const file: string = target;
-const [surface, objective] = RuntimeProposalSchema.options;
+const [surface, objective, preference] = RuntimeProposalSchema.options;
 
 function record(proposal: RuntimeProposal): { content: Array<{ type: "text"; text: string }> } {
   appendFileSync(file, `${JSON.stringify(proposal)}\n`);
@@ -52,6 +52,16 @@ server.registerTool(
     inputSchema: objective.omit({ kind: true }),
   },
   (args) => record(RuntimeProposalSchema.parse({ kind: "objective", ...args })),
+);
+
+server.registerTool(
+  "noctis_remember_preference",
+  {
+    description:
+      "Record one durable thing learned about how to work with the owner. Noctis applies its own rules to the Agent Brain and may refuse; nothing is written by this call.",
+    inputSchema: preference.omit({ kind: true }),
+  },
+  (args) => record(RuntimeProposalSchema.parse({ kind: "preference", ...args })),
 );
 
 await server.connect(new StdioServerTransport());

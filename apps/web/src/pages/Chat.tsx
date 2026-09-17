@@ -76,7 +76,9 @@ function ItemRow({ item }: { item: RuntimeItem }): JSX.Element {
           proposal · {item.status} · {item.proposal.kind}
           {item.proposal.kind === "objective"
             ? `: ${item.proposal.title}`
-            : `: ${item.proposal.surfaceKind}`}
+            : item.proposal.kind === "preference"
+              ? `: ${item.proposal.bullet}`
+              : `: ${item.proposal.surfaceKind}`}
         </span>
       );
     case "sub_agent":

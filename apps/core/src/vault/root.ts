@@ -7,8 +7,13 @@ export interface VaultRoot {
   /** Absolute, symlink-resolved. Every file read is checked to be inside it. */
   path: string;
   /**
-   * True only when a live personal Vault was unlocked deliberately. Nothing in
-   * Phase 7 writes, so this exists to be reported and refused on, not relied on.
+   * True only when a live personal Vault was unlocked deliberately.
+   *
+   * Slice 2 (task 2.5) is what makes this a supported configuration rather than
+   * a thing to refuse: the work PC points `NOCTIS_VAULT_ROOT` at its real
+   * OneDrive MindVault so recall has something to recall. It stays read-only —
+   * `NOCTIS_VAULT_ALLOW_WRITES` is a separate switch, and the only file it
+   * opens for a runtime is the Agent Brain (`vault/brain.ts`).
    */
   live: boolean;
 }
@@ -17,7 +22,7 @@ export interface VaultRoot {
 const ACTIVATION = "true";
 
 const ACTIVATION_NOTE =
-  "Section 7: the live OneDrive/Obsidian Vault is not activated until Phase 14's explicit copy, hash verification, backup, rollback, and user approval gate.";
+  "Indexing a live OneDrive/Obsidian Vault is supported from Slice 2 (task 2.5) and is read-only: the Vault service refuses every write unless NOCTIS_VAULT_ALLOW_WRITES is also set, and the only file that switch opens to a runtime is agent/brain.md.";
 
 /**
  * Whether a path looks like somebody's real, synced notes rather than a fixture.
@@ -78,7 +83,7 @@ export function resolveVaultRoot(
 
   if (live && !allowed) {
     throw new VaultRootRefused(
-      `Refusing to index what looks like a live Vault at ${path}. ${ACTIVATION_NOTE} Set NOCTIS_VAULT_ALLOW_LIVE=true only after that gate.`,
+      `Refusing to index what looks like a live Vault at ${path}. ${ACTIVATION_NOTE} Set NOCTIS_VAULT_ALLOW_LIVE=true when that is what you meant.`,
     );
   }
 

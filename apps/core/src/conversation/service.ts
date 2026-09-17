@@ -33,10 +33,12 @@ import { cancelJob, enqueueJobInTransaction } from "../nodes/jobs.js";
 import { listRuntimeCandidates } from "../nodes/registry.js";
 import type { RuntimeFrameHub } from "../nodes/runtime-frames.js";
 import { getObjective } from "../objectives/service.js";
+import type { VaultRoot } from "../vault/root.js";
 import type { PendingAsk } from "./asks.js";
 import { answerFromEvent, handleAsk } from "./asks.js";
 import { defaultModelFor } from "./models.js";
 import { applyProposal } from "./proposals.js";
+import { promptWithRecall, recallForPrompt } from "./recall-context.js";
 import { threadFor } from "./threads.js";
 
 export type TurnStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -226,6 +228,14 @@ export interface ConversationServiceDeps {
   dispatcher: Dispatcher;
   live: LiveBroker;
   runtimeFrames: RuntimeFrameHub;
+  /**
+   * The Vault, for the two things a turn does with it: the recall that informs
+   * the prompt, and the Agent Brain a `preference` proposal appends to.
+   * Absent when no Vault is configured, which is the default.
+   */
+  vaultRoot?: VaultRoot;
+  /** Where the Vault write switch is read from. See `vault/writes.ts`. */
+  vaultEnv?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface ConversationService {
@@ -418,7 +428,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
             identityId,
             model: selected.model,
             userMessageId,
-            prompt: command.text,
+            prompt: promptWithRecall(command.text, recallForPrompt(tx, command.text, deps)),
             primaryRootGrantId,
             ...(sessionRef === undefined ? {} : { sessionRef }),
             ...(command.objectiveId === undefined ? {} : { objectiveId: command.objectiveId }),
@@ -675,6 +685,10 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         recorded.value,
         item.proposal,
         `proposal:${jobId}:${String(sequence)}`,
+        {
+          ...(deps.vaultRoot === undefined ? {} : { vaultRoot: deps.vaultRoot }),
+          ...(deps.vaultEnv === undefined ? {} : { vaultEnv: deps.vaultEnv }),
+        },
       );
     }
   }
