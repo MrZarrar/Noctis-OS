@@ -24,6 +24,15 @@ self.addEventListener("push", (event) => {
     return;
   }
 
+  // `JSON.parse("null")` succeeds, so the catch above never sees it and
+  // `payload.title` throws inside the handler instead. Same for a bare string
+  // or a number. Nothing Noctis sends looks like this — `pushFor` always
+  // returns an object — but a service worker that throws is one the browser
+  // may stop waking.
+  if (typeof payload !== "object" || payload === null) {
+    return;
+  }
+
   event.waitUntil(
     self.registration.showNotification(payload.title ?? "Noctis", {
       body: payload.body ?? "",
@@ -43,8 +52,21 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      // Focus the tab that is already open rather than opening a second one.
+      // Reuse the tab that is already open rather than opening a second one —
+      // but send it to the target first. Focusing alone would leave the owner
+      // looking at whatever they had open, which is the same screen they were
+      // trying to be told about.
       for (const client of clients) {
+        if ("navigate" in client) {
+          // `navigate` rejects for a client this worker does not control, which
+          // `includeUncontrolled` can hand us. Focusing is then still better
+          // than a rejected `waitUntil`.
+          return client
+            .navigate(target)
+            .then((navigated) => (navigated ?? client).focus())
+            .catch(() => client.focus());
+        }
+
         if ("focus" in client) {
           return client.focus();
         }

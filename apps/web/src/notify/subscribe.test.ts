@@ -68,6 +68,31 @@ describe("enablePush", () => {
     ]);
   });
 
+  it("re-registers a device that already has permission, which is how a swept session is repaired", async () => {
+    const core = transport();
+
+    // Permission already granted, so no prompt happens — and the endpoint the
+    // browser hands back is the one it already had. The point is that it is
+    // posted again: the core may have lost the row when the session it hung
+    // off expired, and `ON CONFLICT (endpoint) DO UPDATE` rebinds it.
+    const result = await enablePush(
+      core.transport,
+      scope({
+        Notification: {
+          permission: "granted",
+          requestPermission: () => Promise.resolve("granted"),
+        },
+      }),
+    );
+
+    expect(result).toBe("enabled");
+    expect(core.calls.at(-1)).toEqual({
+      method: "POST",
+      path: "/push/subscribe",
+      body: SUBSCRIPTION,
+    });
+  });
+
   it("is unsupported in a browser with no service worker", async () => {
     const core = transport();
 

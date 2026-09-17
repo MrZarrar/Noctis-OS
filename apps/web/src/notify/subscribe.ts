@@ -69,7 +69,18 @@ function supported(scope: PushScope): boolean {
   return scope.navigator?.serviceWorker !== undefined && scope.Notification !== undefined;
 }
 
-/** What the card says before anyone presses anything. `undefined` means "off, and can be turned on". */
+/**
+ * What the card says before anyone presses anything. `undefined` means "off,
+ * and can be turned on".
+ *
+ * This reads the *browser's* permission and nothing else, so `"enabled"` here
+ * means "this device was granted permission at some point", not "the core holds
+ * a subscription for it". The two come apart: `push_subscriptions` cascades
+ * from `sessions`, so an expired session takes the row with it while the
+ * browser keeps its permission and its `PushSubscription` forever. That is why
+ * the card re-registers on mount rather than trusting this answer — see
+ * `Settings.tsx`.
+ */
 export function initialPushState(scope: PushScope = globalThis): PushState | undefined {
   if (!supported(scope)) {
     return "unsupported";

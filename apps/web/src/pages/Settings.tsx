@@ -210,6 +210,40 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
     setPushBusy(false);
   }, [transport]);
 
+  /**
+   * The client half of the cascade.
+   *
+   * `push_subscriptions.session_id` cascades from `sessions`, and a session
+   * lasts `NOCTIS_SESSION_TTL_HOURS` — thirty days by default. When it expires
+   * and the next login sweeps it, the core loses this device's subscription
+   * while the browser still holds a live `PushSubscription` and a granted
+   * permission. Nothing in the browser can notice: the phone simply stops
+   * ringing, and a card that read permission alone would still say it was on.
+   *
+   * So re-post it on every visit to this page. `pushManager.subscribe` returns
+   * the subscription the browser already has, and the core's
+   * `ON CONFLICT (endpoint) DO UPDATE SET session_id` rebinds the row to the
+   * current session. No prompt: permission is already granted, so
+   * `requestPermission` resolves without asking.
+   */
+  useEffect(() => {
+    if (transport === undefined || initialPushState() !== "enabled") {
+      return;
+    }
+
+    let cancelled = false;
+
+    void enablePush(transport).then((state) => {
+      if (!cancelled) {
+        setPush(state);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [transport]);
+
   const live = permissions.filter((permission) => permission.revokedAt === undefined);
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
@@ -298,7 +332,14 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
           anywhere else you are logged in.
         </p>
         <p style={{ margin: 0 }}>{PUSH_STATUS[push ?? "off"]}</p>
-        {push !== "enabled" && push !== "unsupported" && (
+        {/*
+          Still offered when it is already on. The core can lose this device's
+          subscription without the browser ever finding out — the session it
+          hung off expired — and while the page re-registers on its own each
+          time it opens, a person who thinks the phone has gone quiet needs
+          something to press rather than advice to clear their site data.
+        */}
+        {push !== "unsupported" && (
           <div>
             <button
               type="button"
@@ -315,7 +356,7 @@ export function Settings({ transport }: SettingsProps): JSX.Element {
                 cursor: "pointer",
               }}
             >
-              Turn on notifications
+              {push === "enabled" ? "Re-register this device" : "Turn on notifications"}
             </button>
           </div>
         )}
