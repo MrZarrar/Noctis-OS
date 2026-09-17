@@ -44,6 +44,7 @@ async function startTestCore(overrides: Partial<CoreConfig> = {}): Promise<TestC
     databasePath: join(directory, "core.db"),
     allowedOrigins: [],
     logLevel: "error",
+    sessionTtlHours: 720,
     ...overrides,
   };
 

@@ -1,5 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
+import type { VerifiedSession } from "./session.js";
+import { hashSecret } from "./session.js";
+
 const BEARER = /^Bearer (.+)$/;
 
 /**
@@ -36,4 +39,56 @@ export function isAuthorized(header: string | undefined, token: string): boolean
  */
 export function isOriginAllowed(origin: string | undefined, allowed: readonly string[]): boolean {
   return origin === undefined ? true : allowed.includes(origin);
+}
+
+export interface AuthorizeInput {
+  method: string;
+  authorization: string | undefined;
+  cookie: string | undefined;
+  csrfHeader: string | undefined;
+  token: string;
+  session: (cookie: string | undefined) => VerifiedSession | undefined;
+}
+
+export type AuthorizeResult =
+  | { kind: "bearer" }
+  | { kind: "session"; id: string }
+  | { kind: "denied"; reason: "unauthorized" | "csrf" };
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Two ways to be authorised, in a fixed order.
+ *
+ * A presented `Authorization` header is answered on its own merits: if it is
+ * wrong, the request is refused rather than quietly falling through to the
+ * cookie. Anything else would let a caller probe tokens for free by attaching a
+ * session it already holds.
+ *
+ * `SameSite=Strict` already stops a cross-site browser from sending the cookie.
+ * The CSRF header is the second lock: its value has to be read from a login
+ * response served by this same origin, which a cross-origin page cannot do.
+ */
+export function authorize(input: AuthorizeInput): AuthorizeResult {
+  if (input.authorization !== undefined) {
+    return isAuthorized(input.authorization, input.token)
+      ? { kind: "bearer" }
+      : { kind: "denied", reason: "unauthorized" };
+  }
+
+  const session = input.session(input.cookie);
+
+  if (session === undefined) {
+    return { kind: "denied", reason: "unauthorized" };
+  }
+
+  if (SAFE_METHODS.has(input.method.toUpperCase())) {
+    return { kind: "session", id: session.id };
+  }
+
+  if (input.csrfHeader === undefined || hashSecret(input.csrfHeader) !== session.csrfHash) {
+    return { kind: "denied", reason: "csrf" };
+  }
+
+  return { kind: "session", id: session.id };
 }

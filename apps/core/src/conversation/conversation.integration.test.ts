@@ -42,6 +42,7 @@ async function startTestCore(): Promise<TestCore> {
     databasePath: join(directory, "core.db"),
     allowedOrigins: [],
     logLevel: "error",
+    sessionTtlHours: 720,
   };
   let now = START;
   const core = await startCore({

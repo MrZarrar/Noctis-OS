@@ -14,6 +14,8 @@ import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
 
+import { LOGIN_PATH, LOGOUT_PATH } from "./http.js";
+
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
 interface TestCore {
@@ -36,6 +38,7 @@ async function startTestCore(
     databasePath: join(directory, "core.db"),
     allowedOrigins: [],
     logLevel: "error",
+    sessionTtlHours: 720,
     ...overrides,
   };
 
@@ -67,6 +70,27 @@ afterEach(async () => {
 
 function authorized(extra: Record<string, string> = {}): Record<string, string> {
   return { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...extra };
+}
+
+/**
+ * Exchanges the core token for a session cookie, the way a browser does. Returns
+ * the two halves a page then holds: the cookie the browser replays on its own,
+ * and the CSRF value it has to attach to every mutation by hand.
+ */
+async function login(core: TestCore, token: string = TOKEN): Promise<Response> {
+  return fetch(`${core.base}${LOGIN_PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+async function session(core: TestCore): Promise<{ cookie: string; csrf: string }> {
+  const response = await login(core);
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  const { csrf } = (await response.json()) as { csrf: string };
+
+  return { cookie: setCookie.split(";")[0] ?? "", csrf };
 }
 
 async function command(
@@ -260,8 +284,9 @@ describe("headless kernel loop", () => {
     // 0002 added node pairing and job results; 0003 the Surface uniqueness;
     // 0004 the six Vault tables Section 4.1 lists; 0005 the consequence
     // boundary columns, source semantics, and artifact lineage; 0006 turns,
-    // sessions, provider decisions, and one thread per Objective.
-    expect(diagnostics.body.schemaVersion).toBe(6);
+    // sessions, provider decisions, and one thread per Objective; 0007 the
+    // browser sessions a cookie is verified against.
+    expect(diagnostics.body.schemaVersion).toBe(7);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -1513,5 +1538,107 @@ describe("THE GATE: a status cannot claim more than the evidence supports", () =
     const state = await read(core, `/sources/${String(source.body.id)}`);
 
     expect(state.body.conflicted).toBe(false);
+  });
+});
+
+describe("the session realm", () => {
+  it("refuses a page with no credential, issues one for the right token, then serves reads and gated mutations", async () => {
+    const core = await startTestCore();
+
+    const denied = await fetch(`${core.base}/objectives`);
+    expect(denied.status).toBe(401);
+
+    const bad = await login(core, "wrong");
+    expect(bad.status).toBe(401);
+    expect(bad.headers.get("set-cookie")).toBe(null);
+
+    const loginResponse = await login(core);
+    expect(loginResponse.status).toBe(200);
+
+    const setCookie = loginResponse.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+    expect(setCookie).toContain("Secure");
+    // The value itself is never readable by a page and never logged; only that
+    // the browser was handed one under the expected name.
+    expect(setCookie.startsWith("noctis_session=")).toBe(true);
+
+    const { csrf } = (await loginResponse.json()) as { csrf: string };
+    const cookie = setCookie.split(";")[0] ?? "";
+
+    expect((await fetch(`${core.base}/objectives`, { headers: { cookie } })).status).toBe(200);
+
+    const body = JSON.stringify({
+      idempotencyKey: newKey("session-objective"),
+      title: "Ship the front door",
+      intent: "Prove the cookie realm end to end",
+      status: "draft",
+      identityId: "vesper",
+      protocolIds: [],
+    });
+
+    const withoutCsrf = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body,
+    });
+    expect(withoutCsrf.status).toBe(403);
+
+    const withCsrf = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body,
+    });
+    expect(withCsrf.status).toBe(200);
+
+    const loggedOut = await fetch(`${core.base}${LOGOUT_PATH}`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+      body: "{}",
+    });
+    expect(loggedOut.status).toBe(200);
+
+    expect((await fetch(`${core.base}/objectives`, { headers: { cookie } })).status).toBe(401);
+  });
+
+  it("leaves the bearer realm alone: a token still needs no cookie and no csrf header", async () => {
+    const core = await startTestCore();
+    await session(core);
+
+    const created = await command(core, "objective.create", {
+      idempotencyKey: newKey("bearer-still-works"),
+      title: "Ship the kernel",
+      intent: "The native shell is unaffected",
+      status: "draft",
+      identityId: "vesper",
+      protocolIds: [],
+    });
+
+    expect(created.status).toBe(200);
+  });
+
+  it("refuses one session's csrf value presented with another session's cookie", async () => {
+    const core = await startTestCore();
+    const mine = await session(core);
+    const theirs = await session(core);
+
+    const crossed = await fetch(`${core.base}/commands/objective.create`, {
+      method: "POST",
+      headers: {
+        cookie: mine.cookie,
+        "content-type": "application/json",
+        "x-noctis-csrf": theirs.csrf,
+      },
+      body: JSON.stringify({
+        idempotencyKey: newKey("crossed"),
+        title: "Never created",
+        intent: "The csrf value belongs to another session",
+        status: "draft",
+        identityId: "vesper",
+        protocolIds: [],
+      }),
+    });
+
+    expect(crossed.status).toBe(403);
   });
 });

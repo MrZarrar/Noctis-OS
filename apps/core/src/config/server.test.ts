@@ -73,4 +73,11 @@ describe("loadCoreConfig", () => {
 
     expect(config.allowedOrigins).toEqual(["https://a.example", "http://localhost:5173"]);
   });
+
+  it("defaults the session lifetime to thirty days and rejects a fractional one", () => {
+    expect(loadCoreConfig(env({})).sessionTtlHours).toBe(720);
+    expect(() => loadCoreConfig(env({ NOCTIS_SESSION_TTL_HOURS: "1.5" }))).toThrow(
+      ConfigurationError,
+    );
+  });
 });

@@ -40,6 +40,7 @@ async function startAt(directory: string, offsetMs = 0): Promise<TestCore> {
     databasePath: join(directory, "core.db"),
     allowedOrigins: [],
     logLevel: "error",
+    sessionTtlHours: 720,
   };
 
   const core = await startCore({

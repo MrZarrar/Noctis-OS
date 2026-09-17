@@ -38,7 +38,7 @@ import {
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
-import type { z } from "zod";
+import { z } from "zod";
 
 import {
   confirmAuthority,
@@ -128,7 +128,10 @@ import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
 import { writesEnabled } from "../vault/writes.js";
 import type { CoreConfig } from "../config/server.js";
-import { isAuthorized, isOriginAllowed } from "./auth.js";
+import { authorize, isAuthorized, isOriginAllowed } from "./auth.js";
+import { serializeCookie } from "./cookie.js";
+import type { SessionDeps } from "./session.js";
+import { SESSION_COOKIE, createSession, revokeSession, verifySession } from "./session.js";
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_PAGE_SIZE = 500;
@@ -136,6 +139,12 @@ const DEFAULT_PAGE_SIZE = 100;
 
 /** The one path that does not require the core bearer token. See `pairNode`. */
 export const PAIR_PATH = "/node/pair";
+
+/** Exchanges the core token for a cookie. The other path that runs before the gate. */
+export const LOGIN_PATH = "/session/login";
+export const LOGOUT_PATH = "/session/logout";
+
+const LoginBodySchema = z.object({ token: z.string().min(1) }).strict();
 
 export interface ApiDeps {
   kernel: Kernel;
@@ -163,6 +172,30 @@ interface ErrorBody {
  */
 function errorBody(code: string, message: string, details?: unknown): ErrorBody {
   return { error: { code, message, ...(details === undefined ? {} : { details }) } };
+}
+
+/**
+ * A repeated request header arrives as an array. A credential presented twice is
+ * not a credential, so only the single-valued form is read.
+ */
+function headerValue(raw: string | string[] | undefined): string | undefined {
+  return typeof raw === "string" ? raw : undefined;
+}
+
+function sessionDeps(deps: ApiDeps): SessionDeps {
+  return { db: deps.kernel.db, clock: deps.kernel.clock, ids: deps.kernel.ids };
+}
+
+/** The attributes every session cookie carries. Only the value and lifetime vary. */
+function sessionCookie(value: string, maxAgeSeconds: number): string {
+  return serializeCookie(SESSION_COOKIE, value, {
+    httpOnly: true,
+    // Tailscale Serve terminates TLS, so the browser always sees HTTPS.
+    secure: true,
+    sameSite: "Strict",
+    path: "/",
+    maxAgeSeconds,
+  });
 }
 
 function send(res: ServerResponse, status: number, body: unknown, correlationId: string): void {
@@ -960,10 +993,11 @@ function handlePair(
 }
 
 /**
- * Single entry point for the REST realm. Order matters: origin, then token, then
- * routing. A caller that fails either check learns nothing about which paths
- * exist. `/node/pair` sits between the two on purpose, and is the only path that
- * does.
+ * Single entry point for the REST realm. Order matters: origin, then credential,
+ * then routing. A caller that fails either check learns nothing about which
+ * paths exist. Two paths sit between the two on purpose and no others:
+ * `/node/pair`, which is how a node earns a credential, and `/session/login`,
+ * which is how a browser exchanges the token for one.
  */
 export async function handleRequest(
   deps: ApiDeps,
@@ -999,11 +1033,34 @@ export async function handleRequest(
     }
 
     const isPair = req.method === "POST" && url.pathname === PAIR_PATH;
+    // `/session/login` runs before the credential check, because presenting the
+    // token in the body is how a browser obtains one. It is a POST with no
+    // session, so the CSRF rule cannot apply to it either.
+    const isLogin = req.method === "POST" && url.pathname === LOGIN_PATH;
+    const isLogout = req.method === "POST" && url.pathname === LOGOUT_PATH;
 
-    if (!isPair && !isAuthorized(req.headers.authorization, deps.config.token)) {
-      logger.log("warn", "rejected unauthenticated request");
-      send(res, 401, errorBody("unauthorized", "A valid bearer token is required"), correlationId);
-      return;
+    if (!isLogin && !isPair) {
+      const decision = authorize({
+        method: req.method ?? "GET",
+        authorization: headerValue(req.headers.authorization),
+        cookie: headerValue(req.headers.cookie),
+        csrfHeader: headerValue(req.headers["x-noctis-csrf"]),
+        token: deps.config.token,
+        session: (cookie) => verifySession(sessionDeps(deps), cookie),
+      });
+
+      if (decision.kind === "denied") {
+        logger.log("warn", "rejected request", { reason: decision.reason });
+        send(
+          res,
+          decision.reason === "csrf" ? 403 : 401,
+          decision.reason === "csrf"
+            ? errorBody("csrf_required", "A matching X-Noctis-CSRF header is required")
+            : errorBody("unauthorized", "A valid bearer token or session is required"),
+          correlationId,
+        );
+        return;
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/ready") {
@@ -1034,16 +1091,18 @@ export async function handleRequest(
     }
 
     const isCommand = req.method === "POST" && segments[0] === "commands" && segments.length === 2;
+    const isSession = isLogin || isLogout;
 
-    if (!isCommand && !isPair) {
+    if (!isCommand && !isPair && !isSession) {
       send(res, 404, errorBody("not_found", "No such resource"), correlationId);
       return;
     }
 
     const name = segments[1] ?? "";
-    const route = isPair ? undefined : Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+    const route =
+      isPair || isSession ? undefined : Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
 
-    if (!isPair && route === undefined) {
+    if (!isPair && !isSession && route === undefined) {
       send(res, 404, errorBody("not_found", "No such command"), correlationId);
       return;
     }
@@ -1073,6 +1132,43 @@ export async function handleRequest(
       body = JSON.parse(raw.toString("utf8")) as unknown;
     } catch {
       send(res, 400, errorBody("invalid_request", "Body is not valid JSON"), correlationId);
+      return;
+    }
+
+    if (isLogin) {
+      const parsed = LoginBodySchema.safeParse(body);
+
+      if (!parsed.success) {
+        send(res, 400, errorBody("invalid_request", "Body must be {token}"), correlationId);
+        return;
+      }
+
+      // The same constant-time comparison the bearer realm uses. A failed login
+      // says only that it failed.
+      if (!isAuthorized(`Bearer ${parsed.data.token}`, deps.config.token)) {
+        logger.log("warn", "rejected session login");
+        send(res, 401, errorBody("unauthorized", "The token is not valid"), correlationId);
+        return;
+      }
+
+      const created = createSession(sessionDeps(deps), deps.config.sessionTtlHours);
+
+      res.setHeader(
+        "set-cookie",
+        sessionCookie(created.cookieValue, deps.config.sessionTtlHours * 3600),
+      );
+
+      logger.log("info", "session established");
+      send(res, 200, { csrf: created.csrf }, correlationId);
+      return;
+    }
+
+    if (isLogout) {
+      const revoked = revokeSession(sessionDeps(deps), headerValue(req.headers.cookie));
+
+      res.setHeader("set-cookie", sessionCookie("", 0));
+
+      send(res, 200, { status: revoked ? "revoked" : "no_session" }, correlationId);
       return;
     }
 

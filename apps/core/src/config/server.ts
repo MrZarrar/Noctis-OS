@@ -17,6 +17,8 @@ export interface CoreConfig {
    */
   allowedOrigins: readonly string[];
   logLevel: LogLevel;
+  /** How long a browser session lasts. A phone should not be asked to log in weekly. */
+  sessionTtlHours: number;
 }
 
 /** Noctis-only default. Deliberately not a port the donor or any common tool uses. */
@@ -56,6 +58,26 @@ function parsePort(raw: string | undefined): number {
   }
 
   return port;
+}
+
+/** Thirty days. A phone is asked to log in monthly, and never more than yearly. */
+const DEFAULT_SESSION_TTL_HOURS = 720;
+const MAX_SESSION_TTL_HOURS = 8760;
+
+function parseSessionTtlHours(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_SESSION_TTL_HOURS;
+  }
+
+  const hours = Number(raw.trim());
+
+  if (!Number.isInteger(hours) || hours < 1 || hours > MAX_SESSION_TTL_HOURS) {
+    throw new ConfigurationError(
+      "NOCTIS_SESSION_TTL_HOURS must be a whole number of hours between 1 and 8760",
+    );
+  }
+
+  return hours;
 }
 
 function parseOrigins(raw: string | undefined): string[] {
@@ -126,5 +148,6 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     databasePath: required(env, "NOCTIS_DATABASE_PATH"),
     allowedOrigins: parseOrigins(env.NOCTIS_ALLOWED_ORIGINS),
     logLevel: logLevel as LogLevel,
+    sessionTtlHours: parseSessionTtlHours(env.NOCTIS_SESSION_TTL_HOURS),
   };
 }

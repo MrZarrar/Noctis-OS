@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { isAuthorized, isOriginAllowed } from "./auth.js";
+import { authorize, isAuthorized, isOriginAllowed } from "./auth.js";
+import { hashSecret } from "./session.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -47,5 +48,105 @@ describe("isOriginAllowed", () => {
 
   it("allows an exact allowlisted origin", () => {
     expect(isOriginAllowed("https://a.example", ["https://a.example"])).toBe(true);
+  });
+});
+
+describe("authorize", () => {
+  const token = "a".repeat(32);
+  const session = { id: "sess-1", csrfHash: "hash-of-csrf" };
+  const found = () => session;
+  const none = () => undefined;
+
+  it("accepts the bearer token without asking for a session", () => {
+    expect(
+      authorize({
+        method: "POST",
+        authorization: `Bearer ${token}`,
+        cookie: undefined,
+        csrfHeader: undefined,
+        token,
+        session: none,
+      }),
+    ).toEqual({ kind: "bearer" });
+  });
+
+  it("accepts a session on a read without a csrf header", () => {
+    expect(
+      authorize({
+        method: "GET",
+        authorization: undefined,
+        cookie: "noctis_session=v",
+        csrfHeader: undefined,
+        token,
+        session: found,
+      }),
+    ).toEqual({ kind: "session", id: "sess-1" });
+  });
+
+  it("refuses a session mutation with no csrf header", () => {
+    expect(
+      authorize({
+        method: "POST",
+        authorization: undefined,
+        cookie: "noctis_session=v",
+        csrfHeader: undefined,
+        token,
+        session: found,
+      }),
+    ).toEqual({ kind: "denied", reason: "csrf" });
+  });
+
+  it("refuses a session mutation whose csrf header does not match", () => {
+    expect(
+      authorize({
+        method: "POST",
+        authorization: undefined,
+        cookie: "noctis_session=v",
+        csrfHeader: "wrong",
+        token,
+        session: found,
+      }),
+    ).toEqual({ kind: "denied", reason: "csrf" });
+  });
+
+  it("accepts a session mutation whose csrf header hashes to the stored digest", () => {
+    const csrf = "the-real-csrf";
+
+    expect(
+      authorize({
+        method: "POST",
+        authorization: undefined,
+        cookie: "noctis_session=v",
+        csrfHeader: csrf,
+        token,
+        session: () => ({ id: "sess-1", csrfHash: hashSecret(csrf) }),
+      }),
+    ).toEqual({ kind: "session", id: "sess-1" });
+  });
+
+  it("refuses when neither credential is presented", () => {
+    expect(
+      authorize({
+        method: "GET",
+        authorization: undefined,
+        cookie: undefined,
+        csrfHeader: undefined,
+        token,
+        session: none,
+      }),
+    ).toEqual({ kind: "denied", reason: "unauthorized" });
+  });
+
+  it("refuses a wrong bearer token even when a valid session exists, rather than silently downgrading", () => {
+    expect(
+      authorize({
+        method: "GET",
+        authorization: "Bearer wrong",
+        cookie: "noctis_session=v",
+        csrfHeader: undefined,
+        token,
+        session: found,
+      }),
+    ).toEqual({ kind: "denied", reason: "unauthorized" });
   });
 });
