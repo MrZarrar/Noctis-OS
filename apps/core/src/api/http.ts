@@ -64,7 +64,13 @@ import {
 import { getAttachment, readAttachmentBytes, uploadAttachment } from "../attachments/service.js";
 import { catalogue, defaultModelFor, setDefaultModel } from "../conversation/models.js";
 import type { ConversationService } from "../conversation/service.js";
-import { getTurn, getTurnByJobId, listMessages, listTurns } from "../conversation/service.js";
+import {
+  getTurn,
+  getTurnByJobId,
+  listMessages,
+  listRecentTurns,
+  listTurns,
+} from "../conversation/service.js";
 import { findThread } from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
@@ -784,6 +790,12 @@ function handleRead(
         })),
       },
     };
+  }
+
+  if (segments.length === 1 && segments[0] === "turns") {
+    // Across every thread, so Missions shows the work without having to know
+    // which conversations it came from first.
+    return { status: 200, body: { turns: listRecentTurns(deps.kernel.db, limit) } };
   }
 
   if (segments.length === 1 && segments[0] === "nodes") {

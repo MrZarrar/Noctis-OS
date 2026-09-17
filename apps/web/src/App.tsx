@@ -21,6 +21,7 @@ import { Artifacts } from "./pages/Artifacts.js";
 import { Chat } from "./pages/Chat.js";
 import { Command } from "./pages/Command.js";
 import { Login } from "./pages/Login.js";
+import { Missions } from "./pages/Missions.js";
 import { Settings } from "./pages/Settings.js";
 import { Vault } from "./pages/Vault.js";
 import { resumeSession } from "./session/login.js";
@@ -232,6 +233,23 @@ function Workbench({
         />
       )}
 
+      {active === "Missions" && (
+        <Missions
+          transport={transport}
+          onOpenChat={(turn) => {
+            // The thread the turn ran on, not merely the Chat page: a turn
+            // under an Objective is invisible from the free thread and vice
+            // versa, and arriving at the wrong one looks like lost history.
+            if (turn.identityId !== identityId) {
+              void identity.activate(turn.identityId);
+            }
+
+            setFreeThread(turn.objectiveId === undefined);
+            setActive("Chat");
+          }}
+        />
+      )}
+
       {active === "Artifacts" && <Artifacts transport={transport} />}
 
       {active === "Settings" && (
@@ -241,6 +259,7 @@ function Workbench({
       {active !== "Command" &&
         active !== "Chat" &&
         active !== "Vault" &&
+        active !== "Missions" &&
         active !== "Artifacts" &&
         active !== "Settings" && (
           <section

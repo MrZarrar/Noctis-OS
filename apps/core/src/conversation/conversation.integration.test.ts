@@ -607,6 +607,37 @@ describe("conversation service", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("GET /turns is every thread's turns, newest first: what Missions reads", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+
+    await connectFake(core, directory);
+    await setDefault(core);
+
+    const objectiveId = await activeObjective(core, "missions");
+    const free = await send(core, "free-turn");
+    const inObjective = await send(core, "objective-turn", { objectiveId });
+
+    const turns = await read(core, "/turns");
+    expect(turns.status).toBe(200);
+    // Two threads, one list, newest first — and each turn carries the host,
+    // model, job and items the page shows without a second read.
+    expect((turns.body.turns as Array<Body>).map((turn) => turn.id)).toEqual([
+      inObjective.body.id,
+      free.body.id,
+    ]);
+    expect((turns.body.turns as Array<Body>)[0]).toMatchObject({
+      objectiveId,
+      identityId: "vesper",
+      model: MODEL,
+      status: "queued",
+      items: [],
+    });
+    expect((turns.body.turns as Array<Body>)[1]?.objectiveId).toBeUndefined();
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("GET /models lists what connected nodes offer and each identity's default", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));

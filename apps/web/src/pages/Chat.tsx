@@ -39,8 +39,12 @@ const buttonStyle = {
 
 const mono = { fontFamily: typography.monoFamily, whiteSpace: "pre-wrap" } as const;
 
-/** One thing the runtime did, in a line. Text says what happened; nothing is inferred. */
-function ItemRow({ item }: { item: RuntimeItem }): JSX.Element {
+/**
+ * One thing the runtime did, in a line. Text says what happened; nothing is
+ * inferred. Exported because Missions shows the same items outside the
+ * conversation, and two renderings of an item would eventually disagree.
+ */
+export function ItemRow({ item }: { item: RuntimeItem }): JSX.Element {
   switch (item.kind) {
     case "agent_message":
       // The committed message lists itself under Messages; here only its status.

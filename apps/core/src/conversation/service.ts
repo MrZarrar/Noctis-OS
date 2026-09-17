@@ -144,6 +144,21 @@ export function listTurns(db: NoctisDatabase, threadId: string, limit: number): 
   return rows.map(toTurn);
 }
 
+/**
+ * Every thread's turns, newest first: what Missions shows.
+ *
+ * Ordered by `started_at` rather than by id, because two turns started in the
+ * same millisecond on different threads are still two turns, and the id breaks
+ * the tie the same way it does within a thread.
+ */
+export function listRecentTurns(db: NoctisDatabase, limit: number): Turn[] {
+  const rows = db
+    .prepare(`${TURN_SELECT} ORDER BY t.started_at DESC, t.id DESC LIMIT ?`)
+    .all(limit) as TurnRow[];
+
+  return rows.map(toTurn);
+}
+
 /** Bodies join from `identity_message_content`; a pre-0006 row with no body reads as empty. */
 export function listMessages(db: NoctisDatabase, threadId: string, limit: number): Message[] {
   const rows = db
