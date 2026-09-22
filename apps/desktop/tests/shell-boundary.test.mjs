@@ -61,13 +61,41 @@ test("the canary neither installs nor autostarts", () => {
   assert.ok(!manifest.includes("tauri-plugin-autostart"));
 });
 
-test("a content security policy is set and does not open the page to the network", () => {
-  const { csp } = readJson("../src-tauri/tauri.conf.json").app.security;
+/** `{ directive: [sources] }`, so each widening is asserted exactly rather than by substring. */
+function directives(csp) {
+  return Object.fromEntries(
+    csp
+      .split(";")
+      .map((part) => part.trim().split(/\s+/))
+      .filter(([name]) => name !== "")
+      .map(([name, ...sources]) => [name, sources]),
+  );
+}
+
+test("a content security policy is set and opens the page only as far as the remote desktop needs", () => {
+  const { csp, dangerousDisableAssetCspModification } = readJson("../src-tauri/tauri.conf.json").app
+    .security;
+  const policy = directives(csp);
 
   assert.ok(csp.startsWith("default-src 'self'"));
-  assert.ok(!csp.includes("unsafe-inline"));
-  assert.ok(!csp.includes("unsafe-eval"));
-  // The page reaches the core through Rust, so its own connect-src needs
-  // nothing beyond the IPC endpoints.
-  assert.ok(!/connect-src[^;]*https?:\/\/(?!ipc\.localhost)/.test(csp));
+  assert.deepEqual(policy["default-src"], ["'self'"]);
+  // WASM compilation, and nothing that evaluates a string: 'unsafe-eval' stays out.
+  assert.deepEqual(policy["script-src"], ["'self'", "'wasm-unsafe-eval'"]);
+  assert.ok(!/(^|[\s;])'unsafe-eval'/.test(csp));
+  // The IronRDP element injects a <style> and sets style attributes at runtime
+  // (remote-access.md §9.1). Inline style is allowed; inline script never is.
+  assert.deepEqual(policy["style-src"], ["'self'", "'unsafe-inline'"]);
+  assert.equal(csp.split("'unsafe-inline'").length - 1, 1);
+  // A nonce Tauri added to style-src would silently cancel 'unsafe-inline'.
+  assert.deepEqual(dangerousDisableAssetCspModification, ["style-src"]);
+  // The page reaches the core through Rust. Beyond IPC it may fetch the
+  // component's inlined data: WASM and open one socket: the Gateway, over TLS.
+  assert.deepEqual(policy["connect-src"], [
+    "'self'",
+    "ipc:",
+    "http://ipc.localhost",
+    "data:",
+    "wss://zarrarpc.tail9594ed.ts.net",
+  ]);
+  assert.equal(policy["frame-src"], undefined);
 });
