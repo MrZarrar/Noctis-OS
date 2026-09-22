@@ -99,6 +99,57 @@ grant time. `nameContains` is a case-insensitive substring, not a regular expres
 can come from a model and a model-supplied regex is a denial of service against the node. The walk is
 bounded (20,000 entries, 12 levels deep) and never descends a symlink or junction.
 
+## Starting without a person (ADR-0036)
+
+Default off. A worker that comes back from a reboot or a wake and never dials the core is a machine
+that is up and cannot run a turn — `docs/operations/WOL.md` §5. Register this only on a host whose
+autostart the owner has approved by name; it was approved for `zarrarpc` on 2026-09-22.
+
+**Run as the owner, never as `LocalSystem`.** Two independent reasons, and both bite silently:
+
+- The runtimes authenticate out of the owner's profile (`~/.codex`, `~/.claude`). As SYSTEM those
+  directories do not exist, every probe reports unavailable, and ADR-0023 leaves nothing to fall back
+  to — so the node would connect, look healthy, and refuse every turn.
+- `machineFingerprint()` in `main.ts` hashes `userInfo().username`. A different account is a
+  different node to the core, so an agent started under the wrong identity does not reconnect — it
+  asks to be paired again.
+
+The account's password is prompted for once at registration and stored by Windows. Run this in
+**PowerShell as the owner**, not elevated beyond what the task registration itself requires:
+
+```powershell
+$repo = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"
+$node = "C:\Program Files\nodejs\node.exe"   # must be the version in .nvmrc
+
+$action  = New-ScheduledTaskAction -Execute $node `
+  -Argument "$repo\apps\node-agent\dist\main.js" -WorkingDirectory $repo
+$trigger = New-ScheduledTaskTrigger -AtStartup
+# Restart rather than sit dead: a worker that gave up once is a worker nobody
+# notices is gone until a turn is refused.
+$settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "Noctis node agent" -Action $action -Trigger $trigger `
+  -Settings $settings -User "$env:COMPUTERNAME\$env:USERNAME" -RunLevel Limited -Password (
+    Read-Host "Windows password for $env:USERNAME" -AsSecureString |
+      ForEach-Object { [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) })
+```
+
+Check it the only way that means anything — reboot, do not log in for a minute, then read the core's
+node list from another machine and confirm the host is online. A task that shows `Ready` in Task
+Scheduler has proved nothing.
+
+To remove it: `Unregister-ScheduledTask -TaskName "Noctis node agent" -Confirm:$false`.
+
+**The version matters.** `.nvmrc`, `engines` and CI all pin Node 22.23.2. Pointing `$node` at
+whatever happens to be on `PATH` is how a worker ends up on a different runtime from CI without
+anyone deciding to.
+
+**What this does not give you.** The agent may now be running in a session with no desktop — before
+anyone logs in, and, under ADR-0035, in a console session an RDP connection has just evicted. Headless
+turns are fine there; GUI tools are not. "Desktop ready" stays something the node reports separately
+from "worker authenticated", and neither is assumed from the other.
+
 ## Credentials
 
 The core stores no node secret. A credential is derived from `NOCTIS_CORE_TOKEN`, the node id, and a
