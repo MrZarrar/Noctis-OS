@@ -45,8 +45,11 @@ describe("mintGatewayToken", () => {
     ).toBe(true);
   });
 
-  it("expires minutes after it is minted, because it only has to outlive the handshake", () => {
-    expect(GATEWAY_TOKEN_LIFETIME_SECONDS).toBeLessThanOrEqual(120);
+  it("expires seconds after it is minted, because it only has to outlive the handshake", () => {
+    // The Gateway adds ~5 min of leeway past exp and does not refuse a replayed
+    // jti (remote-access.md §9.5), so the lifetime is the only part of the
+    // replay window the core controls.
+    expect(GATEWAY_TOKEN_LIFETIME_SECONDS).toBeLessThanOrEqual(30);
     expect(minted.expiresAt).toBe(
       new Date(now + GATEWAY_TOKEN_LIFETIME_SECONDS * 1000).toISOString(),
     );

@@ -33,7 +33,7 @@ export const RemoteDesktopTargetSchema = z.object({ host: RemoteHostNameSchema }
  * What the page needs to connect, once.
  *
  * `token` is a Devolutions Gateway association token: RS256, it names
- * `destination` inside its signature, and it expires at `expiresAt`, minutes
+ * `destination` inside its signature, and it expires at `expiresAt`, seconds
  * after it was minted. It is returned and never stored — the ledger records
  * that a session was opened, not the key to it.
  *

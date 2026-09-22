@@ -2,10 +2,17 @@ import type { KeyObject } from "node:crypto";
 import { sign } from "node:crypto";
 
 /**
- * Two minutes, `New-DGatewayToken`'s own default. The token only has to get the
- * page through the RDCleanPath handshake; the RDP session it opens outlives it.
+ * Thirty seconds, not `New-DGatewayToken`'s two-minute default. The token only
+ * has to get the page through the RDCleanPath handshake, which it reaches
+ * milliseconds after minting; the RDP session it opens outlives it.
+ *
+ * Short because it is most of the replay window this side controls. Measured
+ * against Gateway 2026.3.0 (remote-access.md §9.5): it accepts the same token
+ * twice, it still honours a token about five minutes past `exp`, and it took
+ * one whose `nbf` was two minutes ahead — so clock skew between the core and
+ * the Gateway needs no allowance here either.
  */
-export const GATEWAY_TOKEN_LIFETIME_SECONDS = 120;
+export const GATEWAY_TOKEN_LIFETIME_SECONDS = 30;
 
 export interface MintGatewayTokenInput {
   /** The provisioner private key. The Gateway holds only the public half. */

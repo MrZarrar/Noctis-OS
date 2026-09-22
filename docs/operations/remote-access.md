@@ -299,8 +299,40 @@ cold-boot restart for ADR-0036 brought the listener up, and its firewall scope i
   Gateway → RDP, and the core's command carries only the host name.
 - **The WebView opens one socket of its own.** Until now the shell page opened none, because Rust
   signs every core call (Section 9.2). The RDP socket goes straight from the page to the Gateway.
-  It carries a two-minute Gateway token that names one destination, never the core token. That is
+  It carries a 30-second Gateway token (§9.5) that names one destination, never the core token. That is
   the boundary change the shell CSP records.
+
+### 9.5 Proven against the real Gateway, before any owner step
+
+**Measured** on `zarrarpc`, 2026-09-22. The installed `DevolutionsGateway.exe` ran as a **plain user
+process**: no service, no elevation, no firewall change. It had a scratch `--config-path`, a fresh
+key pair, and a single listener `http://127.0.0.1:7171` with no TCP entry, and it logged `Listening
+on http://127.0.0.1:7171` and nothing else. That proves §9.4's loopback-only config is accepted. The
+real IronRDP element in Chromium, under the proposed CSP (the `wss:` origin swapped for this loopback
+`ws:`), connected with tokens from the core's own `mintGatewayToken` (built `apps/core/dist`). The
+RDP target was `zarrarpc.tail9594ed.ts.net:3389`, this PC's real listener, and the Windows user was
+a **nonexistent** `noctis-probe-nonexistent`, so no real account could be locked or signed in.
+
+| Token                       | What happened                                                                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| core-minted, valid          | Gateway forwarded (`fwd … target="tcp://zarrarpc…:3389"`), TLS to RDP, **CredSSP reached Windows**: `STATUS_LOGON_FAILURE`, `kind 2`, 163 ms |
+| signed with a different key | refused: `kind 4` RDCleanPath, **HTTP 401**, "authorization error" in the Gateway log                                                        |
+| expired 10 min ago          | refused: HTTP 401                                                                                                                            |
+| the same valid token twice  | **accepted both times**: the Gateway does not refuse a replayed `jti` in this mode                                                           |
+| `nbf` 2 min in the future   | accepted                                                                                                                                     |
+| expired 30 s / 270 s ago    | accepted                                                                                                                                     |
+| expired 330 s ago           | refused, HTTP 401                                                                                                                            |
+
+What that means:
+
+- **The whole chain works up to the Windows password.** Page → Gateway → RDP → NLA is proven. The
+  one step not exercised is a correct password, because none was used.
+- **Unauthorized connection is rejected by the Gateway**, with HTTP 401 for a forged or expired
+  token. The panel's "Gateway refused the session token" message maps from exactly this.
+- **Replay window ≈ lifetime + ~5 min.** The Gateway allows about five minutes past `exp` and does
+  not track `jti`. So the core's lifetime was cut from the cmdlet's 120 s to **30 s**, the only part
+  of the window it controls. A replayed token still only opens a path to one RDP listener that
+  demands the Windows password. The same leeway means core/Gateway clock skew needs no allowance.
 
 ## References
 
