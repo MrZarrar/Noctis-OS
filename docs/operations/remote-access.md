@@ -378,6 +378,15 @@ proves Serve proxies the WebSocket upgrade and the Gateway holds the right key, 
 
 The service stays `DEMAND_START` (it does not survive a reboot) until autostart is approved by name.
 
+**Applied by the owner, 2026-09-22 night, and measured:** listening on `127.0.0.1:7171` only,
+nothing on 8181, and `tailscale serve status` shows `https://zarrarpc.tail9594ed.ts.net (tailnet
+only) |-- / proxy http://127.0.0.1:7171`. A foreign-key token over
+`wss://zarrarpc.tail9594ed.ts.net/jet/rdp` came back `RDCleanPath` **HTTP 401**. That proves Serve
+proxies the WebSocket upgrade and the service holds the provisioned key. The first attempt took 8.5 s,
+with Serve getting its certificate on the first request; the next two took 99 and 95 ms. One trap
+cost a round trip: the copied public key had lost its `BEGIN`/`END` lines, and the block's check
+refused it before writing anything, as intended.
+
 ## References
 
 - [IronRDP web client](https://github.com/Devolutions/IronRDP/tree/master/web-client),
