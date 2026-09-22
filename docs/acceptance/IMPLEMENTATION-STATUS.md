@@ -2388,3 +2388,32 @@ the live run.
 appearing as `sub_agent` items whose tool calls still ask needs both runtimes
 live. The `sub_agent` item kind exists in the contract and both adapters already
 emit it; nothing has watched one ask.
+
+#### 2026-09-22 ADR-0036 on `zarrarpc` — the worker starts itself, as the owner, with no password kept
+
+Registered per `docs/operations/nodes.md` "Starting without a person" and started once by hand
+before any reboot. Everything below was read off the machine, not inferred from the task's state:
+
+| Check                 | Result                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `LastTaskResult`      | `267009` — running; the agent never exits, so running is success                   |
+| The process           | PID 21768, **session 0**, created the second the task ran; owner `ZARRARPC\mmush`  |
+| Its connection        | `100.70.27.11:58919` → `100.89.64.5:443` Established, same port four seconds later |
+| Where that is         | the work PC's Tailscale Serve, matching the credential's `coreUrl`                 |
+| Listening sockets     | **none** — the no-listeners constraint holds under autostart                       |
+| Codex auth under S4U  | plain `~/.codex/auth.json`; nothing in Credential Manager                          |
+| Claude auth under S4U | plain `~/.claude/.credentials.json`; nothing in Credential Manager                 |
+
+**S4U works for a Microsoft account here.** `mmush` is `PrincipalSource: MicrosoftAccount`, and S4U
+with those is the variant most likely to fail with a logon error. It did not, so no copy of the
+owner's password is stored on this worker. The DPAPI caveat the runbook raises does not apply on this
+host either, because neither runtime keeps its token in anything DPAPI protects — both are files in
+the profile S4U loads.
+
+**Session 0 is the point, not a quirk.** The agent's command line is invisible to an unelevated
+shell because it runs in another logon session with no desktop. That is exactly the state ADR-0036
+predicted: correct for headless turns, wrong for GUI tools.
+
+**Not yet claimed.** A cold start — reboot with nobody logged in — has not been run; this was a
+manual start of a registered task. The providers the core sees in `hello.providers[]` were not read
+from the core; the plain auth files make them expected to be available, not observed.
