@@ -23,6 +23,7 @@
     "rust:test": "cargo test --workspace --locked",
     "typecheck": "tsc -b --pretty false",
     "test:boundary": "node --test scripts/donor-port/verify-read-only.test.mjs",
+    "test:deploy": "node --test scripts/deploy/*.test.mjs",
     "test:desktop": "node --test apps/desktop/tests/*.test.mjs",
     "test:unit": "vitest run",
     "test:migrations": "vitest run apps/core/src/db",

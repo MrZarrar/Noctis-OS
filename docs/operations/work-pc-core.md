@@ -69,6 +69,46 @@ Invoke-RestMethod https://mushafzarrar.tail9594ed.ts.net/health
 picture. Every other path needs the **work** core's token, which the personal PC does not hold and
 does not need: pairing carries a one-time code instead.
 
+## Deploy an update (one command)
+
+Once the install and environment above are done, every later update is:
+
+```powershell
+cd $HOME\Documents\Noctis-OS
+powershell -ExecutionPolicy Bypass -File scripts\deploy\work-pc.ps1
+```
+
+`scripts\deploy\work-pc.ps1` refuses unless the host is `mushafzarrar`, the branch is `main` and
+the tree is clean. It then runs `git pull --ff-only`, stops the running core (any `node` running
+`apps\core\dist\main.js`), and runs `npm ci`, `npm run build` and `npm run build:web` with
+`VITE_CORE_TOKEN` removed. It starts the core **hidden**, with stdout/stderr in
+`%LOCALAPPDATA%\Noctis\core.out.log` / `core.err.log`, and waits for `/health`. Before starting it
+re-reads every `NOCTIS_*` variable from the registry, so a variable set after this terminal opened is
+not silently missing. It registers no service or task: the core is an ordinary process, the last line
+prints its PID and the `Stop-Process` that ends it, and a reboot does not bring it back.
+`-DryRun` prints the plan and changes nothing.
+
+Stop any `vite` or `tauri dev` running from this checkout first. Their native binaries are the only
+files in `node_modules` Windows locks, and `npm ci` fails on a locked file. Worker nodes reconnect by
+themselves after the restart. A turn leased at that moment fails after 30 s rather than re-running.
+
+## Remote desktop (Task 3.9, ADR-0035)
+
+Off until both variables are set. Once, on the work PC:
+
+```powershell
+node scripts\deploy\gateway-key.mjs          # writes %LOCALAPPDATA%\Noctis\gateway-provisioner.{key,pem}, prints the public key
+[Environment]::SetEnvironmentVariable('NOCTIS_GATEWAY_PROVISIONER_KEY_FILE', "$env:LOCALAPPDATA\Noctis\gateway-provisioner.key", 'User')
+[Environment]::SetEnvironmentVariable('NOCTIS_REMOTE_DESKTOPS', '[{"host":"zarrarpc","gatewayUrl":"wss://zarrarpc.tail9594ed.ts.net/jet/rdp","destination":"zarrarpc.tail9594ed.ts.net:3389"}]', 'User')
+```
+
+The `.key` file is the credential: it signs the Gateway's session tokens, and it never leaves this
+machine. The printed **public** key goes into `provisioner.pem` on each Gateway host
+(remote-access.md §9). The key generator refuses to overwrite an existing pair, because a new private
+key silently locks out every Gateway still holding the old public one. The Windows password is not
+configured anywhere; the panel asks for it on every connect. Then deploy as above; the script prints
+`remote desktop: configured`.
+
 ## The front door (the phone reaches the core)
 
 The core serves the built page itself. That is not a convenience: `tailscale serve` maps the whole
