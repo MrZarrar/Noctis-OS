@@ -1,5 +1,5 @@
 import { generateKeyPairSync, verify } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -36,7 +36,10 @@ interface TestCore {
 
 const started: Array<{ core: RunningCore; directory: string }> = [];
 
-async function startTestCore(remoteDesktop?: CoreConfig["remoteDesktop"]): Promise<TestCore> {
+async function startTestCore(
+  remoteDesktop?: CoreConfig["remoteDesktop"],
+  page: Partial<CoreConfig> = {},
+): Promise<TestCore> {
   const directory = mkdtempSync(join(tmpdir(), "noctis-remote-"));
   const logs: string[] = [];
   const core = await startCore({
@@ -50,6 +53,7 @@ async function startTestCore(remoteDesktop?: CoreConfig["remoteDesktop"]): Promi
       logLevel: "debug",
       sessionTtlHours: 720,
       ...(remoteDesktop === undefined ? {} : { remoteDesktop }),
+      ...page,
     },
     env: {},
     logger: createLogger({ sink: (line) => logs.push(line), level: "debug" }),
@@ -256,5 +260,25 @@ describe("remote desktop session tokens (Task 3.9, ADR-0035)", () => {
     expect(replay.status).toBe(409);
     expect(replay.body.token).toBeUndefined();
     expect(eventsOf(core, "remote.session_opened.v1")).toHaveLength(1);
+  });
+
+  it("serves the page with a CSP the component can run under, only when a Gateway is configured", async () => {
+    const webRoot = mkdtempSync(join(tmpdir(), "noctis-remote-page-"));
+    writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
+    mkdirSync(join(webRoot, "assets"));
+
+    const policyOf = async (core: TestCore) =>
+      (await fetch(`${core.base}/`)).headers.get("content-security-policy") ?? "";
+
+    const off = await startTestCore(undefined, { webRoot });
+    expect(await policyOf(off)).not.toContain("wasm-unsafe-eval");
+
+    const on = await startTestCore(REMOTE, { webRoot });
+    expect(await policyOf(on)).toContain("'wasm-unsafe-eval'");
+    expect(await policyOf(on)).toContain(
+      "connect-src 'self' data: wss://zarrarpc.tail9594ed.ts.net",
+    );
+
+    rmSync(webRoot, { recursive: true, force: true });
   });
 });

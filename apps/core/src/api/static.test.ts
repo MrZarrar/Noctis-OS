@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { contentTypeFor, isApiPath, serveStatic } from "./static.js";
+import { contentTypeFor, isApiPath, pageSecurityPolicy, serveStatic } from "./static.js";
 
 let root: string;
 let outside: string;
@@ -294,5 +294,36 @@ describe("serveStatic", () => {
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
+  });
+});
+
+describe("pageSecurityPolicy (Task 3.9)", () => {
+  const strict =
+    "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
+
+  it("is unchanged when no remote desktop is configured", () => {
+    expect(pageSecurityPolicy([])).toBe(strict);
+  });
+
+  it("widens exactly as far as the remote desktop needs, for the configured Gateways only", () => {
+    const policy = pageSecurityPolicy(["wss://zarrarpc.tail9594ed.ts.net"]);
+
+    expect(policy.startsWith(strict)).toBe(true);
+    // WASM compiles; no string is ever evaluated, and no script is inline.
+    expect(policy).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(policy).not.toMatch(/(^|[\s;])'unsafe-eval'/);
+    // The element injects its own <style>; that is the only 'unsafe-inline'.
+    expect(policy).toContain("style-src 'self' 'unsafe-inline'");
+    expect(policy.split("'unsafe-inline'")).toHaveLength(2);
+    // Its WASM is an inlined data: URL it fetch()es, and its cursors are data: images.
+    expect(policy).toContain("connect-src 'self' data: wss://zarrarpc.tail9594ed.ts.net");
+    expect(policy).toContain("img-src 'self' data:");
+  });
+
+  it("is the header serveStatic sends when it is given one", async () => {
+    const { res, read } = capture();
+    await serveStatic(root, "/", res, pageSecurityPolicy(["wss://gw.example"]));
+
+    expect(read().headers["content-security-policy"]).toContain("wss://gw.example");
   });
 });

@@ -155,7 +155,7 @@ import {
   verifySession,
 } from "./session.js";
 import { openEventStream } from "./sse.js";
-import { isApiPath, serveStatic } from "./static.js";
+import { isApiPath, pageSecurityPolicy, serveStatic } from "./static.js";
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_PAGE_SIZE = 500;
@@ -1235,7 +1235,16 @@ export async function handleRequest(
     // the login screen has to load before there is a session to check. Assets
     // carry no user data and the tailnet is the boundary; see `static.ts`.
     if (deps.config.webRoot !== undefined && req.method === "GET" && !isApiPath(url.pathname)) {
-      await serveStatic(deps.config.webRoot, url.pathname, res);
+      await serveStatic(
+        deps.config.webRoot,
+        url.pathname,
+        res,
+        pageSecurityPolicy(
+          (deps.config.remoteDesktop?.targets ?? []).map(
+            (target) => new URL(target.gatewayUrl).origin,
+          ),
+        ),
+      );
       return;
     }
 

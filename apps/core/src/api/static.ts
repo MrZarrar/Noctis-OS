@@ -170,12 +170,31 @@ function cacheControlFor(pathname: string): string {
 const CONTENT_SECURITY_POLICY =
   "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
 
+/**
+ * The policy above, widened for the embedded remote desktop (ADR-0035) when —
+ * and only when — the core has Gateways configured, and only to those origins.
+ *
+ * Each widening is the IronRDP element's, measured (remote-access.md §9.1): its
+ * WASM is an inlined `data:` URL it `fetch()`es and compiles, it injects its
+ * own `<style>` and `style` attributes, its cursors are `data:` images, and
+ * its one socket is the Gateway's `wss:`. No `'unsafe-eval'`, and no inline
+ * script. The same four widenings as the desktop shell's `tauri.conf.json`.
+ */
+export function pageSecurityPolicy(gatewayOrigins: readonly string[]): string {
+  if (gatewayOrigins.length === 0) {
+    return CONTENT_SECURITY_POLICY;
+  }
+
+  return `${CONTENT_SECURITY_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
+}
+
 function respond(
   res: ServerResponse,
   status: number,
   contentType: string,
   cacheControl: string,
   body: Buffer,
+  policy: string = CONTENT_SECURITY_POLICY,
 ): void {
   res.writeHead(status, {
     "content-type": contentType,
@@ -185,7 +204,7 @@ function respond(
     // the origin that holds the session cookie, so a browser talked into
     // treating one of these bodies as a script is a same-origin script.
     "x-content-type-options": "nosniff",
-    "content-security-policy": CONTENT_SECURITY_POLICY,
+    "content-security-policy": policy,
     // For a browser too old to read `frame-ancestors`. Saying both is the whole
     // cost of covering it.
     "x-frame-options": "DENY",
@@ -205,6 +224,7 @@ export async function serveStatic(
   root: string,
   pathname: string,
   res: ServerResponse,
+  policy: string = CONTENT_SECURITY_POLICY,
 ): Promise<void> {
   const candidate = candidateFor(root, pathname);
 
@@ -212,7 +232,7 @@ export async function serveStatic(
     // Outside the root. No SPA fallback here: laundering an escape attempt into
     // a 200 with the app shell would hide the attempt from every log that looks
     // at status codes.
-    notFound(res);
+    notFound(res, policy);
     return;
   }
 
@@ -226,7 +246,7 @@ export async function serveStatic(
   // decided. The hashed assets, which are the bulk of the bytes, are already
   // never re-fetched.
   if (file !== undefined) {
-    respond(res, 200, contentTypeFor(target), cacheControlFor(pathname), file);
+    respond(res, 200, contentTypeFor(target), cacheControlFor(pathname), file, policy);
     return;
   }
 
@@ -234,14 +254,14 @@ export async function serveStatic(
     const index = await readWithin(root, join(root, "index.html"));
 
     if (index !== undefined) {
-      respond(res, 200, "text/html; charset=utf-8", "no-cache", index);
+      respond(res, 200, "text/html; charset=utf-8", "no-cache", index, policy);
       return;
     }
   }
 
-  notFound(res);
+  notFound(res, policy);
 }
 
-function notFound(res: ServerResponse): void {
-  respond(res, 404, "text/plain; charset=utf-8", "no-store", Buffer.from("not found"));
+function notFound(res: ServerResponse, policy: string): void {
+  respond(res, 404, "text/plain; charset=utf-8", "no-store", Buffer.from("not found"), policy);
 }
