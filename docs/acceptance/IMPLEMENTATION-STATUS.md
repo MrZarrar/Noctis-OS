@@ -2358,3 +2358,33 @@ backend, including AnyDesk's own baseline, which has to be recorded before anyth
 can be called equivalent to it. No magic packet sent. The UEFI wake setting unread.
 Whether GUI input injection fails outright on a disconnected session is expected,
 not verified, and 3.9 should verify it first because the recommendation rests on it.
+
+#### 2026-09-22 Task 3.3 (first half) — two Objectives at once, proven rather than assumed
+
+3.3's gate has two halves. The first — "two turns on two Objectives run
+concurrently on one node" — turned out to need no code at all, which is worth
+writing down precisely because nothing announces it. `routeJob` sorts candidates
+by `activeLeases` only to break ties between nodes, never as a cap, and the node
+agent starts each assignment with `void execute(assignment)` into a `Map` keyed
+by job id. Two independent files already agreed; nobody had ever asked them to
+prove it together.
+
+`conversation.integration.test.ts` now does. Two active Objectives, one node, and
+the second prompt is sent while the first job is still leased — if the core ran
+one turn per node the second job frame would never arrive and the test would time
+out there. Both jobs are then confirmed in flight in the same `SELECT`, answered
+**out of order**, and each thread is checked to hold its own prompt and its own
+reply. Finishing the second Objective's turn leaves the first one `running`, and
+the two `identity_sessions` rows come out one per thread, so the next turn on
+each Objective resumes its own runtime session rather than the other's.
+
+**Fixture proof, not live proof.** The node is the fake socket, not a machine
+running Codex. What this establishes is that the core will hand a real node two
+turns at once and keep their results apart; what it does not establish is that
+two `codex.exe` processes on one PC behave under a shared sandbox, which needs
+the live run.
+
+**The second half is untouched.** A Claude `Agent` call and a Codex collab agent
+appearing as `sub_agent` items whose tool calls still ask needs both runtimes
+live. The `sub_agent` item kind exists in the contract and both adapters already
+emit it; nothing has watched one ask.

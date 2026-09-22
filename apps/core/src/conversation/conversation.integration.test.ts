@@ -776,4 +776,142 @@ describe("conversation service", () => {
 
     rmSync(directory, { recursive: true, force: true });
   });
+
+  // Task 3.3's first half. The router treats `activeLeases` as a tie-break
+  // between nodes and never as a cap, and the agent starts each assignment with
+  // `void execute(...)`, so nothing in either process serialises a node's work.
+  // That is a claim about two files reading each other correctly, which is
+  // exactly the kind of claim that stops being true by accident.
+  it("two Objectives run at once on one node, answer out of order, and do not mix", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const alpha = await activeObjective(core, "alpha");
+    const beta = await activeObjective(core, "beta");
+
+    await setDefault(core);
+
+    const first = await send(core, "concurrent-alpha", { objectiveId: alpha });
+    await waitFor(() => node.jobs().length === 1, "the first Objective's job");
+    const alphaJob = lastTurnJob(node).assignment.jobId;
+
+    // Nothing has finished the first job, and nothing will until after the
+    // second one has answered. A core that ran one turn per node at a time
+    // would leave this prompt queued, so the second frame arriving at all is
+    // most of the assertion.
+    const second = await send(core, "concurrent-beta", { objectiveId: beta });
+    await waitFor(() => node.jobs().length === 2, "the second Objective's job");
+    const betaJob = lastTurnJob(node).assignment.jobId;
+
+    expect(betaJob).not.toBe(alphaJob);
+    expect(second.body.threadId).not.toBe(first.body.threadId);
+
+    const inFlight = core.core.kernel.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM node_jobs WHERE id IN (?, ?) AND status IN ('leased', 'running')",
+      )
+      .get(alphaJob, betaJob) as { n: number };
+    expect(inFlight.n).toBe(2);
+
+    // Out of order on purpose: the Objective that was asked second answers first.
+    node.frame({
+      kind: "stream",
+      jobId: betaJob,
+      sequence: 0,
+      item: { itemId: "b1", kind: "agent_message", status: "completed", text: "beta answered" },
+    });
+    node.frame({
+      kind: "stream",
+      jobId: alphaJob,
+      sequence: 0,
+      item: { itemId: "a1", kind: "agent_message", status: "completed", text: "alpha answered" },
+    });
+
+    async function bodiesOf(threadId: string): Promise<string[]> {
+      const response = await read(core, `/threads/${threadId}/messages`);
+
+      return (response.body.messages as Array<Body>).map((message) => message.body as string);
+    }
+
+    let alphaBodies: string[] = [];
+    let betaBodies: string[] = [];
+    await waitFor(() => {
+      void bodiesOf(first.body.threadId as string).then((bodies) => {
+        alphaBodies = bodies;
+      });
+      void bodiesOf(second.body.threadId as string).then((bodies) => {
+        betaBodies = bodies;
+      });
+
+      return alphaBodies.length === 2 && betaBodies.length === 2;
+    }, "a reply on each thread");
+
+    // Each Objective's thread holds its own prompt and its own answer. Two
+    // threads, two histories — the same separation the free/Objective split
+    // proved, now under simultaneous load rather than one after the other.
+    expect(alphaBodies).toEqual(["prompt concurrent-alpha", "alpha answered"]);
+    expect(betaBodies).toEqual(["prompt concurrent-beta", "beta answered"]);
+
+    node.frame({
+      kind: "result",
+      jobId: betaJob,
+      outcome: "succeeded",
+      evidence: {
+        model: MODEL,
+        sessionRef: "session-beta",
+        itemCount: 1,
+        finalText: "beta",
+        stoppedReason: "completed",
+      },
+    });
+
+    const alphaId = first.body.id as string;
+    const betaId = second.body.id as string;
+
+    let betaTurn: Body = {};
+    await waitFor(() => {
+      void read(core, `/turns/${betaId}`).then((response) => {
+        betaTurn = response.body;
+      });
+
+      return betaTurn.status === "completed";
+    }, "the second Objective's turn to finish");
+
+    // The one that is still working is untouched by the one that finished.
+    const alphaMidway = await read(core, `/turns/${alphaId}`);
+    expect(alphaMidway.body.status).toBe("running");
+
+    node.frame({
+      kind: "result",
+      jobId: alphaJob,
+      outcome: "succeeded",
+      evidence: {
+        model: MODEL,
+        sessionRef: "session-alpha",
+        itemCount: 1,
+        finalText: "alpha",
+        stoppedReason: "completed",
+      },
+    });
+
+    let alphaTurn: Body = {};
+    await waitFor(() => {
+      void read(core, `/turns/${alphaId}`).then((response) => {
+        alphaTurn = response.body;
+      });
+
+      return alphaTurn.status === "completed";
+    }, "the first Objective's turn to finish");
+
+    // Each thread resumes its own runtime session next time, not the other's.
+    const sessions = core.core.kernel.db
+      .prepare("SELECT thread_id, session_ref FROM identity_sessions ORDER BY session_ref")
+      .all() as Array<{ thread_id: string; session_ref: string }>;
+    expect(sessions).toEqual([
+      { thread_id: first.body.threadId, session_ref: "session-alpha" },
+      { thread_id: second.body.threadId, session_ref: "session-beta" },
+    ]);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
 });
