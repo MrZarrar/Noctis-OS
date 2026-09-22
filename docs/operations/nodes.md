@@ -145,10 +145,22 @@ the profile it is fine, and if it uses DPAPI it will fail. **The symptom is spec
 comes online and every provider reports unavailable in `hello.providers[]`. If that happens,
 re-register with `-User`/`-Password` instead of `-Principal` and accept the stored password.
 
-Check it the only way that means anything — reboot, do not log in for a minute, then read the core's
-node list from another machine and confirm the host is online **and that its providers are
+Check it the only way that means anything — **Restart**, do not log in for a minute, then read the
+core's node list from another machine and confirm the host is online **and that its providers are
 available**. A task that shows `Ready` in Task Scheduler has proved nothing, and a node that is
 online but refuses every turn is the failure this section is most likely to produce.
+
+**Restart, not Shut down.** With Fast Startup on (`HiberbootEnabled = 1`, the Windows default), Shut
+down logs the user off and _hibernates_ session 0 rather than ending it, and power-on resumes it —
+the event log records `Kernel-Boot` 27 with boot type `1`, and `LastBootUpTime` does not move. The
+agent lives in session 0, so it survives a Shut down with its process intact and the at-startup
+trigger never fires. That is a real test of reconnection (its socket is dead on resume) and no test
+of the trigger at all. Only Restart, boot type `0`, proves the trigger.
+
+**The tailnet has to be there before anyone logs in.** Tailscale on Windows follows the signed-in
+user unless it runs in unattended mode (`tailscale set --unattended`, off by default). Without it a
+worker can be running, retrying, and unable to reach the core until someone logs in — "reachable"
+and "worker authenticated" both wait on the login this section exists to make unnecessary.
 
 To remove it: `Unregister-ScheduledTask -TaskName "Noctis node agent" -Confirm:$false`.
 

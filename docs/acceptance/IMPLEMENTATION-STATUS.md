@@ -2417,3 +2417,27 @@ predicted: correct for headless turns, wrong for GUI tools.
 **Not yet claimed.** A cold start — reboot with nobody logged in — has not been run; this was a
 manual start of a registered task. The providers the core sees in `hello.providers[]` were not read
 from the core; the plain auth files make them expected to be available, not observed.
+
+#### 2026-09-22 The reconnect fix, proven on the shutdown people actually do
+
+`7f8ba24` stopped the agent exiting 0 when its socket goes. The first live proof of it was not the
+test planned for it. The owner shut the PC down and powered it on, which with Fast Startup is a
+hibernation of session 0, not a boot:
+
+| Event                    | Time     | Read from                                                |
+| ------------------------ | -------- | -------------------------------------------------------- |
+| Agent started (manually) | 21:39:03 | PID 21528, session 0, connected on local port `55259`    |
+| Shut down → hibernate    | 21:43:35 | `Kernel-Power` 187 `SetSuspendState`, then 42            |
+| Power on                 | 21:44:49 | `Kernel-Boot` 27, **boot type 1** (Fast Startup)         |
+| Owner logged in          | 21:44:50 | first `explorer.exe`                                     |
+| Agent reconnected        | 21:46:15 | **same PID 21528**, new connection on local port `58057` |
+
+The process came back from hibernation with a dead socket, kept retrying, and reconnected without
+anyone touching it. Before `7f8ba24` that dead socket was the last thing holding the event loop, so
+this — the everyday Shut down and power on — ended the worker every time. `LastBootUpTime` stayed at
+the 21:32:25 cold boot throughout, and the at-startup trigger did not fire, because nothing booted.
+
+**Not proven by this.** The trigger on a cold boot (Restart, boot type `0`) with the fix in place.
+Whether the tailnet exists before login: the reconnect landed 86 s after login, which a Tailscale
+waiting for the user and a backoff interval would both explain. Tailscale is not in unattended mode
+(its default), so the expected answer is that it does not.
