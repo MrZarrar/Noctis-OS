@@ -388,6 +388,14 @@ while someone is connected. Two new listeners on the target host (RDP itself and
 authorised by this decision, tailnet-scoped only, which is the documented exception in the
 "no listeners on workers" constraint and not a general relaxation of it.
 
+**The Windows credential is typed per session and stored nowhere.** Owner decision, 2026-09-22. RDP
+with NLA needs the target account's password — for a Microsoft account, the account password, not
+the PIN. The panel asks for it on each connect and hands it to the component; it travels page →
+Gateway → RDP and no process persists it, not the core, not the page's storage, not a log. What the
+core _does_ mint is the Gateway's session token, which names the destination and expires, so the
+page never holds anything that outlives the session. A stored credential was offered and declined: a
+leaked core would become a leaked Windows login.
+
 ## ADR-0036: The node agent starts as the owner, never as SYSTEM
 
 **Decision:** Node-agent autostart on a worker is registered to run in the owner's user context
