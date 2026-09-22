@@ -114,30 +114,41 @@ autostart the owner has approved by name; it was approved for `zarrarpc` on 2026
   different node to the core, so an agent started under the wrong identity does not reconnect — it
   asks to be paired again.
 
-The account's password is prompted for once at registration and stored by Windows. Run this in
-**PowerShell as the owner**, not elevated beyond what the task registration itself requires:
+Registered with `-LogonType S4U`, which runs as that account with no logon session and **no stored
+password**. Windows' other option for "whether the user is logged on or not" is to keep the account's
+password in the credential store; a worker that needs a copy of the owner's Windows password lying on
+it to start a process is a worse trade than the one thing S4U gives up (see below). Run this in
+**elevated PowerShell** — an at-startup trigger needs it — while logged in as the owner:
 
 ```powershell
 $repo = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"
 $node = "C:\Program Files\nodejs\node.exe"   # must be the version in .nvmrc
 
-$action  = New-ScheduledTaskAction -Execute $node `
+$action    = New-ScheduledTaskAction -Execute $node `
   -Argument "$repo\apps\node-agent\dist\main.js" -WorkingDirectory $repo
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$trigger   = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$env:USERNAME" `
+  -LogonType S4U -RunLevel Limited
 # Restart rather than sit dead: a worker that gave up once is a worker nobody
 # notices is gone until a turn is refused.
-$settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+$settings  = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName "Noctis node agent" -Action $action -Trigger $trigger `
-  -Settings $settings -User "$env:COMPUTERNAME\$env:USERNAME" -RunLevel Limited -Password (
-    Read-Host "Windows password for $env:USERNAME" -AsSecureString |
-      ForEach-Object { [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($_)) })
+  -Principal $principal -Settings $settings
 ```
 
+**What S4U gives up, and how it would show.** An S4U logon has the owner's identity and profile but
+no credentials for Windows authentication, and it cannot unwrap DPAPI data protected by the password.
+Outbound TLS to the core carries a bearer token, not a Windows credential, so the agent itself is
+unaffected. The runtimes are the open question: if a provider keeps its token in a plain file under
+the profile it is fine, and if it uses DPAPI it will fail. **The symptom is specific** — the node
+comes online and every provider reports unavailable in `hello.providers[]`. If that happens,
+re-register with `-User`/`-Password` instead of `-Principal` and accept the stored password.
+
 Check it the only way that means anything — reboot, do not log in for a minute, then read the core's
-node list from another machine and confirm the host is online. A task that shows `Ready` in Task
-Scheduler has proved nothing.
+node list from another machine and confirm the host is online **and that its providers are
+available**. A task that shows `Ready` in Task Scheduler has proved nothing, and a node that is
+online but refuses every turn is the failure this section is most likely to produce.
 
 To remove it: `Unregister-ScheduledTask -TaskName "Noctis node agent" -Confirm:$false`.
 
