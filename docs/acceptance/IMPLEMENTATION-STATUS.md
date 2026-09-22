@@ -2441,3 +2441,26 @@ the 21:32:25 cold boot throughout, and the at-startup trigger did not fire, beca
 Whether the tailnet exists before login: the reconnect landed 86 s after login, which a Tailscale
 waiting for the user and a backoff interval would both explain. Tailscale is not in unattended mode
 (its default), so the expected answer is that it does not.
+
+#### 2026-09-22 Cold boot with the fix — the worker comes back with nobody touching it
+
+Restart with `7f8ba24` built and Tailscale in unattended mode (`tailscale set --unattended`,
+`ForceDaemon: true`):
+
+| Event                   | Time     | Read from                                                   |
+| ----------------------- | -------- | ----------------------------------------------------------- |
+| Boot                    | 21:53:10 | `Kernel-Boot` 27, **boot type 0** — a real cold boot        |
+| Task fired              | 21:53:22 | `LastRunTime`; `LastTaskResult` `267009`, running           |
+| Owner signed in         | 21:53:24 | first `explorer.exe`, 14 s after boot                       |
+| Agent connected to core | 21:53:39 | PID 4208, `:55827` → `100.89.64.5:443`, 17 s after starting |
+| RDP                     | —        | `3389` listening                                            |
+
+The same sequence at 21:32 — task fired, first dial failed because the tailnet was not up — ended
+with `LastTaskResult 0` and no agent. With the fix it ends connected. No one started the agent,
+restarted the task or touched Noctis.
+
+**What this does not separate.** Sign-in landed 14 s after boot on both cold boots, which the owner
+did not do by hand; Automatic Restart Sign-On or Windows Hello face sign-in would each explain it,
+and the Security log that would distinguish them needs elevation. So the agent connected with a
+user session present, and a boot with no session at all is not directly observed. Unattended mode is
+what removes Tailscale's dependency on that session, and it is on.

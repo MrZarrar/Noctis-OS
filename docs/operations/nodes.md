@@ -145,9 +145,11 @@ the profile it is fine, and if it uses DPAPI it will fail. **The symptom is spec
 comes online and every provider reports unavailable in `hello.providers[]`. If that happens,
 re-register with `-User`/`-Password` instead of `-Principal` and accept the stored password.
 
-Check it the only way that means anything — **Restart**, do not log in for a minute, then read the
+Check it the only way that means anything — **Restart**, touch nothing Noctis-related, then read the
 core's node list from another machine and confirm the host is online **and that its providers are
-available**. A task that shows `Ready` in Task Scheduler has proved nothing, and a node that is
+available**. "Do not log in" is not a test you can rely on: on `zarrarpc` Windows signed the owner
+in 14 s after every cold boot without a key press (Automatic Restart Sign-On or Hello face sign-in).
+What proves the task is that its `LastRunTime` matches the boot and nobody started anything. A task that shows `Ready` in Task Scheduler has proved nothing, and a node that is
 online but refuses every turn is the failure this section is most likely to produce.
 
 **Restart, not Shut down.** With Fast Startup on (`HiberbootEnabled = 1`, the Windows default), Shut
