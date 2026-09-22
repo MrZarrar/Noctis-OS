@@ -1,6 +1,10 @@
-import { ECDH } from "node:crypto";
-import { existsSync } from "node:fs";
+import type { KeyObject } from "node:crypto";
+import { createPrivateKey, ECDH } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+import { RemoteHostNameSchema } from "@noctis/contracts";
+import { z } from "zod";
 
 import type { LogLevel } from "../logging.js";
 import type { VapidKeys } from "../notify/push.js";
@@ -37,6 +41,30 @@ export interface CoreConfig {
    * says so. The private key is a credential and lives only here, in memory.
    */
   vapid?: VapidKeys;
+  /**
+   * The embedded remote desktop (ADR-0035), or absent — the default. Absent,
+   * `/remote/hosts` lists nothing and `remote.open_session` answers 404.
+   */
+  remoteDesktop?: RemoteDesktopConfig;
+}
+
+export interface RemoteDesktopTargetConfig {
+  /** What a page asks for. */
+  host: string;
+  /** The Gateway's RDCleanPath endpoint, `wss://…/jet/rdp`. */
+  gatewayUrl: string;
+  /** `host:port` of the RDP listener, signed into every token for this host. */
+  destination: string;
+}
+
+export interface RemoteDesktopConfig {
+  targets: readonly RemoteDesktopTargetConfig[];
+  /**
+   * The Gateway provisioner private key. The one secret on this path: it signs
+   * tokens, and it is read once from a file and held only in memory. The
+   * Windows password is not here and never is.
+   */
+  privateKey: KeyObject;
 }
 
 /** Noctis-only default. Deliberately not a port the donor or any common tool uses. */
@@ -282,6 +310,88 @@ function parseVapid(env: Readonly<Record<string, string | undefined>>): VapidKey
   return { publicKey, privateKey, subject };
 }
 
+const RemoteDesktopTargetsSchema = z
+  .array(
+    z
+      .object({
+        host: RemoteHostNameSchema,
+        gatewayUrl: z.url({ protocol: /^wss$/ }),
+        destination: z.string().regex(/^[A-Za-z0-9.-]+:\d{1,5}$/),
+      })
+      .strict(),
+  )
+  .min(1)
+  .refine((targets) => new Set(targets.map((target) => target.host)).size === targets.length, {
+    message: "host names must be unique",
+  });
+
+const REMOTE_TARGETS_EXAMPLE =
+  '[{"host":"zarrarpc","gatewayUrl":"wss://zarrarpc.tail9594ed.ts.net/jet/rdp","destination":"zarrarpc.tail9594ed.ts.net:3389"}]';
+
+/**
+ * Both variables or neither, as with VAPID: an allowlist with no key could
+ * never sign, and a key with no allowlist has nowhere to send anyone.
+ *
+ * The key is checked for the one thing the Gateway will need of it — an RSA
+ * private key big enough for RS256 — here, at load, so a public key pasted
+ * into the wrong file is a `ConfigurationError` today rather than a 403 from
+ * the Gateway on the first connect. Refusals name the variable and the file,
+ * never the key's contents.
+ */
+function parseRemoteDesktop(
+  env: Readonly<Record<string, string | undefined>>,
+): RemoteDesktopConfig | undefined {
+  const rawTargets = env.NOCTIS_REMOTE_DESKTOPS?.trim() ?? "";
+  const keyFile = env.NOCTIS_GATEWAY_PROVISIONER_KEY_FILE?.trim() ?? "";
+
+  if (rawTargets === "" && keyFile === "") {
+    return undefined;
+  }
+
+  if (rawTargets === "" || keyFile === "") {
+    throw new ConfigurationError(
+      `The remote desktop needs both NOCTIS_REMOTE_DESKTOPS and NOCTIS_GATEWAY_PROVISIONER_KEY_FILE, or neither. Missing: ${
+        rawTargets === "" ? "NOCTIS_REMOTE_DESKTOPS" : "NOCTIS_GATEWAY_PROVISIONER_KEY_FILE"
+      }.`,
+    );
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(rawTargets) as unknown;
+  } catch {
+    json = undefined;
+  }
+
+  const targets = RemoteDesktopTargetsSchema.safeParse(json);
+
+  if (!targets.success) {
+    throw new ConfigurationError(
+      `NOCTIS_REMOTE_DESKTOPS must be a JSON array of unique {host, gatewayUrl, destination}, with a bare lowercase host name, a wss:// gatewayUrl and a host:port destination, for example ${REMOTE_TARGETS_EXAMPLE}`,
+    );
+  }
+
+  let privateKey: KeyObject;
+  try {
+    privateKey = createPrivateKey(readFileSync(resolve(keyFile)));
+  } catch {
+    throw new ConfigurationError(
+      `NOCTIS_GATEWAY_PROVISIONER_KEY_FILE is not a readable PEM private key: ${resolve(keyFile)}`,
+    );
+  }
+
+  if (
+    privateKey.asymmetricKeyType !== "rsa" ||
+    (privateKey.asymmetricKeyDetails?.modulusLength ?? 0) < 2048
+  ) {
+    throw new ConfigurationError(
+      `NOCTIS_GATEWAY_PROVISIONER_KEY_FILE must be an RSA private key of at least 2048 bits, which is what the Gateway's RS256 tokens are signed with: ${resolve(keyFile)}`,
+    );
+  }
+
+  return { targets: targets.data, privateKey };
+}
+
 /**
  * Reads configuration and refuses to produce a usable value for anything
  * unsafe. There is no permissive fallback: an unset token, an unexplained
@@ -309,6 +419,7 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
 
   const webRoot = parseWebRoot(env.NOCTIS_WEB_ROOT, parseOrigins(env.NOCTIS_ALLOWED_ORIGINS));
   const vapid = parseVapid(env);
+  const remoteDesktop = parseRemoteDesktop(env);
   const logLevel = env.NOCTIS_LOG_LEVEL?.trim() ?? "info";
 
   if (!LOG_LEVELS.has(logLevel)) {
@@ -325,5 +436,6 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     sessionTtlHours: parseSessionTtlHours(env.NOCTIS_SESSION_TTL_HOURS),
     ...(webRoot === undefined ? {} : { webRoot }),
     ...(vapid === undefined ? {} : { vapid }),
+    ...(remoteDesktop === undefined ? {} : { remoteDesktop }),
   };
 }

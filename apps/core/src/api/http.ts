@@ -21,6 +21,7 @@ import {
   ImportArtifactCommandSchema,
   IssueNodePairingCodeCommandSchema,
   ObserveSourceCommandSchema,
+  OpenRemoteDesktopCommandSchema,
   PairNodeRequestSchema,
   RecallVaultCommandSchema,
   RecordArtifactCommandSchema,
@@ -134,6 +135,7 @@ import {
   registerSource,
   sourceState,
 } from "../sources/service.js";
+import { listRemoteHosts, openRemoteDesktop } from "../remote/service.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
 import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
@@ -543,6 +545,14 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     (deps, context, command) => deps.conversation.cancelTurn(context, command),
     (db, id) => getTurnByJobId(db, id),
   ),
+  "remote.open_session": defineDepsCommand(
+    OpenRemoteDesktopCommandSchema,
+    (deps, context, command) =>
+      openRemoteDesktop(deps.kernel, context, command, deps.config.remoteDesktop),
+    // Never a replay: the only thing worth replaying is the token, and it is
+    // stored nowhere. A reused key is a 409 and the page asks with a new one.
+    () => undefined,
+  ),
   "identity.set_default_model": defineCommand(
     SetIdentityDefaultModelCommandSchema,
     setDefaultModel,
@@ -702,6 +712,10 @@ function handleRead(
       status: 400,
       body: errorBody("invalid_request", `limit must be an integer 1-${String(maxLimit)}`),
     };
+  }
+
+  if (segments.length === 2 && segments[0] === "remote" && segments[1] === "hosts") {
+    return { status: 200, body: { hosts: listRemoteHosts(deps.config.remoteDesktop) } };
   }
 
   if (segments.length === 1 && segments[0] === "objectives") {

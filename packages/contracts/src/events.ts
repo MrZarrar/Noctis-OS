@@ -67,6 +67,11 @@ export const EVENT_NAMES = [
   "authority.declined.v1",
   "provider.decision_recorded.v1",
   "identity.default_model_set.v1",
+  /**
+   * Task 3.9: the core minted a Gateway token for a named host. The payload
+   * names the host, destination and expiry, never the token (ADR-0035).
+   */
+  "remote.session_opened.v1",
 ] as const;
 
 export const EventNameSchema = z.enum(EVENT_NAMES);
@@ -95,6 +100,8 @@ export const StreamTypeSchema = z.enum([
   "artifact",
   /** Phase 10: which runtime was chosen, and why, is a fact about the provider. */
   "provider",
+  /** Task 3.9: one stream per remote-desktop session, keyed by its association id. */
+  "remote",
 ]);
 
 export const ActorTypeSchema = z.enum(["user", "identity", "system", "node", "adapter"]);
