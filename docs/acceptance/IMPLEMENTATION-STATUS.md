@@ -2315,3 +2315,46 @@ answered from the wrong machine — correctly, and uselessly. The pinning mechan
 works; what is missing is any way for a person to reach it. That belongs in Slice
 2 beside the phone, because "which machine" and "which device am I on" are the
 same question asked twice.
+
+### 2026-09-22 Slice 3 Task 3.8 and Slice 5 Task 5.3 — two discoveries, no code
+
+Both are inspections. Nothing was installed, enabled, sent or changed on any
+machine; the only artefacts are `docs/operations/remote-access.md` and
+`docs/operations/WOL.md`, and both label every measured fact as measured.
+
+**3.8 found a fork, not a ranking.** Noctis ships two clients and both of them
+are a web page — the Tauri shell is WebView2, the phone is the same bundle over
+Tailscale Serve. So "embedded" means "renderable by a web page", and that one
+constraint splits the candidates cleanly in half. `@devolutions/iron-remote-desktop-rdp`
+(MIT OR Apache-2.0, published 2026-05-27) is the only maintained, permissively
+licensed backend that embeds — and it speaks RDP, which on a Windows client SKU
+evicts the console session. Sunshine, Moonlight and the incumbent AnyDesk all
+share the console session and none of them can be hosted by a web page. There is
+no option that gives both, short of the custom transport 3.9 forbids.
+
+That matters beyond the panel. The node agent's GUI tools drive the console
+desktop, so choosing the embedded panel makes 3.10's handover _exclusive_ — agent
+GUI work stops while a human is connected — rather than cooperative. The document
+recommends taking that trade and stops for the owner's answer, as the task says to.
+
+**5.3 found the hardware ready and the software not.** `powercfg /a` reports S3
+and Hibernate with no Modern Standby, and `powercfg /devicequery wake_armed`
+already lists the Realtek 2.5GbE adapter: Windows' half of wake-on-LAN is on
+without anyone configuring it. The machine also sleeps rather than shuts down —
+last boot 2026-09-16, with S3 cycles through the week — so the realistic wake case
+is the easy one.
+
+Two blockers, both named rather than worked around. Nothing on the home LAN can
+send a magic packet: the ARP table holds the router and one phone, there is no
+subnet router on the tailnet, and Tailscale 1.102.2 has no `wake` subcommand.
+And, separately, **there is no Noctis autostart on `zarrarpc` at all** — no
+service, no scheduled task, no startup entry — so a successful wake would reach
+"reachable" and never reach "worker authenticated". The second blocker is free to
+fix and needs only the autostart approval the plan already keeps default-off; the
+first is a purchase and stays the owner's.
+
+**Not claimed.** No latency, frame rate or resolution figure for any remote-desktop
+backend, including AnyDesk's own baseline, which has to be recorded before anything
+can be called equivalent to it. No magic packet sent. The UEFI wake setting unread.
+Whether GUI input injection fails outright on a disconnected session is expected,
+not verified, and 3.9 should verify it first because the recommendation rests on it.
