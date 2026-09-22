@@ -22,6 +22,7 @@ import { Chat } from "./pages/Chat.js";
 import { Command } from "./pages/Command.js";
 import { Login } from "./pages/Login.js";
 import { Missions } from "./pages/Missions.js";
+import { Nodes } from "./pages/Nodes.js";
 import { Settings } from "./pages/Settings.js";
 import { Vault } from "./pages/Vault.js";
 import { resumeSession } from "./session/login.js";
@@ -252,6 +253,8 @@ function Workbench({
 
       {active === "Artifacts" && <Artifacts transport={transport} />}
 
+      {active === "Nodes" && <Nodes transport={transport} />}
+
       {active === "Settings" && (
         <Settings transport={transport} {...(onSignedOut === undefined ? {} : { onSignedOut })} />
       )}
@@ -261,6 +264,7 @@ function Workbench({
         active !== "Vault" &&
         active !== "Missions" &&
         active !== "Artifacts" &&
+        active !== "Nodes" &&
         active !== "Settings" && (
           <section
             style={{
