@@ -33,6 +33,15 @@ export const ATTACHMENT_MEDIA_TYPES = [
   "image/jpeg",
   "image/webp",
   "image/gif",
+  // What an iPhone camera roll actually hands over. These break the rule above
+  // — a runtime that cannot decode HEIC gets a file it cannot read — but the
+  // alternative is refusing the one source of photos the phone front door has,
+  // and a model failing to read a staged file says so in the turn. The refusal
+  // said nothing except 400.
+  // ponytail: no transcode. If models keep failing on these, convert to JPEG
+  // during staging in `apps/node-agent/src/runtimes/attachments.ts`.
+  "image/heic",
+  "image/heif",
   "application/pdf",
   "application/json",
   "text/csv",

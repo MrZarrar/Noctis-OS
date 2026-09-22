@@ -364,3 +364,44 @@ by `pinned_node_id`, and the work node may enqueue such a turn but never reads t
 **Consequence accepted for now.** Conversation text of turns that ran at home lives in the work-PC
 database. File contents never leave the home node. If that becomes unacceptable, the repair is
 content residency, which `identity_message_content` was shaped to allow.
+
+## ADR-0035: The remote desktop panel is RDP in the page, and takeover is exclusive
+
+**Decision:** The embedded remote-desktop panel is `@devolutions/iron-remote-desktop-rdp` (MIT OR
+Apache-2.0) rendering in `apps/web`, reaching the target host's RDP listener through Devolutions
+Gateway as a WebSocket-to-TCP forwarder. Agent GUI automation on a host is **stopped** for the
+duration of a human session on it, not paused alongside it. Headless work — runtimes, file edits,
+Playwright in its own profile — continues. AnyDesk stays installed as the fallback and the recovery
+route. Owner decision, 2026-09-22.
+
+**Why.** Both Noctis clients are a web page: the Tauri shell is WebView2 and the phone is the same
+bundle over Tailscale Serve. "Embedded" therefore means "renderable by a web page", and that single
+constraint, not licence or performance, decides the field. IronRDP's web component is the only
+maintained, permissively licensed backend that qualifies. Sunshine, Moonlight and AnyDesk all share
+the console session and none can be hosted by a page; GameStream needs raw sockets and has no
+official web client. `docs/operations/remote-access.md` has the inventory and the measurements.
+
+**Consequence accepted.** On a Windows client SKU an RDP connection evicts the console session, so
+the exclusivity above is enforced by the operating system rather than by our code — which is the
+better authority story for ADR-0021's "one owner of an input surface", and a real capability loss
+while someone is connected. Two new listeners on the target host (RDP itself and the Gateway) are
+authorised by this decision, tailnet-scoped only, which is the documented exception in the
+"no listeners on workers" constraint and not a general relaxation of it.
+
+## ADR-0036: The node agent starts as the owner, never as SYSTEM
+
+**Decision:** Node-agent autostart on a worker is registered to run in the owner's user context
+without an interactive logon, not as `LocalSystem`. Owner approval by name, 2026-09-22, against the
+production-capabilities constraint.
+
+**Why.** A woken or rebooted worker that reaches the tailnet but never dials the core is a machine
+that is up and cannot run a turn — `docs/operations/WOL.md` names this as the half of wake that costs
+nothing to fix. But the runtimes the agent spawns authenticate out of the owner's profile
+(`~/.codex`, `~/.claude`), and ADR-0023 forbids any metered fallback, so an agent running as SYSTEM
+would find no auth and report every provider unavailable. The account that owns the credentials is
+the account that must own the process.
+
+**Consequence accepted.** The agent can therefore be running in a session with no desktop — before
+anyone logs in, and, under ADR-0035, in a console session an RDP connection has just evicted. That is
+correct for headless turns and wrong for GUI tools, so "desktop ready" stays a state the node reports
+separately from "worker authenticated" rather than one being assumed from the other.

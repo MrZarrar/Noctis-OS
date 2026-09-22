@@ -132,6 +132,23 @@ describe("attachments", () => {
     expect(Buffer.from(await fetched.arrayBuffer()).equals(PNG)).toBe(true);
   });
 
+  // The phone is the front door, and the camera roll hands over HEIC. Before
+  // this the one thing the phone could offer was the one thing the core refused.
+  it("takes what an iPhone camera roll actually hands over", async () => {
+    const core = await startTestCore();
+    const heic = await upload(core, PNG, "IMG_0001.HEIC", "image/heic");
+
+    expect(heic.status).toBe(200);
+    expect(heic.body.mediaType).toBe("image/heic");
+
+    const refused = await upload(core, PNG, "map.svg", "image/svg+xml");
+
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({
+      error: { code: "invalid_attachment", details: { reason: "unsupported_media_type" } },
+    });
+  });
+
   it("uploading the same file twice is the same attachment", async () => {
     const core = await startTestCore();
     const first = await upload(core, PNG, "shot.png", "image/png");
