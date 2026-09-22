@@ -342,6 +342,42 @@ What that means:
 | **PWA, desktop Chrome/Edge** over Tailscale Serve | none: the core sets no CSP                                                                                                                                                                                           | **Supported, expected.** The same Chromium engine as the probe. The page is `https:`, so the Gateway must be `wss:`, which §9.4 provides.                                                                                                                                                                                                                                                                                                               |
 | **PWA, iPhone** (Safari, Home Screen app)         | none                                                                                                                                                                                                                 | **View and tap only, unverified.** Safari runs the WASM, and a tap arrives as a mouse click. But the component takes keys from `window` `keydown` while a pointer hovers the canvas, and a phone has neither a hover nor a hardware keyboard. So there is no typing, and dragging is unreliable. Honest wording: a look-and-click view of the desktop, not the full-control client. AnyDesk stays the phone's full-control route.                       |
 
+### 9.7 The prepared tailnet-only binding (not applied)
+
+Prepared on 2026-09-22 and **not applied**: it edits `%ProgramData%`, starts a service and adds a
+Serve listener, all of which are the owner's to run. The target `gateway.json` keeps the MSI's `Id`
+and `TlsVerifyStrict`, and replaces both listeners with one loopback listener:
+
+```json
+{
+  "Id": "b6bbb872-d4b8-4286-9df1-fc1e5d4955c7",
+  "Hostname": "zarrarpc.tail9594ed.ts.net",
+  "ProvisionerPublicKeyFile": "provisioner.pem",
+  "ProvisionerPrivateKeyFile": null,
+  "TlsVerifyStrict": true,
+  "Listeners": [
+    {
+      "InternalUrl": "http://127.0.0.1:7171",
+      "ExternalUrl": "https://zarrarpc.tail9594ed.ts.net:443"
+    }
+  ]
+}
+```
+
+`provisioner.pem` is the **public** key printed by `node scripts\deploy\gateway-key.mjs` on the
+work PC. The private half never leaves the work PC. `tailscale serve --bg --https=443
+http://127.0.0.1:7171` then publishes it as `wss://zarrarpc.tail9594ed.ts.net/jet/rdp`, on the
+tailnet only. The file must be written **without a BOM**, because Windows PowerShell 5.1's
+`Set-Content -Encoding UTF8` adds one. The block in the 3.9 handoff uses `[IO.File]::WriteAllText`
+for that reason.
+
+After it is applied, one check needs no password and no work PC. A token signed by any other key,
+sent to `wss://zarrarpc.tail9594ed.ts.net/jet/rdp`, must come back `RDCleanPath` **HTTP 401**. That
+proves Serve proxies the WebSocket upgrade and the Gateway holds the right key, and it is the
+"expected" left in §9.4.
+
+The service stays `DEMAND_START` (it does not survive a reboot) until autostart is approved by name.
+
 ## References
 
 - [IronRDP web client](https://github.com/Devolutions/IronRDP/tree/master/web-client),

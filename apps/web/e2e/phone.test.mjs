@@ -292,7 +292,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
 
       const shown = await waitFor(
         readPage,
-        (state) => state.body.includes("Nodes is not built yet"),
+        (state) => state.body.includes("Remote desktop"),
         "More did not reach Nodes",
       );
 
