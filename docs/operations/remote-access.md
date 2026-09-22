@@ -171,11 +171,136 @@ Answering "embedded" also authorises, by name, before 3.9 starts:
 
 - No latency, frame-rate or resolution result for **any** backend. The 6 ms is the network only.
 - The AnyDesk baseline is not measured, and until it is, no candidate can be called equivalent.
-- Devolutions Gateway's exact listener ports and auth configuration are read from its documentation,
-  not from an install here.
+- ~~Devolutions Gateway's exact listener ports and auth configuration are read from its
+  documentation, not from an install here.~~ Superseded by §9, which reads them off the install.
 - Locked-screen, logged-out and post-reboot behaviour on the RDP path is untested.
 - Whether Windows-MCP input injection fails outright or merely misbehaves on a disconnected session
   is **expected**, not verified. 3.9 should verify it early, because §5 rests on it.
+
+## 9. Task 3.9: the real interfaces, read before building
+
+Read on 2026-09-22 from the published npm tarballs (unpacked, not installed) and from the Gateway
+install on `zarrarpc`. **Read** means the text of the code or the file; **expected** means inferred
+and still to be seen working.
+
+### 9.1 The component: `@devolutions/iron-remote-desktop` 0.11.0 + `-rdp` 0.7.0
+
+Both MIT OR Apache-2.0. **Read:**
+
+- **Two packages, one element.** `iron-remote-desktop` is a backend-agnostic Svelte custom element,
+  `customElements.define("iron-remote-desktop", …)`, with four props: `scale`, `verbose`,
+  `flexcenter`, and `module`. `module` must be the **RDP backend object**, `Backend` from
+  `iron-remote-desktop-rdp`, set as a JS property (it is an object, not an attribute string).
+- **The backend is WASM, inlined.** `iron-remote-desktop-rdp.js` is 6.1 MB because the `.wasm` is
+  embedded as a `data:application/wasm;base64,…` URL. `init(logLevel)` must be awaited before use.
+  It calls `fetch()` on that data URL and then `WebAssembly.instantiate(Streaming)`. So a CSP needs
+  **`connect-src data:`** as well as **`script-src 'wasm-unsafe-eval'`**. The first one is not in
+  §3's estimate.
+- **Readiness is an event.** On mount the element dispatches `ready` (bubbles, composed). Its
+  `detail.irgUserInteraction` is the `UserInteraction` handle. There is no other way to get it.
+- **Connect.** `ui.configBuilder()` → `.withUsername().withPassword().withDestination(host:port)
+.withProxyAddress(wsUrl).withAuthToken(jwt).withServerDomain().withDesktopSize().withExtension()`
+  → `.build()`. Then `await ui.connect(config)` resolves `{ initialDesktopSize, run }`, where
+  `run()` resolves with a `SessionTerminationInfo` (`reason()`) when the session ends. `build()`
+  throws unless destination, proxy address and token are all set.
+- **Errors are typed.** Rejections carry `IronError { kind(), backtrace(), rdcleanpathDetails() }`,
+  with `IronErrorKind` = `General 0, WrongPassword 1, LogonFailure 2, AccessDenied 3, RDCleanPath 4,
+ProxyConnect 5, NegotiationFailure 6`. `rdcleanpathDetails()` gives
+  `{ httpStatusCode?, wsaErrorCode?, tlsAlertCode? }`, which is how a Gateway refusal (a 403 for a
+  bad or expired token) reaches the page. Every honest error state in the panel maps from these.
+- **Input is the component's.** Mouse handlers sit on its canvas. Keyboard listeners go on `window`
+  (`keydown`/`keyup`) while the pointer is over the canvas. `ctrlAltDel()`, `metaKey()`,
+  `releaseAllInputs` (on blur and `visibilitychange`) and `shutdown()` are on `UserInteraction`. So
+  "full keyboard/mouse" is the component's job and the panel only needs to leave room for it.
+- **Extensions used.** `enableCredssp(true)` (NLA, which the host requires) and
+  `displayControl(true)` (dynamic resize) are exported factories.
+- **Styles are injected at runtime.** The element appends a `<style>` element and sets `style`
+  attributes. Under `style-src 'self'` both are refused, so the shell needs `style-src 'unsafe-inline'`
+  for this component. That is also not in §3's estimate.
+- **`module` must be set before the element upgrades.** The bridge captures `module` at mount. If
+  the element is already in the DOM when `customElements.define` runs, it mounts first and `connect`
+  fails with `Cannot read properties of undefined (reading 'SessionBuilder')`. Create the element,
+  set `.module`, then attach it.
+
+**Measured** by mounting the real element in headless Chromium (WebView2 is Chromium) under each
+CSP and recording every violation:
+
+| CSP                                                                                                       | Result                                                                                                |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| the shell's today                                                                                         | **fails**: `fetch` of the `data:` WASM refused by `connect-src`, and both inline styles refused       |
+| + `script-src 'wasm-unsafe-eval'`, `connect-src data: wss://zarrarpc.tail9594ed.ts.net`, no inline styles | WASM loads and `ready` fires, but two inline-style violations                                         |
+| + `style-src 'unsafe-inline'` as well                                                                     | **zero violations**, `ready` fires, one `<style>` in the shadow root, `connect` reaches the WebSocket |
+
+With no Gateway listening, `connect` rejected with `kind() === 5` (`ProxyConnect`) and
+`backtrace()` = `failed to connect to wss://zarrarpc.tail9594ed.ts.net/jet/rdp (WebSocket is Closed)`.
+That is the real shape of the "Gateway unreachable" error, not a guessed one.
+
+### 9.2 The token: Devolutions Gateway's association JWT
+
+**Read** from the installed module's own minting code, `New-DGatewayToken` in
+`C:\Program Files\Devolutions\Gateway\PowerShell\Modules\DevolutionsGateway\Public\DGateway.ps1`:
+
+- Header `{ "alg": "RS256", "typ": "JWT", "cty": "ASSOCIATION" }`. It is signed RSASSA-PKCS1-v1_5 /
+  SHA-256 with the **provisioner private key**, and the Gateway verifies it with the matching public
+  key (`ProvisionerPublicKeyFile`).
+- Payload `{ iat, nbf, exp, jti, jet_ap: "rdp", jet_cm: "fwd", jet_aid: <uuid>, dst_hst: "host:port" }`.
+  `jet_cm: "fwd"` is the forwarding mode, and `dst_hst` is the destination the Gateway will dial.
+  **The destination is inside the signed token**, so a page cannot redirect it.
+- The cmdlet's default lifetime is **two minutes** (`exp = now + 2 min`). The token only has to
+  outlive the handshake, not the session.
+- Key pair: `New-DGatewayProvisionerKeyPair` makes RSA-2048 PEMs `provisioner.pem` /
+  `provisioner.key`. Only the public half belongs on the Gateway.
+
+**Consequence:** the core signs this with `node:crypto` (`sign("sha256", …)` defaults to PKCS#1 v1.5
+for an RSA key). There is no JWT dependency, and the core holds the private key, the only secret.
+
+### 9.3 The forwarding endpoint
+
+**Read:** the Gateway's own bundled web client (`…\Gateway\webapp`) addresses RDP at **`/jet/rdp`**
+on the HTTP listener. That is the RDCleanPath WebSocket endpoint: the page sends the token and the
+destination in the first PDU, the Gateway dials the RDP port, does the TLS hop itself, and relays.
+The generic TCP forwarder is `/jet/fwd/tcp` and is not used here.
+
+**Read** from `%ProgramData%\Devolutions\Gateway\gateway.json`, as the v2026.3.0 MSI left it:
+
+```json
+{
+  "ProvisionerPublicKeyFile": "provisioner.pem",
+  "TlsVerifyStrict": true,
+  "Listeners": [
+    { "InternalUrl": "tcp://*:8181", "ExternalUrl": "tcp://*:8181" },
+    { "InternalUrl": "http://*:7171", "ExternalUrl": "https://*:7171" }
+  ]
+}
+```
+
+That is **two listeners on every interface**, and `provisioner.pem` **does not exist** yet. The
+service `DevolutionsGateway` is installed, `DEMAND_START`, runs as `NT AUTHORITY\NetworkService`,
+and has never been started (exit 1077). It must not be started as configured.
+
+**Measured** the same evening: `TermService` Running and **3389 listening** on `0.0.0.0`/`::`. The
+cold-boot restart for ADR-0036 brought the listener up, and its firewall scope is `100.64.0.0/10`.
+`tailscale serve status` on `zarrarpc` is empty.
+
+### 9.4 What 3.9 does with it
+
+- **Tailnet-only binding without a certificate.** The Gateway binds **`http://127.0.0.1:7171` only**,
+  the TCP listener is removed, and `tailscale serve` on `zarrarpc` terminates TLS with the node's
+  own `ts.net` certificate and proxies to it. The page's URL becomes
+  `wss://zarrarpc.tail9594ed.ts.net/jet/rdp`. There is no firewall rule for 7171 because nothing
+  listens beyond loopback, and there is no certificate to issue or renew. A `wss:` URL is required
+  anyway: the PWA is an `https:` page, and a browser refuses `ws:` from it as mixed content.
+  **Expected:** that Serve proxies the WebSocket upgrade (it is an HTTP reverse proxy), and that
+  the Gateway accepts a loopback-only listener list with no TCP entry.
+- **Destination is core configuration, never page input.** The page names a host (`zarrarpc`). The
+  core looks that name up in its own allowlist, signs `dst_hst` from the allowlist, and returns the
+  token, the Gateway URL and the destination. An unknown name is refused before anything is signed.
+- **The Windows password never reaches the core** (ADR-0035 addendum). It goes page → component →
+  Gateway → RDP, and the core's command carries only the host name.
+- **The WebView opens one socket of its own.** Until now the shell page opened none, because Rust
+  signs every core call (Section 9.2). The RDP socket goes straight from the page to the Gateway.
+  It carries a two-minute Gateway token that names one destination, never the core token. That is
+  the boundary change the shell CSP records.
 
 ## References
 
