@@ -304,6 +304,42 @@ describe("the real agent against the real core", () => {
     expect(agent.connected()).toBe(false);
   });
 
+  // The two tests above pass whether or not the agent holds its own process
+  // open, because vitest's worker keeps the event loop alive for them. On a real
+  // machine the pending reconnect is the only thing left once the socket has
+  // gone, so a timer that does not hold the loop lets `node main.js` exit 0 — at
+  // boot before the tailnet is up, and on every drop after that. Task Scheduler
+  // reads exit 0 as success and restarts nothing. Found on `zarrarpc` on
+  // 2026-09-22, when the first cold start exited two seconds before login.
+  //
+  // `getActiveResourcesInfo()` is Node's own list of what is keeping the loop
+  // alive, and an unref'd timer is exactly what it leaves out.
+  it("holds its own process open while it waits to reconnect", async () => {
+    const liveTimers = () =>
+      process.getActiveResourcesInfo().filter((resource) => resource === "Timeout").length;
+    const before = liveTimers();
+
+    const agent = startAgent({
+      credential: {
+        coreUrl: "http://127.0.0.1:1",
+        nodeId: "0199a000-0000-7000-8000-00000000000b",
+        generation: 0,
+        credential: "b".repeat(64),
+      },
+      saveCredential: () => undefined,
+      probes: () => Promise.resolve([]),
+      // Long enough that the retry is certainly still pending when it is counted.
+      initialBackoffMs: 60_000,
+      maxBackoffMs: 60_000,
+    });
+
+    agents.push(agent);
+
+    await waitFor(() => agent.attempts() >= 1, "the first reconnect to be scheduled");
+
+    expect(liveTimers()).toBe(before + 1);
+  });
+
   it("reports a failure rather than going silent when an adapter refuses", async () => {
     const core = await startTestCore();
     const credential = await pair(core);

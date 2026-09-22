@@ -319,8 +319,11 @@ export function startAgent(options: AgentOptions): RunningAgent {
     const delay = Math.round(ceiling * (0.5 + Math.random() * 0.5));
 
     attempt += 1;
+    // Deliberately *not* unref'd. Once the socket has gone this timer is the
+    // only thing keeping the process alive, and a worker whose process exits
+    // cleanly while it waits to reconnect is a worker that is gone for good —
+    // exit 0 reads as success to whatever started it. `close()` clears it.
     retry = setTimeout(connect, delay);
-    retry.unref();
 
     log("debug", "scheduled reconnect", { delay, attempt });
   }
