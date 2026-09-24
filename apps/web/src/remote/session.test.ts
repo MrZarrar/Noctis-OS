@@ -55,6 +55,7 @@ interface FakeComponent {
   extensions: unknown[];
   connects: number;
   shutdowns: number;
+  visibility: boolean[];
   end: (reason: string) => void;
 }
 
@@ -65,6 +66,7 @@ function component(connect: "ok" | { reject: unknown } = "ok"): FakeComponent {
     extensions: [],
     connects: 0,
     shutdowns: 0,
+    visibility: [],
     end: (reason) => {
       end(reason);
     },
@@ -105,6 +107,9 @@ function component(connect: "ok" | { reject: unknown } = "ok"): FakeComponent {
         end("shut down by the client");
       },
       ctrlAltDel: () => undefined,
+      setVisibility: (visible: boolean) => {
+        fake.visibility.push(visible);
+      },
     },
   };
 
@@ -167,6 +172,24 @@ describe("connectRemote (Task 3.9)", () => {
       { ext: "credssp", enable: true },
       { ext: "display", enable: true },
     ]);
+  });
+
+  it("shows the canvas once connected, which the component leaves hidden until told", async () => {
+    // Measured on the route: without this the session connected, authenticated
+    // and showed nothing but black (remote-access.md §9.8).
+    const fake = component();
+
+    await run(core().transport, fake);
+
+    expect(fake.visibility).toEqual([true]);
+  });
+
+  it("does not show the canvas for a session that never connected", async () => {
+    const fake = component({ reject: ironError(IronErrorKind.LogonFailure) });
+
+    await run(core().transport, fake);
+
+    expect(fake.visibility).toEqual([]);
   });
 
   it("reports each step, then the session's own reason when it ends", async () => {

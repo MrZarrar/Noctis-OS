@@ -388,6 +388,23 @@ with Serve getting its certificate on the first request; the next two took 99 an
 cost a round trip: the copied public key had lost its `BEGIN`/`END` lines, and the block's check
 refused it before writing anything, as intended.
 
+### 9.8 First connects over the real route, 2026-09-24
+
+From the work PC's browser, through the core, the Gateway and Serve, to `zarrarpc`:
+
+- **Blocked first by the account, not the code.** The Microsoft account would not accept a password
+  sign-in anywhere, including the web, until the owner reset its password. The home PC also had
+  "Only allow Windows Hello sign-in for Microsoft accounts on this device" on
+  (`DevicePasswordLessBuildVersion = 2`). With it off, and one console sign-in with the new password
+  (`PasswordLastSet` updated), RDP authentication succeeded: event `1149`, "User authentication
+  succeeded: m.mushafzarrar@gmail".
+- **Connected at 1280×720, then showed only black.** The component mounts its canvas hidden and
+  never unhides it; the page must call `setVisibility(true)` after `connect`. That call is now made.
+- **Each session was logged off about 32 s after it started** (`LocalSessionManager` event 40,
+  sessions 5 and 6, reason code 12). Each connect got a **new** session rather than the console's
+  session 4. The regular timing suggests a screen inside the session timing out, but it could not be
+  seen while the canvas was black. Diagnose it with the canvas visible before changing anything else.
+
 ## References
 
 - [IronRDP web client](https://github.com/Devolutions/IronRDP/tree/master/web-client),

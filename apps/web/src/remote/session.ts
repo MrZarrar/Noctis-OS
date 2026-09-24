@@ -37,6 +37,7 @@ export interface RemoteUserInteraction {
   }>;
   shutdown(): void;
   ctrlAltDel(): void;
+  setVisibility(visible: boolean): void;
 }
 
 export interface RemoteConfigBuilder {
@@ -195,6 +196,9 @@ export function connectRemote(options: ConnectRemoteOptions): RemoteHandle {
 
       const connected = await ui.connect(config as never);
       live = true;
+      // The component mounts its canvas hidden and never unhides it itself;
+      // without this a connected session is a black rectangle.
+      ui.setVisibility(true);
 
       onState({
         phase: "connected",
