@@ -149,7 +149,13 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     specular: 0x8f85b4,
     flatShading: true,
   });
-  world.add(new THREE.Mesh(shardGeometry(CORE.shards), glassMaterial));
+  const shell = new THREE.Group();
+  const shellShards = CORE.shards.map((shard) => {
+    const mesh = new THREE.Mesh(shardGeometry([shard]), glassMaterial);
+    shell.add(mesh);
+    return mesh;
+  });
+  world.add(shell);
   const shardLines: CorePoint[] = [];
   for (const shard of CORE.shards) {
     const center = shard.reduce<CorePoint>(
@@ -170,7 +176,8 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     opacity: 0.36,
     depthWrite: false,
   });
-  world.add(new THREE.LineSegments(buffer(shardLines), borderMaterial));
+  const borders = new THREE.LineSegments(buffer(shardLines), borderMaterial);
+  shell.add(borders);
   const fragmentMaterial = new THREE.MeshBasicMaterial({
     color: VESPER_PROFILE.violet,
     vertexColors: true,
@@ -180,7 +187,9 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     depthWrite: false,
   });
   const fragments = new THREE.Mesh(shardGeometry(CORE.fragments), fragmentMaterial);
-  world.add(fragments);
+  const heart = new THREE.Group();
+  heart.add(fragments);
+  world.add(heart);
   const crystal = new THREE.Mesh(
     new THREE.OctahedronGeometry(0.23),
     new THREE.MeshPhongMaterial({
@@ -191,19 +200,20 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
       flatShading: true,
     }),
   );
-  crystal.scale.set(0.85, 1.35, 0.85);
+  crystal.scale.setScalar(1.05);
   crystal.rotation.set(0.2, 0.4, 0.18);
-  world.add(crystal);
-  world.add(
+  heart.add(crystal);
+  const highlightMaterial = new THREE.MeshBasicMaterial({
+    color: 0xd4bcff,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+  });
+  heart.add(
     new THREE.Mesh(
       buffer(CORE.fragments.filter((_, index) => index % 5 === 0).flat()),
-      new THREE.MeshBasicMaterial({
-        color: 0xd4bcff,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.78,
-        depthWrite: false,
-      }),
+      highlightMaterial,
     ),
   );
   const junctions = lights(
@@ -220,10 +230,14 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     150,
     VESPER_PROFILE.violet,
   );
-  const approval = lights([[0.94, 0.1, 0.41]], 39, VESPER_PROFILE.approval);
-  approval.visible = false;
-  world.add(junctions, dust, glow, approval);
-  const pedestal = lights([[0, -2.7, 0]], 48, VESPER_PROFILE.violet);
+  world.add(junctions, dust, glow);
+  const sparks = lights(
+    Array.from({ length: 18 }, () => [0, 0, 0] as CorePoint),
+    12,
+    VESPER_PROFILE.violet,
+  );
+  world.add(sparks);
+  const pedestal = lights([[0, -2.32, 0]], 48, VESPER_PROFILE.violet);
   scene.add(pedestal);
   scene.add(new THREE.AmbientLight(0xc3bcdd, 0.8));
   const key = new THREE.DirectionalLight(0xbbb6d4, 1.4);
@@ -239,6 +253,11 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
   let frames = 0;
   let totalDraw = 0;
   let maxDraw = 0;
+  let lastTime = 0;
+  let elapsed = 0;
+  let energy = 0;
+  const heartColor = new THREE.Color(VESPER_PROFILE.violet);
+  const targetHeartColor = new THREE.Color(VESPER_PROFILE.violet);
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const canDraw = (): boolean => !disposed && !lost && visible && !document.hidden;
@@ -248,28 +267,74 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     const started = performance.now();
     const appearance = coreAppearance(state, profile);
     const moving = animate();
-    const beat = moving ? Math.sin(now * (state === "thinking" ? 0.0028 : 0.0018)) : 0;
+    const delta = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
+    lastTime = now;
+    energy = THREE.MathUtils.lerp(
+      energy,
+      state === "speaking" ? 1 : state === "thinking" ? 0.7 : 0.35,
+      moving ? 1 - Math.exp(-delta * 5) : 1,
+    );
+    if (moving) elapsed += delta * (0.65 + energy * 0.65);
+    const beat = moving ? Math.sin(elapsed * (appearance.approval ? 2 : 4.2)) : 0;
     world.rotation.set(
-      moving ? Math.sin(now * 0.00022) * 0.025 : 0,
-      moving ? Math.sin(now * 0.00028) * 0.065 : 0,
+      moving ? Math.sin(elapsed * 0.4) * 0.12 : 0,
+      moving ? Math.sin(elapsed * 0.32) * 0.24 : 0,
       0,
     );
-    world.scale.setScalar(appearance.expansion + beat * (state === "speaking" ? 0.014 : 0.004));
-    fragments.rotation.z = moving ? Math.sin(now * 0.0008) * 0.035 : 0;
+    world.scale.setScalar(appearance.expansion + beat * (0.009 + energy * 0.018));
+    network.rotation.y = moving ? elapsed * 0.23 : 0;
+    junctions.rotation.copy(network.rotation);
+    dust.rotation.copy(network.rotation);
+    shell.rotation.z = moving ? Math.sin(elapsed * 0.3) * 0.12 : 0;
+    for (let index = 0; index < shellShards.length; index += 1) {
+      const shard = shellShards[index]!;
+      const drift = moving ? Math.sin(elapsed * 1.2 + index * 1.7) * (0.025 + energy * 0.055) : 0;
+      const angle = (index / shellShards.length) * Math.PI * 2;
+      shard.position.set(Math.cos(angle) * drift, Math.sin(angle) * drift, drift * 1.6);
+      shard.rotation.z = drift * 0.4;
+    }
+    heart.rotation.set(
+      moving ? Math.sin(elapsed * 0.7) * 0.3 : 0,
+      moving ? elapsed * 0.65 : 0,
+      moving ? Math.sin(elapsed * 0.6) * 0.25 : 0,
+    );
+    heart.scale.setScalar(1 + beat * (appearance.approval ? 0.08 : 0.045 + energy * 0.06));
+    fragments.rotation.z = moving ? -elapsed * 0.45 : 0;
     networkMaterial.color.set(appearance.color);
     networkMaterial.opacity = 0.28 * appearance.light + beat * 0.025;
     glassMaterial.color.set(profile.glass);
-    fragmentMaterial.color.set(profile.violet);
+    targetHeartColor.set(appearance.coreColor);
+    heartColor.lerp(targetHeartColor, moving ? 1 - Math.exp(-delta * 8) : 1);
+    fragmentMaterial.color.copy(heartColor);
+    highlightMaterial.color.copy(heartColor);
+    crystal.material.color.copy(heartColor);
+    crystal.material.emissive.copy(heartColor);
+    crystal.material.emissiveIntensity = 0.65 + appearance.light * 0.35 + beat * 0.18;
     fragmentMaterial.opacity = Math.min(0.92, 0.68 + appearance.light * 0.12 + beat * 0.05);
-    approval.visible = appearance.approval;
+    const sparkPositions = sparks.geometry.getAttribute("position") as THREE.BufferAttribute;
+    for (let index = 0; index < sparkPositions.count; index += 1) {
+      const edge = CORE.edges[(index * 31) % CORE.edges.length]!;
+      const from = CORE.points[edge[0]]!;
+      const to = CORE.points[edge[1]]!;
+      const travel = (elapsed * 0.95 + index * 0.137) % 1;
+      sparkPositions.setXYZ(
+        index,
+        THREE.MathUtils.lerp(from[0], to[0], travel),
+        THREE.MathUtils.lerp(from[1], to[1], travel),
+        THREE.MathUtils.lerp(from[2], to[2], travel),
+      );
+    }
+    sparkPositions.needsUpdate = true;
+    sparks.rotation.copy(network.rotation);
+    sparks.visible = moving;
     const dpr = renderer.getPixelRatio();
-    for (const points of [junctions, glow, dust, pedestal, approval]) {
+    for (const points of [junctions, glow, dust, pedestal, sparks]) {
       points.material.uniforms.pixelRatio!.value = dpr;
       (points.material.uniforms.color!.value as THREE.Color).set(
-        points === approval ? appearance.approvalColor : appearance.color,
+        points === glow ? heartColor : appearance.color,
       );
       points.material.uniforms.intensity!.value =
-        points === approval ? 1.2 : appearance.light + beat * 0.12;
+        appearance.light + beat * (points === glow ? 0.28 : 0.16);
     }
     renderer.render(scene, camera);
     const duration = performance.now() - started;
@@ -280,6 +345,7 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     host.dataset.coreDrawMs = duration.toFixed(3);
     host.dataset.coreTotalDrawMs = totalDraw.toFixed(3);
     host.dataset.coreMaxDrawMs = maxDraw.toFixed(3);
+    host.dataset.coreHeartColor = `#${heartColor.getHexString()}`;
   };
   const tick = (now: number): void => {
     frame = 0;
@@ -292,7 +358,9 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     frame = 0;
     const active = animate();
     host.dataset.coreRunning = String(active);
-    if (canDraw()) render(0);
+    host.dataset.coreVisible = String(canDraw());
+    lastTime = performance.now();
+    if (canDraw()) render(lastTime);
     if (active) frame = requestAnimationFrame(tick);
   };
   const resize = (): void => {
@@ -300,7 +368,7 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     if (width <= 0 || height <= 0 || disposed || lost) return;
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    camera.position.z = Math.max(9.2, 5.8 / camera.aspect);
+    camera.position.z = Math.max(8.6, 6.2 / camera.aspect);
     camera.updateProjectionMatrix();
     reconcile();
   };
@@ -399,22 +467,24 @@ function StaticCore({
           strokeOpacity="0.7"
         />
       ))}
-      {CORE.fragments.map((shard, index) => (
+      <g data-core-heart="true">
+        {CORE.fragments.map((shard, index) => (
+          <polygon
+            key={index}
+            points={shard.map((point) => project(point).join(",")).join(" ")}
+            fill={appearance.coreColor}
+            fillOpacity={Math.min(0.95, 0.5 * appearance.light)}
+            stroke={appearance.coreColor}
+            strokeWidth="0.5"
+          />
+        ))}
         <polygon
-          key={index}
-          points={shard.map((point) => project(point).join(",")).join(" ")}
-          fill={index % 3 === 0 ? "#e1cfff" : profile.violet}
-          fillOpacity={Math.min(0.95, 0.5 * appearance.light)}
-          stroke="#c9a9ff"
-          strokeWidth="0.5"
+          points="180,165 169,183 180,201 191,183"
+          fill={appearance.coreColor}
+          stroke={appearance.coreColor}
+          strokeWidth="0.7"
         />
-      ))}
-      <polygon
-        points="180,165 169,183 180,201 191,183"
-        fill="#b08cff"
-        stroke="#dfc8ff"
-        strokeWidth="0.7"
-      />
+      </g>
       {CORE.points
         .filter((_, index) => index % 7 === 0)
         .map((point, index) => {
@@ -427,12 +497,6 @@ function StaticCore({
           );
         })}
       <path d="M160 343h40 M180 339v8" stroke={profile.violet} strokeWidth="1.2" />
-      {appearance.approval && (
-        <g>
-          <circle cx="239" cy="177" r="6" fill={profile.approval} opacity="0.2" />
-          <circle cx="239" cy="177" r="1.9" fill={profile.approval} />
-        </g>
-      )}
     </svg>
   );
 }
@@ -483,6 +547,18 @@ export function IntelligenceRenderer({
         overflow: "hidden",
       }}
     >
+      <style>{`
+        @keyframes noctis-core-breathe {
+          0%, 100% { transform: scale(.99) rotate(-.6deg); }
+          50% { transform: scale(1.015) rotate(.6deg); }
+        }
+        @media (prefers-reduced-motion: no-preference) {
+          .noctis-intelligence[data-core-state="idle"][data-core-visible="true"] > canvas {
+            will-change: transform;
+            animation: noctis-core-breathe 7s ease-in-out infinite;
+          }
+        }
+      `}</style>
       {!webgl && <StaticCore state={state} profile={profile} />}
     </div>
   );

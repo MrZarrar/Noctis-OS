@@ -17,5 +17,11 @@ describe("IntelligenceRenderer", () => {
     expect(html).toContain('role="img"');
     expect(html).not.toContain("aria-live");
     expect(html).not.toContain("radial-gradient");
+    const heart = html.match(/<g data-core-heart="true">([\s\S]*?)<\/g>/)?.[1];
+    expect(heart).toBeDefined();
+    const fills = [...heart!.matchAll(/fill="([^"]+)"/g)].map((match) => match[1]);
+    expect(fills.length).toBeGreaterThan(8);
+    expect(fills.every((fill) => fill === "#ffc16c")).toBe(true);
+    expect(html).not.toContain('cx="239"');
   });
 });

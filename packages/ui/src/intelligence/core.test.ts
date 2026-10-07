@@ -21,7 +21,7 @@ describe("Presence core geometry", () => {
       ),
     ).toBe(true);
   });
-  it("keeps the shard mesh deterministic, elongated, connected and bounded", () => {
+  it("keeps the shard mesh deterministic, round, connected and bounded", () => {
     const core = buildCoreGeometry();
     expect(core).toEqual(buildCoreGeometry());
     expect(core.points.length).toBeGreaterThan(100);
@@ -35,7 +35,13 @@ describe("Presence core geometry", () => {
       Math.max(...core.points.map(([x]) => x)) - Math.min(...core.points.map(([x]) => x));
     const height =
       Math.max(...core.points.map(([, y]) => y)) - Math.min(...core.points.map(([, y]) => y));
-    expect(height / width).toBeGreaterThan(1.4);
+    expect(height / width).toBeGreaterThan(0.85);
+    expect(height / width).toBeLessThan(1.15);
+    const shell = core.shards.flat();
+    const shellWidth = Math.max(...shell.map(([x]) => x)) - Math.min(...shell.map(([x]) => x));
+    const shellHeight = Math.max(...shell.map(([, y]) => y)) - Math.min(...shell.map(([, y]) => y));
+    expect(shellHeight / shellWidth).toBeGreaterThan(0.85);
+    expect(shellHeight / shellWidth).toBeLessThan(1.15);
     const connected = new Set([0]);
     for (let pass = 0; pass < core.points.length; pass += 1) {
       for (const [a, b] of core.edges) {
@@ -51,10 +57,10 @@ describe("Presence core geometry", () => {
 
 describe("Presence core scheduling", () => {
   it("only animates visible active states", () => {
-    for (const state of ["idle", "waiting_for_approval"] as const) {
+    for (const state of ["idle"] as const) {
       expect(shouldAnimateCore(state, false, true, false)).toBe(false);
     }
-    for (const state of ["listening", "thinking", "speaking"] as const) {
+    for (const state of ["listening", "thinking", "speaking", "waiting_for_approval"] as const) {
       expect(shouldAnimateCore(state, false, true, false)).toBe(true);
       expect(shouldAnimateCore(state, true, true, false)).toBe(false);
       expect(shouldAnimateCore(state, false, false, false)).toBe(false);
@@ -62,11 +68,16 @@ describe("Presence core scheduling", () => {
     }
   });
 
-  it("gives approval a static amber junction while preserving violet identity", () => {
+  it("turns the whole heart amber for approval while preserving the violet shell", () => {
     expect(coreAppearance("waiting_for_approval", VESPER_PROFILE)).toMatchObject({
       approval: true,
+      coreColor: VESPER_PROFILE.approval,
+      color: VESPER_PROFILE.violet,
     });
-    expect(coreAppearance("idle", VESPER_PROFILE)).toMatchObject({ approval: false });
+    expect(coreAppearance("idle", VESPER_PROFILE)).toMatchObject({
+      approval: false,
+      coreColor: VESPER_PROFILE.violet,
+    });
     expect(coreAppearance("speaking", VESPER_PROFILE).light).toBeGreaterThan(
       coreAppearance("idle", VESPER_PROFILE).light,
     );

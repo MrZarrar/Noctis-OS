@@ -77,11 +77,11 @@ export function Presence({
       </h1>
       <div
         style={{
-          flex: "1 1 360px",
+          flex: "1 1 320px",
           width: "100%",
           maxWidth: 690,
           minHeight: mobile ? 200 : 280,
-          maxHeight: mobile ? 530 : 640,
+          maxHeight: mobile ? 430 : 530,
           position: "relative",
         }}
       >

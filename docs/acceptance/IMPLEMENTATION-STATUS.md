@@ -2978,7 +2978,8 @@ square on the glass card; and the approval buttons were in the browser's default
 
 Pulled with `git pull --ff-only`: already up to date. The owner approved all three reference
 stills from design session `01a116ae-1a1a-7273-950e-99e1ed19e08a` before implementation.
-Implementation is verified locally; owner acceptance of the working visuals remains. Not committed.
+The initial implementation was verified locally and pushed in `861a94a`. The owner then requested
+the visual revision recorded below.
 
 Presence is home, with the room, greeting and shared prompt. It starts/continues the identity's free
 thread and opens Threads; returning home clears a delegated-thread selection. The Three.js core uses
@@ -3024,3 +3025,30 @@ Renderer CPU comes from Chrome SystemInfo process CPU-time deltas; it sums rende
 the isolated browser. Draw submission excludes GPU time. Physical-phone GPU/thermal behaviour and
 owner visual acceptance are still unverified. No live workers, Vault, services or production bundle
 were changed. ESLint ignores `.noctis/` so isolated generated bundles are not treated as source.
+
+### 2026-10-07 S6: rounder core and stronger motion
+
+The owner requested this revision and authorised its commit and push without another approval gate.
+The shell and central fragments are now rounder; Presence uses a shorter hero region. All central
+materials and the glow turn amber for approval, including the SVG fallback. The isolated amber dot
+is gone. Active states rotate the mesh, send lights along its edges, drift individual glass shards,
+and tumble and pulse the centre. Speaking has stronger motion; approval has a slower amber pulse.
+Idle breathes through a CSS transform with no renderer loop. Hidden and reduced-motion modes stop
+motion. Geometry, scheduling and amber-centre assertions failed before the implementation and passed
+then; browser checks compare actual core screenshots across time.
+
+Fresh verification with Node 22.23.2: 108 files / 1,935 unit and integration tests; 17 browser checks;
+2 capture/fallback checks; 6 donor-boundary checks. Typecheck, lint, formatting, isolated web build
+and diff checks passed. No dependencies or lockfile changes.
+
+All five desktop and phone states were visually inspected in `.noctis/s6/evidence-round/`.
+Full-page videos use Playwright's 25 fps recorder. Separate core videos target 60 fps through an
+opaque canvas and MediaRecorder; the capture run preserves the WebGL drawing buffer solely for
+recording. Both core videos decode correctly and their representative frames were inspected.
+The direct core videos omit the idle CSS transform; the full-page videos include it.
+
+`performance.json` measures the normal renderer with both video encoders disabled: active states
+59.99?60.17 fps, mean CPU draw submission 0.42?0.49 ms, idle WebGL draws zero. Idle renderer-process
+CPU is 2.09% desktop / 1.85% phone-size: the breathing compositor exceeds the earlier 1% idle budget.
+These are Chrome viewport measurements, not physical-phone or GPU/thermal qualification. No live
+workers, Vault, production bundle, services or paid agents were activated.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { after, before, it } from "node:test";
@@ -10,6 +11,8 @@ import { launchOptions, startProcess, stopProcess, waitForHttp } from "./harness
 const ROOT = resolve(import.meta.dirname, "../../..");
 const URL = "http://localhost:4192";
 const EVIDENCE = process.env.NOCTIS_S6_EVIDENCE;
+const CORE_RECORDING = EVIDENCE && process.env.NOCTIS_S6_CORE_RECORDING === "1";
+const PAGE_RECORDING = EVIDENCE && process.env.NOCTIS_S6_PAGE_RECORDING !== "0";
 let web;
 let browser;
 
@@ -161,9 +164,20 @@ it(
       const context = await browser.newContext({
         viewport,
         deviceScaleFactor: name === "phone" ? 2 : 1,
-        ...(EVIDENCE ? { recordVideo: { dir: EVIDENCE, size: viewport } } : {}),
+        ...(PAGE_RECORDING ? { recordVideo: { dir: EVIDENCE, size: viewport } } : {}),
       });
       await context.addInitScript(fixture);
+      if (CORE_RECORDING)
+        await context.addInitScript(() => {
+          const original = globalThis.HTMLCanvasElement.prototype.getContext;
+          globalThis.HTMLCanvasElement.prototype.getContext = function (type, options) {
+            return original.call(
+              this,
+              type,
+              type.startsWith("webgl") ? { ...options, preserveDrawingBuffer: true } : options,
+            );
+          };
+        });
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", (error) => errors.push(error.message));
@@ -178,6 +192,42 @@ it(
       await page.waitForFunction(
         () => document.querySelector(".noctis-intelligence")?.dataset.coreRenderer === "webgl",
       );
+      if (CORE_RECORDING)
+        await core.locator("canvas").evaluate((canvas) => {
+          const output = document.createElement("canvas");
+          output.width = canvas.width;
+          output.height = canvas.height;
+          const paint = output.getContext("2d", { alpha: false });
+          let frame;
+          const capture = () => {
+            paint.fillStyle = "#080610";
+            paint.fillRect(0, 0, output.width, output.height);
+            paint.drawImage(canvas, 0, 0);
+            frame = globalThis.requestAnimationFrame(capture);
+          };
+          capture();
+          const stream = output.captureStream(60);
+          const chunks = [];
+          const recorder = new globalThis.MediaRecorder(stream, {
+            mimeType: "video/webm;codecs=vp8",
+            videoBitsPerSecond: 4_000_000,
+          });
+          recorder.addEventListener("dataavailable", (event) => chunks.push(event.data));
+          globalThis.s6Recording = async () => {
+            await new Promise((done) => {
+              recorder.addEventListener("stop", done, { once: true });
+              recorder.stop();
+            });
+            stream.getTracks().forEach((track) => track.stop());
+            globalThis.cancelAnimationFrame(frame);
+            return await new Promise((done) => {
+              const reader = new globalThis.FileReader();
+              reader.onload = () => done(reader.result.split(",")[1]);
+              reader.readAsDataURL(new globalThis.Blob(chunks, { type: recorder.mimeType }));
+            });
+          };
+          recorder.start();
+        });
       const cdp = await context.newCDPSession(page);
       const browserCdp = await browser.newBrowserCDPSession();
       await cdp.send("Performance.enable");
@@ -194,6 +244,12 @@ it(
           state,
         );
         await page.waitForTimeout(350);
+        if (state === "waiting_for_approval")
+          await page.waitForFunction(
+            () =>
+              document.querySelector(".noctis-intelligence")?.dataset.coreHeartColor === "#ffc16c",
+          );
+        const pixelsBefore = state === "idle" ? undefined : await core.screenshot();
         const before = await core.evaluate((element) => ({ ...element.dataset }));
         const metricsBefore = await cdp.send("Performance.getMetrics");
         const processesBefore = await browserCdp.send("SystemInfo.getProcessInfo");
@@ -218,12 +274,26 @@ it(
             }, 0) /
             (elapsed / 1000)) *
           100;
-        if (["idle", "waiting_for_approval"].includes(state))
-          assert.equal(frames, 0, `${name} ${state} keeps drawing`);
+        if (state === "idle") assert.equal(frames, 0, `${name} ${state} keeps drawing`);
         else
           assert.ok(
             frames > 0,
             `${name} ${state} never animates: ${JSON.stringify({ before, after, errors })}`,
+          );
+        if (state === "idle")
+          assert.equal(
+            await core
+              .locator("canvas")
+              .evaluate((canvas) => getComputedStyle(canvas).animationName),
+            "noctis-core-breathe",
+          );
+        if (state === "waiting_for_approval")
+          assert.equal(after.coreHeartColor, "#ffc16c", "the entire centre remains violet");
+        if (pixelsBefore)
+          assert.notDeepEqual(
+            await core.screenshot(),
+            pixelsBefore,
+            `${name} ${state} has no visible motion`,
           );
         measurements.push({
           viewport: name,
@@ -239,6 +309,11 @@ it(
         });
         if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, `${name}-${state}.png`) });
       }
+      if (CORE_RECORDING)
+        writeFileSync(
+          join(EVIDENCE, `${name}-core-60fps.webm`),
+          Buffer.from(await page.evaluate(() => globalThis.s6Recording()), "base64"),
+        );
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.evaluate(() => globalThis.s6Fixture.set("thinking"));
       await page.waitForTimeout(350);
@@ -248,6 +323,11 @@ it(
         await core.getAttribute("data-core-frames"),
         staticFrames,
         "reduced motion keeps drawing",
+      );
+      await page.evaluate(() => globalThis.s6Fixture.set("idle"));
+      assert.equal(
+        await core.locator("canvas").evaluate((canvas) => getComputedStyle(canvas).animationName),
+        "none",
       );
       if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, `${name}-reduced-motion.png`) });
       await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -280,6 +360,8 @@ it(
           {
             fixture: "Scripted local transport events, production renderer",
             browser: await browser.version(),
+            pageRecording: Boolean(PAGE_RECORDING),
+            coreRecording: Boolean(CORE_RECORDING),
             measurements,
           },
           null,
