@@ -253,8 +253,13 @@ describe("the Claude Agent SDK runtime", () => {
 
     const [call] = calls;
     const options = call?.options;
+    const first = await call?.prompt[Symbol.asyncIterator]().next();
 
-    expect(call?.prompt).toBe("say hello");
+    expect(first?.value).toMatchObject({
+      type: "user",
+      message: { role: "user", content: "say hello" },
+      parent_tool_use_id: null,
+    });
     expect(options).toMatchObject({
       cwd: "C:\\work",
       additionalDirectories: ["C:\\ref"],
@@ -302,11 +307,16 @@ describe("the Claude Agent SDK runtime", () => {
   });
 
   describe("canUseTool", () => {
+    /** A turn held open, so its tool calls have someone to ask. */
     async function permission(decision: RuntimeAnswer["decision"], reason?: string) {
-      const { query, calls } = scripted(list(init(), result()));
+      const { query, calls } = scripted(async function* () {
+        yield init();
+        await new Promise(() => undefined);
+      });
       const r = recorder(decision, reason);
 
-      await createClaudeRuntime({ query }).turn(input(), r.sink);
+      void createClaudeRuntime({ query }).turn(input(), r.sink);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       const canUseTool = calls[0]?.options?.canUseTool;
 
@@ -408,6 +418,22 @@ describe("the Claude Agent SDK runtime", () => {
       expect(r.asks).toEqual([]);
     });
 
+    it("denies a tool call that arrives between turns, when nobody could answer it", async () => {
+      const { query, calls } = scripted(list(init(), result()));
+      const r = recorder("allow");
+
+      await createClaudeRuntime({ query }).turn(input(), r.sink);
+
+      await expect(
+        calls[0]?.options?.canUseTool?.(
+          "Bash",
+          { command: "git push" },
+          { signal: SIGNAL, toolUseID: "tu-1", requestId: "req-1" },
+        ),
+      ).resolves.toEqual({ behavior: "deny", message: "no Noctis turn is running" });
+      expect(r.asks).toEqual([]);
+    });
+
     it("asks about an allowlisted browser tool and refuses the rest of that server outright", async () => {
       const { r, ask } = await permission("allow");
 
@@ -470,10 +496,17 @@ describe("the Claude Agent SDK runtime", () => {
   });
 
   it("hosts the Noctis proposal tools in-process and emits each call as a proposal item", async () => {
-    const { query, calls } = scripted(list(init(), result()));
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { query, calls } = scripted(async function* () {
+      yield init();
+      await held;
+      yield result();
+    });
     const r = recorder();
+    const turn = createClaudeRuntime({ query }).turn(input(), r.sink);
 
-    await createClaudeRuntime({ query }).turn(input(), r.sink);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const server = calls[0]?.options?.mcpServers?.noctis;
 
@@ -511,6 +544,8 @@ describe("the Claude Agent SDK runtime", () => {
     ]);
 
     await client.close();
+    release();
+    await turn;
   });
 
   it("reports cancellation when the job's signal aborts mid-turn", async () => {
@@ -539,6 +574,106 @@ describe("the Claude Agent SDK runtime", () => {
 
     expect(evidence.stoppedReason).toBe("failed");
     expect(evidence).not.toHaveProperty("finalText");
+  });
+
+  describe("one CLI per thread", () => {
+    /** A CLI kept open: one reply and one result for every message it is streamed. */
+    function conversational() {
+      const prompts: string[] = [];
+      const fake = scripted(async function* (params) {
+        yield init();
+
+        for await (const message of params.prompt) {
+          const text = typeof message.message.content === "string" ? message.message.content : "";
+
+          prompts.push(text);
+          yield assistant([{ type: "text", text: `re: ${text}` }]);
+          yield result({ result: `re: ${text}` });
+        }
+      });
+
+      return { ...fake, prompts };
+    }
+
+    const idle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("THE GATE: the second message in a thread reuses the process instead of spawning one", async () => {
+      const { query, calls, prompts } = conversational();
+      const runtime = createClaudeRuntime({ query });
+
+      const first = await runtime.turn(input(), recorder().sink);
+      const second = await runtime.turn(
+        input({ prompt: "and again", sessionRef: first.sessionRef }),
+        recorder().sink,
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.options?.abortController?.signal.aborted).toBe(false);
+      expect(prompts).toEqual(["say hello", "and again"]);
+      expect([first.finalText, second.finalText]).toEqual(["re: say hello", "re: and again"]);
+      expect(second.sessionRef).toBe(SESSION);
+
+      runtime.close?.();
+    });
+
+    it("closes an idle process, and the next message resumes the session in a new one", async () => {
+      const { query, calls } = conversational();
+      const runtime = createClaudeRuntime({ query, idleMs: 20 });
+
+      const first = await runtime.turn(input(), recorder().sink);
+
+      await idle(60);
+      expect(calls[0]?.options?.abortController?.signal.aborted).toBe(true);
+
+      const second = await runtime.turn(
+        input({ prompt: "back again", sessionRef: first.sessionRef }),
+        recorder().sink,
+      );
+
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.options?.resume).toBe(SESSION);
+      expect(second.finalText).toBe("re: back again");
+
+      runtime.close?.();
+    });
+
+    it("reopens rather than reuse when the core names no session or another root", async () => {
+      const { query, calls } = conversational();
+      const runtime = createClaudeRuntime({ query });
+
+      const first = await runtime.turn(input(), recorder().sink);
+
+      // The core holds no session for the thread: whatever the live process remembers is not its.
+      await runtime.turn(input(), recorder().sink);
+      expect(calls).toHaveLength(2);
+
+      await runtime.turn(
+        { ...input({ sessionRef: first.sessionRef }), roots: { ...ROOTS, cwd: "C:\\ref" } },
+        recorder().sink,
+      );
+      expect(calls).toHaveLength(3);
+      expect(calls.slice(0, 2).map((c) => c.options?.abortController?.signal.aborted)).toEqual([
+        true,
+        true,
+      ]);
+
+      runtime.close?.();
+    });
+
+    it("keeps threads apart, and close() ends every live process", async () => {
+      const { query, calls } = conversational();
+      const runtime = createClaudeRuntime({ query });
+
+      await runtime.turn(input(), recorder().sink);
+      await runtime.turn(
+        input({ threadId: "0199a000-0000-7000-8000-0000000000e9" }),
+        recorder().sink,
+      );
+
+      expect(calls).toHaveLength(2);
+      runtime.close?.();
+      expect(calls.map((c) => c.options?.abortController?.signal.aborted)).toEqual([true, true]);
+    });
   });
 
   it("never spawns claude with --bare anywhere in the agent", () => {

@@ -168,7 +168,7 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-function runtime(scenario: Scenario, command = "C:\\bin\\codex.exe") {
+function runtime(scenario: Scenario, command = "C:\\bin\\codex.exe", idleMs?: number) {
   const fake = fakeAppServer(scenario);
 
   return {
@@ -179,6 +179,7 @@ function runtime(scenario: Scenario, command = "C:\\bin\\codex.exe") {
       proposalsDir: join(scratch, "proposals"),
       codexHome: join(scratch, "codex-home"),
       mcpEntry: "C:\\noctis\\dist\\noctis-mcp.js",
+      ...(idleMs === undefined ? {} : { idleMs }),
     }),
   };
 }
@@ -405,7 +406,8 @@ describe("the Codex App Server runtime", () => {
       usage: { inputTokens: 12, outputTokens: 5 },
       stoppedReason: "completed",
     });
-    expect(s?.child.killed).toBe(true);
+    // The process outlives the turn: the next message in the thread is answered by it.
+    expect(s?.child.killed).toBe(false);
   });
 
   it("turns the core's deny into a decline, and the item arrives declined", async () => {
@@ -423,7 +425,7 @@ describe("the Codex App Server runtime", () => {
     });
     // A decline does not end the turn: Codex carries on and the next ask still arrives.
     expect(r.asks.map((ask) => ask.kind)).toEqual(["command", "file_change"]);
-    expect(spawned[0]?.child.killed).toBe(true);
+    expect(spawned[0]?.child.killed).toBe(false);
   });
 
   it("opens workspace-write on the writable roots when an Objective is active", async () => {
@@ -526,7 +528,8 @@ describe("the Codex App Server runtime", () => {
         `mcp_servers.noctis.args=${JSON.stringify([
           "C:\\noctis\\dist\\noctis-mcp.js",
           "--proposals",
-          join(scratch, "proposals", "0199a000-0000-7000-8000-0000000000e2.jsonl"),
+          // Named for the thread, because the MCP child it is handed lives as long as the thread's process.
+          join(scratch, "proposals", "0199a000-0000-7000-8000-0000000000e1.jsonl"),
         ])}`,
       ]),
     );
@@ -665,6 +668,129 @@ describe("the Codex App Server runtime", () => {
         text: "Noctis does not answer runtime questions mid-turn; continue without the input.",
       },
     ]);
+  });
+
+  describe("one app-server per thread", () => {
+    /** One reply per turn/start, echoing the prompt. */
+    const REPLY: Scenario = {
+      turn(server, spawned) {
+        const starts = spawned.requests.get("turn/start") ?? [];
+        const last = starts[starts.length - 1] as { input: Array<{ text: string }> };
+
+        server.notify(
+          "item/completed",
+          itemNotification(spawned, {
+            type: "agentMessage",
+            id: `m${String(starts.length)}`,
+            text: `re: ${last.input[0]?.text ?? ""}`,
+          }),
+        );
+        server.notify("turn/completed", turnCompleted(spawned, "completed"));
+
+        return Promise.resolve();
+      },
+    };
+
+    const idle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("THE GATE: the second message in a thread reuses the process: one spawn, one thread, two turns", async () => {
+      const { runtime: codex, spawned } = runtime(REPLY);
+
+      const first = await codex.turn(input(), recorder().sink);
+      const second = await codex.turn(
+        input({ prompt: "and again", sessionRef: first.sessionRef }),
+        recorder().sink,
+      );
+      const [s] = spawned;
+
+      expect(spawned).toHaveLength(1);
+      expect(s?.requests.get("initialize")).toHaveLength(1);
+      expect(s?.requests.get("thread/start")).toHaveLength(1);
+      expect(s?.requests.has("thread/resume")).toBe(false);
+      expect(
+        (
+          s?.requests.get("turn/start") as Array<{
+            threadId: string;
+            input: Array<{ text: string }>;
+          }>
+        ).map((p) => [p.threadId, p.input[0]?.text]),
+      ).toEqual([
+        ["thread-1", "say hello"],
+        ["thread-1", "and again"],
+      ]);
+      expect([first.finalText, second.finalText]).toEqual(["re: say hello", "re: and again"]);
+      expect(second.sessionRef).toBe("thread-1");
+      expect(s?.child.killed).toBe(false);
+
+      codex.close?.();
+    });
+
+    it("closes an idle process, and the next message resumes the thread in a new one", async () => {
+      const { runtime: codex, spawned } = runtime(REPLY, undefined, 20);
+
+      const first = await codex.turn(input(), recorder().sink);
+
+      await idle(60);
+      expect(spawned[0]?.child.killed).toBe(true);
+
+      const second = await codex.turn(
+        input({ prompt: "back again", sessionRef: first.sessionRef }),
+        recorder().sink,
+      );
+
+      expect(spawned).toHaveLength(2);
+      expect(spawned[1]?.requests.get("thread/resume")).toEqual([
+        expect.objectContaining({ threadId: "thread-1" }),
+      ]);
+      expect(second.finalText).toBe("re: back again");
+
+      codex.close?.();
+    });
+
+    it("reopens rather than reuse when the core names no session, or the process died", async () => {
+      const { runtime: codex, spawned } = runtime(REPLY);
+
+      const first = await codex.turn(input(), recorder().sink);
+
+      await codex.turn(input(), recorder().sink);
+      expect(spawned).toHaveLength(2);
+      expect(spawned[0]?.child.killed).toBe(true);
+
+      spawned[1]?.child.kill();
+      await codex.turn(input({ sessionRef: first.sessionRef }), recorder().sink);
+      expect(spawned).toHaveLength(3);
+
+      codex.close?.();
+    });
+
+    it("keeps threads apart, and close() ends every live process", async () => {
+      const { runtime: codex, spawned } = runtime(REPLY);
+
+      await codex.turn(input(), recorder().sink);
+      await codex.turn(
+        input({ threadId: "0199a000-0000-7000-8000-0000000000e9" }),
+        recorder().sink,
+      );
+
+      expect(spawned).toHaveLength(2);
+      codex.close?.();
+      expect(spawned.map((s) => s.child.killed)).toEqual([true, true]);
+    });
+
+    it("runs a thread's turns one at a time", async () => {
+      const { runtime: codex, spawned } = runtime(REPLY);
+
+      // The second arrives before the first has a thread; it waits, then reuses what the first opened.
+      const [a, b] = await Promise.all([
+        codex.turn(input({ prompt: "one" }), recorder().sink),
+        codex.turn(input({ prompt: "two", sessionRef: "thread-1" }), recorder().sink),
+      ]);
+
+      expect([a.finalText, b.finalText]).toEqual(["re: one", "re: two"]);
+      expect(spawned).toHaveLength(1);
+
+      codex.close?.();
+    });
   });
 
   it("reports itself as the codex provider", () => {

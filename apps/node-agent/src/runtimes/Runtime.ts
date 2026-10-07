@@ -38,4 +38,6 @@ export interface Runtime {
   providerId: RuntimeProviderId;
   probe(): Promise<RuntimeProbe>;
   turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence>;
+  /** Ends every process the runtime is keeping open between turns. */
+  close?(): void;
 }

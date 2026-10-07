@@ -3,6 +3,7 @@ import type {
   Options,
   PermissionResult,
   SDKMessage,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkMcpServer, query as sdkQuery, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
@@ -16,10 +17,14 @@ import { AdapterRefused } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
 import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
 import { probeClaudeInstalled } from "./probe.js";
+import type { LiveProcess } from "./sessions.js";
+import { createProcessPool, processKey } from "./sessions.js";
 
 /**
  * Claude Code behind the node boundary, through the Agent SDK (ADR-0020/0021).
  *
+ * One `query()` per thread, kept open between turns and fed one user message
+ * per turn, so a follow-up does not pay for a CLI start and a session reload.
  * `query()` spawns the SDK's own bundled CLI (never the CLI's bare mode, never
  * an API key: the environment arrives stripped and the login is the owner's
  * claude.ai subscription). `settingSources: []` and `strictMcpConfig: true`
@@ -33,7 +38,7 @@ import { probeClaudeInstalled } from "./probe.js";
  */
 
 export type ClaudeQuery = (params: {
-  prompt: string;
+  prompt: AsyncIterable<SDKUserMessage>;
   options?: Options;
 }) => AsyncIterable<SDKMessage>;
 
@@ -41,6 +46,8 @@ export interface ClaudeRuntimeOptions {
   /** The SDK's `query`; tests hand in a scripted generator. */
   query?: ClaudeQuery;
   env?: NodeJS.ProcessEnv;
+  /** How long a thread's CLI waits for its next message before it is closed. */
+  idleMs?: number;
 }
 
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -240,185 +247,301 @@ function resultText(content: unknown): string | undefined {
   return text === "" ? undefined : text;
 }
 
-export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime {
-  const query: ClaudeQuery = options.query ?? sdkQuery;
+/** The user messages a live CLI is streamed, one per turn. Ending it lets the CLI exit. */
+function createInbox(): AsyncIterable<SDKUserMessage> & {
+  push(message: SDKUserMessage): void;
+  end(): void;
+} {
+  const queued: SDKUserMessage[] = [];
+  let wake: (() => void) | undefined;
+  let ended = false;
 
   return {
-    providerId: "claude",
-    probe: (): Promise<RuntimeProbe> => probeClaudeInstalled(options.env ?? process.env),
-    async turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
-      const { payload, roots, signal } = input;
+    push(message) {
+      queued.push(message);
+      wake?.();
+    },
+    end() {
+      ended = true;
+      wake?.();
+    },
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        const message = queued.shift();
 
-      if (signal.aborted) {
-        throw new AdapterRefused("job was cancelled");
+        if (message !== undefined) {
+          yield message;
+        } else if (ended) {
+          return;
+        } else {
+          await new Promise<void>((resolve) => (wake = resolve));
+          wake = undefined;
+        }
       }
+    },
+  };
+}
 
-      // The adapter already stripped these; this is the boundary, so it is asserted, not assumed.
-      const leaked = Object.keys(input.env).find((key) =>
-        (BILLING_KEYS as readonly string[]).includes(key.toUpperCase()),
-      );
+/** The turn a live CLI is currently answering. Everything the CLI says goes to it. */
+interface ClaudeTurn {
+  message(message: SDKMessage): void;
+  canUseTool: CanUseTool;
+  propose(kind: "surface" | "objective" | "preference", args: unknown): void;
+  /** The CLI ended under the turn. */
+  stop(error: Error): void;
+}
 
-      if (leaked !== undefined) {
-        throw new AdapterRefused(`billing key ${leaked} in the runtime environment`);
-      }
+interface ClaudeProcess extends LiveProcess {
+  send(prompt: string): void;
+  current: ClaudeTurn | undefined;
+  failure: Error | undefined;
+}
 
-      const controller = new AbortController();
-      const abort = (): void => controller.abort();
-      const pending = new Map<string, { name: string; input: unknown }>();
-      const denied = new Set<string>();
-      let itemCount = 0;
-      let proposals = 0;
-      let messageIndex = 0;
-      let fresh = false;
-      let sessionRef: string | undefined;
-      let finalText: string | undefined;
-      let usage: RuntimeTurnEvidence["usage"];
+export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime {
+  const query: ClaudeQuery = options.query ?? sdkQuery;
+  const pool = createProcessPool<ClaudeProcess>(options.idleMs);
 
-      function emit(item: RuntimeItem): void {
-        if (item.status !== "in_progress") {
-          itemCount += 1;
+  /** One CLI for one thread, opened with the roots and model of the turn that needed it. */
+  function open(input: RuntimeTurnInput, key: string): ClaudeProcess {
+    const { payload, roots } = input;
+    const controller = new AbortController();
+    const inbox = createInbox();
+    let alive = true;
+
+    const proc: ClaudeProcess = {
+      key,
+      sessionRef: undefined,
+      current: undefined,
+      failure: undefined,
+      get alive() {
+        return alive;
+      },
+      send(prompt) {
+        inbox.push({
+          type: "user",
+          message: { role: "user", content: prompt },
+          parent_tool_use_id: null,
+        });
+      },
+      close() {
+        if (alive) {
+          alive = false;
+          inbox.end();
+          controller.abort();
+        }
+      },
+    };
+
+    function end(error: Error): void {
+      proc.failure ??= error;
+      proc.close();
+      proc.current?.stop(error);
+    }
+
+    const [surface, objective, preference] = RuntimeProposalSchema.options;
+
+    function record(kind: "surface" | "objective" | "preference", args: unknown) {
+      proc.current?.propose(kind, args);
+
+      return Promise.resolve({ content: [{ type: "text" as const, text: "recorded" }] });
+    }
+
+    const noctis = createSdkMcpServer({
+      name: "noctis",
+      version: AGENT_VERSION,
+      tools: [
+        tool(
+          "noctis_propose_surface",
+          "Propose a surface for Noctis to place. Noctis validates it and decides; nothing is placed by this call.",
+          surface.omit({ kind: true }).shape,
+          (args) => record("surface", args),
+        ),
+        tool(
+          "noctis_propose_objective",
+          "Propose an objective for the operator to consider. It is recorded as a suggestion, never started.",
+          objective.omit({ kind: true }).shape,
+          (args) => record("objective", args),
+        ),
+        tool(
+          "noctis_remember_preference",
+          "Record one durable thing learned about how to work with the owner. Noctis applies its own rules to the Agent Brain and may refuse; nothing is written by this call.",
+          preference.omit({ kind: true }).shape,
+          (args) => record("preference", args),
+        ),
+      ],
+    });
+
+    // One browser profile per thread, and only on this route: see mcp-config.
+    const browser = playwrightServer(input.env, payload.threadId);
+
+    // The SDK does not split read from write access: `additionalDirectories`
+    // grants both, so writes into a read root are caught by canUseTool +
+    // classifyAsk (a path outside every writable root is external_write).
+    const sdkOptions: Options = {
+      cwd: roots.cwd,
+      additionalDirectories: [...roots.writable.filter((r) => r !== roots.cwd), ...roots.readable],
+      env: input.env,
+      model: payload.model.model,
+      permissionMode: "default",
+      settingSources: [],
+      strictMcpConfig: true,
+      includePartialMessages: true,
+      abortController: controller,
+      mcpServers: {
+        noctis,
+        ...(browser === undefined
+          ? {}
+          : { [PLAYWRIGHT_SERVER]: { type: "stdio" as const, ...browser } }),
+      },
+      // A tool call with no turn to ask on has nobody to answer it.
+      canUseTool: (toolName, toolInput, ctx) =>
+        proc.current === undefined
+          ? Promise.resolve({ behavior: "deny", message: "no Noctis turn is running" })
+          : proc.current.canUseTool(toolName, toolInput, ctx),
+      ...(payload.sessionRef === undefined ? {} : { resume: payload.sessionRef }),
+    };
+
+    const messages = query({ prompt: inbox, options: sdkOptions });
+
+    void (async () => {
+      try {
+        for await (const message of messages) {
+          if (message.type === "system" && message.subtype === "init") {
+            proc.sessionRef = message.session_id;
+
+            if (message.apiKeySource !== "none") {
+              // A key would bill per token; the whole route exists to avoid that.
+              end(new AdapterRefused(`claude_api_key_login_is_metered: ${message.apiKeySource}`));
+              return;
+            }
+          }
+
+          proc.current?.message(message);
         }
 
-        sink.item(item);
+        end(new Error("claude turn ended without a result"));
+      } catch (error) {
+        end(error instanceof Error ? error : new Error("claude stream failed"));
+      }
+    })();
+
+    return proc;
+  }
+
+  /** One user message sent to a live CLI, answered when its `result` arrives. */
+  function answer(
+    proc: ClaudeProcess,
+    input: RuntimeTurnInput,
+    sink: RuntimeSink,
+  ): Promise<RuntimeTurnEvidence> {
+    const { payload, roots, signal } = input;
+    const pending = new Map<string, { name: string; input: unknown }>();
+    const denied = new Set<string>();
+    let itemCount = 0;
+    let proposals = 0;
+    let messageIndex = 0;
+    let fresh = false;
+    let finalText: string | undefined;
+    let usage: RuntimeTurnEvidence["usage"];
+
+    function emit(item: RuntimeItem): void {
+      if (item.status !== "in_progress") {
+        itemCount += 1;
       }
 
-      function evidence(stoppedReason: RuntimeTurnEvidence["stoppedReason"]): RuntimeTurnEvidence {
-        return {
-          model: payload.model,
-          ...(sessionRef === undefined ? {} : { sessionRef: clip(sessionRef, 512) }),
-          itemCount,
-          ...(finalText === undefined ? {} : { finalText: clip(finalText, 20_000) }),
-          ...(usage === undefined ? {} : { usage }),
-          stoppedReason,
-        };
+      sink.item(item);
+    }
+
+    function evidence(stoppedReason: RuntimeTurnEvidence["stoppedReason"]): RuntimeTurnEvidence {
+      return {
+        model: payload.model,
+        ...(proc.sessionRef === undefined ? {} : { sessionRef: clip(proc.sessionRef, 512) }),
+        itemCount,
+        ...(finalText === undefined ? {} : { finalText: clip(finalText, 20_000) }),
+        ...(usage === undefined ? {} : { usage }),
+        stoppedReason,
+      };
+    }
+
+    return new Promise<RuntimeTurnEvidence>((resolve, reject) => {
+      let settled = false;
+      // Cancelling closes the CLI; the next turn resumes the session in a new one.
+      const cancel = (): void => proc.close();
+
+      function settle(outcome: RuntimeTurnEvidence | Error): void {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        signal.removeEventListener("abort", cancel);
+
+        if (proc.current === turn) {
+          proc.current = undefined;
+        }
+
+        if (outcome instanceof Error) {
+          reject(outcome);
+        } else {
+          resolve(outcome);
+        }
       }
 
-      const canUseTool: CanUseTool = async (
-        toolName,
-        toolInput,
-        ctx,
-      ): Promise<PermissionResult> => {
-        // Refused, not asked: a browser tool outside the allowlist is not a
-        // decision the owner should be handed. `browser_evaluate` and
-        // `browser_run_code_unsafe` are on the same server as the five.
-        if (refusedBrowserTool(toolName)) {
-          return { behavior: "deny", message: `${toolName} is not a tool Noctis lends` };
-        }
+      const turn: ClaudeTurn = {
+        stop(error) {
+          settle(
+            error instanceof AdapterRefused || !signal.aborted ? error : evidence("cancelled"),
+          );
+        },
 
-        const ask = askFor(toolName, toolInput, clip(ctx.toolUseID, 128), roots);
+        propose(kind, args) {
+          proposals += 1;
+          emit({
+            itemId: `proposal-${String(proposals)}`,
+            kind: "proposal",
+            status: "completed",
+            proposal: RuntimeProposalSchema.parse({ kind, ...(args as object) }),
+          });
+        },
 
-        if (ask === undefined) {
-          return { behavior: "allow", updatedInput: toolInput };
-        }
+        async canUseTool(toolName, toolInput, ctx): Promise<PermissionResult> {
+          // Refused, not asked: a browser tool outside the allowlist is not a
+          // decision the owner should be handed. `browser_evaluate` and
+          // `browser_run_code_unsafe` are on the same server as the five.
+          if (refusedBrowserTool(toolName)) {
+            return { behavior: "deny", message: `${toolName} is not a tool Noctis lends` };
+          }
 
-        try {
-          const answer = await sink.ask(ask);
+          const ask = askFor(toolName, toolInput, clip(ctx.toolUseID, 128), roots);
 
-          if (answer.decision === "allow") {
+          if (ask === undefined) {
             return { behavior: "allow", updatedInput: toolInput };
           }
 
-          denied.add(ctx.toolUseID);
+          try {
+            const answer = await sink.ask(ask);
 
-          return { behavior: "deny", message: answer.reason ?? DECLINED };
-        } catch {
-          // Cancelled or disconnected mid-ask: fail closed and stop the turn.
-          denied.add(ctx.toolUseID);
-
-          return { behavior: "deny", message: "Noctis authority did not answer", interrupt: true };
-        }
-      };
-
-      const [surface, objective, preference] = RuntimeProposalSchema.options;
-
-      function record(kind: "surface" | "objective" | "preference", args: unknown) {
-        proposals += 1;
-        emit({
-          itemId: `proposal-${String(proposals)}`,
-          kind: "proposal",
-          status: "completed",
-          proposal: RuntimeProposalSchema.parse({ kind, ...(args as object) }),
-        });
-
-        return Promise.resolve({ content: [{ type: "text" as const, text: "recorded" }] });
-      }
-
-      const noctis = createSdkMcpServer({
-        name: "noctis",
-        version: AGENT_VERSION,
-        tools: [
-          tool(
-            "noctis_propose_surface",
-            "Propose a surface for Noctis to place. Noctis validates it and decides; nothing is placed by this call.",
-            surface.omit({ kind: true }).shape,
-            (args) => record("surface", args),
-          ),
-          tool(
-            "noctis_propose_objective",
-            "Propose an objective for the operator to consider. It is recorded as a suggestion, never started.",
-            objective.omit({ kind: true }).shape,
-            (args) => record("objective", args),
-          ),
-          tool(
-            "noctis_remember_preference",
-            "Record one durable thing learned about how to work with the owner. Noctis applies its own rules to the Agent Brain and may refuse; nothing is written by this call.",
-            preference.omit({ kind: true }).shape,
-            (args) => record("preference", args),
-          ),
-        ],
-      });
-
-      // One browser profile per thread, and only on this route: see mcp-config.
-      const browser = playwrightServer(input.env, payload.threadId);
-
-      // The SDK does not split read from write access: `additionalDirectories`
-      // grants both, so writes into a read root are caught by canUseTool +
-      // classifyAsk (a path outside every writable root is external_write).
-      const sdkOptions: Options = {
-        cwd: roots.cwd,
-        additionalDirectories: [
-          ...roots.writable.filter((r) => r !== roots.cwd),
-          ...roots.readable,
-        ],
-        env: input.env,
-        model: payload.model.model,
-        permissionMode: "default",
-        settingSources: [],
-        strictMcpConfig: true,
-        includePartialMessages: true,
-        abortController: controller,
-        mcpServers: {
-          noctis,
-          ...(browser === undefined
-            ? {}
-            : { [PLAYWRIGHT_SERVER]: { type: "stdio" as const, ...browser } }),
-        },
-        canUseTool,
-        ...(payload.sessionRef === undefined ? {} : { resume: payload.sessionRef }),
-      };
-
-      signal.addEventListener("abort", abort, { once: true });
-
-      try {
-        for await (const message of query({ prompt: payload.prompt, options: sdkOptions })) {
-          switch (message.type) {
-            case "system": {
-              if (message.subtype !== "init") {
-                break;
-              }
-
-              sessionRef = message.session_id;
-
-              if (message.apiKeySource !== "none") {
-                // A key would bill per token; the whole route exists to avoid that.
-                controller.abort();
-                throw new AdapterRefused(
-                  `claude_api_key_login_is_metered: ${message.apiKeySource}`,
-                );
-              }
-
-              break;
+            if (answer.decision === "allow") {
+              return { behavior: "allow", updatedInput: toolInput };
             }
+
+            denied.add(ctx.toolUseID);
+
+            return { behavior: "deny", message: answer.reason ?? DECLINED };
+          } catch {
+            // Cancelled or disconnected mid-ask: fail closed and stop the turn.
+            denied.add(ctx.toolUseID);
+
+            return {
+              behavior: "deny",
+              message: "Noctis authority did not answer",
+              interrupt: true,
+            };
+          }
+        },
+
+        message(message) {
+          switch (message.type) {
             case "stream_event": {
               if (message.parent_tool_use_id !== null) {
                 break;
@@ -518,35 +641,60 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                   finalText = message.result;
                 }
 
-                return evidence(message.is_error ? "failed" : "completed");
+                settle(evidence(message.is_error ? "failed" : "completed"));
+              } else {
+                settle(evidence(signal.aborted ? "cancelled" : "failed"));
               }
 
-              return evidence(signal.aborted ? "cancelled" : "failed");
+              break;
             }
             default:
-              // Hooks, tasks, rate limits, status: the CLI's bookkeeping, not evidence.
+              // Init, hooks, tasks, rate limits, status: the CLI's bookkeeping, not evidence.
               break;
           }
-        }
-      } catch (error) {
-        if (error instanceof AdapterRefused) {
-          throw error;
-        }
+        },
+      };
 
-        if (signal.aborted) {
-          return evidence("cancelled");
-        }
+      proc.current = turn;
+      signal.addEventListener("abort", cancel, { once: true });
+      proc.send(payload.prompt);
 
-        throw error;
-      } finally {
-        signal.removeEventListener("abort", abort);
+      if (!proc.alive) {
+        turn.stop(proc.failure ?? new Error("claude ended before the turn started"));
       }
+    });
+  }
+
+  return {
+    providerId: "claude",
+    probe: (): Promise<RuntimeProbe> => probeClaudeInstalled(options.env ?? process.env),
+    turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
+      const { payload, roots, signal } = input;
 
       if (signal.aborted) {
-        return evidence("cancelled");
+        return Promise.reject(new AdapterRefused("job was cancelled"));
       }
 
-      throw new Error("claude turn ended without a result");
+      // The adapter already stripped these; this is the boundary, so it is asserted, not assumed.
+      const leaked = Object.keys(input.env).find((key) =>
+        (BILLING_KEYS as readonly string[]).includes(key.toUpperCase()),
+      );
+
+      if (leaked !== undefined) {
+        return Promise.reject(
+          new AdapterRefused(`billing key ${leaked} in the runtime environment`),
+        );
+      }
+
+      const key = processKey(payload, roots);
+
+      return pool.run(
+        payload.threadId,
+        { key, sessionRef: payload.sessionRef },
+        () => open(input, key),
+        (proc) => answer(proc, input, sink),
+      );
     },
+    close: () => pool.closeAll(),
   };
 }
