@@ -8,7 +8,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { createSdkMcpServer, query as sdkQuery, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
-import { RuntimeProposalSchema } from "@noctis/contracts";
+import { RuntimeDelegationSchema, RuntimeProposalSchema } from "@noctis/contracts";
 import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
@@ -328,6 +328,7 @@ interface ClaudeTurn {
   /** The CLI's own permission system asking. */
   canUseTool: CanUseTool;
   propose(kind: "surface" | "objective" | "preference", args: unknown): void;
+  delegate: RuntimeSink["delegate"];
   /** The CLI ended under the turn. */
   stop(error: Error): void;
 }
@@ -402,6 +403,41 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           "Propose an objective for the operator to consider. It is recorded as a suggestion, never started.",
           objective.omit({ kind: true }).shape,
           (args) => record("objective", args),
+        ),
+        tool(
+          "noctis_delegate",
+          "Hand work to another agent the owner runs (codex, claude or hermes) and wait for its answer. It runs in a Noctis thread of its own that the owner can open from any device. Returns the child's threadId, its reply and any files it produced; pass that threadId back to continue the same thread. Runs on this machine in the same folder unless `node` names another.",
+          RuntimeDelegationSchema.omit({ delegationId: true }).shape,
+          async (args) => {
+            const current = proc.current;
+
+            if (current === undefined) {
+              return { content: [{ type: "text" as const, text: NO_TURN }], isError: true };
+            }
+
+            try {
+              const result = await current.delegate(args);
+              // The delegation id is Noctis's bookkeeping; the agent needs the thread.
+              const text = JSON.stringify(result, (key, value: unknown) =>
+                key === "delegationId" ? undefined : value,
+              );
+
+              return {
+                content: [{ type: "text" as const, text }],
+                ...(result.outcome === "completed" ? {} : { isError: true }),
+              };
+            } catch (error) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `delegation did not finish: ${error instanceof Error ? error.message : "unknown"}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+          },
         ),
         tool(
           "noctis_remember_preference",
@@ -585,6 +621,8 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
             error instanceof AdapterRefused || !signal.aborted ? error : evidence("cancelled"),
           );
         },
+
+        delegate: (delegation) => sink.delegate(delegation),
 
         propose(kind, args) {
           proposals += 1;

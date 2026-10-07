@@ -27,6 +27,9 @@ const SLOW_STEP_MS = 200;
  */
 export const FAKE_ASK_COMMAND = "curl -X POST https://example.invalid/hook";
 
+/** The PNG signature and nothing else: enough for anything that sniffs the type. */
+const FAKE_PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 class Cancelled extends Error {}
 
 /**
@@ -36,6 +39,9 @@ class Cancelled extends Error {}
  *   - `ASK:`      a command that asks; allow → completed, deny → declined
  *   - `PROPOSE:`  a completed proposal item
  *   - `SLOW:`     200 ms between steps, honouring cancellation
+ *   - `IMAGE:`    hands a tiny PNG to the core and records it as an output
+ *   - `DELEGATE:` asks codex for an `IMAGE:`, then asks again on the same
+ *                 child thread, and reports both results as `delegated:<json>`
  */
 export function createFakeRuntime(): Runtime {
   return {
@@ -119,6 +125,41 @@ export function createFakeRuntime(): Runtime {
             cwd: roots.cwd,
             output: "hi",
             exitCode: 0,
+          });
+        }
+
+        if (payload.prompt.includes("IMAGE:")) {
+          await step();
+
+          const attachmentId = await sink.upload({
+            filename: "frame.png",
+            mediaType: "image/png",
+            bytes: FAKE_PNG,
+          });
+
+          item({
+            itemId: "ig1",
+            kind: "output",
+            status: "completed",
+            mediaType: "image/png",
+            attachmentId,
+          });
+        }
+
+        if (payload.prompt.includes("DELEGATE:")) {
+          const brief = payload.prompt.slice(payload.prompt.indexOf("DELEGATE:") + 9).trim();
+          const first = await sink.delegate({ runtime: "codex", prompt: `IMAGE: ${brief}` });
+          const second = await sink.delegate({
+            runtime: "codex",
+            prompt: "IMAGE: again, darker",
+            ...(first.threadId === undefined ? {} : { threadId: first.threadId }),
+          });
+
+          item({
+            itemId: "m2",
+            kind: "agent_message",
+            status: "completed",
+            text: `delegated:${JSON.stringify([first, second])}`,
           });
         }
 

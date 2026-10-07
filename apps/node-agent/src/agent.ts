@@ -6,6 +6,7 @@ import type {
   NodeFrame,
   NodeJobAssignment,
   RuntimeAnswer,
+  RuntimeDelegationResult,
   RuntimeProbe,
   RuntimeProviderId,
 } from "@noctis/contracts";
@@ -66,6 +67,11 @@ interface PendingAsk {
   reject(reason: Error): void;
 }
 
+interface PendingDelegation {
+  resolve(result: RuntimeDelegationResult): void;
+  reject(reason: Error): void;
+}
+
 export interface RunningAgent {
   close(): void;
   /** Reconnect attempts since the last successful `welcome`. Read by tests. */
@@ -114,6 +120,12 @@ export function startAgent(options: AgentOptions): RunningAgent {
   const running = new Map<string, AbortController>();
   /** Per job, the asks whose answer has not arrived. Rejected on cancel and on disconnect. */
   const pendingAsks = new Map<string, Map<string, PendingAsk>>();
+  /**
+   * Per job, the delegations whose child turn has not ended. No timeout of
+   * their own: the child's asks time out on the node that runs it, and the
+   * parent's job is cancelled or dropped like any other.
+   */
+  const pendingDelegations = new Map<string, Map<string, PendingDelegation>>();
   let providers: RuntimeProbe[] = [];
 
   let credential = options.credential;
@@ -151,22 +163,62 @@ export function startAgent(options: AgentOptions): RunningAgent {
     return new Uint8Array(await response.arrayBuffer());
   }
 
+  /** A file a turn made, posted for the job that made it. Same credential rules as a fetch. */
+  async function uploadOutput(
+    jobId: string,
+    output: { filename: string; mediaType: string; bytes: Uint8Array },
+    signal: AbortSignal,
+  ): Promise<string> {
+    const response = await fetch(new URL("/node/outputs", credential.coreUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential.nodeId}.${credential.credential}`,
+        "content-type": output.mediaType,
+        "x-noctis-filename": output.filename,
+        "x-noctis-job": jobId,
+      },
+      body: output.bytes,
+      signal,
+    });
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AdapterRefused(`the core refused an output with ${String(response.status)}`);
+    }
+
+    const { id } = (await response.json()) as { id?: unknown };
+
+    if (typeof id !== "string") {
+      throw new AdapterRefused("the core stored an output without an id");
+    }
+
+    return id;
+  }
+
   function rejectAsks(jobId: string, reason: string): void {
     for (const pending of pendingAsks.get(jobId)?.values() ?? []) {
       pending.reject(new AdapterRefused(reason));
     }
 
     pendingAsks.delete(jobId);
+
+    for (const pending of pendingDelegations.get(jobId)?.values() ?? []) {
+      pending.reject(new AdapterRefused(reason));
+    }
+
+    pendingDelegations.delete(jobId);
   }
 
   async function execute(assignment: NodeJobAssignment): Promise<void> {
     const controller = new AbortController();
     const { jobId } = assignment;
     const asks = new Map<string, PendingAsk>();
+    const delegations = new Map<string, PendingDelegation>();
     let sequence = 0;
 
     running.set(jobId, controller);
     pendingAsks.set(jobId, asks);
+    pendingDelegations.set(jobId, delegations);
     controller.signal.addEventListener("abort", () => rejectAsks(jobId, "job was cancelled"));
 
     const context: AdapterContext = {
@@ -175,6 +227,24 @@ export function startAgent(options: AgentOptions): RunningAgent {
       env,
       runtimes,
       fetchAttachment: (id) => fetchAttachment(id, controller.signal),
+      uploadOutput: (output) => uploadOutput(jobId, output, controller.signal),
+      delegate(delegation) {
+        if (controller.signal.aborted) {
+          return Promise.reject(new AdapterRefused("job was cancelled"));
+        }
+
+        const delegationId = ids.nextId();
+
+        return new Promise<RuntimeDelegationResult>((resolve, reject) => {
+          delegations.set(delegationId, { resolve, reject });
+          send({
+            kind: "delegate",
+            envelopeVersion: NODE_ENVELOPE_VERSION,
+            jobId,
+            delegation: { ...delegation, delegationId },
+          });
+        });
+      },
       progress(percent, note) {
         send({ kind: "progress", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, percent, note });
       },
@@ -257,7 +327,20 @@ export function startAgent(options: AgentOptions): RunningAgent {
     } finally {
       running.delete(jobId);
       pendingAsks.delete(jobId);
+      pendingDelegations.delete(jobId);
     }
+  }
+
+  function onDelegated(jobId: string, result: RuntimeDelegationResult): void {
+    const pending = pendingDelegations.get(jobId)?.get(result.delegationId);
+
+    if (pending === undefined) {
+      log("warn", "result for a delegation this node is not waiting on", { jobId });
+      return;
+    }
+
+    pendingDelegations.get(jobId)?.delete(result.delegationId);
+    pending.resolve(result);
   }
 
   function onAnswer(jobId: string, answer: RuntimeAnswer): void {
@@ -430,6 +513,9 @@ export function startAgent(options: AgentOptions): RunningAgent {
           return;
         case "answer":
           onAnswer(frame.jobId, frame.answer);
+          return;
+        case "delegated":
+          onDelegated(frame.jobId, frame.result);
           return;
       }
     });

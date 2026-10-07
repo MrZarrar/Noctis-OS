@@ -8,7 +8,7 @@ import type { RuntimeAnswer, RuntimeAsk, RuntimeItem, RuntimeTurnPayload } from 
 import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
+import type { RuntimeSink, RuntimeTurnInput, RuntimeUpload } from "./Runtime.js";
 import { ApprovalTimedOut } from "./Runtime.js";
 import type { CodexSpawn, SpawnedChild } from "./codex.js";
 import { NOCTIS_CODEX_RULES } from "./codex-rules.js";
@@ -37,10 +37,17 @@ interface Recorded {
   items: RuntimeItem[];
   deltas: Array<[string, string]>;
   asks: Array<Omit<RuntimeAsk, "askId">>;
+  uploads: RuntimeUpload[];
 }
 
 function recorder(decision: RuntimeAnswer["decision"] = "allow"): Recorded {
-  const recorded: Recorded = { items: [], deltas: [], asks: [], sink: undefined as never };
+  const recorded: Recorded = {
+    items: [],
+    deltas: [],
+    asks: [],
+    uploads: [],
+    sink: undefined as never,
+  };
 
   recorded.sink = {
     item: (item) => recorded.items.push(RuntimeItemSchema.parse(item)),
@@ -54,10 +61,18 @@ function recorder(decision: RuntimeAnswer["decision"] = "allow"): Recorded {
         approvalId: "0199a000-0000-7000-8000-0000000000a6",
       });
     },
+    delegate: () => Promise.reject(new Error("no delegation expected")),
+    upload: (output) => {
+      recorded.uploads.push(output);
+
+      return Promise.resolve(UPLOADED);
+    },
   };
 
   return recorded;
 }
+
+const UPLOADED = "0199a000-0000-7000-8000-0000000000f1";
 
 class FakeChild extends EventEmitter implements SpawnedChild {
   stdin = new PassThrough();
@@ -306,6 +321,102 @@ const HAPPY: Scenario = {
 };
 
 describe("the Codex App Server runtime", () => {
+  it("hands a generated image to the core before the turn ends, and records it as an output", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7]);
+    const { runtime: codex } = runtime({
+      turn(server, spawned) {
+        server.notify(
+          "item/completed",
+          itemNotification(spawned, {
+            type: "imageGeneration",
+            id: "ig_1",
+            status: "completed",
+            result: png.toString("base64"),
+            savedPath: "C:\\Users\\o\\.codex\\generated_images\\s\\ig_1.png",
+          }),
+        );
+        server.notify("turn/completed", turnCompleted(spawned, "completed"));
+
+        return Promise.resolve();
+      },
+    });
+    const r = recorder();
+    const evidence = await codex.turn(input(), r.sink);
+
+    expect(evidence.stoppedReason).toBe("completed");
+    expect(r.uploads).toEqual([
+      { filename: "ig_1.png", mediaType: "image/png", bytes: new Uint8Array(png) },
+    ]);
+    expect(r.items).toEqual([
+      {
+        itemId: "ig_1",
+        kind: "output",
+        status: "completed",
+        mediaType: "image/png",
+        path: "C:\\Users\\o\\.codex\\generated_images\\s\\ig_1.png",
+        attachmentId: UPLOADED,
+      },
+    ]);
+    codex.close?.();
+  });
+
+  it("reads a generated image far larger than a megabyte, as real ones are", async () => {
+    const png = Buffer.alloc(3 * 1024 * 1024, 7);
+
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    const { runtime: codex } = runtime({
+      turn(server, spawned) {
+        server.notify(
+          "item/completed",
+          itemNotification(spawned, {
+            type: "imageGeneration",
+            id: "ig_big",
+            status: "completed",
+            result: png.toString("base64"),
+          }),
+        );
+        server.notify(
+          "item/completed",
+          itemNotification(spawned, { type: "agentMessage", id: "m1", text: "Done." }),
+        );
+        server.notify("turn/completed", turnCompleted(spawned, "completed"));
+
+        return Promise.resolve();
+      },
+    });
+    const r = recorder();
+    const evidence = await codex.turn(input(), r.sink);
+
+    expect(evidence).toMatchObject({ stoppedReason: "completed", finalText: "Done." });
+    expect(r.uploads[0]?.bytes.length).toBe(png.length);
+    codex.close?.();
+  });
+
+  it("fails the turn, rather than wait forever, when the app-server sends what cannot be read", async () => {
+    const fake = fakeAppServer({
+      turn(server, spawned) {
+        server.notify(
+          "item/completed",
+          itemNotification(spawned, { type: "agentMessage", id: "m1", text: "x".repeat(4096) }),
+        );
+
+        return Promise.resolve();
+      },
+    });
+    const codex = createCodexRuntime({
+      command: "C:\\bin\\codex.exe",
+      spawn: fake.spawn,
+      proposalsDir: join(scratch, "proposals"),
+      codexHome: join(scratch, "codex-home"),
+      mcpEntry: "C:\\noctis\\dist\\noctis-mcp.js",
+      maxMessageBytes: 2048,
+    });
+
+    await expect(codex.turn(input(), recorder().sink)).rejects.toThrow(/exceeded 2048 bytes/);
+    codex.close?.();
+  });
+
   it("drives initialize → thread/start → turn/start and maps every item, delta, and ask", async () => {
     const { runtime: codex, spawned } = runtime(HAPPY);
     const r = recorder();

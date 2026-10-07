@@ -147,6 +147,8 @@ interface FakeNode {
    * different machine and answers a different question.
    */
   reconnect: () => Promise<FakeNode>;
+  /** The `Authorization` value this node presents on the HTTP node realm. */
+  bearer: () => string;
 }
 
 /** Pairs, grants `runtime.turn` on `directory`, connects, and says hello with Codex. */
@@ -214,6 +216,7 @@ async function connectFake(core: TestCore, directory: string): Promise<FakeNode>
       frame: (body) =>
         socket.send(JSON.stringify({ envelopeVersion: NODE_ENVELOPE_VERSION, ...body })),
       reconnect: dial,
+      bearer: () => `Bearer ${paired.nodeId}.${credential}`,
     };
 
     await waitFor(() => frames.some((frame) => frame.kind === "welcome"), "welcome frame");
@@ -979,6 +982,317 @@ describe("conversation service", () => {
       { thread_id: first.body.threadId, session_ref: "session-alpha" },
       { thread_id: second.body.threadId, session_ref: "session-beta" },
     ]);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+});
+
+const DELEGATION_A = "0199a000-0000-7000-8000-0000000000d1";
+const DELEGATION_B = "0199a000-0000-7000-8000-0000000000d2";
+const OUTPUT_ATTACHMENT = "0199a000-0000-7000-8000-0000000000e1";
+const FRAME_PATH = "C:\\frames\\1.png";
+
+function delegatedResults(node: FakeNode) {
+  return node.frames.flatMap((frame) => (frame.kind === "delegated" ? [frame] : []));
+}
+
+/** The child turn's node answers: a reply, one image, and a session to resume. */
+function finishChild(node: FakeNode, jobId: string, reply: string, sessionRef: string): void {
+  node.frame({
+    kind: "stream",
+    jobId,
+    sequence: 0,
+    item: { itemId: "m1", kind: "agent_message", status: "completed", text: reply },
+  });
+  node.frame({
+    kind: "stream",
+    jobId,
+    sequence: 1,
+    item: {
+      itemId: "ig_1",
+      kind: "output",
+      status: "completed",
+      mediaType: "image/png",
+      path: FRAME_PATH,
+      attachmentId: OUTPUT_ATTACHMENT,
+    },
+  });
+  node.frame({
+    kind: "result",
+    jobId,
+    outcome: "succeeded",
+    evidence: {
+      model: MODEL,
+      sessionRef,
+      itemCount: 2,
+      finalText: reply,
+      stoppedReason: "completed",
+    },
+  });
+}
+
+async function delegationApprovals(core: TestCore): Promise<Body[]> {
+  const response = await read(core, "/approvals");
+
+  return (response.body.approvals as Body[]).filter((a) => a.capability === "runtime.delegate");
+}
+
+describe("delegation", () => {
+  it("THE GATE: a delegated turn runs on a linked child thread, and a second request continues it", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const objectiveId = await activeObjective(core, "delegate");
+
+    await setDefault(core);
+    const parent = await send(core, "parent", { objectiveId });
+    await waitFor(() => node.jobs().length === 1, "the parent turn");
+    const parentJob = lastTurnJob(node).assignment.jobId;
+
+    node.frame({
+      kind: "delegate",
+      jobId: parentJob,
+      delegation: { delegationId: DELEGATION_A, runtime: "codex", prompt: "draw frame 1" },
+    });
+    await waitFor(() => node.jobs().length === 2, "the child turn");
+
+    const child = lastTurnJob(node);
+    const childThreadId = child.payload.threadId;
+    expect(childThreadId).not.toBe(parent.body.threadId);
+    expect(child.payload).toMatchObject({
+      prompt: "draw frame 1",
+      model: MODEL,
+      primaryRootGrantId: "d",
+      objectiveId,
+    });
+
+    finishChild(node, child.assignment.jobId, "frame drawn", "child-session");
+    await waitFor(() => delegatedResults(node).length === 1, "the delegation result");
+
+    expect(delegatedResults(node)[0]).toMatchObject({
+      jobId: parentJob,
+      result: {
+        delegationId: DELEGATION_A,
+        outcome: "completed",
+        threadId: childThreadId,
+        reply: "frame drawn",
+        outputs: [{ mediaType: "image/png", path: FRAME_PATH, attachmentId: OUTPUT_ATTACHMENT }],
+      },
+    });
+
+    // Policy decided it, and the decision is on the record against the parent's job.
+    expect(await delegationApprovals(core)).toEqual([
+      expect.objectContaining({
+        outcome: "allow",
+        nodeJobId: parentJob,
+        operationClass: "local_reversible_edit",
+        target: expect.objectContaining({ type: "runtime", id: "codex" }) as unknown,
+      }),
+    ]);
+
+    const thread = await read(core, `/threads/${childThreadId}`);
+    expect(thread.status).toBe(200);
+    expect(thread.body).toMatchObject({
+      id: childThreadId,
+      identityId: "vesper",
+      parentThreadId: parent.body.threadId,
+      parentTurnId: parent.body.id,
+    });
+
+    const children = await read(core, `/threads/${parent.body.threadId as string}/children`);
+    expect((children.body.threads as Body[]).map((t) => t.id)).toEqual([childThreadId]);
+
+    // The Objective's own thread is still the parent, not the child.
+    const byObjective = await read(core, `/threads?identityId=vesper&objectiveId=${objectiveId}`);
+    expect(byObjective.body.id).toBe(parent.body.threadId);
+
+    node.frame({
+      kind: "delegate",
+      jobId: parentJob,
+      delegation: {
+        delegationId: DELEGATION_B,
+        runtime: "codex",
+        prompt: "make the sky darker",
+        threadId: childThreadId,
+      },
+    });
+    await waitFor(() => node.jobs().length === 3, "the follow-up child turn");
+    expect(lastTurnJob(node).payload).toMatchObject({
+      threadId: childThreadId,
+      sessionRef: "child-session",
+      prompt: "make the sky darker",
+    });
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("outside an active Objective a delegation waits for the owner, and a decline refuses it", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+
+    await setDefault(core);
+    await send(core, "parent-free");
+    await waitFor(() => node.jobs().length === 1, "the parent turn");
+    const parentJob = lastTurnJob(node).assignment.jobId;
+
+    node.frame({
+      kind: "delegate",
+      jobId: parentJob,
+      delegation: { delegationId: DELEGATION_A, runtime: "codex", prompt: "draw" },
+    });
+
+    await waitFor(
+      async () => (await delegationApprovals(core)).length === 1,
+      "the delegation approval",
+    );
+    const [first] = await delegationApprovals(core);
+    expect(first).toMatchObject({ outcome: "require_confirmation", nodeJobId: parentJob });
+    expect(node.jobs()).toHaveLength(1);
+
+    const confirmed = await command(core, "authority.confirm", {
+      idempotencyKey: "confirm-delegation",
+      requestId: first?.id,
+    });
+    expect(confirmed.status).toBe(200);
+    await waitFor(() => node.jobs().length === 2, "the child turn after confirmation");
+
+    node.frame({
+      kind: "delegate",
+      jobId: parentJob,
+      delegation: { delegationId: DELEGATION_B, runtime: "codex", prompt: "draw again" },
+    });
+    await waitFor(
+      async () => (await delegationApprovals(core)).length === 2,
+      "the second approval",
+    );
+    const second = (await delegationApprovals(core)).find((a) => a.id !== first?.id);
+
+    const declined = await command(core, "authority.decline", {
+      idempotencyKey: "decline-delegation",
+      requestId: second?.id,
+    });
+    expect(declined.status).toBe(200);
+    await waitFor(() => delegatedResults(node).length === 1, "the refusal");
+    expect(delegatedResults(node)[0]?.result).toMatchObject({
+      delegationId: DELEGATION_B,
+      outcome: "refused",
+    });
+    expect(node.jobs()).toHaveLength(2);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("a delegation continues only a thread its own parent started", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const objectiveId = await activeObjective(core, "foreign");
+
+    await setDefault(core);
+    const parent = await send(core, "parent-a", { objectiveId });
+    await waitFor(() => node.jobs().length === 1, "the parent turn");
+
+    // The parent's own thread is a real thread, and not one this turn delegated.
+    node.frame({
+      kind: "delegate",
+      jobId: lastTurnJob(node).assignment.jobId,
+      delegation: {
+        delegationId: DELEGATION_A,
+        runtime: "codex",
+        prompt: "continue other work",
+        threadId: parent.body.threadId,
+      },
+    });
+    await waitFor(() => delegatedResults(node).length === 1, "the refusal");
+    expect(delegatedResults(node)[0]?.result).toMatchObject({ outcome: "refused" });
+    expect(node.jobs()).toHaveLength(1);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("the owner continues a delegated thread by naming it", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const objectiveId = await activeObjective(core, "owner-continues");
+
+    await setDefault(core);
+    await send(core, "parent-o", { objectiveId });
+    await waitFor(() => node.jobs().length === 1, "the parent turn");
+
+    node.frame({
+      kind: "delegate",
+      jobId: lastTurnJob(node).assignment.jobId,
+      delegation: { delegationId: DELEGATION_A, runtime: "codex", prompt: "draw" },
+    });
+    await waitFor(() => node.jobs().length === 2, "the child turn");
+    const child = lastTurnJob(node);
+    finishChild(node, child.assignment.jobId, "drawn", "child-session");
+    await waitFor(() => delegatedResults(node).length === 1, "the delegation result");
+
+    const continued = await send(core, "owner-follow-up", { threadId: child.payload.threadId });
+    expect(continued.status).toBe(200);
+    expect(continued.body.threadId).toBe(child.payload.threadId);
+    await waitFor(() => node.jobs().length === 3, "the owner's turn");
+    expect(lastTurnJob(node).payload).toMatchObject({
+      threadId: child.payload.threadId,
+      sessionRef: "child-session",
+    });
+
+    const unknown = await send(core, "owner-unknown", { threadId: OUTPUT_ATTACHMENT });
+    expect(unknown.status).toBe(404);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("a node hands over an output's bytes for a job it holds, and the page reads them back", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+
+    await setDefault(core);
+    await send(core, "outputs");
+    await waitFor(() => node.jobs().length === 1, "the turn");
+    const jobId = lastTurnJob(node).assignment.jobId;
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const headers = {
+      "content-type": "image/png",
+      "x-noctis-filename": "frame.png",
+      "x-noctis-job": jobId,
+    };
+
+    const anonymous = await fetch(`${core.base}/node/outputs`, {
+      method: "POST",
+      headers,
+      body: png,
+    });
+    expect(anonymous.status).toBe(401);
+    await anonymous.body?.cancel();
+
+    const foreignJob = await fetch(`${core.base}/node/outputs`, {
+      method: "POST",
+      headers: { ...headers, authorization: node.bearer(), "x-noctis-job": OUTPUT_ATTACHMENT },
+      body: png,
+    });
+    expect(foreignJob.status).toBe(403);
+    await foreignJob.body?.cancel();
+
+    const stored = await fetch(`${core.base}/node/outputs`, {
+      method: "POST",
+      headers: { ...headers, authorization: node.bearer() },
+      body: png,
+    });
+    expect(stored.status).toBe(200);
+    const record = (await stored.json()) as Body;
+    expect(record).toMatchObject({ filename: "frame.png", mediaType: "image/png", sizeBytes: 11 });
+
+    const content = await fetch(`${core.base}/attachments/${record.id as string}/content`, {
+      headers: authorized(),
+    });
+    expect(content.status).toBe(200);
+    expect(content.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await content.arrayBuffer())).toEqual(png);
 
     rmSync(directory, { recursive: true, force: true });
   });

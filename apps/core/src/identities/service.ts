@@ -17,20 +17,24 @@ export type ThreadRow = {
   id: string;
   identity_id: string;
   objective_id: string | null;
+  parent_thread_id: string | null;
+  parent_turn_id: string | null;
   active_objective_id: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
 };
 
-export const THREAD_COLUMNS = `id, identity_id, objective_id, active_objective_id, revision,
-                               created_at, updated_at`;
+export const THREAD_COLUMNS = `id, identity_id, objective_id, parent_thread_id, parent_turn_id,
+                               active_objective_id, revision, created_at, updated_at`;
 
 export function toThread(row: ThreadRow): ConversationThread {
   return ConversationThreadSchema.parse({
     id: row.id,
     identityId: row.identity_id,
     ...(row.objective_id === null ? {} : { objectiveId: row.objective_id }),
+    ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
+    ...(row.parent_turn_id === null ? {} : { parentTurnId: row.parent_turn_id }),
     ...(row.active_objective_id === null ? {} : { activeObjectiveId: row.active_objective_id }),
     revision: row.revision,
     createdAt: row.created_at,
@@ -52,7 +56,7 @@ export function getThreadForIdentity(
   const row = db
     .prepare(
       `SELECT ${THREAD_COLUMNS} FROM identity_threads
-        WHERE identity_id = ? AND objective_id IS NULL`,
+        WHERE identity_id = ? AND objective_id IS NULL AND parent_thread_id IS NULL`,
     )
     .get(identityId) as ThreadRow | undefined;
 

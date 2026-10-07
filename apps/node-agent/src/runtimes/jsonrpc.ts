@@ -19,6 +19,11 @@ export interface JsonRpcClientOptions {
   timeoutMs?: number;
   /** A single inbound line longer than this is a protocol failure, not a message. */
   maxLineBytes?: number;
+  /**
+   * Called once when the client stops reading, for whatever reason. Without it
+   * a peer that is still running but no longer heard looks like a quiet one.
+   */
+  onClose?: (reason: string) => void;
 }
 
 export type NotificationHandler = (method: string, params: unknown) => void;
@@ -110,6 +115,7 @@ export function createJsonRpcClient(
     io.input.off("data", onData);
     io.input.off("end", onEnd);
     io.input.off("close", onEnd);
+    options.onClose?.(reason);
   }
 
   function answer(id: string | number, work: Promise<unknown>): void {

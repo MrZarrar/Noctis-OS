@@ -70,9 +70,17 @@ export interface CodexRuntimeOptions {
   env?: NodeJS.ProcessEnv;
   /** How long a thread's app-server waits for its next message before it is closed. */
   idleMs?: number;
+  /** The largest single message read from the app-server. Tests lower it. */
+  maxMessageBytes?: number;
 }
 
 const KILL_AFTER_INTERRUPT_MS = 5_000;
+/**
+ * A generated image arrives inside one notification as base64, so a message
+ * has to fit the largest output the core will store (10 MB, a third more as
+ * base64) with room to spare.
+ */
+const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
 const STDERR_TAIL_BYTES = 2_000;
 const NO_INPUT_TEXT =
   "Noctis does not answer runtime questions mid-turn; continue without the input.";
@@ -104,6 +112,7 @@ const ThreadItemSchema = z
       .optional(),
     kind: z.string().optional(),
     agentPath: z.string().optional(),
+    savedPath: z.string().nullable().optional(),
   })
   .loose();
 
@@ -195,6 +204,32 @@ function toolOutput(item: ThreadItem): string | undefined {
   return payload === undefined || payload === null
     ? undefined
     : clip(JSON.stringify(payload), 4000);
+}
+
+const IMAGE_SIGNATURES: ReadonlyArray<readonly [string, string, number[]]> = [
+  ["image/png", "png", [0x89, 0x50, 0x4e, 0x47]],
+  ["image/jpeg", "jpg", [0xff, 0xd8, 0xff]],
+  ["image/webp", "webp", [0x52, 0x49, 0x46, 0x46]],
+];
+
+/**
+ * The bytes of a generated image, from the item's base64 `result`, and what
+ * they are. Judged by the bytes, not by the file name Codex chose, because the
+ * type is what the page will be told to render them as.
+ */
+export function generatedImage(
+  item: ThreadItem,
+): { bytes: Uint8Array; mediaType: string; extension: string } | undefined {
+  if (typeof item.result !== "string" || item.result === "") {
+    return undefined;
+  }
+
+  const bytes = new Uint8Array(Buffer.from(item.result.replace(/^data:[^,]*,/, ""), "base64"));
+  const match = IMAGE_SIGNATURES.find(([, , magic]) =>
+    magic.every((byte, index) => bytes[index] === byte),
+  );
+
+  return match === undefined ? undefined : { bytes, mediaType: match[0], extension: match[1] };
 }
 
 /** ThreadItem → RuntimeItem, or nothing for the kinds Noctis does not persist. */
@@ -315,7 +350,19 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       // Stripped again here: the adapter already did, and this is the boundary.
       { cwd: roots.cwd, env: childEnvironment(input.env) },
     );
-    const rpc = createJsonRpcClient({ input: child.stdout, output: child.stdin });
+    const rpc = createJsonRpcClient(
+      { input: child.stdout, output: child.stdin },
+      {
+        maxLineBytes: options.maxMessageBytes ?? MAX_MESSAGE_BYTES,
+        // Once nothing more can be read, nothing can finish the turn either.
+        // A close Noctis started itself already said why.
+        onClose: (reason) => {
+          if (alive) {
+            end(new Error(`codex app-server could not be read: ${reason}`));
+          }
+        },
+      },
+    );
     let alive = true;
     let stderrTail = "";
     let killTimer: NodeJS.Timeout | undefined;
@@ -347,9 +394,11 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       },
     };
 
+    // The turn hears the reason first: closing kills the child, and its exit
+    // would otherwise arrive as a second, less useful one.
     function end(error: Error): void {
-      proc.close();
       proc.current?.ended(error);
+      proc.close();
     }
 
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -388,6 +437,40 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     let usage: RuntimeTurnEvidence["usage"];
     let turnId: string | undefined;
     let settled = false;
+    /** Generated images still on their way to the core. The turn ends after them. */
+    const uploads: Array<Promise<void>> = [];
+
+    /**
+     * A generated image becomes an output the owner can open anywhere. A failed
+     * upload still records where the file is on this machine.
+     */
+    async function imageOutput(item: ThreadItem): Promise<void> {
+      const itemId = clip(item.id ?? "image", 128);
+      const path = typeof item.savedPath === "string" ? clip(item.savedPath, 1024) : undefined;
+      const image = generatedImage(item);
+      let attachmentId: string | undefined;
+
+      if (image !== undefined) {
+        try {
+          attachmentId = await sink.upload({
+            filename: `${itemId.replace(/[^\w-]/g, "_")}.${image.extension}`,
+            mediaType: image.mediaType,
+            bytes: image.bytes,
+          });
+        } catch {
+          attachmentId = undefined;
+        }
+      }
+
+      emit({
+        itemId,
+        kind: "output",
+        status: "completed",
+        mediaType: image?.mediaType ?? "application/octet-stream",
+        ...(path === undefined ? {} : { path }),
+        ...(attachmentId === undefined ? {} : { attachmentId }),
+      });
+    }
 
     function emit(item: RuntimeItem): void {
       if (item.status !== "in_progress") {
@@ -475,13 +558,17 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           return;
         }
 
-        resolve({
-          model: payload.model,
-          ...(proc.threadId === undefined ? {} : { sessionRef: proc.threadId }),
-          itemCount,
-          ...(finalText === undefined ? {} : { finalText }),
-          ...(usage === undefined ? {} : { usage }),
-          stoppedReason: outcome.evidence,
+        // The result is what tells the core the turn is over, so every output
+        // item has to have reached it first.
+        void Promise.allSettled(uploads).then(() => {
+          resolve({
+            model: payload.model,
+            ...(proc.threadId === undefined ? {} : { sessionRef: proc.threadId }),
+            itemCount,
+            ...(finalText === undefined ? {} : { finalText }),
+            ...(usage === undefined ? {} : { usage }),
+            stoppedReason: outcome.evidence,
+          });
         });
       }
 
@@ -510,7 +597,14 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
               return;
             }
             case "item/completed": {
-              const mapped = toRuntimeItem(ItemNotificationSchema.parse(params).item, "completed");
+              const { item } = ItemNotificationSchema.parse(params);
+
+              if (item.type === "imageGeneration" && item.status !== "failed") {
+                uploads.push(imageOutput(item));
+                return;
+              }
+
+              const mapped = toRuntimeItem(item, "completed");
 
               if (mapped !== undefined) {
                 emit(mapped);

@@ -4,7 +4,13 @@ import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { RuntimeAnswer, RuntimeAsk, RuntimeItem, RuntimeTurnPayload } from "@noctis/contracts";
+import type {
+  RuntimeAnswer,
+  RuntimeAsk,
+  RuntimeDelegation,
+  RuntimeItem,
+  RuntimeTurnPayload,
+} from "@noctis/contracts";
 import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -47,10 +53,17 @@ interface Recorded {
   items: RuntimeItem[];
   deltas: Array<[string, string]>;
   asks: Array<Omit<RuntimeAsk, "askId">>;
+  delegations: Array<Omit<RuntimeDelegation, "delegationId">>;
 }
 
 function recorder(decision: RuntimeAnswer["decision"] = "allow", reason?: string): Recorded {
-  const recorded: Recorded = { items: [], deltas: [], asks: [], sink: undefined as never };
+  const recorded: Recorded = {
+    items: [],
+    deltas: [],
+    asks: [],
+    delegations: [],
+    sink: undefined as never,
+  };
 
   recorded.sink = {
     item: (item) => recorded.items.push(RuntimeItemSchema.parse(item)),
@@ -65,6 +78,24 @@ function recorder(decision: RuntimeAnswer["decision"] = "allow", reason?: string
         ...(reason === undefined ? {} : { reason }),
       });
     },
+    delegate: (delegation) => {
+      recorded.delegations.push(delegation);
+
+      return Promise.resolve({
+        delegationId: "0199a000-0000-7000-8000-0000000000d1",
+        outcome: "completed",
+        threadId: "0199a000-0000-7000-8000-0000000000c1",
+        reply: "frame drawn",
+        outputs: [
+          {
+            mediaType: "image/png",
+            path: "C:\\frames\\1.png",
+            attachmentId: "0199a000-0000-7000-8000-0000000000f1",
+          },
+        ],
+      });
+    },
+    upload: () => Promise.reject(new Error("no upload expected")),
   };
 
   return recorded;
@@ -633,6 +664,7 @@ describe("the Claude Agent SDK runtime", () => {
     const tools = await client.listTools();
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "noctis_delegate",
       "noctis_propose_objective",
       "noctis_propose_surface",
       "noctis_remember_preference",
@@ -652,6 +684,59 @@ describe("the Claude Agent SDK runtime", () => {
         proposal: { kind: "objective", title: "Suggested", intent: "later" },
       },
     ]);
+
+    await client.close();
+    release();
+    await turn;
+  });
+
+  it("noctis_delegate hands the work to the core and returns the child's thread, reply and outputs", async () => {
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { query, calls } = scripted(async function* () {
+      yield init();
+      await held;
+      yield result();
+    });
+    const r = recorder();
+    const turn = createClaudeRuntime({ query }).turn(input(), r.sink);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const server = calls[0]?.options?.mcpServers?.noctis;
+
+    if (server === undefined || server.type !== "sdk") {
+      throw new Error("no sdk server");
+    }
+
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+
+    await server.instance.connect(serverSide);
+    await client.connect(clientSide);
+
+    const called = await client.callTool({
+      name: "noctis_delegate",
+      arguments: { runtime: "codex", prompt: "draw frame 1" },
+    });
+
+    expect(r.delegations).toEqual([{ runtime: "codex", prompt: "draw frame 1" }]);
+    expect(called.isError).not.toBe(true);
+
+    const [content] = called.content as Array<{ type: string; text: string }>;
+
+    expect(JSON.parse(content?.text ?? "")).toEqual({
+      outcome: "completed",
+      threadId: "0199a000-0000-7000-8000-0000000000c1",
+      reply: "frame drawn",
+      outputs: [
+        {
+          mediaType: "image/png",
+          path: "C:\\frames\\1.png",
+          attachmentId: "0199a000-0000-7000-8000-0000000000f1",
+        },
+      ],
+    });
 
     await client.close();
     release();

@@ -110,6 +110,8 @@ export interface UploadAttachment {
   filename: string;
   mediaType: string;
   bytes: Uint8Array;
+  /** An upload for a prompt by default; `runtime_output` is a file an agent made on a node. */
+  origin?: "prompt_attachment" | "runtime_output";
 }
 
 /**
@@ -171,7 +173,7 @@ export function uploadAttachment(
         mediaType: mediaType.data,
         provenanceVersion: 1,
         provenance: {
-          kind: "prompt_attachment",
+          kind: upload.origin ?? "prompt_attachment",
           filename: filename.data,
           sizeBytes: upload.bytes.length,
           checksum,

@@ -27,7 +27,8 @@ export function findThread(
 
   const row = db
     .prepare(
-      `SELECT ${THREAD_COLUMNS} FROM identity_threads WHERE identity_id = ? AND objective_id = ?`,
+      `SELECT ${THREAD_COLUMNS} FROM identity_threads
+        WHERE identity_id = ? AND objective_id = ? AND parent_thread_id IS NULL`,
     )
     .get(identityId, objectiveId) as ThreadRow | undefined;
 
@@ -49,6 +50,46 @@ export function listThreads(db: NoctisDatabase, identityId: string): Conversatio
     .all(identityId) as ThreadRow[];
 
   return rows.map(toThread);
+}
+
+/** The threads agents on `parentThreadId` delegated to, oldest first. */
+export function listChildThreads(db: NoctisDatabase, parentThreadId: string): ConversationThread[] {
+  const rows = db
+    .prepare(
+      `SELECT ${THREAD_COLUMNS} FROM identity_threads
+        WHERE parent_thread_id = ? ORDER BY created_at, id`,
+    )
+    .all(parentThreadId) as ThreadRow[];
+
+  return rows.map(toThread);
+}
+
+/**
+ * A new thread for one delegation. It keeps the parent's identity and
+ * Objective, so the child's asks are judged by the same scope as the parent's.
+ */
+export function createChildThread(
+  tx: NoctisDatabase,
+  kernel: Kernel,
+  parent: ConversationThread,
+  parentTurnId: string,
+  now: string,
+): ConversationThread {
+  const id = kernel.ids.nextId();
+
+  tx.prepare(
+    `INSERT INTO identity_threads
+       (id, identity_id, objective_id, parent_thread_id, parent_turn_id, revision, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+  ).run(id, parent.identityId, parent.objectiveId ?? null, parent.id, parentTurnId, now, now);
+
+  const thread = getThread(tx, id);
+
+  if (thread === undefined) {
+    throw new Error(`Thread ${id} vanished mid-transaction`);
+  }
+
+  return thread;
 }
 
 /**

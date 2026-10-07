@@ -326,8 +326,9 @@ describe("headless kernel loop", () => {
     // sessions, provider decisions, and one thread per Objective; 0007 the
     // browser sessions a cookie is verified against; 0008 the push
     // subscriptions that die with the session they belong to; 0009 the
-    // attachments a prompt carries and the turns that carried them.
-    expect(diagnostics.body.schemaVersion).toBe(9);
+    // attachments a prompt carries and the turns that carried them; 0010 the
+    // child threads a delegation runs on.
+    expect(diagnostics.body.schemaVersion).toBe(10);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {

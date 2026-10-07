@@ -523,6 +523,71 @@ describe("a runtime turn through the real core", () => {
       "both turns to succeed",
     );
   });
+
+  it("THE GATE: a turn delegates an image, gets it back viewable, and continues the same child thread", async () => {
+    const { core } = await turnReadyAgent();
+    const created = await command(core, "objective.create", {
+      idempotencyKey: "o-delegate",
+      title: "Storyboard",
+      intent: "Frames for the channel",
+      status: "draft",
+      identityId: "vesper",
+      protocolIds: [],
+    });
+    await command(core, "objective.change_status", {
+      idempotencyKey: "o-delegate-on",
+      objectiveId: created.id,
+      expectedRevision: 0,
+      status: "active",
+    });
+
+    const parent = await command(core, "conversation.send", {
+      idempotencyKey: "parent-delegates",
+      identityId: "vesper",
+      text: "DELEGATE: frame 1",
+      model: TURN.model,
+      objectiveId: created.id,
+    });
+    const parentThread = parent.threadId as string;
+
+    let messages: Array<{ role: string; body: string }> = [];
+    await waitFor(async () => {
+      const response = await fetch(`${core.base}/threads/${parentThread}/messages`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      messages = ((await response.json()) as { messages: typeof messages }).messages;
+
+      return messages.some((message) => message.body.startsWith("delegated:"));
+    }, "the parent to report both delegations");
+
+    const report = messages.find((message) => message.body.startsWith("delegated:"))?.body ?? "";
+    const [first, second] = JSON.parse(report.slice("delegated:".length)) as Array<{
+      outcome: string;
+      threadId: string;
+      reply: string;
+      outputs: Array<{ mediaType: string; attachmentId?: string }>;
+    }>;
+
+    expect(first?.outcome).toBe("completed");
+    expect(second?.outcome).toBe("completed");
+    expect(second?.threadId).toBe(first?.threadId);
+    expect(first?.reply).toContain("IMAGE: frame 1");
+
+    const image = await fetch(
+      `${core.base}/attachments/${first?.outputs[0]?.attachmentId ?? "none"}/content`,
+      { headers: { authorization: `Bearer ${TOKEN}` } },
+    );
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await image.arrayBuffer()).slice(0, 4)).toEqual(
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    );
+
+    const child = await fetch(`${core.base}/threads/${first?.threadId ?? "none"}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(((await child.json()) as { parentThreadId: string }).parentThreadId).toBe(parentThread);
+  });
 });
 
 /**

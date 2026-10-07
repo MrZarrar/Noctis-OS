@@ -142,6 +142,45 @@ export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/**
+ * A file a turn produced that the owner can open: an image Codex generated,
+ * say. `attachmentId` is set once the node has handed the bytes to the core;
+ * `path` is where the file sits on the node that made it.
+ */
+export const RuntimeOutputSchema = z
+  .object({
+    mediaType: z.string().trim().min(1).max(128),
+    path: z.string().max(1024).optional(),
+    attachmentId: UuidSchema.optional(),
+  })
+  .strict();
+
+/**
+ * One agent handing work to another through Noctis. The core creates or
+ * continues the child thread; `threadId` names a child thread the same parent
+ * already started, and `node` a node id or host name to run it on.
+ */
+export const RuntimeDelegationSchema = z
+  .object({
+    delegationId: UuidSchema,
+    runtime: RuntimeProviderIdSchema,
+    prompt: z.string().min(1).max(20_000),
+    threadId: UuidSchema.optional(),
+    node: ShortId.optional(),
+  })
+  .strict();
+
+export const RuntimeDelegationResultSchema = z
+  .object({
+    delegationId: UuidSchema,
+    outcome: z.enum(["completed", "failed", "refused"]),
+    threadId: UuidSchema.optional(),
+    reply: z.string().max(20_000).optional(),
+    outputs: z.array(RuntimeOutputSchema).max(50).default([]),
+    reason: z.string().max(500).optional(),
+  })
+  .strict();
+
 const ItemBase = { itemId: ShortId, status: RuntimeItemStatusSchema };
 
 /** One thing the runtime did during a turn, bounded so a node cannot flood the core. */
@@ -178,6 +217,7 @@ export const RuntimeItemSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ ...ItemBase, kind: z.literal("proposal"), proposal: RuntimeProposalSchema }).strict(),
   z.object({ ...ItemBase, kind: z.literal("sub_agent"), label: z.string().max(200) }).strict(),
+  z.object({ ...ItemBase, kind: z.literal("output"), ...RuntimeOutputSchema.shape }).strict(),
 ]);
 
 /** A token delta. The one ephemeral channel; never written to `orchestration_events`. */
@@ -253,3 +293,6 @@ export type RuntimeDelta = z.infer<typeof RuntimeDeltaSchema>;
 export type RuntimeAsk = z.infer<typeof RuntimeAskSchema>;
 export type RuntimeAnswer = z.infer<typeof RuntimeAnswerSchema>;
 export type RuntimeTurnEvidence = z.infer<typeof RuntimeTurnEvidenceSchema>;
+export type RuntimeOutput = z.infer<typeof RuntimeOutputSchema>;
+export type RuntimeDelegation = z.infer<typeof RuntimeDelegationSchema>;
+export type RuntimeDelegationResult = z.infer<typeof RuntimeDelegationResultSchema>;

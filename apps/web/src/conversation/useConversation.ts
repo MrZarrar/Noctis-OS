@@ -64,6 +64,7 @@ export type Turn = z.infer<typeof TurnSchema>;
 const MessagesSchema = z.object({ messages: z.array(MessageSchema) }).strict();
 const TurnsSchema = z.object({ turns: z.array(TurnSchema) }).strict();
 const ApprovalsSchema = z.object({ approvals: z.array(ApprovalRecordSchema) }).strict();
+const ChildrenSchema = z.object({ threads: z.array(ConversationThreadSchema) }).strict();
 const LedgerHeadSchema = z
   .object({ events: z.array(z.unknown()), latestSequence: z.int().nonnegative() })
   .strict();
@@ -125,6 +126,10 @@ export interface ConversationSnapshot {
   offlineRetry: { text: string; options: SendOptions } | undefined;
   /** Whether this transport can upload a file at all. See `CoreTransport.upload`. */
   canAttach: boolean;
+  /** Threads an agent on this one delegated to, oldest first. */
+  children: readonly ConversationThread[];
+  /** Where an output's bytes can be loaded from; absent when the transport cannot say. */
+  outputUrl: ((attachmentId: string) => string) | undefined;
   error: string | undefined;
 }
 
@@ -175,6 +180,8 @@ const EMPTY: ConversationSnapshot = {
   roots: [],
   offlineRetry: undefined,
   canAttach: false,
+  children: [],
+  outputUrl: undefined,
   error: undefined,
 };
 
@@ -190,7 +197,9 @@ function isPendingFor(approval: ApprovalRecord, jobIds: ReadonlySet<string>): bo
 
 /**
  * One identity's conversation on one thread: the free-chat thread when
- * `objectiveId` is absent, the Objective's thread when it is set (0.12).
+ * `objectiveId` is absent, the Objective's thread when it is set (0.12), and
+ * any thread by id when `threadId` is set, which is how a delegated thread is
+ * opened and continued.
  *
  * Framework-free on purpose. `useConversation` is a thin `useSyncExternalStore`
  * over it, so the whole behaviour — deltas, items, approvals, refetches — is
@@ -204,8 +213,16 @@ export function createConversation(
   transport: CoreTransport,
   identityId: ConversationalIdentityId,
   objectiveId: string | undefined,
+  openThreadId?: string,
 ): ConversationStore {
-  let state: ConversationSnapshot = { ...EMPTY, canAttach: transport.upload !== undefined };
+  let state: ConversationSnapshot = {
+    ...EMPTY,
+    canAttach: transport.upload !== undefined,
+    outputUrl:
+      transport.contentUrl === undefined
+        ? undefined
+        : (attachmentId) => transport.contentUrl?.(`/attachments/${attachmentId}/content`) ?? "",
+  };
   let generation = 0;
   let subscription: Subscription | undefined;
   const listeners = new Set<() => void>();
@@ -227,6 +244,10 @@ export function createConversation(
   }
 
   function threadPath(): string {
+    if (openThreadId !== undefined) {
+      return `/threads/${openThreadId}`;
+    }
+
     const query = new URLSearchParams({ identityId });
 
     if (objectiveId !== undefined) {
@@ -274,6 +295,17 @@ export function createConversation(
     }
   }
 
+  /**
+   * Quietly empty when the core cannot answer: a core from before delegation
+   * has no children to show, and that is not an error worth a banner.
+   */
+  async function loadChildren(parentId: string): Promise<void> {
+    const response = await transport.request("GET", `/threads/${parentId}/children`);
+    const page = response.status === 200 ? ChildrenSchema.safeParse(response.body) : undefined;
+
+    set({ children: page?.success === true ? page.data.threads : [] });
+  }
+
   /** Asks left unanswered before this page loaded. */
   async function loadPendingApprovals(): Promise<void> {
     const page = await read("/approvals", ApprovalsSchema, "approvals");
@@ -319,7 +351,11 @@ export function createConversation(
     }
 
     set({ thread: thread.data });
-    await Promise.all([loadMessages(thread.data.id), loadTurns(thread.data.id)]);
+    await Promise.all([
+      loadMessages(thread.data.id),
+      loadTurns(thread.data.id),
+      loadChildren(thread.data.id),
+    ]);
     await loadPendingApprovals();
   }
 
@@ -431,6 +467,13 @@ export function createConversation(
       case "identity.turn_completed.v1":
         if (event.streamId === threadId) {
           void loadTurns(event.streamId);
+        } else if (
+          event.type === "identity.turn_started.v1" &&
+          threadId !== undefined &&
+          !state.children.some((child) => child.id === event.streamId)
+        ) {
+          // Possibly a delegation from here starting its first turn.
+          void loadChildren(threadId);
         }
 
         return;
@@ -604,7 +647,11 @@ export function createConversation(
       const body = await command("conversation.send", {
         identityId,
         text,
-        ...(objectiveId === undefined ? {} : { objectiveId }),
+        ...(openThreadId !== undefined
+          ? { threadId: openThreadId }
+          : objectiveId === undefined
+            ? {}
+            : { objectiveId }),
         ...(options?.model === undefined ? {} : { model: options.model }),
         ...(options?.rootGrantId === undefined ? {} : { rootGrantId: options.rootGrantId }),
         ...(attachmentIds.length === 0 ? {} : { attachmentIds }),
@@ -696,11 +743,14 @@ export function useConversation(
   transport: CoreTransport | undefined,
   identityId: ConversationalIdentityId,
   objectiveId: string | undefined,
+  threadId?: string,
 ): ConversationState {
   const store = useMemo(
     () =>
-      transport === undefined ? undefined : createConversation(transport, identityId, objectiveId),
-    [transport, identityId, objectiveId],
+      transport === undefined
+        ? undefined
+        : createConversation(transport, identityId, objectiveId, threadId),
+    [transport, identityId, objectiveId, threadId],
   );
 
   useEffect(() => {

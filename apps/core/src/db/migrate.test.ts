@@ -148,6 +148,7 @@ describe("migrate", () => {
         "idx_identity_turns_thread",
         "idx_identity_threads_objective",
         "idx_identity_threads_free",
+        "idx_identity_threads_parent",
         "idx_sessions_cookie_hash",
         "idx_sessions_expires_at",
         "idx_push_subscriptions_session",
@@ -158,7 +159,9 @@ describe("migrate", () => {
     );
     expect(nodeJobs).toContain("pinned_node_id");
     expect(nodes).toContain("providers_json");
-    expect(threads).toContain("objective_id");
-    expect(version.v).toBe(9);
+    expect(threads).toEqual(
+      expect.arrayContaining(["objective_id", "parent_thread_id", "parent_turn_id"]),
+    );
+    expect(version.v).toBe(10);
   });
 });

@@ -24,6 +24,8 @@ export interface ChatProps {
    */
   freeThread?: boolean;
   onUseFreeThread?: (free: boolean) => void;
+  /** Opens a thread an agent delegated to, or (undefined) goes back to the identity's own. */
+  onOpenThread?: (threadId: string | undefined) => void;
 }
 
 const listStyle = { listStyle: "none", margin: 0, padding: 0, display: "grid" } as const;
@@ -44,7 +46,13 @@ const mono = { fontFamily: typography.monoFamily, whiteSpace: "pre-wrap" } as co
  * inferred. Exported because Missions shows the same items outside the
  * conversation, and two renderings of an item would eventually disagree.
  */
-export function ItemRow({ item }: { item: RuntimeItem }): JSX.Element {
+export function ItemRow({
+  item,
+  outputUrl,
+}: {
+  item: RuntimeItem;
+  outputUrl?: ((attachmentId: string) => string) | undefined;
+}): JSX.Element {
   switch (item.kind) {
     case "agent_message":
       // The committed message lists itself under Messages; here only its status.
@@ -98,10 +106,39 @@ export function ItemRow({ item }: { item: RuntimeItem }): JSX.Element {
           sub-agent · {item.status} · {item.label}
         </span>
       );
+    case "output":
+      return (
+        <span style={{ display: "grid", gap: spacing.xs }}>
+          <span>
+            output · {item.mediaType}
+            {item.path === undefined ? "" : ` · ${item.path}`}
+          </span>
+          {item.attachmentId !== undefined &&
+            outputUrl !== undefined &&
+            item.mediaType.startsWith("image/") && (
+              <a href={outputUrl(item.attachmentId)} target="_blank" rel="noreferrer">
+                <img
+                  src={outputUrl(item.attachmentId)}
+                  alt={item.path ?? "generated image"}
+                  loading="lazy"
+                  style={{ maxWidth: "100%", maxHeight: 480, borderRadius: corner.sm }}
+                />
+              </a>
+            )}
+        </span>
+      );
   }
 }
 
-function TurnRow({ turn, onCancel }: { turn: Turn; onCancel: () => void }): JSX.Element {
+function TurnRow({
+  turn,
+  onCancel,
+  outputUrl,
+}: {
+  turn: Turn;
+  onCancel: () => void;
+  outputUrl: ((attachmentId: string) => string) | undefined;
+}): JSX.Element {
   const running = turn.status === "queued" || turn.status === "running";
 
   return (
@@ -133,7 +170,7 @@ function TurnRow({ turn, onCancel }: { turn: Turn; onCancel: () => void }): JSX.
         <ul aria-label="Turn items" style={{ ...listStyle, gap: spacing.xs }}>
           {turn.items.map((item) => (
             <li key={item.itemId} data-item-kind={item.kind} data-item-status={item.status}>
-              <ItemRow item={item} />
+              <ItemRow item={item} outputUrl={outputUrl} />
             </li>
           ))}
         </ul>
@@ -189,9 +226,21 @@ export function Chat({
   connected,
   freeThread,
   onUseFreeThread,
+  onOpenThread,
 }: ChatProps): JSX.Element {
-  const { thread, messages, turns, streaming, pendingApprovals, models, defaultModel, error } =
-    conversation;
+  const {
+    thread,
+    messages,
+    turns,
+    streaming,
+    pendingApprovals,
+    models,
+    defaultModel,
+    children,
+    outputUrl,
+    error,
+  } = conversation;
+  const delegated = thread?.parentThreadId !== undefined;
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
   const roleLabel = (role: string): string =>
@@ -216,14 +265,27 @@ export function Chat({
         <span style={{ color: typography.color.muted }}>
           {thread === undefined
             ? `${displayName} · nothing said yet`
-            : thread.objectiveId === undefined
-              ? `${displayName} · free chat`
-              : `${displayName} · Objective thread`}
+            : delegated
+              ? `${displayName} · delegated thread`
+              : thread.objectiveId === undefined
+                ? `${displayName} · free chat`
+                : `${displayName} · Objective thread`}
         </span>
         {/* An Objective being active used to mean every question went into it.
             A question that has nothing to do with the work in progress now has
             somewhere to go that does not require pausing the Objective. */}
-        {onUseFreeThread !== undefined && (
+        {delegated && onOpenThread !== undefined && (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenThread(undefined);
+            }}
+            style={buttonStyle}
+          >
+            Back
+          </button>
+        )}
+        {!delegated && onUseFreeThread !== undefined && (
           <button
             type="button"
             aria-pressed={freeThread === true}
@@ -236,6 +298,30 @@ export function Chat({
           </button>
         )}
       </header>
+
+      {/* Where agents on this thread handed work: each one opens, and the
+          prompt below then continues it. */}
+      {children.length > 0 && onOpenThread !== undefined && (
+        <nav
+          aria-label="Delegated threads"
+          style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
+        >
+          {children.map((child, index) => (
+            <button
+              key={child.id}
+              type="button"
+              data-thread={child.id}
+              onClick={() => {
+                onOpenThread(child.id);
+              }}
+              title={`Started ${new Date(child.createdAt).toLocaleString()}`}
+              style={buttonStyle}
+            >
+              Delegated thread {String(index + 1)}
+            </button>
+          ))}
+        </nav>
+      )}
 
       <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.sm }}>
         {timelineOf(messages, turns, pendingApprovals).map((entry) => {
@@ -260,6 +346,7 @@ export function Chat({
               <TurnRow
                 key={entry.turn.id}
                 turn={entry.turn}
+                outputUrl={outputUrl}
                 onCancel={() => {
                   if (entry.turn.jobId !== undefined) {
                     void conversation.cancel(entry.turn.jobId);

@@ -1,12 +1,16 @@
 import type {
   CancelConversationTurnCommand,
+  ConversationThread,
   ConversationalIdentityId,
   EventName,
   ModelRef,
   OrchestrationEvent,
   RuntimeAsk,
+  RuntimeDelegation,
+  RuntimeDelegationResult,
   RuntimeDelta,
   RuntimeItem,
+  RuntimeOutput,
   RuntimeTurnPayload,
   SendConversationMessageCommand,
   StreamType,
@@ -17,29 +21,32 @@ import {
   ModelRefSchema,
   RuntimeItemSchema,
   RuntimeTurnEvidenceSchema,
+  RuntimeTurnPayloadSchema,
 } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
 import { chooseProvider, conflict, ok } from "@noctis/domain";
 
 import { attachmentRefs, linkTurnAttachments } from "../attachments/service.js";
+import { declineAuthority, requestAuthority } from "../authority/service.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import type { EventDraft } from "../db/events.js";
+import type { Mutation } from "../db/transactions.js";
 import type { LiveBroker } from "../events/live.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
 import type { Dispatcher } from "../nodes/dispatch.js";
 import type { NodeJobRecord } from "../nodes/jobs.js";
-import { cancelJob, enqueueJobInTransaction } from "../nodes/jobs.js";
+import { cancelJob, enqueueJobInTransaction, getJob } from "../nodes/jobs.js";
 import { listRuntimeCandidates } from "../nodes/registry.js";
 import type { RuntimeFrameHub } from "../nodes/runtime-frames.js";
 import { getObjective } from "../objectives/service.js";
 import type { VaultRoot } from "../vault/root.js";
 import type { PendingAsk } from "./asks.js";
 import { answerFromEvent, closePendingAsks, handleAsk } from "./asks.js";
-import { defaultModelFor } from "./models.js";
+import { catalogue, defaultModelFor } from "./models.js";
 import { applyProposal } from "./proposals.js";
 import { promptWithRecall, recallForPrompt } from "./recall-context.js";
-import { threadFor } from "./threads.js";
+import { createChildThread, getThread, threadFor } from "./threads.js";
 
 export type TurnStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -238,6 +245,60 @@ function sessionOn(
   return row?.session_ref;
 }
 
+/** The model the thread's latest turn ran on. */
+function lastModel(db: NoctisDatabase, threadId: string): ModelRef | undefined {
+  const row = db
+    .prepare(
+      `SELECT model_json FROM identity_turns WHERE thread_id = ?
+        ORDER BY started_at DESC, id DESC LIMIT 1`,
+    )
+    .get(threadId) as { model_json: string } | undefined;
+
+  return row === undefined ? undefined : ModelRefSchema.parse(JSON.parse(row.model_json));
+}
+
+function messageBody(db: NoctisDatabase, messageId: string): string | undefined {
+  const row = db
+    .prepare("SELECT body FROM identity_message_content WHERE message_id = ?")
+    .get(messageId) as { body: string } | undefined;
+
+  return row?.body;
+}
+
+/** A node named by id or by host name, the way an agent would name a machine. */
+function findNode(db: NoctisDatabase, name: string): { id: string; hostId: string } | undefined {
+  return db
+    .prepare(
+      `SELECT id, host_id AS hostId FROM nodes
+        WHERE status != 'revoked' AND (id = ? OR host_id = ?) ORDER BY id LIMIT 1`,
+    )
+    .get(name, name) as { id: string; hostId: string } | undefined;
+}
+
+/** What a turn needs besides its thread. */
+interface TurnRequest {
+  text: string;
+  /** Absent means the identity's default model. */
+  model: ModelRef | undefined;
+  rootGrantId?: string;
+  attachmentIds: readonly string[];
+  /** Run on this node or not at all. */
+  nodeId?: string;
+}
+
+/** A delegation the core is still working on: waiting for the owner, or for the child turn. */
+interface OpenDelegation {
+  nodeId: string;
+  /** The parent turn's job. The answer goes back on it. */
+  jobId: string;
+  parentTurn: Turn;
+  delegation: RuntimeDelegation;
+  /** Where the child runs. Absent means wherever the parent runs. */
+  target?: { id: string; hostId: string };
+  approvalId?: string;
+  childTurnId?: string;
+}
+
 export interface ConversationServiceDeps {
   kernel: Kernel;
   dispatcher: Dispatcher;
@@ -259,6 +320,7 @@ export interface ConversationService {
   onStreamItem(nodeId: string, jobId: string, sequence: number, item: RuntimeItem): void;
   onDelta(nodeId: string, jobId: string, delta: RuntimeDelta): void;
   onAsk(nodeId: string, jobId: string, ask: RuntimeAsk): void;
+  onDelegate(nodeId: string, jobId: string, delegation: RuntimeDelegation): void;
   close(): void;
 }
 
@@ -307,6 +369,8 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
   /** jobId -> threadId, so a delta costs no read. Filled on send, lazily otherwise. */
   const threadByJob = new Map<string, string>();
   const pendingAsks = new Map<string, PendingAsk>();
+  /** Keyed by delegation id. */
+  const delegations = new Map<string, OpenDelegation>();
 
   function nowIso(): string {
     return new Date(kernel.clock.now()).toISOString();
@@ -338,6 +402,259 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     };
   }
 
+  /**
+   * A prompt on a thread becomes a user message, a provider decision and, when
+   * something can run it, a `runtime.turn` job. Runs inside the caller's
+   * command, so a refusal rolls back whatever the caller wrote before it.
+   */
+  function openTurn(
+    tx: NoctisDatabase,
+    context: CommandContext,
+    thread: ConversationThread,
+    request: TurnRequest,
+    turnId: string,
+    now: number,
+  ): Result<Mutation<Turn>> {
+    const at = new Date(now).toISOString();
+    const { identityId, objectiveId } = thread;
+    const model = request.model ?? defaultModelFor(tx, identityId);
+
+    if (model === undefined) {
+      return conflict({ kind: "unavailable", entity: "model", reason: "no_default_model" });
+    }
+
+    const objective = objectiveId === undefined ? undefined : getObjective(tx, objectiveId);
+
+    // Carried to the node so it can choose auto-allow behaviour honestly;
+    // the evaluator still makes the actual decision on each ask.
+    const objectiveActive = objective?.status === "active";
+
+    // Resolved before anything is written. An id that names no attachment
+    // is a client bug, and sending the turn without the file the prompt
+    // refers to would produce an answer about a file the model never saw.
+    const { attachmentIds } = request;
+    const attachments = attachmentRefs(tx, attachmentIds);
+
+    if (attachments.length !== attachmentIds.length) {
+      const missing = attachmentIds.find(
+        (id) => !attachments.some((attachment) => attachment.id === id),
+      );
+
+      return conflict({ kind: "not_found", entity: "attachment", id: missing ?? "unknown" });
+    }
+
+    const userMessageId = insertMessage(tx, kernel, thread.id, "user", request.text, at);
+
+    const requiredRoots = request.rootGrantId === undefined ? [] : [request.rootGrantId];
+    const candidates = listRuntimeCandidates(
+      tx,
+      (nodeId) => dispatcher.isConnected(nodeId),
+      requiredRoots,
+      now,
+    ).filter((candidate) => request.nodeId === undefined || candidate.nodeId === request.nodeId);
+    // S1 rule (plan 1.6, behaviour 1): Jester's work never leaves this
+    // machine, so a Jester turn may only land on a local-auth runtime.
+    // Vesper's may go anywhere granted. Per-root local-only comes with the
+    // roots that carry it.
+    const localOnly = identityId === "jester";
+    const affinity = latestSession(tx, thread.id, model.providerId);
+    const decision = chooseProvider(model, candidates, {
+      ...(affinity === undefined ? {} : { preferredNodeId: affinity.nodeId }),
+      localOnly,
+    });
+
+    // Task 2.6: a host that is merely asleep is a different answer from a
+    // host that could never run this. Refusing before anything is written
+    // means the owner can wake the machine and send the same prompt again,
+    // rather than finding a failed turn in the thread they have to read
+    // past — and the page can offer the same prompt somewhere else, which
+    // it can only do if the send did not already happen.
+    if (
+      decision.selected === undefined &&
+      decision.candidates.some(
+        (candidate) =>
+          candidate.reasonCodes.length === 1 && candidate.reasonCodes[0] === "not_connected",
+      )
+    ) {
+      return conflict({ kind: "unavailable", entity: "node", reason: "node_offline" });
+    }
+
+    let selected = decision.selected;
+    let reasonCodes = decision.reasonCodes;
+    let primaryRootGrantId = request.rootGrantId;
+
+    if (selected !== undefined && primaryRootGrantId === undefined) {
+      const chosenNodeId = selected.nodeId;
+      const chosen = candidates.find(
+        (candidate) =>
+          candidate.nodeId === chosenNodeId && candidate.probe.providerId === model.providerId,
+      );
+
+      primaryRootGrantId = chosen?.roots.find((root) => root.mode === "write")?.grantId;
+
+      if (primaryRootGrantId === undefined) {
+        // 0.5: a turn may edit files, so a node with nowhere to write is
+        // not a node that can run it.
+        selected = undefined;
+        reasonCodes = [...reasonCodes, "no_writable_root"];
+      }
+    }
+
+    const events: EventDraft[] = [
+      draft(
+        context,
+        "identity",
+        thread.id,
+        "identity.message_added.v1",
+        { messageId: userMessageId, role: "user", turnId },
+        at,
+      ),
+    ];
+    let job: NodeJobRecord | undefined;
+
+    if (selected !== undefined && primaryRootGrantId !== undefined) {
+      const sessionRef = sessionOn(tx, thread.id, model.providerId, selected.nodeId);
+      const payload: RuntimeTurnPayload = {
+        threadId: thread.id,
+        identityId,
+        model: selected.model,
+        userMessageId,
+        prompt: promptWithRecall(request.text, recallForPrompt(tx, request.text, deps)),
+        primaryRootGrantId,
+        ...(sessionRef === undefined ? {} : { sessionRef }),
+        ...(objectiveId === undefined ? {} : { objectiveId }),
+        objectiveActive,
+        ...(attachments.length === 0 ? {} : { attachments }),
+      };
+      const enqueued = enqueueJobInTransaction(tx, kernel, context, {
+        capability: "runtime.turn",
+        payload,
+        idempotencyKey: `turn:${turnId}`,
+        pinnedNodeId: selected.nodeId,
+      });
+
+      if (!enqueued.ok) {
+        return conflict(enqueued.conflict);
+      }
+
+      job = enqueued.value.value;
+      events.push(...enqueued.value.events);
+    }
+
+    const chosenModel = selected?.model ?? model;
+    const failureReason =
+      job === undefined ? `no_eligible_provider:${reasonCodes.join(",")}` : undefined;
+
+    tx.prepare(
+      `INSERT INTO identity_turns
+         (id, thread_id, user_message_id, node_job_id, node_id, provider_id, model_json,
+          status, items_json, failure_reason, started_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
+    ).run(
+      turnId,
+      thread.id,
+      userMessageId,
+      job?.job.id ?? null,
+      job === undefined ? null : (selected?.nodeId ?? null),
+      model.providerId,
+      JSON.stringify(chosenModel),
+      job === undefined ? "failed" : "queued",
+      failureReason ?? null,
+      at,
+      job === undefined ? at : null,
+    );
+
+    // After the turn row, because of the foreign key. Recorded even when no
+    // node could be found: the turn failed *with* these files attached, and
+    // a retry that re-sent them would otherwise look like a different ask.
+    linkTurnAttachments(tx, turnId, attachmentIds);
+
+    tx.prepare(
+      `INSERT INTO provider_decisions
+         (id, turn_id, requested_model_json, selected_node_id, selected_model,
+          candidates_json, reason_codes_json, cost_class, decided_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      kernel.ids.nextId(),
+      turnId,
+      JSON.stringify(model),
+      job === undefined ? null : (selected?.nodeId ?? null),
+      job === undefined ? null : chosenModel.model,
+      JSON.stringify(decision.candidates),
+      JSON.stringify(reasonCodes),
+      job === undefined ? "none" : decision.costClass,
+      at,
+    );
+
+    events.push(
+      draft(
+        context,
+        "provider",
+        turnId,
+        "provider.decision_recorded.v1",
+        {
+          turnId,
+          model,
+          ...(job === undefined || selected === undefined ? {} : { selected }),
+          candidates: decision.candidates,
+          reasonCodes,
+          costClass: job === undefined ? "none" : decision.costClass,
+        },
+        at,
+      ),
+    );
+
+    if (job !== undefined && selected !== undefined) {
+      events.push(
+        draft(
+          context,
+          "identity",
+          thread.id,
+          "identity.turn_started.v1",
+          {
+            turnId,
+            jobId: job.job.id,
+            nodeId: selected.nodeId,
+            model: selected.model,
+            ...(objectiveId === undefined ? {} : { objectiveId }),
+            objectiveActive,
+          },
+          at,
+        ),
+      );
+    } else {
+      // Returned as `ok`: the user sees an honest failed turn in the thread
+      // — "nothing can run this model right now" — rather than a 5xx that
+      // loses their message. `unavailable` is reserved for "no model at all".
+      events.push(
+        draft(
+          context,
+          "identity",
+          thread.id,
+          "identity.turn_completed.v1",
+          { turnId, threadId: thread.id, status: "failed", failureReason, model },
+          at,
+        ),
+      );
+    }
+
+    const turn = getTurn(tx, turnId);
+
+    if (turn === undefined) {
+      throw new Error(`Turn ${turnId} vanished mid-transaction`);
+    }
+
+    return ok({ value: turn, events });
+  }
+
+  /** Post-commit, like http.ts does for node.job_enqueue: a job frame must never describe a row a rollback erased. */
+  function dispatchOpened(outcome: Result<Turn>): void {
+    if (outcome.ok && outcome.value.jobId !== undefined) {
+      threadByJob.set(outcome.value.jobId, outcome.value.threadId);
+      dispatcher.pass();
+    }
+  }
+
   function sendMessage(
     context: CommandContext,
     command: SendConversationMessageCommand,
@@ -350,250 +667,49 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       kernel,
       { scope: "conversation.send", key: command.idempotencyKey, resultId: turnId },
       (tx) => {
-        const { identityId } = command;
-        const model = command.model ?? defaultModelFor(tx, identityId);
+        let thread: ConversationThread;
 
-        if (model === undefined) {
-          return conflict({ kind: "unavailable", entity: "model", reason: "no_default_model" });
+        if (command.threadId !== undefined) {
+          const named = getThread(tx, command.threadId);
+
+          // The other identity's thread is not one this identity may write to.
+          if (named === undefined || named.identityId !== command.identityId) {
+            return conflict({ kind: "not_found", entity: "thread", id: command.threadId });
+          }
+
+          thread = named;
+        } else {
+          if (
+            command.objectiveId !== undefined &&
+            getObjective(tx, command.objectiveId) === undefined
+          ) {
+            return conflict({ kind: "not_found", entity: "objective", id: command.objectiveId });
+          }
+
+          thread = threadFor(tx, kernel, command.identityId, command.objectiveId, at);
         }
 
-        const objective =
-          command.objectiveId === undefined ? undefined : getObjective(tx, command.objectiveId);
-
-        if (command.objectiveId !== undefined && objective === undefined) {
-          return conflict({ kind: "not_found", entity: "objective", id: command.objectiveId });
-        }
-
-        // Carried to the node so it can choose auto-allow behaviour honestly;
-        // the evaluator still makes the actual decision on each ask.
-        const objectiveActive = objective?.status === "active";
-
-        // Resolved before anything is written. An id that names no attachment
-        // is a client bug, and sending the turn without the file the prompt
-        // refers to would produce an answer about a file the model never saw.
-        const attachmentIds = command.attachmentIds ?? [];
-        const attachments = attachmentRefs(tx, attachmentIds);
-
-        if (attachments.length !== attachmentIds.length) {
-          const missing = attachmentIds.find(
-            (id) => !attachments.some((attachment) => attachment.id === id),
-          );
-
-          return conflict({ kind: "not_found", entity: "attachment", id: missing ?? "unknown" });
-        }
-
-        const thread = threadFor(tx, kernel, identityId, command.objectiveId, at);
-        const userMessageId = insertMessage(tx, kernel, thread.id, "user", command.text, at);
-
-        const requiredRoots = command.rootGrantId === undefined ? [] : [command.rootGrantId];
-        const candidates = listRuntimeCandidates(
+        return openTurn(
           tx,
-          (nodeId) => dispatcher.isConnected(nodeId),
-          requiredRoots,
+          context,
+          thread,
+          {
+            text: command.text,
+            // A delegated thread belongs to the runtime that was asked, not to
+            // the identity's default, so the owner's follow-up stays on it.
+            model:
+              command.model ??
+              (thread.parentThreadId === undefined ? undefined : lastModel(tx, thread.id)),
+            ...(command.rootGrantId === undefined ? {} : { rootGrantId: command.rootGrantId }),
+            attachmentIds: command.attachmentIds ?? [],
+          },
+          turnId,
           now,
         );
-        // S1 rule (plan 1.6, behaviour 1): Jester's work never leaves this
-        // machine, so a Jester turn may only land on a local-auth runtime.
-        // Vesper's may go anywhere granted. Per-root local-only comes with the
-        // roots that carry it.
-        const localOnly = identityId === "jester";
-        const affinity = latestSession(tx, thread.id, model.providerId);
-        const decision = chooseProvider(model, candidates, {
-          ...(affinity === undefined ? {} : { preferredNodeId: affinity.nodeId }),
-          localOnly,
-        });
-
-        // Task 2.6: a host that is merely asleep is a different answer from a
-        // host that could never run this. Refusing before anything is written
-        // means the owner can wake the machine and send the same prompt again,
-        // rather than finding a failed turn in the thread they have to read
-        // past — and the page can offer the same prompt somewhere else, which
-        // it can only do if the send did not already happen.
-        if (
-          decision.selected === undefined &&
-          decision.candidates.some(
-            (candidate) =>
-              candidate.reasonCodes.length === 1 && candidate.reasonCodes[0] === "not_connected",
-          )
-        ) {
-          return conflict({ kind: "unavailable", entity: "node", reason: "node_offline" });
-        }
-
-        let selected = decision.selected;
-        let reasonCodes = decision.reasonCodes;
-        let primaryRootGrantId = command.rootGrantId;
-
-        if (selected !== undefined && primaryRootGrantId === undefined) {
-          const chosenNodeId = selected.nodeId;
-          const chosen = candidates.find(
-            (candidate) =>
-              candidate.nodeId === chosenNodeId && candidate.probe.providerId === model.providerId,
-          );
-
-          primaryRootGrantId = chosen?.roots.find((root) => root.mode === "write")?.grantId;
-
-          if (primaryRootGrantId === undefined) {
-            // 0.5: a turn may edit files, so a node with nowhere to write is
-            // not a node that can run it.
-            selected = undefined;
-            reasonCodes = [...reasonCodes, "no_writable_root"];
-          }
-        }
-
-        const events: EventDraft[] = [
-          draft(
-            context,
-            "identity",
-            thread.id,
-            "identity.message_added.v1",
-            { messageId: userMessageId, role: "user", turnId },
-            at,
-          ),
-        ];
-        let job: NodeJobRecord | undefined;
-
-        if (selected !== undefined && primaryRootGrantId !== undefined) {
-          const sessionRef = sessionOn(tx, thread.id, model.providerId, selected.nodeId);
-          const payload: RuntimeTurnPayload = {
-            threadId: thread.id,
-            identityId,
-            model: selected.model,
-            userMessageId,
-            prompt: promptWithRecall(command.text, recallForPrompt(tx, command.text, deps)),
-            primaryRootGrantId,
-            ...(sessionRef === undefined ? {} : { sessionRef }),
-            ...(command.objectiveId === undefined ? {} : { objectiveId: command.objectiveId }),
-            objectiveActive,
-            ...(attachments.length === 0 ? {} : { attachments }),
-          };
-          const enqueued = enqueueJobInTransaction(tx, kernel, context, {
-            capability: "runtime.turn",
-            payload,
-            idempotencyKey: `turn:${turnId}`,
-            pinnedNodeId: selected.nodeId,
-          });
-
-          if (!enqueued.ok) {
-            return conflict(enqueued.conflict);
-          }
-
-          job = enqueued.value.value;
-          events.push(...enqueued.value.events);
-        }
-
-        const chosenModel = selected?.model ?? model;
-        const failureReason =
-          job === undefined ? `no_eligible_provider:${reasonCodes.join(",")}` : undefined;
-
-        tx.prepare(
-          `INSERT INTO identity_turns
-             (id, thread_id, user_message_id, node_job_id, node_id, provider_id, model_json,
-              status, items_json, failure_reason, started_at, completed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
-        ).run(
-          turnId,
-          thread.id,
-          userMessageId,
-          job?.job.id ?? null,
-          job === undefined ? null : (selected?.nodeId ?? null),
-          model.providerId,
-          JSON.stringify(chosenModel),
-          job === undefined ? "failed" : "queued",
-          failureReason ?? null,
-          at,
-          job === undefined ? at : null,
-        );
-
-        // After the turn row, because of the foreign key. Recorded even when no
-        // node could be found: the turn failed *with* these files attached, and
-        // a retry that re-sent them would otherwise look like a different ask.
-        linkTurnAttachments(tx, turnId, attachmentIds);
-
-        tx.prepare(
-          `INSERT INTO provider_decisions
-             (id, turn_id, requested_model_json, selected_node_id, selected_model,
-              candidates_json, reason_codes_json, cost_class, decided_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          kernel.ids.nextId(),
-          turnId,
-          JSON.stringify(model),
-          job === undefined ? null : (selected?.nodeId ?? null),
-          job === undefined ? null : chosenModel.model,
-          JSON.stringify(decision.candidates),
-          JSON.stringify(reasonCodes),
-          job === undefined ? "none" : decision.costClass,
-          at,
-        );
-
-        events.push(
-          draft(
-            context,
-            "provider",
-            turnId,
-            "provider.decision_recorded.v1",
-            {
-              turnId,
-              model,
-              ...(job === undefined || selected === undefined ? {} : { selected }),
-              candidates: decision.candidates,
-              reasonCodes,
-              costClass: job === undefined ? "none" : decision.costClass,
-            },
-            at,
-          ),
-        );
-
-        if (job !== undefined && selected !== undefined) {
-          events.push(
-            draft(
-              context,
-              "identity",
-              thread.id,
-              "identity.turn_started.v1",
-              {
-                turnId,
-                jobId: job.job.id,
-                nodeId: selected.nodeId,
-                model: selected.model,
-                ...(command.objectiveId === undefined ? {} : { objectiveId: command.objectiveId }),
-                objectiveActive,
-              },
-              at,
-            ),
-          );
-        } else {
-          // Returned as `ok`: the user sees an honest failed turn in the thread
-          // — "nothing can run this model right now" — rather than a 5xx that
-          // loses their message. `unavailable` is reserved for "no model at all".
-          events.push(
-            draft(
-              context,
-              "identity",
-              thread.id,
-              "identity.turn_completed.v1",
-              { turnId, threadId: thread.id, status: "failed", failureReason, model },
-              at,
-            ),
-          );
-        }
-
-        const turn = getTurn(tx, turnId);
-
-        if (turn === undefined) {
-          throw new Error(`Turn ${turnId} vanished mid-transaction`);
-        }
-
-        return ok({ value: turn, events });
       },
     );
 
-    if (outcome.ok && outcome.value.jobId !== undefined) {
-      threadByJob.set(outcome.value.jobId, outcome.value.threadId);
-      // Post-commit, like http.ts does for node.job_enqueue: a job frame must
-      // never describe a row a rollback erased.
-      dispatcher.pass();
-    }
+    dispatchOpened(outcome);
 
     return outcome;
   }
@@ -760,6 +876,256 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     handleAsk(kernel, dispatcher, pendingAsks, turn, nodeId, jobId, ask);
   }
 
+  function answerDelegation(
+    open: OpenDelegation,
+    result: Omit<RuntimeDelegationResult, "delegationId" | "outputs"> & {
+      outputs?: RuntimeOutput[];
+    },
+  ): void {
+    delegations.delete(open.delegation.delegationId);
+    dispatcher.sendDelegated(open.nodeId, open.jobId, {
+      delegationId: open.delegation.delegationId,
+      outputs: [],
+      ...result,
+    });
+  }
+
+  function refuseDelegation(open: OpenDelegation, reason: string): void {
+    answerDelegation(open, { outcome: "refused", reason: reason.slice(0, 500) });
+  }
+
+  /**
+   * An agent asked for another agent. The thread it names must be one its own
+   * thread started; the machine it names must exist; then the authority service
+   * decides, like any other step, and the child turn opens once it says yes.
+   */
+  function onDelegate(nodeId: string, jobId: string, delegation: RuntimeDelegation): void {
+    const parentTurn = getTurnByJobId(kernel.db, jobId);
+
+    if (parentTurn === undefined) {
+      dispatcher.sendDelegated(nodeId, jobId, {
+        delegationId: delegation.delegationId,
+        outcome: "refused",
+        outputs: [],
+        reason: "only a conversation turn can delegate",
+      });
+      return;
+    }
+
+    if (delegations.has(delegation.delegationId)) {
+      return;
+    }
+
+    const open: OpenDelegation = { nodeId, jobId, delegation, parentTurn };
+
+    if (delegation.threadId !== undefined) {
+      const child = getThread(kernel.db, delegation.threadId);
+
+      if (child?.parentThreadId !== parentTurn.threadId) {
+        refuseDelegation(open, `thread ${delegation.threadId} was not delegated from this thread`);
+        return;
+      }
+    }
+
+    if (delegation.node !== undefined) {
+      const target = findNode(kernel.db, delegation.node);
+
+      if (target === undefined) {
+        refuseDelegation(open, `no node is named ${delegation.node}`);
+        return;
+      }
+
+      open.target = target;
+    }
+
+    delegations.set(delegation.delegationId, open);
+
+    const decision = requestAuthority(kernel, identityContext(parentTurn), {
+      idempotencyKey: `delegate:${delegation.delegationId}`,
+      ...(parentTurn.objectiveId === undefined ? {} : { objectiveId: parentTurn.objectiveId }),
+      actorId: parentTurn.identityId,
+      // The child works inside granted roots under its own gates, the same
+      // bounds a local edit has; anything consequential it does asks on its own.
+      operationClass: "local_reversible_edit",
+      capability: "runtime.delegate",
+      target: {
+        type: "runtime",
+        id: delegation.runtime,
+        ...(open.target === undefined ? {} : { hostId: open.target.hostId }),
+      },
+      consequenceSummary: `hand to ${delegation.runtime}: ${delegation.prompt.slice(0, 300)}`,
+      reversibility: "reversible",
+      nodeJobId: jobId,
+    });
+
+    if (!decision.ok) {
+      refuseDelegation(
+        open,
+        `authority could not record the delegation: ${decision.conflict.kind}`,
+      );
+      return;
+    }
+
+    open.approvalId = decision.value.requestId;
+
+    if (decision.value.outcome === "allow") {
+      startDelegation(open);
+    } else if (decision.value.outcome === "deny") {
+      refuseDelegation(open, `denied: ${decision.value.reasonCodes.join(",")}`);
+    }
+    // Otherwise a person decides; `onEvents` picks up the confirm or decline.
+  }
+
+  /** Opens the child turn: a new thread linked to the parent, or the one named. */
+  function startDelegation(open: OpenDelegation): void {
+    const { delegation, parentTurn } = open;
+    const now = kernel.clock.now();
+    const at = new Date(now).toISOString();
+    const turnId = kernel.ids.nextId();
+    // Unless told otherwise the child runs where the parent runs, in the same
+    // folder, so what one agent writes the other can read.
+    const sameNode = open.target === undefined || open.target.id === parentTurn.nodeId;
+    const parentPayload =
+      parentTurn.jobId === undefined ? undefined : getJob(kernel.db, parentTurn.jobId)?.job.payload;
+    const parentRoot = RuntimeTurnPayloadSchema.safeParse(parentPayload);
+    const nodeId = open.target?.id ?? parentTurn.nodeId;
+
+    const outcome = runCommand<Turn>(
+      kernel,
+      { scope: "conversation.delegate", key: delegation.delegationId, resultId: turnId },
+      (tx) => {
+        const parentThread = getThread(tx, parentTurn.threadId);
+
+        if (parentThread === undefined) {
+          return conflict({ kind: "not_found", entity: "thread", id: parentTurn.threadId });
+        }
+
+        const thread =
+          delegation.threadId === undefined
+            ? createChildThread(tx, kernel, parentThread, parentTurn.id, at)
+            : getThread(tx, delegation.threadId);
+
+        if (thread === undefined) {
+          return conflict({ kind: "not_found", entity: "thread", id: delegation.threadId ?? "" });
+        }
+
+        const previous = lastModel(tx, thread.id);
+        const model =
+          previous?.providerId === delegation.runtime
+            ? previous
+            : defaultModelFor(tx, parentTurn.identityId)?.providerId === delegation.runtime
+              ? defaultModelFor(tx, parentTurn.identityId)
+              : catalogue(tx, (id) => dispatcher.isConnected(id)).find(
+                  (candidate) => candidate.providerId === delegation.runtime,
+                );
+
+        if (model === undefined) {
+          return conflict({
+            kind: "unavailable",
+            entity: "model",
+            reason: `no connected node offers ${delegation.runtime}`,
+          });
+        }
+
+        return openTurn(
+          tx,
+          identityContext(parentTurn),
+          thread,
+          {
+            text: delegation.prompt,
+            model,
+            ...(sameNode && parentRoot.success
+              ? { rootGrantId: parentRoot.data.primaryRootGrantId }
+              : {}),
+            attachmentIds: [],
+            ...(nodeId === undefined ? {} : { nodeId }),
+          },
+          turnId,
+          now,
+        );
+      },
+    );
+
+    if (!outcome.ok) {
+      refuseDelegation(
+        open,
+        outcome.conflict.kind === "unavailable"
+          ? outcome.conflict.reason
+          : `the child turn could not open: ${outcome.conflict.kind}`,
+      );
+      return;
+    }
+
+    dispatchOpened(outcome);
+
+    if (outcome.value.status === "failed") {
+      answerDelegation(open, {
+        outcome: "failed",
+        threadId: outcome.value.threadId,
+        reason: outcome.value.failureReason ?? "the child turn failed",
+      });
+      return;
+    }
+
+    open.childTurnId = outcome.value.id;
+  }
+
+  /** The child turn ended: its reply and whatever it produced go back to the parent. */
+  function finishDelegation(open: OpenDelegation, turn: Turn): void {
+    const reply =
+      turn.replyMessageId === undefined ? undefined : messageBody(kernel.db, turn.replyMessageId);
+    const outputs = turn.items
+      .flatMap((item): RuntimeOutput[] =>
+        item.kind === "output"
+          ? [
+              {
+                mediaType: item.mediaType,
+                ...(item.path === undefined ? {} : { path: item.path }),
+                ...(item.attachmentId === undefined ? {} : { attachmentId: item.attachmentId }),
+              },
+            ]
+          : [],
+      )
+      .slice(0, 50);
+
+    answerDelegation(open, {
+      outcome: turn.status === "completed" ? "completed" : "failed",
+      threadId: turn.threadId,
+      ...(reply === undefined ? {} : { reply }),
+      outputs,
+      ...(turn.status === "completed"
+        ? {}
+        : { reason: (turn.failureReason ?? turn.status).slice(0, 500) }),
+    });
+  }
+
+  /**
+   * The parent turn ended while a delegation still waited on the owner. Declined,
+   * so nobody approves work whose answer has nowhere to go. A child already
+   * running carries on in its own thread, where the owner can see it.
+   */
+  function closeDelegations(jobId: string): void {
+    for (const open of [...delegations.values()]) {
+      if (open.jobId !== jobId) {
+        continue;
+      }
+
+      delegations.delete(open.delegation.delegationId);
+
+      if (open.childTurnId === undefined && open.approvalId !== undefined) {
+        declineAuthority(
+          kernel,
+          { correlationId: kernel.ids.nextId(), actorType: "system", actorId: "system" },
+          {
+            idempotencyKey: `turn-ended:${open.approvalId}`,
+            requestId: open.approvalId,
+            reason: "the turn ended before anyone answered",
+          },
+        );
+      }
+    }
+  }
+
   function completeTurn(jobId: string, final: Final): void {
     const turn = getTurnByJobId(kernel.db, jobId);
 
@@ -841,6 +1207,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     }
 
     closePendingAsks(kernel, pendingAsks, jobId);
+    closeDelegations(jobId);
     threadByJob.delete(jobId);
   }
 
@@ -881,16 +1248,52 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           break;
         }
         case "authority.confirmed.v1":
-        case "authority.declined.v1":
+        case "authority.declined.v1": {
           answerFromEvent(dispatcher, pendingAsks, event);
+
+          const open = [...delegations.values()].find(
+            (candidate) =>
+              candidate.approvalId === event.streamId && candidate.childTurnId === undefined,
+          );
+
+          if (open !== undefined) {
+            if (event.type === "authority.confirmed.v1") {
+              startDelegation(open);
+            } else {
+              refuseDelegation(
+                open,
+                `declined: ${(event.payload as { reason?: string }).reason ?? "by the owner"}`,
+              );
+            }
+          }
+
           break;
+        }
+        case "identity.turn_completed.v1": {
+          const { turnId } = event.payload as { turnId: string };
+          const open = [...delegations.values()].find(
+            (candidate) => candidate.childTurnId === turnId,
+          );
+          const turn = open === undefined ? undefined : getTurn(kernel.db, turnId);
+
+          if (open !== undefined && turn !== undefined) {
+            finishDelegation(open, turn);
+          }
+
+          break;
+        }
         default:
           break;
       }
     }
   }
 
-  const unsubscribeFrames = deps.runtimeFrames.subscribe({ onStreamItem, onDelta, onAsk });
+  const unsubscribeFrames = deps.runtimeFrames.subscribe({
+    onStreamItem,
+    onDelta,
+    onAsk,
+    onDelegate,
+  });
   const unsubscribeEvents = kernel.broker.subscribe(onEvents);
 
   return {
@@ -899,10 +1302,12 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     onStreamItem,
     onDelta,
     onAsk,
+    onDelegate,
     close() {
       unsubscribeFrames();
       unsubscribeEvents();
       pendingAsks.clear();
+      delegations.clear();
       threadByJob.clear();
     },
   };

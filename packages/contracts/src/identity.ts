@@ -17,6 +17,9 @@ export const ConversationThreadSchema = z
     identityId: ConversationalIdentityIdSchema,
     /** 0.12: absent on the identity's one free-chat thread; set on its thread for one Objective. */
     objectiveId: UuidSchema.optional(),
+    /** Set on a thread another agent started with `noctis_delegate`, and on nothing else. */
+    parentThreadId: UuidSchema.optional(),
+    parentTurnId: UuidSchema.optional(),
     activeObjectiveId: UuidSchema.optional(),
     revision: RevisionSchema,
     createdAt: UtcTimestampSchema,

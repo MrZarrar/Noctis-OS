@@ -108,6 +108,15 @@ describe("SessionTransport", () => {
     await expect(transport().subject.request("GET", "//evil.example/steal")).rejects.toThrow();
   });
 
+  it("addresses a core path for an <img>, and never one on another origin", () => {
+    const { subject } = transport();
+
+    expect(subject.contentUrl("/attachments/abc/content")).toBe(
+      "https://core.example/attachments/abc/content",
+    );
+    expect(() => subject.contentUrl("//evil.example/x")).toThrow();
+  });
+
   it("opens the stream at the caller's cursor and delivers committed events", async () => {
     const received: unknown[] = [];
     await transport().subject.subscribe({

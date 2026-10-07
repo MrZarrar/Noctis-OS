@@ -318,7 +318,7 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
 
       const frame = parsed.data;
 
-      // Stream, delta and ask are handed to the hub and nothing else. What
+      // Stream, delta, ask and delegate are handed to the hub and nothing else. What
       // becomes durable is the subscriber's decision; a delta never does.
       switch (frame.kind) {
         case "hello":
@@ -353,6 +353,16 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
           if (entry !== undefined) {
             markStarted(frame.jobId, entry);
             deps.runtime.onAsk(nodeId, frame.jobId, frame.ask);
+          }
+
+          return;
+        }
+        case "delegate": {
+          const entry = admit(frame.jobId, "delegate");
+
+          if (entry !== undefined) {
+            markStarted(frame.jobId, entry);
+            deps.runtime.onDelegate(nodeId, frame.jobId, frame.delegation);
           }
 
           return;

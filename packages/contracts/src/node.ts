@@ -11,6 +11,8 @@ import {
 import {
   RuntimeAnswerSchema,
   RuntimeAskSchema,
+  RuntimeDelegationResultSchema,
+  RuntimeDelegationSchema,
   RuntimeDeltaSchema,
   RuntimeItemSchema,
   RuntimeProbeSchema,
@@ -295,6 +297,15 @@ export const NodeFrameSchema = z.discriminatedUnion("kind", [
       ask: RuntimeAskSchema,
     })
     .strict(),
+  /** The runtime hands work to another agent and waits for `delegated`. */
+  z
+    .object({
+      kind: z.literal("delegate"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      delegation: RuntimeDelegationSchema,
+    })
+    .strict(),
 ]);
 
 /** Core -> node. */
@@ -342,6 +353,15 @@ export const NodeServerFrameSchema = z.discriminatedUnion("kind", [
       envelopeVersion: NodeEnvelopeVersionSchema,
       jobId: UuidSchema,
       answer: RuntimeAnswerSchema,
+    })
+    .strict(),
+  /** How a `delegate` ended: the child thread, its reply and what it produced. */
+  z
+    .object({
+      kind: z.literal("delegated"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      result: RuntimeDelegationResultSchema,
     })
     .strict(),
 ]);

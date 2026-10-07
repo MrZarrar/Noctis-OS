@@ -1,4 +1,9 @@
-import type { NodeJobAssignment, NodeServerFrame, RuntimeAnswer } from "@noctis/contracts";
+import type {
+  NodeJobAssignment,
+  NodeServerFrame,
+  RuntimeAnswer,
+  RuntimeDelegationResult,
+} from "@noctis/contracts";
 import { NODE_ENVELOPE_VERSION } from "@noctis/contracts";
 
 import type { CommandContext, Kernel } from "../kernel.js";
@@ -44,6 +49,8 @@ export interface Dispatcher {
   sendCancel(nodeId: string, jobId: string): boolean;
   /** The core's decision on an `ask`. False if the node is not connected to receive it. */
   sendAnswer(nodeId: string, jobId: string, answer: RuntimeAnswer): boolean;
+  /** How a delegation ended, on the parent turn's job. False if the node is not connected. */
+  sendDelegated(nodeId: string, jobId: string, result: RuntimeDelegationResult): boolean;
   /** Drops a node's socket. Revoking a node that stays connected is not revoked. */
   disconnect(nodeId: string, code: number, reason: string): boolean;
   /** One sweep: lapsed leases first, then placement of queued work. */
@@ -264,6 +271,21 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
       }
 
       connection.send({ kind: "answer", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, answer });
+      return true;
+    },
+    sendDelegated(nodeId, jobId, result) {
+      const connection = connections.get(nodeId);
+
+      if (connection === undefined) {
+        return false;
+      }
+
+      connection.send({
+        kind: "delegated",
+        envelopeVersion: NODE_ENVELOPE_VERSION,
+        jobId,
+        result,
+      });
       return true;
     },
     pass,

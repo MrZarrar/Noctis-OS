@@ -41,6 +41,8 @@ function recorder(decision: RuntimeAnswer["decision"] = "allow"): Recorded {
         approvalId: "0199a000-0000-7000-8000-0000000000a6",
       });
     },
+    delegate: () => Promise.reject(new Error("no delegation expected")),
+    upload: () => Promise.reject(new Error("no upload expected")),
   };
 
   return recorded;

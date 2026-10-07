@@ -397,4 +397,72 @@ describe("createConversation", () => {
 
     store.close();
   });
+
+  it("lists the threads agents delegated from this one, and finds a new one when it starts", async () => {
+    const scripted = core();
+    const store = createConversation(scripted.transport, "vesper", undefined);
+
+    store.start();
+    await vi.waitFor(() => expect(store.getState().turns).toHaveLength(1));
+    expect(store.getState().children).toEqual([]);
+
+    scripted.answer(`GET /threads/${THREAD_ID}/children`, {
+      status: 200,
+      body: { threads: [childThread] },
+    });
+    scripted.live().onEvent(
+      event("identity.turn_started.v1", "identity", CHILD_ID, {
+        turnId: TURN_ID,
+        jobId: JOB_ID,
+      }),
+    );
+
+    await vi.waitFor(() => expect(store.getState().children.map((t) => t.id)).toEqual([CHILD_ID]));
+    expect(store.getState().error).toBeUndefined();
+
+    store.close();
+  });
+
+  it("opened by thread id, it reads that thread and continues it", async () => {
+    const scripted = core({
+      [`GET /threads/${CHILD_ID}`]: { status: 200, body: childThread },
+      [`GET /threads/${CHILD_ID}/messages`]: { status: 200, body: { messages: [] } },
+      [`GET /threads/${CHILD_ID}/turns`]: { status: 200, body: { turns: [] } },
+      "POST /commands/conversation.send": {
+        status: 200,
+        body: { ...runningTurn, threadId: CHILD_ID },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", OBJECTIVE_ID, CHILD_ID);
+
+    store.start();
+    await vi.waitFor(() => expect(store.getState().thread?.id).toBe(CHILD_ID));
+    expect(store.getState().thread?.parentThreadId).toBe(THREAD_ID);
+
+    await store.send("make it darker");
+
+    const sent = scripted.calls.find((call) => call.path === "/commands/conversation.send");
+
+    expect(sent?.body).toMatchObject({ identityId: "vesper", threadId: CHILD_ID });
+    expect(sent?.body).not.toHaveProperty("objectiveId");
+
+    store.close();
+  });
+
+  it("addresses an output's bytes only through a transport that can", () => {
+    const withUrl = createConversation(
+      { ...core().transport, contentUrl: (path) => `https://core.example${path}` },
+      "vesper",
+      undefined,
+    );
+    const without = createConversation(core().transport, "vesper", undefined);
+
+    expect(withUrl.getState().outputUrl?.(CHILD_ID)).toBe(
+      `https://core.example/attachments/${CHILD_ID}/content`,
+    );
+    expect(without.getState().outputUrl).toBeUndefined();
+  });
 });
+
+const CHILD_ID = "0199a000-0000-7000-8000-0000000000f2";
+const childThread = { ...thread, id: CHILD_ID, parentThreadId: THREAD_ID, parentTurnId: TURN_ID };

@@ -149,7 +149,9 @@ function Workbench({
    */
   const [freeThread, setFreeThread] = useState(false);
   const objectiveId = freeThread ? undefined : identity.activeObjectiveId;
-  const conversation = useConversation(transport, identityId, objectiveId);
+  /** A delegated thread the owner opened; undefined is the identity's own thread. */
+  const [openThreadId, setOpenThreadId] = useState<string | undefined>(undefined);
+  const conversation = useConversation(transport, identityId, objectiveId, openThreadId);
 
   const openInVault = (entityId: string): void => {
     setHandoff({ entityId, returnTo: active });
@@ -216,6 +218,7 @@ function Workbench({
           {...(identity.activeObjectiveId === undefined
             ? {}
             : { freeThread, onUseFreeThread: setFreeThread })}
+          onOpenThread={setOpenThreadId}
         />
       )}
 

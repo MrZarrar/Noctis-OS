@@ -273,4 +273,75 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
     assert.equal(proposed.messages[3], "Vesper: Hello PROPOSE: plan");
     assert.deepEqual(proposed.errors, []);
   });
+
+  it(
+    "a delegation is approved here, opens as its own thread with its image, and the owner continues it",
+    { timeout: 120_000 },
+    async () => {
+      await openChat();
+      await waitFor(readPage, (state) => state.messages.length === 4, "history did not load");
+
+      await prompt("DELEGATE: frame 1");
+
+      // Free chat, so each of the fake's two delegations asks the owner first.
+      for (const brief of ["IMAGE: frame 1", "IMAGE: again, darker"]) {
+        const card = `hand to codex: ${brief}`;
+
+        await waitFor(
+          readPage,
+          (state) => state.approvals.some((text) => text.startsWith(card)),
+          `the delegation of "${brief}" never asked`,
+        );
+        await tabTo(page, "Confirm");
+        await page.keyboard.press("Enter");
+        await waitFor(
+          readPage,
+          (state) => !state.approvals.some((text) => text.startsWith(card)),
+          `confirming "${brief}" did not close its card`,
+        );
+      }
+
+      const reported = await waitFor(
+        readPage,
+        (state) => state.messages.some((text) => text.startsWith("Vesper: delegated:")),
+        "the parent never reported its delegations",
+      );
+      const [first, second] = JSON.parse(
+        reported.messages.find((text) => text.startsWith("Vesper: delegated:")).slice(18),
+      );
+
+      assert.equal(first.outcome, "completed");
+      assert.equal(second.threadId, first.threadId, "the second request started a new thread");
+
+      await tabTo(page, "Delegated thread 1");
+      await page.keyboard.press("Enter");
+
+      const child = await waitFor(
+        readPage,
+        (state) =>
+          state.messages.includes("You: IMAGE: frame 1") &&
+          state.items.some((item) => item.kind === "output" && item.text.includes("image/png")),
+        "the delegated thread did not open with its image",
+      );
+
+      assert.ok(child.messages.includes("You: IMAGE: again, darker"), child.messages.join(" | "));
+
+      await prompt("IMAGE: one more");
+      await waitFor(
+        readPage,
+        (state) =>
+          state.messages.includes("Vesper: Hello IMAGE: one more") &&
+          state.turns.every((status) => status === "completed"),
+        "the owner's follow-up did not run on the delegated thread",
+      );
+
+      await tabTo(page, "Back");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.messages.includes("You: DELEGATE: frame 1"),
+        "Back did not return to the parent thread",
+      );
+    },
+  );
 });

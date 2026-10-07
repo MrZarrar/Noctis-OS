@@ -1,6 +1,8 @@
 import type {
   RuntimeAnswer,
   RuntimeAsk,
+  RuntimeDelegation,
+  RuntimeDelegationResult,
   RuntimeItem,
   RuntimeProbe,
   RuntimeProviderId,
@@ -41,6 +43,16 @@ export interface RuntimeSink {
   item(item: RuntimeItem): void;
   delta(itemId: string, text: string): void;
   ask(ask: Omit<RuntimeAsk, "askId">): Promise<RuntimeAnswer>;
+  /** Hands work to another agent through the core and waits for the child turn to end. */
+  delegate(delegation: Omit<RuntimeDelegation, "delegationId">): Promise<RuntimeDelegationResult>;
+  /** Gives the core a file the turn made, so the owner can open it anywhere. Resolves to its attachment id. */
+  upload(output: RuntimeUpload): Promise<string>;
+}
+
+export interface RuntimeUpload {
+  filename: string;
+  mediaType: string;
+  bytes: Uint8Array;
 }
 
 export interface RuntimeTurnInput {

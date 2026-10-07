@@ -80,6 +80,11 @@ export class SessionTransport implements CoreTransport {
     return { status: response.status, body: parseCoreBody(await response.text()) };
   }
 
+  /** The browser attaches the session cookie to an `<img>` on the core's origin by itself. */
+  contentUrl(path: string): string {
+    return resolveCoreUrl(this.#baseUrl, path).href;
+  }
+
   async upload(file: File): Promise<CoreResponse> {
     const url = resolveCoreUrl(this.#baseUrl, "/attachments");
     const response = await this.#fetch(url.href, {

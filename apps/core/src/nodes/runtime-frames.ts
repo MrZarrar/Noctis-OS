@@ -1,10 +1,11 @@
-import type { RuntimeAsk, RuntimeDelta, RuntimeItem } from "@noctis/contracts";
+import type { RuntimeAsk, RuntimeDelegation, RuntimeDelta, RuntimeItem } from "@noctis/contracts";
 
 /** What a node says mid-turn. The socket hands these over; it persists none of them. */
 export interface RuntimeFrameHandlers {
   onStreamItem(nodeId: string, jobId: string, sequence: number, item: RuntimeItem): void;
   onDelta(nodeId: string, jobId: string, delta: RuntimeDelta): void;
   onAsk(nodeId: string, jobId: string, ask: RuntimeAsk): void;
+  onDelegate(nodeId: string, jobId: string, delegation: RuntimeDelegation): void;
 }
 
 export interface RuntimeFrameHub extends RuntimeFrameHandlers {
@@ -41,6 +42,9 @@ export function createRuntimeFrameHub(onError?: (error: unknown) => void): Runti
     },
     onAsk(nodeId, jobId, ask) {
       each((handlers) => handlers.onAsk?.(nodeId, jobId, ask));
+    },
+    onDelegate(nodeId, jobId, delegation) {
+      each((handlers) => handlers.onDelegate?.(nodeId, jobId, delegation));
     },
     subscribe(handlers) {
       subscribers.add(handlers);

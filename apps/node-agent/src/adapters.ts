@@ -7,6 +7,8 @@ import type {
   NodeCapability,
   RuntimeAnswer,
   RuntimeAsk,
+  RuntimeDelegation,
+  RuntimeDelegationResult,
   RuntimeItem,
   RuntimeProviderId,
 } from "@noctis/contracts";
@@ -19,7 +21,7 @@ import {
   VerificationNoopPayloadSchema,
 } from "@noctis/contracts";
 
-import type { Runtime, RuntimeSink } from "./runtimes/Runtime.js";
+import type { Runtime, RuntimeSink, RuntimeUpload } from "./runtimes/Runtime.js";
 import { AdapterRefused } from "./runtimes/Runtime.js";
 import { promptWithAttachments, stageAttachments } from "./runtimes/attachments.js";
 import { childEnvironment } from "./runtimes/env.js";
@@ -48,6 +50,10 @@ export interface AdapterContext {
    * them actually needs is the ability to fetch a file the core already named.
    */
   fetchAttachment(id: string): Promise<Uint8Array>;
+  /** Hands work to another agent through the core; resolves when the child turn ends. */
+  delegate(delegation: Omit<RuntimeDelegation, "delegationId">): Promise<RuntimeDelegationResult>;
+  /** A file the turn made, given to the core for this job. Resolves to its attachment id. */
+  uploadOutput(output: RuntimeUpload): Promise<string>;
 }
 
 export type Adapter = (payload: unknown, context: AdapterContext) => Promise<unknown>;
@@ -260,6 +266,8 @@ const runtimeTurn: Adapter = async (payload, context) => {
     item: (item) => context.stream(item),
     delta: (itemId, text) => context.delta(itemId, text),
     ask: (ask) => context.ask(ask),
+    delegate: (delegation) => context.delegate(delegation),
+    upload: (output) => context.uploadOutput(output),
   };
 
   // Staged before the runtime starts, so a turn whose files could not be

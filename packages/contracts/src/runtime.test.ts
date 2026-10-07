@@ -121,4 +121,49 @@ describe("runtime contracts", () => {
   it("names chatgpt, claude_ai and local as eligible", () => {
     expect([...ELIGIBLE_AUTH_MODES].sort()).toEqual(["chatgpt", "claude_ai", "local"]);
   });
+
+  it("carries a delegation to the core and its result back", () => {
+    expect(
+      NodeFrameSchema.safeParse({
+        kind: "delegate",
+        envelopeVersion: 1,
+        jobId: UUID,
+        delegation: { delegationId: UUID, runtime: "codex", prompt: "draw frame 1" },
+      }).success,
+    ).toBe(true);
+    expect(
+      NodeFrameSchema.safeParse({
+        kind: "delegate",
+        envelopeVersion: 1,
+        jobId: UUID,
+        delegation: { delegationId: UUID, runtime: "gemini", prompt: "x" },
+      }).success,
+    ).toBe(false);
+    expect(
+      NodeServerFrameSchema.safeParse({
+        kind: "delegated",
+        envelopeVersion: 1,
+        jobId: UUID,
+        result: {
+          delegationId: UUID,
+          outcome: "completed",
+          threadId: UUID,
+          reply: "done",
+          outputs: [{ mediaType: "image/png", path: "C:\\frames\\1.png", attachmentId: UUID }],
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("records an output a turn produced", () => {
+    expect(
+      RuntimeItemSchema.safeParse({
+        kind: "output",
+        itemId: "ig_1",
+        status: "completed",
+        mediaType: "image/png",
+        attachmentId: UUID,
+      }).success,
+    ).toBe(true);
+  });
 });

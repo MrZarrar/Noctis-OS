@@ -22,6 +22,12 @@ export interface CoreTransport {
    * Upgrade path: a `core_upload` Tauri command taking bytes.
    */
   upload?: (file: File) => Promise<CoreResponse>;
+  /**
+   * A URL the page can put in `<img src>` for a core path. Only a transport
+   * whose credential travels with a plain GET can offer one: the cookie
+   * session can, a bearer token cannot.
+   */
+  contentUrl?: (path: string) => string;
 }
 
 /**

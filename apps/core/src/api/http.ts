@@ -72,7 +72,7 @@ import {
   listRecentTurns,
   listTurns,
 } from "../conversation/service.js";
-import { findThread } from "../conversation/threads.js";
+import { findThread, getThread, listChildThreads } from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
 import type { LiveBroker } from "../events/live.js";
@@ -172,6 +172,10 @@ export const ATTACHMENT_UPLOAD_PATH = "/attachments";
 const NODE_ATTACHMENT_PREFIX = "/node/attachments/";
 /** The filename a browser sends alongside the bytes. There is no multipart parser here by design. */
 export const ATTACHMENT_FILENAME_HEADER = "x-noctis-filename";
+/** `POST /node/outputs` — a file a turn made, handed over by the node running it. */
+export const NODE_OUTPUT_PATH = "/node/outputs";
+/** The job the output belongs to. The node must hold it. */
+export const OUTPUT_JOB_HEADER = "x-noctis-job";
 
 /** Exchanges the core token for a cookie. The other path that runs before the gate. */
 export const LOGIN_PATH = "/session/login";
@@ -899,6 +903,18 @@ function handleRead(
     return { status: 404, body: errorBody("not_found", "No such resource") };
   }
 
+  if (collection === "threads" && sub === undefined) {
+    const thread = getThread(deps.kernel.db, id);
+
+    return thread === undefined
+      ? { status: 404, body: errorBody("not_found", "thread not found") }
+      : { status: 200, body: thread };
+  }
+
+  if (collection === "threads" && sub === "children") {
+    return { status: 200, body: { threads: listChildThreads(deps.kernel.db, id) } };
+  }
+
   if (collection === "threads" && sub === "messages") {
     return { status: 200, body: { messages: listMessages(deps.kernel.db, id, limit) } };
   }
@@ -1077,6 +1093,76 @@ function handleNodeAttachment(
   }
 
   return { status: 200, bytes, mediaType: record.mediaType };
+}
+
+/** The node presenting `authorization`, when its credential verifies. */
+function verifiedNode(deps: ApiDeps, authorization: string | undefined): string | undefined {
+  const presented = parseNodeAuthorization(authorization);
+
+  if (presented === undefined) {
+    return undefined;
+  }
+
+  const generation = getCredentialGeneration(deps.kernel.db, presented.nodeId);
+
+  return generation !== undefined &&
+    verifyCredential({
+      coreToken: deps.config.token,
+      nodeId: presented.nodeId,
+      generation,
+      presented: presented.credential,
+    })
+    ? presented.nodeId
+    : undefined;
+}
+
+/**
+ * Stores a file a turn produced, so a phone can open it without reaching the
+ * node. Only for a job the node holds right now: an output belongs to a turn,
+ * and a node with nothing running has nothing to hand over.
+ */
+function handleNodeOutput(
+  deps: ApiDeps,
+  context: CommandContext,
+  headers: IncomingMessage["headers"],
+  bytes: Uint8Array,
+): { status: number; body: unknown } {
+  const nodeId = verifiedNode(deps, headerValue(headers.authorization));
+
+  if (nodeId === undefined) {
+    return { status: 401, body: errorBody("unauthorized", "A node credential is required") };
+  }
+
+  const jobId = headerValue(headers[OUTPUT_JOB_HEADER]) ?? "";
+  const job = UuidSchema.safeParse(jobId).success ? getJob(deps.kernel.db, jobId)?.job : undefined;
+
+  if (job?.nodeId !== nodeId || (job.status !== "leased" && job.status !== "running")) {
+    return { status: 403, body: errorBody("forbidden", "This node holds no such job") };
+  }
+
+  const outcome = uploadAttachment(
+    deps.kernel,
+    { ...context, actorType: "node", actorId: nodeId },
+    {
+      filename: headerValue(headers[ATTACHMENT_FILENAME_HEADER]) ?? "",
+      mediaType: (headers["content-type"] ?? "").split(";")[0]?.trim() ?? "",
+      bytes,
+      origin: "runtime_output",
+    },
+  );
+
+  if (!outcome.ok) {
+    return outcome.conflict.kind === "unavailable"
+      ? {
+          status: 400,
+          body: errorBody("invalid_attachment", "That output cannot be stored", {
+            reason: outcome.conflict.reason,
+          }),
+        }
+      : conflictResponse(outcome.conflict);
+  }
+
+  return { status: 200, body: outcome.value };
 }
 
 function handlePair(
@@ -1274,6 +1360,29 @@ export async function handleRequest(
         "x-correlation-id": correlationId,
       });
       res.end(result.bytes);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === NODE_OUTPUT_PATH) {
+      const raw = await readBody(req, MAX_ATTACHMENT_BYTES);
+      const result =
+        raw === "too_large"
+          ? {
+              status: 413,
+              body: errorBody("payload_too_large", "That output is larger than may be stored"),
+            }
+          : handleNodeOutput(
+              deps,
+              { correlationId, actorType: "node", actorId: "node" },
+              req.headers,
+              raw,
+            );
+
+      if (result.status !== 200) {
+        logger.log("warn", "node output refused", { status: result.status });
+      }
+
+      send(res, result.status, result.body, correlationId);
       return;
     }
 
@@ -1483,6 +1592,38 @@ export async function handleRequest(
         sizeBytes: outcome.value.sizeBytes,
       });
       send(res, 200, outcome.value, correlationId);
+      return;
+    }
+
+    // An output's bytes for the page. The same headers the node realm sends,
+    // plus `nosniff`, so a stored file is only ever the type it was stored as.
+    if (
+      req.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "attachments" &&
+      segments[2] === "content"
+    ) {
+      const id = segments[1] ?? "";
+      const record = UuidSchema.safeParse(id).success
+        ? getAttachment(deps.kernel.db, id)
+        : undefined;
+      const bytes = record === undefined ? undefined : readAttachmentBytes(deps.kernel.db, id);
+
+      if (record === undefined || bytes === undefined) {
+        send(res, 404, errorBody("not_found", "No such attachment"), correlationId);
+        return;
+      }
+
+      res.writeHead(200, {
+        "content-type": record.mediaType,
+        "content-length": bytes.length,
+        "cache-control": "private, max-age=3600",
+        "x-content-type-options": "nosniff",
+        // Opened directly, a stored file is inert: no script, no same-origin access.
+        "content-security-policy": "sandbox; default-src 'none'",
+        "x-correlation-id": correlationId,
+      });
+      res.end(bytes);
       return;
     }
 

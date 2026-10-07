@@ -133,6 +133,15 @@ describe("the line-delimited JSON-RPC client", () => {
     await expect(pending).rejects.toThrow(/line/);
   });
 
+  it("tells its owner it closed, even with nothing pending", () => {
+    const reasons: string[] = [];
+    const p = pair({ maxLineBytes: 64, onClose: (reason) => reasons.push(reason) });
+
+    p.rawToClient("a".repeat(100));
+
+    expect(reasons).toEqual(["inbound line exceeded 64 bytes"]);
+  });
+
   it("fails pending requests when the peer ends or the client is closed", async () => {
     const ended = pair();
     const pendingOnEnd = ended.client.request("initialize", {});
