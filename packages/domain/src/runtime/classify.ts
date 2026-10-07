@@ -86,12 +86,18 @@ const READ_ONLY_HEAD =
 
 /**
  * A shell launched only to run one command: `"...\powershell.exe" -Command "..."`,
- * `pwsh -NoProfile -c "..."`, `cmd /c "..."`. Codex on Windows wraps every
- * command this way, so without unwrapping, the head every rule sees is the
- * shell and no read is ever recognised as one.
+ * `pwsh -NoProfile -c "..."`, `cmd /c "..."`, `bash -lc "..."`. Codex wraps every
+ * command this way (PowerShell on Windows, bash elsewhere), so without unwrapping, the head every
+ * rule sees is the shell and no read is ever recognised as one. Only a wrapper at the very start
+ * is unwrapped; a shell started anywhere else is an evasion construct below.
  */
-const SHELL_WRAPPER =
-  /^\s*(?:"[^"]*?(?:powershell|pwsh)(?:\.exe)?"|\S*?(?:powershell|pwsh)(?:\.exe)?)\s+(?:-(?:noprofile|nologo|noninteractive|executionpolicy\s+\S+)\s+)*-(?:command|c)\s+([\s\S]+)$|^\s*(?:"[^"]*?cmd(?:\.exe)?"|\S*?cmd(?:\.exe)?)\s+\/[ck]\s+([\s\S]+)$/;
+const SHELL_WRAPPER = new RegExp(
+  [
+    String.raw`^\s*(?:"[^"]*?(?:powershell|pwsh)(?:\.exe)?"|(?:\S*[\/])?(?:powershell|pwsh)(?:\.exe)?)\s+(?:-(?:noprofile|nologo|noninteractive|executionpolicy\s+\S+)\s+)*-(?:command|c)\s+([\s\S]+)$`,
+    String.raw`^\s*(?:"[^"]*?cmd(?:\.exe)?"|(?:\S*[\/])?cmd(?:\.exe)?)\s+\/[ck]\s+([\s\S]+)$`,
+    String.raw`^\s*(?:"[^"]*?(?:bash|sh|zsh)(?:\.exe)?"|(?:\S*[\/])?(?:bash|sh|zsh)(?:\.exe)?)\s+-l?c\s+([\s\S]+)$`,
+  ].join("|"),
+);
 
 function unwrap(command: string): string {
   let current = command;
@@ -99,20 +105,41 @@ function unwrap(command: string): string {
   // Bounded: a wrapper inside a wrapper is plausible, a deeper one is not worth a loop.
   for (let depth = 0; depth < 3; depth += 1) {
     const match = SHELL_WRAPPER.exec(current);
-    const inner = (match?.[1] ?? match?.[2])?.trim();
+    const inner = (match?.[1] ?? match?.[2] ?? match?.[3])?.trim();
 
     if (inner === undefined) {
       break;
     }
 
+    const quote = inner[0];
+
     current =
-      inner.length >= 2 && inner.startsWith('"') && inner.endsWith('"')
+      inner.length >= 2 && (quote === '"' || quote === "'") && inner.endsWith(quote)
         ? inner.slice(1, -1)
         : inner;
   }
 
   return current;
 }
+
+/**
+ * Ways of running a command that hide what the command is: a string evaluated, a script
+ * sourced, an encoded or nested shell, an escape that splits a word the tables would know.
+ * Whatever they hide, the owner sees it before it runs. Checked after the destructive and
+ * external tables, which already catch what they can see.
+ */
+const EVASION: readonly Rule[] = [
+  ["Invoke-Expression", /\b(?:iex|invoke-expression)\b/],
+  ["a nested PowerShell", /(?:^|[\s;&|("'\\/])(?:powershell|pwsh)(?:\.exe)?["']?\s+-/],
+  ["a nested cmd /c", /(?:^|[\s;&|("'\\/])cmd(?:\.exe)?["']?\s+\/[ck]\b/],
+  ["the call operator", new RegExp(String.raw`(?:^|[;|({]\s*)&\s*["'($]`)],
+  ["dot-sourcing", new RegExp(String.raw`(?:^|[;&|({]\s*)\.\s+\S`)],
+  ["a backtick", /`/],
+  ["eval", /\beval\b/],
+  ["a nested shell -c", /(?:^|[\s;&|("'\\/])(?:bash|sh|zsh|dash)(?:\.exe)?\s+(?:-\S+\s+)*-\w*c\b/],
+  ["node -e", /\bnode(?:\.exe)?\s+(?:-\S+\s+)*?(?:-e|--eval|-p|--print)\b/],
+  ["python -c", /\b(?:python3?|py)(?:\.exe)?\s+(?:-\S+\s+)*?-c\b/],
+];
 
 function lower(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -167,6 +194,11 @@ function classifyCommand(input: AskInput): AskClass {
   const external = match(EXTERNAL, command);
   if (external !== undefined) {
     return { ...EXTERNAL_CLASS, capability, reason: `external-write pattern: ${external}` };
+  }
+
+  const evasion = match(EVASION, command);
+  if (evasion !== undefined) {
+    return { ...EXTERNAL_CLASS, capability, reason: `hides what it runs: ${evasion}` };
   }
 
   if (isReadOnly(command)) {

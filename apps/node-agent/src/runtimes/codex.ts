@@ -1,4 +1,6 @@
 import { spawn as spawnChild } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +20,7 @@ import { createProposalChannel } from "../proposals-file.js";
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { resolveCodexCommand } from "./codex-command.js";
+import { installCodexRules } from "./codex-rules.js";
 import { childEnvironment } from "./env.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
@@ -62,6 +65,8 @@ export interface CodexRuntimeOptions {
   proposalsDir: string;
   /** `dist/noctis-mcp.js`; the sibling of this file's parent in the build. */
   mcpEntry?: string;
+  /** Where Codex reads the owner's config and rules; `CODEX_HOME`, else `~/.codex`. */
+  codexHome?: string;
   env?: NodeJS.ProcessEnv;
   /** How long a thread's app-server waits for its next message before it is closed. */
   idleMs?: number;
@@ -292,12 +297,18 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       }));
   const mcpEntry = options.mcpEntry ?? fileURLToPath(new URL("../noctis-mcp.js", import.meta.url));
   const pool = createProcessPool<CodexProcess>(options.idleMs);
+  const codexHome =
+    options.codexHome ??
+    ((options.env ?? process.env).CODEX_HOME?.trim() || join(homedir(), ".codex"));
 
   /** One app-server for one thread. The JSON-RPC handshake waits for its first turn. */
   function open(input: RuntimeTurnInput, key: string, command: string): CodexProcess {
     const { payload, roots } = input;
     // Named for the thread, because the MCP child it is handed lives as long as this process.
     const proposals = createProposalChannel(options.proposalsDir, payload.threadId);
+
+    // Before the spawn: Codex reads its rules when it starts.
+    installCodexRules(codexHome);
     const child = spawn(
       command,
       spawnArgs(payload.model.model, mcpEntry, proposals.path),

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { ApprovalTimedOut } from "./Runtime.js";
 import type { CodexSpawn, SpawnedChild } from "./codex.js";
+import { NOCTIS_CODEX_RULES } from "./codex-rules.js";
 import { createCodexRuntime } from "./codex.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, createJsonRpcClient } from "./jsonrpc.js";
@@ -178,6 +179,7 @@ function runtime(scenario: Scenario, command = "C:\\bin\\codex.exe", idleMs?: nu
       command,
       spawn: fake.spawn,
       proposalsDir: join(scratch, "proposals"),
+      codexHome: join(scratch, "codex-home"),
       mcpEntry: "C:\\noctis\\dist\\noctis-mcp.js",
       ...(idleMs === undefined ? {} : { idleMs }),
     }),
@@ -555,6 +557,16 @@ describe("the Codex App Server runtime", () => {
 
     expect(spawned[0]?.args).not.toContain("--disable");
     expect(spawned[0]?.args.filter((arg) => arg.endsWith(".enabled=false"))).toEqual([]);
+  });
+
+  it("installs the Noctis rules into the Codex home before the app-server starts", async () => {
+    const { runtime: codex } = runtime(HAPPY);
+
+    await codex.turn(input(), recorder().sink);
+
+    expect(readFileSync(join(scratch, "codex-home", "rules", "noctis.rules"), "utf8")).toBe(
+      NOCTIS_CODEX_RULES,
+    );
   });
 
   it("fails the turn with the timeout's own words when nobody answers Codex's ask", async () => {
