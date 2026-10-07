@@ -9,6 +9,7 @@ import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts"
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
+import { ApprovalTimedOut } from "./Runtime.js";
 import type { CodexSpawn, SpawnedChild } from "./codex.js";
 import { createCodexRuntime } from "./codex.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
@@ -177,7 +178,6 @@ function runtime(scenario: Scenario, command = "C:\\bin\\codex.exe", idleMs?: nu
       command,
       spawn: fake.spawn,
       proposalsDir: join(scratch, "proposals"),
-      codexHome: join(scratch, "codex-home"),
       mcpEntry: "C:\\noctis\\dist\\noctis-mcp.js",
       ...(idleMs === undefined ? {} : { idleMs }),
     }),
@@ -318,13 +318,24 @@ describe("the Codex App Server runtime", () => {
       },
     ]);
     expect(s?.requests.get("thread/start")).toEqual([
-      { cwd: "C:\\work", model: "gpt-5.5", approvalPolicy: "untrusted", sandbox: "read-only" },
+      {
+        cwd: "C:\\work",
+        model: "gpt-5.5",
+        approvalPolicy: "on-request",
+        sandbox: "workspace-write",
+      },
     ]);
     expect(s?.requests.get("turn/start")).toEqual([
       {
         threadId: "thread-1",
         input: [{ type: "text", text: "say hello", text_elements: [] }],
-        sandboxPolicy: { type: "readOnly", networkAccess: false },
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: ["C:\\work"],
+          networkAccess: false,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
       },
     ]);
 
@@ -385,6 +396,7 @@ describe("the Codex App Server runtime", () => {
         capability: "runtime.command",
         target: { type: "command", id: "echo hi" },
         detail: { command: "echo hi", cwd: "C:\\work" },
+        askedBy: "runtime",
       },
       {
         itemId: "f1",
@@ -395,6 +407,7 @@ describe("the Codex App Server runtime", () => {
         capability: "runtime.file_change",
         target: { type: "file_change", id: "C:\\work\\a.ts" },
         detail: { paths: ["C:\\work\\a.ts"] },
+        askedBy: "runtime",
       },
     ]);
 
@@ -428,13 +441,13 @@ describe("the Codex App Server runtime", () => {
     expect(spawned[0]?.child.killed).toBe(false);
   });
 
-  it("opens workspace-write on the writable roots when an Objective is active", async () => {
+  it("runs workspace-write with approval on-request and the network off, Objective or not", async () => {
     const { runtime: codex, spawned } = runtime(HAPPY);
 
-    await codex.turn(input({ objectiveActive: true }), recorder().sink);
+    await codex.turn(input({ objectiveActive: false }), recorder().sink);
 
     expect(spawned[0]?.requests.get("thread/start")).toEqual([
-      expect.objectContaining({ sandbox: "workspace-write" }),
+      expect.objectContaining({ sandbox: "workspace-write", approvalPolicy: "on-request" }),
     ]);
     expect(spawned[0]?.requests.get("turn/start")).toEqual([
       expect.objectContaining({
@@ -455,7 +468,7 @@ describe("the Codex App Server runtime", () => {
     const evidence = await codex.turn(input({ sessionRef: "thread-9" }), recorder().sink);
 
     expect(spawned[0]?.requests.get("thread/resume")).toEqual([
-      expect.objectContaining({ threadId: "thread-9", approvalPolicy: "untrusted" }),
+      expect.objectContaining({ threadId: "thread-9", approvalPolicy: "on-request" }),
     ]);
     expect(spawned[0]?.requests.has("thread/start")).toBe(false);
     expect(evidence.sessionRef).toBe("thread-9");
@@ -522,8 +535,6 @@ describe("the Codex App Server runtime", () => {
       expect.arrayContaining([
         'model="gpt-5.5"',
         'sandbox_mode="workspace-write"',
-        "--disable",
-        "plugins",
         `mcp_servers.noctis.command=${JSON.stringify(process.execPath)}`,
         `mcp_servers.noctis.args=${JSON.stringify([
           "C:\\noctis\\dist\\noctis-mcp.js",
@@ -537,24 +548,26 @@ describe("the Codex App Server runtime", () => {
     expect(s?.args.filter((arg) => arg.startsWith("approval_policy"))).toEqual([]);
   });
 
-  it("switches off every MCP server the owner's config.toml declares", async () => {
+  it("leaves the owner's ~/.codex as it is: no plugin, app or MCP server switched off", async () => {
     const { runtime: codex, spawned } = runtime(HAPPY);
-    const { mkdirSync, writeFileSync } = await import("node:fs");
-
-    mkdirSync(join(scratch, "codex-home"), { recursive: true });
-    writeFileSync(
-      join(scratch, "codex-home", "config.toml"),
-      'model = "gpt-6-astra"\n[mcp_servers.node_repl]\ncommand = "node"\n[mcp_servers.node_repl.env]\nX = "1"\n[mcp_servers.other-one]\nurl = "https://x"\n',
-    );
 
     await codex.turn(input(), recorder().sink);
 
-    expect(spawned[0]?.args).toEqual(
-      expect.arrayContaining([
-        "mcp_servers.node_repl.enabled=false",
-        "mcp_servers.other-one.enabled=false",
-      ]),
+    expect(spawned[0]?.args).not.toContain("--disable");
+    expect(spawned[0]?.args.filter((arg) => arg.endsWith(".enabled=false"))).toEqual([]);
+  });
+
+  it("fails the turn with the timeout's own words when nobody answers Codex's ask", async () => {
+    const { runtime: codex, spawned } = runtime(HAPPY);
+    const r = recorder();
+
+    r.sink.ask = () => Promise.reject(new ApprovalTimedOut("echo hi", 600_000));
+
+    await expect(codex.turn(input(), r.sink)).rejects.toThrow(
+      'approval timed out: "echo hi" was not answered within 10 minutes',
     );
+    // A process left mid-ask is not one the next turn should inherit.
+    expect(spawned[0]?.child.killed).toBe(true);
   });
 
   it("fails the turn when app-server exits before the turn completed", async () => {
@@ -607,6 +620,7 @@ describe("the Codex App Server runtime", () => {
         capability: "runtime.permission",
         target: { type: "permission", id: "network" },
         detail: { cwd: "C:\\work" },
+        askedBy: "runtime",
       },
     ]);
     expect(answers[0]).toEqual({ permissions: { network: { enabled: true } }, scope: "turn" });

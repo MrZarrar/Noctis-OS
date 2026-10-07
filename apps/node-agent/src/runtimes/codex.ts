@@ -1,7 +1,4 @@
 import { spawn as spawnChild } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +16,7 @@ import { AGENT_VERSION } from "../agent.js";
 import type { ProposalChannel } from "../proposals-file.js";
 import { createProposalChannel } from "../proposals-file.js";
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
-import { AdapterRefused } from "./Runtime.js";
+import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { resolveCodexCommand } from "./codex-command.js";
 import { childEnvironment } from "./env.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
@@ -32,11 +29,12 @@ import { createProcessPool, processKey } from "./sessions.js";
  * Codex App Server behind the node boundary (ADR-0020/0021).
  *
  * One `codex app-server` process per thread, kept open between turns and
- * spoken to over stdio JSON-RPC; a follow-up is one `turn/start`. The
- * owner's config.toml is overridden on the command line and per request:
- * model, sandbox, approval policy, and every MCP server or plugin that would
- * hand the model a tool no ask ever sees. Each approval Codex raises becomes
- * a `sink.ask` classified by `classifyAsk`; the runtime never decides.
+ * spoken to over stdio JSON-RPC; a follow-up is one `turn/start`. It runs on
+ * the owner's own ~/.codex (plugins, skills, MCP servers) with three things
+ * pinned: the model Noctis chose, `workspace-write` on the granted roots with
+ * the network off, and approval `on-request`. Codex's own permission system
+ * does the everyday work; anything it asks becomes a `sink.ask` the owner
+ * answers, classified by `classifyAsk` so the card says what it is.
  */
 
 /** What `spawn` returns, narrowed to what a turn touches so tests can hand in a fake. */
@@ -64,8 +62,6 @@ export interface CodexRuntimeOptions {
   proposalsDir: string;
   /** `dist/noctis-mcp.js`; the sibling of this file's parent in the build. */
   mcpEntry?: string;
-  /** The owner's `~/.codex`, read only for the MCP servers it declares. */
-  codexHome?: string;
   env?: NodeJS.ProcessEnv;
   /** How long a thread's app-server waits for its next message before it is closed. */
   idleMs?: number;
@@ -166,31 +162,7 @@ function toml(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/**
- * The MCP servers the owner's config.toml declares, so each can be switched
- * off. ponytail: bare table names only; a quoted `[mcp_servers."a b"]` cannot
- * be reached through `-c` anyway. Plugins are handled by `--disable plugins`.
- */
-function ownerMcpServers(codexHome: string): string[] {
-  try {
-    const config = readFileSync(join(codexHome, "config.toml"), "utf8");
-
-    return [
-      ...new Set(
-        [...config.matchAll(/^\[mcp_servers\.([A-Za-z0-9_-]+)\]/gm)].map((m) => m[1] ?? ""),
-      ),
-    ].filter((name) => name !== "");
-  } catch {
-    return [];
-  }
-}
-
-function spawnArgs(
-  model: string,
-  mcpEntry: string,
-  proposalsFile: string,
-  ownerServers: readonly string[],
-): string[] {
+function spawnArgs(model: string, mcpEntry: string, proposalsFile: string): string[] {
   return [
     "app-server",
     "--listen",
@@ -199,10 +171,6 @@ function spawnArgs(
     `model=${toml(model)}`,
     "-c",
     'sandbox_mode="workspace-write"',
-    // The owner's plugins bundle MCP servers (browser, computer use, apps) that
-    // would reach the model with no ask in between. Verified against 0.154.
-    ...["plugins", "apps", "computer_use", "browser_use"].flatMap((f) => ["--disable", f]),
-    ...ownerServers.flatMap((name) => ["-c", `mcp_servers.${name}.enabled=false`]),
     "-c",
     `mcp_servers.noctis.command=${toml(process.execPath)}`,
     "-c",
@@ -323,7 +291,6 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
         windowsHide: true,
       }));
   const mcpEntry = options.mcpEntry ?? fileURLToPath(new URL("../noctis-mcp.js", import.meta.url));
-  const codexHome = options.codexHome ?? join(homedir(), ".codex");
   const pool = createProcessPool<CodexProcess>(options.idleMs);
 
   /** One app-server for one thread. The JSON-RPC handshake waits for its first turn. */
@@ -333,7 +300,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     const proposals = createProposalChannel(options.proposalsDir, payload.threadId);
     const child = spawn(
       command,
-      spawnArgs(payload.model.model, mcpEntry, proposals.path, ownerMcpServers(codexHome)),
+      spawnArgs(payload.model.model, mcpEntry, proposals.path),
       // Stripped again here: the adapter already did, and this is the boundary.
       { cwd: roots.cwd, env: childEnvironment(input.env) },
     );
@@ -433,21 +400,29 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       });
     });
 
-    const sandboxPolicy = payload.objectiveActive
-      ? {
-          type: "workspaceWrite",
-          writableRoots: roots.writable,
-          networkAccess: false,
-          excludeTmpdirEnvVar: false,
-          excludeSlashTmp: false,
-        }
-      : { type: "readOnly", networkAccess: false };
+    // The network stays off whatever ~/.codex says: an external write then has
+    // to escalate, and an escalation is an ask the owner answers.
+    const sandboxPolicy = {
+      type: "workspaceWrite",
+      writableRoots: roots.writable,
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
+    };
+    let fail: (error: Error) => void = () => undefined;
 
-    /** The core's answer as a boolean; `undefined` when the ask itself failed (cancelled, disconnected). */
+    /**
+     * The owner's answer to Codex's own ask, as a boolean; `undefined` when the
+     * ask itself failed (cancelled, disconnected, or nobody answered in time).
+     */
     async function decide(ask: Omit<RuntimeAsk, "askId">): Promise<boolean | undefined> {
       try {
-        return (await sink.ask(ask)).decision === "allow";
-      } catch {
+        return (await sink.ask({ ...ask, askedBy: "runtime" })).decision === "allow";
+      } catch (error) {
+        if (error instanceof ApprovalTimedOut) {
+          fail(error);
+        }
+
         return undefined;
       }
     }
@@ -498,6 +473,8 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           stoppedReason: outcome.evidence,
         });
       }
+
+      fail = (error) => finish({ error });
 
       const turn: CodexTurn = {
         ended(error) {
@@ -686,8 +663,8 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           const thread = {
             cwd: roots.cwd,
             model: payload.model.model,
-            approvalPolicy: "untrusted",
-            sandbox: payload.objectiveActive ? "workspace-write" : "read-only",
+            approvalPolicy: "on-request",
+            sandbox: "workspace-write",
           };
 
           if (payload.sessionRef !== undefined) {

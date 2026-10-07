@@ -11,6 +11,21 @@ import type {
 /** The node refused the job itself. Reported to the core as a failure, not a crash. */
 export class AdapterRefused extends Error {}
 
+/** How long a turn waits for a person to answer an approval before it fails. */
+export const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+
+/** Nobody answered an approval in time. A runtime fails its turn with this message. */
+export class ApprovalTimedOut extends Error {
+  constructor(summary: string, timeoutMs: number) {
+    const within =
+      timeoutMs >= 60_000
+        ? `${String(Math.round(timeoutMs / 60_000))} minutes`
+        : `${String(timeoutMs)} ms`;
+
+    super(`approval timed out: "${summary}" was not answered within ${within}`);
+  }
+}
+
 /** Grant roots made real: every path is a `realpath`, so junctions cannot widen a grant. */
 export interface ResolvedRoots {
   cwd: string;

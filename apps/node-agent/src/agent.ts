@@ -20,6 +20,7 @@ import { WebSocket } from "ws";
 import type { Adapter, AdapterContext } from "./adapters.js";
 import { ADAPTERS, AdapterRefused } from "./adapters.js";
 import type { Runtime } from "./runtimes/Runtime.js";
+import { APPROVAL_TIMEOUT_MS, ApprovalTimedOut } from "./runtimes/Runtime.js";
 import { probeInstalledProviders } from "./runtimes/probe.js";
 
 export const AGENT_VERSION = "0.0.0";
@@ -56,6 +57,8 @@ export interface AgentOptions {
   /** Run once before the first connect; the result rides in every `hello`. */
   probes?: () => Promise<RuntimeProbe[]>;
   env?: NodeJS.ProcessEnv;
+  /** How long an ask waits for its answer before the turn fails. */
+  approvalTimeoutMs?: number;
 }
 
 interface PendingAsk {
@@ -106,6 +109,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
   const runtimes = options.runtimes ?? {};
   const env = options.env ?? process.env;
   const probes = options.probes ?? (() => probeInstalledProviders(env));
+  const approvalTimeoutMs = options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;
   const ids = createIdFactory(systemClock);
   const running = new Map<string, AbortController>();
   /** Per job, the asks whose answer has not arrived. Rejected on cancel and on disconnect. */
@@ -194,7 +198,24 @@ export function startAgent(options: AgentOptions): RunningAgent {
         const askId = ids.nextId();
 
         return new Promise<RuntimeAnswer>((resolve, reject) => {
-          asks.set(askId, { resolve, reject });
+          // The waiting side enforces the limit: a core that restarted, or a
+          // question nobody saw, must not hold a turn open forever.
+          const timer = setTimeout(() => {
+            asks.delete(askId);
+            reject(new ApprovalTimedOut(ask.summary, approvalTimeoutMs));
+          }, approvalTimeoutMs);
+
+          timer.unref();
+          asks.set(askId, {
+            resolve: (answer) => {
+              clearTimeout(timer);
+              resolve(answer);
+            },
+            reject: (reason) => {
+              clearTimeout(timer);
+              reject(reason);
+            },
+          });
           send({
             kind: "ask",
             envelopeVersion: NODE_ENVELOPE_VERSION,

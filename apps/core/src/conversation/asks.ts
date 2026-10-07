@@ -5,7 +5,12 @@ import type {
   RuntimeAsk,
 } from "@noctis/contracts";
 
-import { getApproval, getApprovalByAskId, requestAuthority } from "../authority/service.js";
+import {
+  declineAuthority,
+  getApproval,
+  getApprovalByAskId,
+  requestAuthority,
+} from "../authority/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import type { Dispatcher } from "../nodes/dispatch.js";
 import type { Turn } from "./service.js";
@@ -48,6 +53,7 @@ export function handleAsk(
     reversibility: ask.reversibility,
     nodeJobId: jobId,
     askId: ask.askId,
+    ...(ask.askedBy === "runtime" ? { askedByRuntime: true } : {}),
   });
 
   const approval = decision.ok
@@ -138,4 +144,33 @@ export function answerFromEvent(
     decision: "deny",
     reason,
   });
+}
+
+/**
+ * The turn ended with a question still open: the node gave up waiting, was
+ * cancelled, or crashed. Declining it closes the card, so nobody confirms
+ * something that can no longer happen and the audit trail says why.
+ */
+export function closePendingAsks(
+  kernel: Kernel,
+  pending: Map<string, PendingAsk>,
+  jobId: string,
+): void {
+  for (const [approvalId, entry] of pending) {
+    if (entry.jobId !== jobId) {
+      continue;
+    }
+
+    // Removed first, so the decline below is not sent to a node that stopped waiting.
+    pending.delete(approvalId);
+    declineAuthority(
+      kernel,
+      { correlationId: kernel.ids.nextId(), actorType: "system", actorId: "system" },
+      {
+        idempotencyKey: `turn-ended:${approvalId}`,
+        requestId: approvalId,
+        reason: "the turn ended before anyone answered",
+      },
+    );
+  }
 }

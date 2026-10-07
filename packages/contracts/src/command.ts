@@ -113,6 +113,8 @@ export const RequestAuthorityCommandSchema = z
     /** Set when a runtime ask raised the request, so the answer can find its way back. */
     nodeJobId: UuidSchema.optional(),
     askId: UuidSchema.optional(),
+    /** The agent's own permission system asked; policy alone never answers it. */
+    askedByRuntime: z.boolean().optional(),
   })
   .strict();
 

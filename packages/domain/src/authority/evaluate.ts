@@ -66,6 +66,11 @@ export interface AuthorityEvaluationInput {
   standingPermissions: readonly StandingPermission[];
   /** Epoch milliseconds from the injected clock. */
   now: number;
+  /**
+   * The agent's own permission system asked, rather than Noctis stopping it.
+   * The agent wanted a person, so policy alone never answers for one.
+   */
+  askedByRuntime?: boolean;
 }
 
 export interface AuthorityEvaluation {
@@ -147,10 +152,29 @@ function decide(
 }
 
 /**
+ * The Section 9.1 rows that confirm: everything but a read and a local edit.
+ * A runtime brings these to Noctis before acting; below them the agent's own
+ * permission system decides.
+ */
+export function isConfirmLevel(operationClass: OperationClass): boolean {
+  return operationClass !== "read_inspect" && operationClass !== "local_reversible_edit";
+}
+
+/**
  * The single authority decision function. Pure, deterministic, and fail-closed:
  * an operation class outside the table denies rather than falling through.
  */
 export function evaluateAuthority(input: AuthorityEvaluationInput): AuthorityEvaluation {
+  const evaluation = evaluatePolicy(input);
+
+  if (input.askedByRuntime === true && evaluation.outcome === "allow") {
+    return decide("require_confirmation", [...evaluation.reasonCodes, "runtime_asked"], input);
+  }
+
+  return evaluation;
+}
+
+function evaluatePolicy(input: AuthorityEvaluationInput): AuthorityEvaluation {
   const base = DEFAULT_OUTCOME[input.operationClass] as AuthorityOutcome | undefined;
 
   if (base === undefined) {

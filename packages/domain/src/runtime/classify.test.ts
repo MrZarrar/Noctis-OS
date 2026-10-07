@@ -90,8 +90,51 @@ const ROWS: Row[] = [
     command(
       `powershell.exe -Command "Get-ChildItem -LiteralPath C:\\Users\\me\\Downloads -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name,Length | Format-List"`,
     ),
+    "read_inspect",
+    "reversible",
+    CMD,
+  ],
+  /**
+   * From the S1 measurement: Codex on Windows wraps every command in a quoted
+   * PowerShell path, and this plain read raised an approval and hung the turn.
+   */
+  [
+    "a plain read inside Codex's quoted PowerShell wrapper",
+    command(
+      `"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -Raw 'C:\\Users\\me\\.agents\\skills\\superpowers\\SKILL.md'"`,
+      OUTSIDE,
+    ),
+    "read_inspect",
+    "reversible",
+    CMD,
+  ],
+  [
+    "PowerShell switches before -Command",
+    command(`pwsh -NoProfile -ExecutionPolicy Bypass -c "git status"`),
+    "read_inspect",
+    "reversible",
+    CMD,
+  ],
+  ["cmd /c around a read", command(`cmd.exe /c "dir /b"`), "read_inspect", "reversible", CMD],
+  [
+    "the wrapper does not launder a write",
+    command(`powershell.exe -Command "Set-Content notes.txt hi"`),
     "local_reversible_edit",
     "reversible",
+    CMD,
+  ],
+  [
+    "the wrapper does not launder a redirect",
+    command(`powershell.exe -Command "Get-Content a.txt > b.txt"`),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
+  [
+    "the wrapper does not hide a disk format",
+    command(`powershell.exe -Command "format D: /q"`),
+    "destructive",
+    "irreversible",
     CMD,
   ],
 
@@ -232,6 +275,34 @@ const ROWS: Row[] = [
     TOOL,
   ],
   ["tool_call noctis_*", tool("noctis_status"), "read_inspect", "reversible", TOOL],
+  [
+    "an MCP tool named for a read",
+    tool("mcp__github__get_issue"),
+    "read_inspect",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "an MCP lookup with a hyphenated name",
+    tool("mcp__context7__query-docs"),
+    "read_inspect",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "an MCP send is not a read",
+    tool("mcp__slack__send_message"),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "a browser action behind an MCP server is not a read",
+    tool("mcp__playwright__browser_navigate"),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
   ["tool_call other", tool("web_fetch"), "external_write", "partially_reversible", TOOL],
 ];
 

@@ -84,6 +84,36 @@ const EXTERNAL: readonly Rule[] = [
 const READ_ONLY_HEAD =
   /^(?:dir|ls|type|cat|get-childitem|gci|get-content|gc|echo|findstr|grep|rg|where|which|pwd|select-string|test-path|git\s+(?:status|log|diff|show)|node\s+--version|npm\s+ls|format-(?:list|table|wide)|select-object|sort-object|measure-object|out-string)\b/;
 
+/**
+ * A shell launched only to run one command: `"...\powershell.exe" -Command "..."`,
+ * `pwsh -NoProfile -c "..."`, `cmd /c "..."`. Codex on Windows wraps every
+ * command this way, so without unwrapping, the head every rule sees is the
+ * shell and no read is ever recognised as one.
+ */
+const SHELL_WRAPPER =
+  /^\s*(?:"[^"]*?(?:powershell|pwsh)(?:\.exe)?"|\S*?(?:powershell|pwsh)(?:\.exe)?)\s+(?:-(?:noprofile|nologo|noninteractive|executionpolicy\s+\S+)\s+)*-(?:command|c)\s+([\s\S]+)$|^\s*(?:"[^"]*?cmd(?:\.exe)?"|\S*?cmd(?:\.exe)?)\s+\/[ck]\s+([\s\S]+)$/;
+
+function unwrap(command: string): string {
+  let current = command;
+
+  // Bounded: a wrapper inside a wrapper is plausible, a deeper one is not worth a loop.
+  for (let depth = 0; depth < 3; depth += 1) {
+    const match = SHELL_WRAPPER.exec(current);
+    const inner = (match?.[1] ?? match?.[2])?.trim();
+
+    if (inner === undefined) {
+      break;
+    }
+
+    current =
+      inner.length >= 2 && inner.startsWith('"') && inner.endsWith('"')
+        ? inner.slice(1, -1)
+        : inner;
+  }
+
+  return current;
+}
+
 function lower(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
@@ -127,7 +157,7 @@ const READ_CLASS = { operationClass: "read_inspect", reversibility: "reversible"
 
 function classifyCommand(input: AskInput): AskClass {
   const capability = "runtime.command";
-  const command = (input.command ?? "").toLowerCase();
+  const command = unwrap((input.command ?? "").toLowerCase());
 
   const destructive = match(DESTRUCTIVE, command);
   if (destructive !== undefined) {
@@ -152,11 +182,20 @@ function classifyCommand(input: AskInput): AskClass {
     : { ...EXTERNAL_CLASS, capability, reason: "unrecognised command outside every writable root" };
 }
 
+const MCP_READ_VERB =
+  /^(?:get|list|search|read|fetch|query|find|view|describe|show|lookup|resolve)(?:[_-]|$)/;
+
 function classifyToolCall(tool: string): AskClass {
   const capability = "runtime.tool_call";
 
   if (tool.startsWith("noctis_")) {
     return { ...READ_CLASS, capability, reason: "noctis_* tool" };
+  }
+
+  // An MCP tool named for a read (`get_issue`, `query-docs`). Its name is the
+  // server's claim, which is all Noctis has; anything else stays external.
+  if (tool.startsWith("mcp__") && MCP_READ_VERB.test(tool.slice(tool.lastIndexOf("__") + 2))) {
+    return { ...READ_CLASS, capability, reason: "mcp__* tool named for a read" };
   }
 
   if (tool.startsWith("browser_") || tool.startsWith("mcp__")) {

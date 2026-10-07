@@ -205,6 +205,12 @@ export const RuntimeAskSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * `runtime`: the agent's own permission system asked, so a person answers.
+     * `noctis` (or absent, from an older node): Noctis stopped a confirm-level
+     * action before it ran, and policy decides.
+     */
+    askedBy: z.enum(["runtime", "noctis"]).optional(),
   })
   .strict();
 

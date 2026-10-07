@@ -9,7 +9,7 @@ import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts"
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
-import { AdapterRefused } from "./Runtime.js";
+import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import type { ClaudeQuery } from "./claude.js";
 import { createClaudeRuntime } from "./claude.js";
 import { PLAYWRIGHT_SERVER } from "./mcp-config.js";
@@ -246,7 +246,7 @@ describe("the Claude Agent SDK runtime", () => {
     });
   });
 
-  it("isolates the spawned CLI: no settings, strict MCP, default permissions, stripped env, the payload's model", async () => {
+  it("loads the owner's real setup: every setting source, every skill, auto mode, the payload's model", async () => {
     const { query, calls } = scripted(list(init(), result()));
 
     await createClaudeRuntime({ query }).turn(input(), recorder().sink);
@@ -265,11 +265,13 @@ describe("the Claude Agent SDK runtime", () => {
       additionalDirectories: ["C:\\ref"],
       env: { PATH: "C:\\bin" },
       model: "sonnet",
-      permissionMode: "default",
-      settingSources: [],
-      strictMcpConfig: true,
+      permissionMode: "auto",
+      settingSources: ["user", "project", "local"],
+      skills: "all",
       includePartialMessages: true,
     });
+    expect(options?.strictMcpConfig).toBe(undefined);
+    expect(options?.hooks?.PreToolUse).toHaveLength(1);
     expect(options?.resume).toBe(undefined);
     expect(options?.abortController).toBeInstanceOf(AbortController);
     expect(options?.canUseTool).toBeTypeOf("function");
@@ -306,27 +308,48 @@ describe("the Claude Agent SDK runtime", () => {
     expect(calls[0]?.options?.abortController?.signal.aborted).toBe(true);
   });
 
-  describe("canUseTool", () => {
+  describe("permissions: the agent decides the everyday, Noctis confirms the consequential", () => {
     /** A turn held open, so its tool calls have someone to ask. */
-    async function permission(decision: RuntimeAnswer["decision"], reason?: string) {
+    async function held(decision: RuntimeAnswer["decision"] = "allow", reason?: string) {
       const { query, calls } = scripted(async function* () {
         yield init();
         await new Promise(() => undefined);
       });
       const r = recorder(decision, reason);
+      const turn = createClaudeRuntime({ query }).turn(input(), r.sink);
 
-      void createClaudeRuntime({ query }).turn(input(), r.sink);
+      turn.catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const canUseTool = calls[0]?.options?.canUseTool;
+      const options = calls[0]?.options;
+      const canUseTool = options?.canUseTool;
+      const hook = options?.hooks?.PreToolUse?.[0]?.hooks[0];
 
-      if (canUseTool === undefined) {
-        throw new Error("no canUseTool");
+      if (canUseTool === undefined || hook === undefined) {
+        throw new Error("no canUseTool or PreToolUse hook");
       }
 
       return {
         r,
-        ask: (toolName: string, toolInput: Record<string, unknown>) =>
+        turn,
+        options,
+        /** Noctis's gate: every tool call, before the agent's own permission system sees it. */
+        gate: (toolName: string, toolInput: Record<string, unknown>) =>
+          hook(
+            {
+              hook_event_name: "PreToolUse",
+              tool_name: toolName,
+              tool_input: toolInput,
+              tool_use_id: "tu-1",
+              session_id: SESSION,
+              transcript_path: "",
+              cwd: ROOTS.cwd,
+            },
+            "tu-1",
+            { signal: SIGNAL },
+          ),
+        /** The agent's own permission system asking. */
+        agentAsks: (toolName: string, toolInput: Record<string, unknown>) =>
           canUseTool(toolName, toolInput, {
             signal: SIGNAL,
             toolUseID: "tu-1",
@@ -335,14 +358,28 @@ describe("the Claude Agent SDK runtime", () => {
       };
     }
 
-    it("asks the core about an external write and allows with the input unchanged", async () => {
-      const { r, ask } = await permission("allow");
-      const toolInput = { command: "git push origin main" };
+    const allowed = {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        permissionDecisionReason: "confirmed in Noctis",
+      },
+    };
 
-      await expect(ask("Bash", toolInput)).resolves.toEqual({
-        behavior: "allow",
-        updatedInput: toolInput,
-      });
+    function denied(reason: string) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: reason,
+        },
+      };
+    }
+
+    it("stops an external write before it runs, asks the core, and lets it run once confirmed", async () => {
+      const { r, gate } = await held("allow");
+
+      await expect(gate("Bash", { command: "git push origin main" })).resolves.toEqual(allowed);
       expect(r.asks).toEqual([
         {
           itemId: "tu-1",
@@ -353,72 +390,122 @@ describe("the Claude Agent SDK runtime", () => {
           capability: "runtime.command",
           target: { type: "command", id: "git push origin main" },
           detail: { command: "git push origin main", cwd: "C:\\work" },
+          askedBy: "noctis",
         },
       ]);
     });
 
-    it("turns a deny into a deny with the core's reason", async () => {
-      const { ask } = await permission("deny", "not now");
-
-      await expect(ask("Bash", { command: "git push" })).resolves.toEqual({
-        behavior: "deny",
-        message: "not now",
-      });
+    it("turns the core's deny into a deny, in the core's words or a fixed one", async () => {
+      await expect(
+        (await held("deny", "not now")).gate("Bash", { command: "git push" }),
+      ).resolves.toEqual(denied("not now"));
+      await expect(
+        (await held("deny")).gate("Write", { file_path: "C:\\elsewhere\\x.ts" }),
+      ).resolves.toEqual(denied("declined by Noctis authority"));
     });
 
-    it("falls back to a fixed message when the deny carries no reason", async () => {
-      const { ask } = await permission("deny");
-
-      await expect(ask("Edit", { file_path: "C:\\elsewhere\\x.ts" })).resolves.toEqual({
-        behavior: "deny",
-        message: "declined by Noctis authority",
-      });
-    });
-
-    it("classifies every edit through the roots: inside is local, outside is external, both ask", async () => {
-      const { r, ask } = await permission("allow");
-
-      await ask("Edit", { file_path: "C:\\work\\a.ts" });
-      await ask("Write", { file_path: "C:\\ref\\b.ts" });
-
-      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.detail?.paths])).toEqual([
-        ["file_change", "local_reversible_edit", ["C:\\work\\a.ts"]],
-        ["file_change", "external_write", ["C:\\ref\\b.ts"]],
-      ]);
-    });
-
-    it("asks about the web as a permission and about unknown tools as tool calls", async () => {
-      const { r, ask } = await permission("allow");
-
-      await ask("WebFetch", { url: "https://example.com" });
-      await ask("mcp__browser__click", { selector: "#go" });
-
-      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target])).toEqual([
-        ["permission", "external_write", { type: "permission", id: "WebFetch" }],
-        ["tool_call", "external_write", { type: "tool_call", id: "mcp__browser__click" }],
-      ]);
-    });
-
-    it("allows read_inspect locally without a round trip: Read, a read-only command, the Noctis tools, a sub-agent", async () => {
-      const { r, ask } = await permission("deny");
+    it("leaves everything below confirm-level to the agent's own permission system", async () => {
+      const { r, gate } = await held("deny");
 
       for (const [name, toolInput] of [
         ["Read", { file_path: "C:\\work\\a.ts" }],
         ["Glob", { pattern: "**/*.ts" }],
         ["Bash", { command: "git status" }],
-        ["mcp__noctis__noctis_propose_surface", { surfaceKind: "card" }],
+        [
+          "Bash",
+          {
+            command: `"C:\\WINDOWS\\powershell.exe" -Command "Get-Content -Raw 'C:\\x\\SKILL.md'"`,
+          },
+        ],
+        ["Bash", { command: "npm test" }],
+        ["Edit", { file_path: "C:\\work\\a.ts" }],
+        ["Skill", { skill: "brainstorming" }],
+        ["WebFetch", { url: "https://example.com" }],
+        ["WebSearch", { query: "noctis" }],
         ["Agent", { description: "look", subagent_type: "Explore" }],
+        ["mcp__github__get_issue", { number: 1 }],
+        ["mcp__noctis__noctis_propose_surface", { surfaceKind: "card" }],
       ] as const) {
-        await expect(ask(name, toolInput)).resolves.toEqual({
-          behavior: "allow",
-          updatedInput: toolInput,
-        });
+        await expect(gate(name, toolInput), name).resolves.toEqual({});
       }
 
       expect(r.asks).toEqual([]);
     });
 
-    it("denies a tool call that arrives between turns, when nobody could answer it", async () => {
+    it("stops an edit outside every writable root, an MCP send, and a tool it does not know", async () => {
+      const { r, gate } = await held("allow");
+
+      await gate("Write", { file_path: "C:\\ref\\b.ts" });
+      await gate("mcp__slack__send_message", { text: "hi" });
+      await gate("SomethingNew", {});
+
+      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
+        ["file_change", "external_write", "C:\\ref\\b.ts"],
+        ["tool_call", "external_write", "mcp__slack__send_message"],
+        ["tool_call", "external_write", "SomethingNew"],
+      ]);
+    });
+
+    it("asks about an allowlisted browser tool and refuses the rest of that server outright", async () => {
+      const { r, gate } = await held("allow");
+
+      await expect(
+        gate("mcp__playwright__browser_navigate", { url: "https://example.com" }),
+      ).resolves.toEqual(allowed);
+      await expect(
+        gate("mcp__playwright__browser_evaluate", { function: "() => 1" }),
+      ).resolves.toEqual(denied("mcp__playwright__browser_evaluate is not a tool Noctis lends"));
+
+      // One ask, for the navigate. The refusal is never a decision the owner is handed.
+      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
+        ["tool_call", "external_write", "mcp__playwright__browser_navigate"],
+      ]);
+    });
+
+    it("forwards every ask the agent's own permission system raises, even a read, as the agent's", async () => {
+      const { r, agentAsks } = await held("allow");
+      const toolInput = { file_path: "C:\\work\\a.ts" };
+
+      await expect(agentAsks("Read", toolInput)).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: toolInput,
+      });
+      expect(r.asks).toEqual([
+        {
+          itemId: "tu-1",
+          kind: "tool_call",
+          summary: "call Read",
+          operationClass: "read_inspect",
+          reversibility: "reversible",
+          capability: "runtime.tool_call",
+          target: { type: "tool_call", id: "Read" },
+          detail: { tool: "Read" },
+          askedBy: "runtime",
+        },
+      ]);
+    });
+
+    it("turns the owner's no to the agent's ask into a deny", async () => {
+      await expect(
+        (await held("deny", "not now")).agentAsks("Bash", { command: "npm test" }),
+      ).resolves.toEqual({ behavior: "deny", message: "not now" });
+    });
+
+    it("fails the turn with the timeout's own words when nobody answers, and closes the CLI", async () => {
+      const { r, gate, turn, options } = await held();
+
+      r.sink.ask = () => Promise.reject(new ApprovalTimedOut("git push", 600_000));
+
+      await expect(gate("Bash", { command: "git push" })).resolves.toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      await expect(turn).rejects.toThrow(
+        'approval timed out: "git push" was not answered within 10 minutes',
+      );
+      expect(options?.abortController?.signal.aborted).toBe(true);
+    });
+
+    it("refuses a tool call that arrives between turns, when nobody could answer it", async () => {
       const { query, calls } = scripted(list(init(), result()));
       const r = recorder("allow");
 
@@ -432,25 +519,6 @@ describe("the Claude Agent SDK runtime", () => {
         ),
       ).resolves.toEqual({ behavior: "deny", message: "no Noctis turn is running" });
       expect(r.asks).toEqual([]);
-    });
-
-    it("asks about an allowlisted browser tool and refuses the rest of that server outright", async () => {
-      const { r, ask } = await permission("allow");
-
-      await expect(
-        ask("mcp__playwright__browser_navigate", { url: "https://example.com" }),
-      ).resolves.toMatchObject({ behavior: "allow" });
-      await expect(
-        ask("mcp__playwright__browser_evaluate", { function: "() => 1" }),
-      ).resolves.toEqual({
-        behavior: "deny",
-        message: "mcp__playwright__browser_evaluate is not a tool Noctis lends",
-      });
-
-      // One ask, for the navigate. The refusal is never a decision the owner is handed.
-      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
-        ["tool_call", "external_write", "mcp__playwright__browser_navigate"],
-      ]);
     });
   });
 

@@ -15,18 +15,9 @@ export interface LiveProcess {
 /** Long enough to cover reading a reply and typing the next one; short enough not to hoard memory. */
 export const RUNTIME_IDLE_MS = 10 * 60_000;
 
-/**
- * Everything a process is opened with that a later turn could ask for differently.
- * `objectiveActive` is here because Codex fixes the thread's sandbox when it opens it.
- */
+/** Everything a process is opened with that a later turn could ask for differently. */
 export function processKey(payload: RuntimeTurnPayload, roots: ResolvedRoots): string {
-  return JSON.stringify([
-    payload.model.model,
-    payload.objectiveActive,
-    roots.cwd,
-    roots.writable,
-    roots.readable,
-  ]);
+  return JSON.stringify([payload.model.model, roots.cwd, roots.writable, roots.readable]);
 }
 
 export interface ProcessPool<P extends LiveProcess> {

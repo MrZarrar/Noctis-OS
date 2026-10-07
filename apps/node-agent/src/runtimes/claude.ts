@@ -1,5 +1,6 @@
 import type {
   CanUseTool,
+  HookJSONOutput,
   Options,
   PermissionResult,
   SDKMessage,
@@ -8,12 +9,12 @@ import type {
 import { createSdkMcpServer, query as sdkQuery, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
 import { RuntimeProposalSchema } from "@noctis/contracts";
-import { classifyAsk } from "@noctis/domain";
+import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
-import { AdapterRefused } from "./Runtime.js";
+import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
 import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
 import { probeClaudeInstalled } from "./probe.js";
@@ -27,10 +28,14 @@ import { createProcessPool, processKey } from "./sessions.js";
  * per turn, so a follow-up does not pay for a CLI start and a session reload.
  * `query()` spawns the SDK's own bundled CLI (never the CLI's bare mode, never
  * an API key: the environment arrives stripped and the login is the owner's
- * claude.ai subscription). `settingSources: []` and `strictMcpConfig: true`
- * keep the owner's ~/.claude hooks, plugins and MCP servers out of the turn.
- * Every consequential tool call comes back through `canUseTool`, is classified
- * by `classifyAsk`, and waits on `sink.ask`; the runtime never decides.
+ * claude.ai subscription). It loads the owner's real setup: user, project and
+ * local settings, CLAUDE.md, skills, plugins, hooks and MCP servers.
+ *
+ * Permissions are split by consequence. The CLI runs in auto mode and decides
+ * the everyday itself. A `PreToolUse` hook classifies every call with
+ * `classifyAsk` and stops only the Section 9.1 confirm-level ones until the
+ * core answers. When the CLI's own permission system asks, `canUseTool`
+ * forwards that to the owner as well.
  *
  * The Noctis proposal tools are hosted in-process with `createSdkMcpServer`:
  * an `sdk`-type server is relayed over the CLI child's stdio control channel,
@@ -52,19 +57,52 @@ export interface ClaudeRuntimeOptions {
 
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const AGENT_TOOLS = new Set(["Task", "Agent"]);
-const WEB_TOOLS = new Set(["WebFetch", "WebSearch"]);
-/** Reading, listing, planning, delegating: allowed locally, no ask (ADR-0021 read_inspect). */
+/**
+ * Claude Code's own tools that reach nothing outside the machine by themselves:
+ * reading, searching the web, planning, delegating, loading a skill. Whatever
+ * they lead to (a Bash call, an edit) is classified on its own. A tool missing
+ * from this list is treated as external until someone adds it, so a new
+ * built-in that sends or publishes is stopped rather than waved through.
+ */
 const LOCAL_TOOLS = new Set([
   "Read",
   "Glob",
   "Grep",
   "LS",
+  "NotebookRead",
   "TodoWrite",
   "TodoRead",
+  "Skill",
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "BashOutput",
+  "KillShell",
+  "KillBash",
+  "TaskOutput",
+  "TaskStop",
+  "Monitor",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "AskUserQuestion",
+  "ListMcpResourcesTool",
+  "ReadMcpResourceTool",
   ...AGENT_TOOLS,
 ]);
 const NOCTIS_PREFIX = "mcp__noctis__";
 const DECLINED = "declined by Noctis authority";
+const NO_TURN = "no Noctis turn is running";
+const HOOK_TIMEOUT_SECONDS = 24 * 60 * 60;
+
+function gateDecision(decision: "allow" | "deny", reason: string): HookJSONOutput {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: decision,
+      permissionDecisionReason: reason,
+    },
+  };
+}
 
 /** Claude Code's tool inputs, not ours: only the fields the mapping reads, the rest passes through. */
 const ToolInputSchema = z
@@ -96,27 +134,22 @@ function toolLabel(toolName: string): string {
   return toolName.startsWith(NOCTIS_PREFIX) ? toolName.slice(NOCTIS_PREFIX.length) : toolName;
 }
 
-/** The ask one tool call raises, or nothing when its class is read_inspect. */
-function askFor(
+/** One tool call as the ask it would raise, classified, whether or not anyone is asked. */
+function describeCall(
   toolName: string,
   raw: unknown,
   itemId: string,
   roots: ResolvedRoots,
-): Omit<RuntimeAsk, "askId"> | undefined {
-  if (LOCAL_TOOLS.has(toolName)) {
-    return undefined;
-  }
-
+): Omit<RuntimeAsk, "askId"> {
   const input = fields(raw);
   const scope = { writableRoots: roots.writable, readableRoots: roots.readable };
-  let ask: Omit<RuntimeAsk, "askId">;
 
   if (toolName === "Bash") {
     const command = input.command ?? "";
     const cwd = input.cwd ?? roots.cwd;
     const cls = classifyAsk({ kind: "command", command, cwd, ...scope });
 
-    ask = {
+    return {
       itemId,
       kind: "command",
       summary: clip(command, 2000).trim() || "run a command",
@@ -126,13 +159,15 @@ function askFor(
       target: { type: "command", id: clip(command, 200).trim() || "command" },
       detail: { command: clip(command, 4000), cwd: clip(cwd, 1024) },
     };
-  } else if (FILE_TOOLS.has(toolName)) {
+  }
+
+  if (FILE_TOOLS.has(toolName)) {
     const paths = [input.file_path ?? input.notebook_path ?? ""]
       .filter((p) => p !== "")
       .map((p) => clip(p, 1024));
     const cls = classifyAsk({ kind: "file_change", paths, ...scope });
 
-    ask = {
+    return {
       itemId,
       kind: "file_change",
       summary: clip(`edit ${paths.join(", ") || "a file"}`, 2000),
@@ -142,35 +177,27 @@ function askFor(
       target: { type: "file_change", id: clip(paths[0] ?? itemId, 200) },
       detail: { paths },
     };
-  } else if (WEB_TOOLS.has(toolName)) {
-    const cls = classifyAsk({ kind: "permission", ...scope });
-
-    ask = {
-      itemId,
-      kind: "permission",
-      summary: clip(`${toolName} ${input.url ?? input.query ?? ""}`, 2000).trim(),
-      operationClass: cls.operationClass,
-      reversibility: cls.reversibility,
-      capability: cls.capability,
-      target: { type: "permission", id: toolName },
-    };
-  } else {
-    const name = toolLabel(toolName);
-    const cls = classifyAsk({ kind: "tool_call", tool: name, ...scope });
-
-    ask = {
-      itemId,
-      kind: "tool_call",
-      summary: clip(`call ${name}`, 2000),
-      operationClass: cls.operationClass,
-      reversibility: cls.reversibility,
-      capability: cls.capability,
-      target: { type: "tool_call", id: clip(name, 200) },
-      detail: { tool: clip(name, 128) },
-    };
   }
 
-  return ask.operationClass === "read_inspect" ? undefined : ask;
+  const name = toolLabel(toolName);
+  const cls = LOCAL_TOOLS.has(toolName)
+    ? ({
+        operationClass: "read_inspect",
+        reversibility: "reversible",
+        capability: "runtime.tool_call",
+      } as const)
+    : classifyAsk({ kind: "tool_call", tool: name, ...scope });
+
+  return {
+    itemId,
+    kind: "tool_call",
+    summary: clip(`call ${name}`, 2000),
+    operationClass: cls.operationClass,
+    reversibility: cls.reversibility,
+    capability: cls.capability,
+    target: { type: "tool_call", id: clip(name, 200) },
+    detail: { tool: clip(name, 128) },
+  };
 }
 
 /** A tool_use block (and later its tool_result) as one RuntimeItem. */
@@ -285,6 +312,9 @@ function createInbox(): AsyncIterable<SDKUserMessage> & {
 /** The turn a live CLI is currently answering. Everything the CLI says goes to it. */
 interface ClaudeTurn {
   message(message: SDKMessage): void;
+  /** Noctis's gate, before the CLI's own permission system sees the call. */
+  gate(toolName: string, toolInput: unknown, toolUseId: string): Promise<HookJSONOutput>;
+  /** The CLI's own permission system asking. */
   canUseTool: CanUseTool;
   propose(kind: "surface" | "objective" | "preference", args: unknown): void;
   /** The CLI ended under the turn. */
@@ -375,16 +405,16 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     const browser = playwrightServer(input.env, payload.threadId);
 
     // The SDK does not split read from write access: `additionalDirectories`
-    // grants both, so writes into a read root are caught by canUseTool +
-    // classifyAsk (a path outside every writable root is external_write).
+    // grants both, so a write into a read root is caught by the gate, where
+    // `classifyAsk` calls a path outside every writable root external_write.
     const sdkOptions: Options = {
       cwd: roots.cwd,
       additionalDirectories: [...roots.writable.filter((r) => r !== roots.cwd), ...roots.readable],
       env: input.env,
       model: payload.model.model,
-      permissionMode: "default",
-      settingSources: [],
-      strictMcpConfig: true,
+      permissionMode: "auto",
+      settingSources: ["user", "project", "local"],
+      skills: "all",
       includePartialMessages: true,
       abortController: controller,
       mcpServers: {
@@ -393,10 +423,31 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           ? {}
           : { [PLAYWRIGHT_SERVER]: { type: "stdio" as const, ...browser } }),
       },
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              (hookInput, toolUseId) =>
+                hookInput.hook_event_name !== "PreToolUse"
+                  ? Promise.resolve({})
+                  : proc.current === undefined
+                    ? Promise.resolve(gateDecision("deny", NO_TURN))
+                    : proc.current.gate(
+                        hookInput.tool_name,
+                        hookInput.tool_input,
+                        toolUseId ?? hookInput.tool_use_id,
+                      ),
+            ],
+            // A person may take minutes. The node's own approval timeout ends
+            // the wait first and fails the turn; this only must not end it sooner.
+            timeout: HOOK_TIMEOUT_SECONDS,
+          },
+        ],
+      },
       // A tool call with no turn to ask on has nobody to answer it.
       canUseTool: (toolName, toolInput, ctx) =>
         proc.current === undefined
-          ? Promise.resolve({ behavior: "deny", message: "no Noctis turn is running" })
+          ? Promise.resolve({ behavior: "deny", message: NO_TURN })
           : proc.current.canUseTool(toolName, toolInput, ctx),
       ...(payload.sessionRef === undefined ? {} : { resume: payload.sessionRef }),
     };
@@ -487,6 +538,36 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         }
       }
 
+      /** Asks the core and waits. A timeout fails the turn in its own words. */
+      async function consult(
+        ask: Omit<RuntimeAsk, "askId">,
+        toolUseId: string,
+      ): Promise<{ allowed: boolean; message: string; stop: boolean }> {
+        try {
+          const answer = await sink.ask(ask);
+
+          if (answer.decision === "allow") {
+            return { allowed: true, message: "", stop: false };
+          }
+
+          denied.add(toolUseId);
+
+          return { allowed: false, message: answer.reason ?? DECLINED, stop: false };
+        } catch (error) {
+          denied.add(toolUseId);
+
+          if (error instanceof ApprovalTimedOut) {
+            // The CLI is mid-call; a later turn must not inherit it. The next
+            // message resumes the session in a new process.
+            proc.close();
+            settle(error);
+          }
+
+          // Cancelled or disconnected mid-ask: fail closed and stop the turn.
+          return { allowed: false, message: "Noctis authority did not answer", stop: true };
+        }
+      }
+
       const turn: ClaudeTurn = {
         stop(error) {
           settle(
@@ -504,40 +585,44 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           });
         },
 
-        async canUseTool(toolName, toolInput, ctx): Promise<PermissionResult> {
+        async gate(toolName, toolInput, toolUseId) {
           // Refused, not asked: a browser tool outside the allowlist is not a
           // decision the owner should be handed. `browser_evaluate` and
           // `browser_run_code_unsafe` are on the same server as the five.
           if (refusedBrowserTool(toolName)) {
+            return gateDecision("deny", `${toolName} is not a tool Noctis lends`);
+          }
+
+          const ask = describeCall(toolName, toolInput, clip(toolUseId, 128), roots);
+
+          if (!isConfirmLevel(ask.operationClass)) {
+            // Below confirm-level the agent's own permission system decides.
+            return {};
+          }
+
+          const answer = await consult({ ...ask, askedBy: "noctis" }, toolUseId);
+
+          return answer.allowed
+            ? gateDecision("allow", "confirmed in Noctis")
+            : gateDecision("deny", answer.message);
+        },
+
+        async canUseTool(toolName, toolInput, ctx): Promise<PermissionResult> {
+          if (refusedBrowserTool(toolName)) {
             return { behavior: "deny", message: `${toolName} is not a tool Noctis lends` };
           }
 
-          const ask = askFor(toolName, toolInput, clip(ctx.toolUseID, 128), roots);
+          // The agent wanted a person, so a person answers, whatever the class.
+          const ask = describeCall(toolName, toolInput, clip(ctx.toolUseID, 128), roots);
+          const answer = await consult({ ...ask, askedBy: "runtime" }, ctx.toolUseID);
 
-          if (ask === undefined) {
-            return { behavior: "allow", updatedInput: toolInput };
-          }
-
-          try {
-            const answer = await sink.ask(ask);
-
-            if (answer.decision === "allow") {
-              return { behavior: "allow", updatedInput: toolInput };
-            }
-
-            denied.add(ctx.toolUseID);
-
-            return { behavior: "deny", message: answer.reason ?? DECLINED };
-          } catch {
-            // Cancelled or disconnected mid-ask: fail closed and stop the turn.
-            denied.add(ctx.toolUseID);
-
-            return {
-              behavior: "deny",
-              message: "Noctis authority did not answer",
-              interrupt: true,
-            };
-          }
+          return answer.allowed
+            ? { behavior: "allow", updatedInput: toolInput }
+            : {
+                behavior: "deny",
+                message: answer.message,
+                ...(answer.stop ? { interrupt: true } : {}),
+              };
         },
 
         message(message) {

@@ -35,7 +35,7 @@ import type { RuntimeFrameHub } from "../nodes/runtime-frames.js";
 import { getObjective } from "../objectives/service.js";
 import type { VaultRoot } from "../vault/root.js";
 import type { PendingAsk } from "./asks.js";
-import { answerFromEvent, handleAsk } from "./asks.js";
+import { answerFromEvent, closePendingAsks, handleAsk } from "./asks.js";
 import { defaultModelFor } from "./models.js";
 import { applyProposal } from "./proposals.js";
 import { promptWithRecall, recallForPrompt } from "./recall-context.js";
@@ -840,6 +840,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       });
     }
 
+    closePendingAsks(kernel, pendingAsks, jobId);
     threadByJob.delete(jobId);
   }
 

@@ -265,6 +265,7 @@ export function requestAuthority(
         objectiveIsActive: objective?.status === "active",
         standingPermissions: loadStandingPermissionsFor(tx, command.actorId),
         now: kernel.clock.now(),
+        ...(command.askedByRuntime === true ? { askedByRuntime: true } : {}),
       });
 
       const decision = AuthorityDecisionSchema.parse({

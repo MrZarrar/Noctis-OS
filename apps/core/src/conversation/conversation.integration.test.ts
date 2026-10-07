@@ -492,6 +492,75 @@ describe("conversation service", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("an ask the agent raised itself waits for a person, even a read under an active Objective", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const objectiveId = await activeObjective(core, "agent-ask");
+
+    await setDefault(core);
+    await send(core, "turn-agent-ask", { objectiveId });
+    await waitFor(() => node.jobs().length === 1, "the turn");
+
+    const read_ask: RuntimeAsk = {
+      ...ASK,
+      operationClass: "read_inspect",
+      askedBy: "runtime",
+    };
+
+    node.frame({ kind: "ask", jobId: lastTurnJob(node).assignment.jobId, ask: read_ask });
+
+    let approval: Body | undefined;
+    await waitFor(async () => {
+      const response = await read(core, "/approvals");
+      approval = (response.body.approvals as Body[]).find((a) => a.askId === read_ask.askId);
+      return approval !== undefined;
+    }, "the approval");
+
+    // `require_confirmation` is what `notify/triggers.ts` sends a push for.
+    expect(approval).toMatchObject({
+      outcome: "require_confirmation",
+      reasonCodes: ["operation_class_default", "runtime_asked"],
+    });
+    expect(node.answers()).toHaveLength(0);
+  });
+
+  it("a turn that ends while its approval waits closes the approval, so nobody answers a dead question", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+
+    await setDefault(core);
+    await send(core, "turn-ends-waiting");
+    await waitFor(() => node.jobs().length === 1, "the turn");
+
+    const jobId = lastTurnJob(node).assignment.jobId;
+
+    node.frame({ kind: "ask", jobId, ask: { ...ASK, askedBy: "runtime" } });
+    await waitFor(async () => {
+      const response = await read(core, "/approvals");
+      return (response.body.approvals as Body[]).some((a) => a.askId === ASK.askId);
+    }, "the pending approval");
+
+    node.frame({
+      kind: "result",
+      jobId,
+      outcome: "failed",
+      evidence: null,
+      failureReason: 'approval timed out: "run the tests" was not answered within 10 minutes',
+    });
+
+    let approval: Body | undefined;
+    await waitFor(async () => {
+      const response = await read(core, "/approvals");
+      approval = (response.body.approvals as Body[]).find((a) => a.askId === ASK.askId);
+      return approval?.declinedAt !== undefined;
+    }, "the approval to close");
+
+    expect(approval).toMatchObject({ declinedBy: "system" });
+    expect(node.answers()).toHaveLength(0);
+  });
+
   it("an ask under an active Objective is allowed automatically; a free-chat ask waits for the human", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));

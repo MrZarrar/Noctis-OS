@@ -389,7 +389,10 @@ describe("a runtime turn through the real core", () => {
   }
 
   /** A paired node granted runtime.turn over a scratch root, with the fake behind codex. */
-  async function turnReadyAgent(probes: RuntimeProbe[] = [FAKE_PROBE]): Promise<{
+  async function turnReadyAgent(
+    probes: RuntimeProbe[] = [FAKE_PROBE],
+    overrides: Partial<AgentOptions> = {},
+  ): Promise<{
     core: TestCore;
     credential: NodeCredential;
     seen: Seen;
@@ -421,6 +424,7 @@ describe("a runtime turn through the real core", () => {
     await connectAgent(core, credential, [], {
       runtimes: { codex: createFakeRuntime() },
       probes: () => Promise.resolve(probes),
+      ...overrides,
     });
 
     return { core, credential, seen };
@@ -480,6 +484,18 @@ describe("a runtime turn through the real core", () => {
     expect(evidence.itemCount).toBeGreaterThanOrEqual(2);
     expect(evidence.stoppedReason).toBe("completed");
     expect(seen.items.at(-1)?.item).toMatchObject({ itemId: "c1", status: "completed" });
+  });
+
+  it("fails the turn with a clear error when nobody answers an approval in time", async () => {
+    const { core, seen } = await turnReadyAgent([FAKE_PROBE], { approvalTimeoutMs: 150 });
+    const id = await enqueueTurn(core, "turn-unanswered", "ASK: please");
+
+    await waitFor(() => seen.asks.some((ask) => ask.jobId === id), "the ask to reach the hub");
+    await waitFor(async () => (await status(core, id)) === "failed", "the turn to fail");
+
+    const job = await readJob(core, id);
+
+    expect(job.failureReason).toMatch(/^approval timed out: .+ was not answered within 150 ms$/);
   });
 
   it("runs two turns on one node at the same time", async () => {

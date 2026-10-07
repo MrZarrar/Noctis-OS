@@ -11,7 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import type { AuthorityEvaluationInput } from "./evaluate.js";
-import { BASELINE_POLICY_ID, evaluateAuthority } from "./evaluate.js";
+import { BASELINE_POLICY_ID, evaluateAuthority, isConfirmLevel } from "./evaluate.js";
 import { raisedOperationClass } from "../tools/route.js";
 
 const NOW = Date.parse("2026-09-01T12:00:00.000Z");
@@ -574,5 +574,47 @@ describe("tool routes go through the same authority", () => {
       expect(decision.policyId).toBe(BASELINE_POLICY_ID);
       expect(decision.reasonCodes).not.toContain("unknown_operation_class");
     }
+  });
+});
+
+describe("the agents decide the everyday, Noctis confirms the consequential", () => {
+  /** Section 9.1's confirm rows, written out so a change to the table fails here. */
+  const CONFIRM_LEVEL: readonly OperationClass[] = [
+    "external_write",
+    "message_send",
+    "publish",
+    "spend",
+    "destructive",
+    "production_deploy",
+    "credential_security",
+  ];
+
+  it("names exactly the confirm-level classes", () => {
+    expect(ALL_CLASSES.filter((operationClass) => isConfirmLevel(operationClass))).toEqual(
+      CONFIRM_LEVEL,
+    );
+  });
+
+  it("puts every ask an agent raised itself in front of a person, even a read", () => {
+    for (const operationClass of ALL_CLASSES) {
+      const decision = evaluateAuthority(
+        input({ operationClass, objectiveIsActive: true, askedByRuntime: true }),
+      );
+
+      expect(decision.outcome, operationClass).not.toBe("allow");
+    }
+
+    expect(
+      evaluateAuthority(input({ operationClass: "read_inspect", askedByRuntime: true })),
+    ).toMatchObject({
+      outcome: "require_confirmation",
+      reasonCodes: ["operation_class_default", "runtime_asked"],
+    });
+  });
+
+  it("does not soften a typed confirmation the agent's ask lands on", () => {
+    expect(
+      evaluateAuthority(input({ operationClass: "destructive", askedByRuntime: true })).outcome,
+    ).toBe("require_typed_confirmation");
   });
 });
