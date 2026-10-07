@@ -71,9 +71,9 @@ describe("resolveRoots", () => {
     );
 
     expect(roots).toEqual({
-      cwd: realpathSync(write),
-      writable: [realpathSync(write)],
-      readable: [realpathSync(read)],
+      cwd: realpathSync.native(write),
+      writable: [realpathSync.native(write)],
+      readable: [realpathSync.native(read)],
       localOnly: true,
     });
   });
@@ -132,7 +132,7 @@ describe("resolveRoots", () => {
       "w",
     );
 
-    expect(roots.cwd).toBe(realpathSync(nested));
+    expect(roots.cwd).toBe(realpathSync.native(nested));
   });
 
   // Built at collection time so skipIf can see it; cleaned in afterAll, not
@@ -157,7 +157,7 @@ describe("resolveRoots", () => {
 
       // THE GATE: a grant over the junction is a grant over its target, and the
       // runtime is told the target, not the alias.
-      expect(roots.cwd).toBe(realpathSync(target));
+      expect(roots.cwd).toBe(realpathSync.native(target));
       expect(roots.cwd.toLowerCase()).not.toContain("link");
     },
   );

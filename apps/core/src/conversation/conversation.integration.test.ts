@@ -108,10 +108,19 @@ async function read(core: TestCore, path: string): Promise<{ status: number; bod
   return { status: response.status, body: (await response.json()) as Body };
 }
 
-async function waitFor(predicate: () => boolean, label: string, timeoutMs = 4000): Promise<void> {
+/**
+ * Polls until `predicate` holds. An async predicate is awaited before the next
+ * poll, so no request is still in flight when the test moves on and `afterEach`
+ * closes the core underneath it.
+ */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  label: string,
+  timeoutMs = 4000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() > deadline) {
       throw new Error(`timed out waiting for ${label}`);
     }
@@ -461,10 +470,9 @@ describe("conversation service", () => {
     });
 
     let messages: Array<Body> = [];
-    await waitFor(() => {
-      void read(core, `/threads/${sent.body.threadId as string}/messages`).then((response) => {
-        messages = response.body.messages as Array<Body>;
-      });
+    await waitFor(async () => {
+      const response = await read(core, `/threads/${sent.body.threadId as string}/messages`);
+      messages = response.body.messages as Array<Body>;
       return messages.length === 2;
     }, "the identity reply");
 
@@ -517,12 +525,11 @@ describe("conversation service", () => {
     node.frame({ kind: "ask", jobId: freeJob, ask: askC });
 
     let pending: Array<Body> = [];
-    await waitFor(() => {
-      void read(core, "/approvals").then((response) => {
-        pending = (response.body.approvals as Array<Body>).filter(
-          (a) => a.askId === askB.askId || a.askId === askC.askId,
-        );
-      });
+    await waitFor(async () => {
+      const response = await read(core, "/approvals");
+      pending = (response.body.approvals as Array<Body>).filter(
+        (a) => a.askId === askB.askId || a.askId === askC.askId,
+      );
       return pending.length === 2;
     }, "two pending approvals");
     expect(pending.every((a) => a.outcome === "require_confirmation")).toBe(true);
@@ -578,10 +585,9 @@ describe("conversation service", () => {
     });
 
     let turn: Body = {};
-    await waitFor(() => {
-      void read(core, `/turns/${first.body.id as string}`).then((response) => {
-        turn = response.body;
-      });
+    await waitFor(async () => {
+      const response = await read(core, `/turns/${first.body.id as string}`);
+      turn = response.body;
       return turn.status === "completed";
     }, "the turn to complete");
     expect(turn.completedAt).toBeDefined();
@@ -701,10 +707,9 @@ describe("conversation service", () => {
 
     let original: Body | undefined;
 
-    await waitFor(() => {
-      void read(core, "/approvals").then((response) => {
-        original = (response.body.approvals as Body[]).find((a) => a.askId === ASK.askId);
-      });
+    await waitFor(async () => {
+      const response = await read(core, "/approvals");
+      original = (response.body.approvals as Body[]).find((a) => a.askId === ASK.askId);
 
       return original !== undefined;
     }, "the first approval");
@@ -835,13 +840,9 @@ describe("conversation service", () => {
 
     let alphaBodies: string[] = [];
     let betaBodies: string[] = [];
-    await waitFor(() => {
-      void bodiesOf(first.body.threadId as string).then((bodies) => {
-        alphaBodies = bodies;
-      });
-      void bodiesOf(second.body.threadId as string).then((bodies) => {
-        betaBodies = bodies;
-      });
+    await waitFor(async () => {
+      alphaBodies = await bodiesOf(first.body.threadId as string);
+      betaBodies = await bodiesOf(second.body.threadId as string);
 
       return alphaBodies.length === 2 && betaBodies.length === 2;
     }, "a reply on each thread");
@@ -869,10 +870,9 @@ describe("conversation service", () => {
     const betaId = second.body.id as string;
 
     let betaTurn: Body = {};
-    await waitFor(() => {
-      void read(core, `/turns/${betaId}`).then((response) => {
-        betaTurn = response.body;
-      });
+    await waitFor(async () => {
+      const response = await read(core, `/turns/${betaId}`);
+      betaTurn = response.body;
 
       return betaTurn.status === "completed";
     }, "the second Objective's turn to finish");
@@ -895,10 +895,9 @@ describe("conversation service", () => {
     });
 
     let alphaTurn: Body = {};
-    await waitFor(() => {
-      void read(core, `/turns/${alphaId}`).then((response) => {
-        alphaTurn = response.body;
-      });
+    await waitFor(async () => {
+      const response = await read(core, `/turns/${alphaId}`);
+      alphaTurn = response.body;
 
       return alphaTurn.status === "completed";
     }, "the first Objective's turn to finish");

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
@@ -320,7 +320,7 @@ describe("runtime.turn", () => {
     expect(deltas).toEqual(["Hel", "lo"]);
     expect(items.map((item) => item.itemId)).toEqual(["m1", "c1", "c1"]);
     // The ask carries the real root as cwd: the runtime saw resolved roots.
-    expect(asks[0]?.detail?.cwd).toBe(root);
+    expect(asks[0]?.detail?.cwd).toBe(realpathSync.native(root));
     // THE GATE: the runtime's environment is the agent's minus the billing keys.
     expect(seenEnv).toEqual({ PATH: "x" });
     expect(RuntimeTurnEvidenceSchema.parse(evidence)).toMatchObject({
