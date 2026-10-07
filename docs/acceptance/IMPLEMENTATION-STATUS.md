@@ -2698,8 +2698,8 @@ escalation, so the path where Codex's own ask is forwarded and pushed is proven 
 - **A granted root's project settings run with the owner's authority**, hooks included. The
   automated review flagged this too; it is the requested behaviour, and granting a root is the
   trust decision.
-- **Codex keeps writing project trust into `~/.codex/config.toml`**: three scratch-folder entries
-  from these runs (lines 272 to 279) are left for the owner to remove.
+- **Codex keeps writing project trust into `~/.codex/config.toml`**: four scratch-folder entries
+  from these runs and the rules check below (lines 274 to 283) are left for the owner to remove.
 - **The automated security review also flagged Codex running the owner's plugins and MCP servers
   with approval `on-request`, and MCP tools trusted by name.** Both are as asked; the first is the
   Codex gap described above. On the second: the name only decides whether Noctis stops a call
@@ -2724,3 +2724,82 @@ escalation, so the path where Codex's own ask is forwarded and pushed is proven 
 | `npm run test:deploy`                                                 | exit 1; 3 pass, 1 fail by design: "refuses to deploy anywhere but the work PC" asserts it is not run on `mushafzarrar` |
 | `npm run test:desktop`                                                | exit 1; 5 pass, 1 fail: `cargo.exe ENOENT`, no Rust toolchain on this machine                                          |
 | `npm run rust:fmt:check`, `rust:clippy`, `rust:test`, `build:desktop` | not runnable here: `cargo` is not installed; CI is the authority, as before                                            |
+
+### 2026-10-07 Evasion constructs confirm, and Codex prompts by rule
+
+Two follow-ups to the entry above, both from the security review of `57a2424`.
+
+**Commands that hide what they run are confirm-level, in both shells.** `classifyAsk` checks an
+`EVASION` table after the destructive and external tables and before the read-only heads:
+`iex`/`Invoke-Expression`, a nested PowerShell (which covers `-EncodedCommand` and `-File`), a
+nested `cmd /c`, the `&` call operator on a string, variable or expression, dot-sourcing, any
+backtick (a PowerShell escape or a Bash substitution), `eval`, a `bash`/`sh`/`zsh`/`dash -c`
+started mid-command, `node -e`/`-p`, and `python -c`. Each classifies `external_write` with reason
+`hides what it runs: ...`, so Claude's gate stops it and the owner is asked. A shell wrapper at the
+very start of the command is still unwrapped rather than flagged, because that is how both agents
+run every command; `bash -lc "..."` joined the wrappers for nodes that are not Windows, and the
+shell names are anchored so `ssh -c` is not read as `sh -c`. Rows pin the near misses: `&&`, `ls .`,
+`node --version` and a file named `powershell-notes.md` are unchanged.
+
+**Codex itself prompts before recursive deletes, history changes and publishing.** The node
+installs `noctis.rules` into the Codex home (`CODEX_HOME`, else `~/.codex/rules/`) before each
+app-server starts, rewriting it only when it differs and leaving the owner's own rules files alone.
+`prefix_rule`s with `decision = "prompt"` cover `rm -r` in every flag spelling, `Remove-Item` and
+its aliases with `-Recurse` (or `-Force -Recurse`), `rd`/`rmdir /s`, `git push`, `git reset`,
+`rebase`, `filter-branch`, `filter-repo`, `replace`, `commit --amend`, `branch -D`, and
+`publish`/`upload`/`push` for npm, pnpm, yarn, bun, cargo, poetry, uv, twine, gem, dotnet/nuget,
+plus `gh release`. Codex merges rules files and keeps the strictest result, so this file only adds
+prompts. Because it is the user layer, the owner's other Codex sessions prompt for these too.
+
+`codex-rules.test.ts` runs Codex's own evaluator (`codex execpolicy check`) on the installed file:
+24 commands prompt and 6 ordinary ones (`git status`, `git commit -m`, a single-file `rm` or
+`Remove-Item`, `npm test`, `npm run build`) do not. The block skips where Codex is not installed,
+as on CI.
+
+**Live, on the work PC.** Asked to run `Remove-Item -Recurse -Force build` in a scratch folder:
+
+- Through a throwaway core and node with a 20 s approval timeout, the ask reached the core as an
+  approval (`destructive`, `require_typed_confirmation`, the outcome that pushes), the turn failed
+  with `approval timed out: "...Remove-Item -Recurse -Force build'" was not answered within 20
+seconds`, the approval was declined by `system`, and `build/` was still there.
+- The raw request Codex sent, read from its JSON-RPC stream, gives the reason as
+  ``...powershell.exe" -Command 'Remove-Item -Recurse -Force build'` requires approval: a recursive
+delete`` — the rule's own justification, matched through the PowerShell wrapper. The runtime
+  forwarded it as `askedBy: "runtime"`.
+- A control with `Remove-Item -LiteralPath build2 -Recurse -Force`, which no prefix rule matches,
+  also prompted: Codex's built-in dangerous-command check covers recursive deletes on its own. The
+  rule is what names the reason; the deletes would have been asked about either way.
+
+Sabotage: removing the install call fails "installs the Noctis rules into the Codex home before the
+app-server starts"; the 15 evasion rows were red before the table existed.
+
+Not covered: prefix rules match leading tokens only, so `git commit -m x --amend` is not matched
+(the sandbox still bounds it to the granted roots, and `.git` is read-only in Codex's
+`workspace-write`). The forwarded card shows the command, not Codex's reason text.
+
+#### Known, not fixed
+
+- **Warm turns are slower with the owner's full setup.** Warm medians went from 1.23 s (Claude) and
+  1.22 s (Codex) isolated to 1.94 s and 1.85 s, with occasional 4.5 to 7.2 s outliers, and the first
+  turn costs 3 to 4 s more. The planned fix is a lean Noctis settings profile: the owner's skills
+  and CLAUDE.md without every plugin, hook and MCP server starting on each process.
+- **MCP read detection is by name prefix.** `classifyToolCall` treats an `mcp__*` tool named
+  `get_`, `list_`, `fetch_`, `query-` and the like as a read, so a server whose `fetch_` or
+  `query_` tool writes would bypass the gate. The planned fix is an explicit allowlist of
+  server and tool pairs the owner has marked read-only.
+
+| Command                                                       | Result                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run format:check`                                        | exit 0                                                                                                                                                                                                                                                                                                |
+| `npm run lint`                                                | exit 0                                                                                                                                                                                                                                                                                                |
+| `npm run typecheck`                                           | exit 0                                                                                                                                                                                                                                                                                                |
+| `npm run test:unit`                                           | exit 0; 103 files, 1908 tests, including the 30 rules cases run through Codex's own evaluator                                                                                                                                                                                                         |
+| `npm run test:integration`                                    | exit 1 in the full sequence: two timeouts in suites this change does not touch (`headless.integration.test.ts` "stops upgrading the moment it is revoked", `nodes.integration.test.ts` "closes a socket that exhausts its progress budget"); three reruns straight after: exit 0, 223 tests each time |
+| `npm run test:migrations`                                     | exit 0; 30 tests                                                                                                                                                                                                                                                                                      |
+| `npm run test:boundary`                                       | exit 0; 6 tests                                                                                                                                                                                                                                                                                       |
+| `npm run test:e2e`                                            | exit 0; 13 tests, against Edge                                                                                                                                                                                                                                                                        |
+| `npm run build`, `build:web`                                  | exit 0                                                                                                                                                                                                                                                                                                |
+| `npm run test:security`, `test:performance`                   | exit 0; no dedicated tests                                                                                                                                                                                                                                                                            |
+| `npm run test:deploy`                                         | exit 1 by design on this machine: "refuses to deploy anywhere but the work PC"                                                                                                                                                                                                                        |
+| `npm run test:desktop`                                        | exit 1: `cargo.exe ENOENT`                                                                                                                                                                                                                                                                            |
+| `rust:fmt:check`, `rust:clippy`, `rust:test`, `build:desktop` | not runnable: no Rust toolchain on this machine; CI is the authority                                                                                                                                                                                                                                  |
