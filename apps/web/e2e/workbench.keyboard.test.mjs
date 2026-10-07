@@ -29,7 +29,9 @@ function readCanvas() {
     const surfaces = [...document.querySelectorAll("section[aria-labelledby]")];
 
     return {
-      heading: document.querySelector("h1")?.textContent ?? "",
+      heading:
+        [...document.querySelectorAll("h1")].find((heading) => heading.checkVisibility())
+          ?.textContent ?? "",
       surfaces: surfaces.map((surface) => ({
         title: surface.querySelector("h2")?.textContent ?? "",
         region: surface.querySelector("select")?.value ?? "",
@@ -142,7 +144,6 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
     { timeout: 120_000 },
     async () => {
       await page.goto(WEB_URL);
-      // Threads is the home page since v1; Command is one of the flagged pages.
       await tabTo(page, "Command");
       await page.keyboard.press("Enter");
       await page.getByLabel("New Objective").waitFor();
@@ -213,10 +214,9 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
 
       const beforeReload = await readCanvas();
 
-      // Restore. A reload is the client-side half of the restart the core
-      // integration test proves: no re-activation, no Presence screen, and the
-      // arrangement still in force.
       await page.reload();
+      await tabTo(page, "Command");
+      await page.keyboard.press("Enter");
       await waitForCanvas(
         (state) => state.surfaces.length === 2 && state.heading === "Prove the Phase 6 slice",
         "the workbench did not restore the active Objective after a reload",

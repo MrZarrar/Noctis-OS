@@ -86,7 +86,11 @@ function readPage() {
       turns: [...document.querySelectorAll('li[data-entry="turn"]')].map(
         (item) => item.dataset.turnStatus ?? "",
       ),
-      items: [...document.querySelectorAll('ul[aria-label="Turn items"] > li')].map((item) => ({
+      items: [
+        ...document.querySelectorAll(
+          'ul[aria-label="Turn items"] > li, ul[aria-label="Outputs"] > li',
+        ),
+      ].map((item) => ({
         kind: item.dataset.itemKind ?? "",
         status: item.dataset.itemStatus ?? "",
         text: item.textContent?.trim() ?? "",
@@ -289,14 +293,14 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
 
         await waitFor(
           readPage,
-          (state) => state.approvals.some((text) => text.startsWith(card)),
+          (state) => state.approvals.some((text) => text.includes(card)),
           `the delegation of "${brief}" never asked`,
         );
         await tabTo(page, "Confirm");
         await page.keyboard.press("Enter");
         await waitFor(
           readPage,
-          (state) => !state.approvals.some((text) => text.startsWith(card)),
+          (state) => !state.approvals.some((text) => text.includes(card)),
           `confirming "${brief}" did not close its card`,
         );
       }

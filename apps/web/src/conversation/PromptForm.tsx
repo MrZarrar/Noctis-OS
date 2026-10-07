@@ -34,6 +34,7 @@ export interface PromptFormProps {
    */
   roots?: readonly RuntimeRootOption[];
   onSend: (text: string, options: SendOptions) => void;
+  onListeningChange?: (listening: boolean) => void;
 }
 
 /** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
@@ -118,6 +119,7 @@ export function PromptForm({
   canAttach = false,
   roots = [],
   onSend,
+  onListeningChange,
 }: PromptFormProps): JSX.Element {
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string>();
@@ -152,6 +154,7 @@ export function PromptForm({
       ...(rootGrantId === "" ? {} : { rootGrantId }),
     });
     setText("");
+    onListeningChange?.(false);
     setFiles([]);
   };
 
@@ -170,6 +173,8 @@ export function PromptForm({
           value={text}
           disabled={disabled}
           rows={2}
+          onFocus={() => onListeningChange?.(true)}
+          onBlur={() => onListeningChange?.(false)}
           onChange={(event) => {
             setText(event.target.value);
           }}

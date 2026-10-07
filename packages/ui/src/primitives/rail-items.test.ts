@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { HIDDEN_ITEMS, NAV_ITEMS, railItems } from "./rail-items.js";
 
 describe("v1 navigation", () => {
-  it("is exactly the five v1 destinations, in order", () => {
-    expect(NAV_ITEMS).toEqual(["Threads", "Files", "Nodes", "Approvals", "Vault"]);
+  it("opens with Presence before the five v1 destinations", () => {
+    expect(NAV_ITEMS).toEqual(["Presence", "Threads", "Files", "Nodes", "Approvals", "Vault"]);
   });
 
   it("shows only the v1 destinations unless every page is asked for", () => {

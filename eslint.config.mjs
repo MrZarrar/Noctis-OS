@@ -6,7 +6,13 @@ export default tseslint.config(
     // vite.config.ts is Vite's own loader config, not part of the apps/web
     // TypeScript project (its "include" is src/** only) — nothing else under
     // apps/** sits outside its project's include, so this is the one exception.
-    ignores: ["**/dist/**", "**/node_modules/**", "**/target/**", "apps/web/vite.config.ts"],
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/target/**",
+      ".noctis/**",
+      "apps/web/vite.config.ts",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked.map((config) => ({

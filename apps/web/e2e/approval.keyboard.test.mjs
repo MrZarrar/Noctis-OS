@@ -76,7 +76,9 @@ function readPage() {
     );
 
     return {
-      heading: document.querySelector("h1")?.textContent ?? "",
+      heading:
+        [...document.querySelectorAll("h1")].find((heading) => heading.checkVisibility())
+          ?.textContent ?? "",
       approvals: [
         ...(document.querySelector('ul[aria-label="Approvals waiting"]')?.children ?? []),
       ].map((item) => item.textContent?.trim() ?? ""),

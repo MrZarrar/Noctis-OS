@@ -4,7 +4,7 @@
  * the agents produced, Nodes is the PCs themselves, Approvals is what is
  * waiting on the owner, and Vault is the shared memory.
  */
-export const NAV_ITEMS = ["Threads", "Files", "Nodes", "Approvals", "Vault"] as const;
+export const NAV_ITEMS = ["Presence", "Threads", "Files", "Nodes", "Approvals", "Vault"] as const;
 
 /**
  * Pages built before v1 narrowed the product. They stay in the code and

@@ -18,5 +18,7 @@ export { RecallSurface } from "./vault/RecallSurface.js";
 export type { RecallSurfaceProps, RecallEvidenceView } from "./vault/RecallSurface.js";
 export { IntelligenceRenderer } from "./intelligence/IntelligenceRenderer.js";
 export type { IntelligenceRendererProps } from "./intelligence/IntelligenceRenderer.js";
+export type { IntelligenceState, IntelligenceProfile } from "./intelligence/core.js";
+export { VESPER_PROFILE } from "./intelligence/core.js";
 export { visualForIdentity } from "./intelligence/visual.js";
 export type { IdentityVisual } from "./intelligence/visual.js";

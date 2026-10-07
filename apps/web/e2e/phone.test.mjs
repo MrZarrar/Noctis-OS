@@ -45,7 +45,7 @@ const DESKTOP = { width: 1280, height: 800 };
 const MIN_TARGET = 44;
 
 /** The v1 destinations, in the order the bar and the rail show them. */
-const NAV_ITEMS = ["Threads", "Files", "Nodes", "Approvals", "Vault"];
+const NAV_ITEMS = ["Presence", "Threads", "Files", "Nodes", "Approvals", "Vault"];
 
 /** Every page the owner can reach without the all-pages flag, with the heading it shows. */
 const V1_PAGES = [...NAV_ITEMS, "Settings"];
@@ -283,7 +283,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       const barWidth = bar.widths.reduce((total, width) => total + width, 0);
 
       assert.ok(barWidth <= PHONE.width, `the bar's buttons total ${String(barWidth)}px`);
-      assert.equal((await readPage()).heading, "Threads", "the phone does not open on Threads");
+      assert.equal((await readPage()).heading, "Presence", "the phone does not open on Presence");
     },
   );
 
@@ -361,7 +361,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     async () => {
       await page.setViewportSize(PHONE);
       await page.goto(WEB_URL);
-      await waitFor(readPage, (state) => state.heading === "Threads", "Threads never opened");
+      await open("Threads");
 
       await tabTo(page, "Message Vesper");
       await page.keyboard.type("ASK: hello");

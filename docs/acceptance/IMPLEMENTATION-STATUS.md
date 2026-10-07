@@ -2973,3 +2973,54 @@ square on the glass card; and the approval buttons were in the browser's default
 | `npm run test:e2e`                              | exit 0; 15 tests, against Chrome, with `NOCTIS_WEB_ROOT` unset (the first run lost a suite to the race above) |
 | `npm run build`, `build:web`                    | exit 0                                                                                                        |
 | `npm run test:deploy`, `test:desktop`, `rust:*` | not run: not runnable on this machine, as before                                                              |
+
+### 2026-10-07 S6: Presence and the live Vesper core
+
+Pulled with `git pull --ff-only`: already up to date. The owner approved all three reference
+stills from design session `01a116ae-1a1a-7273-950e-99e1ed19e08a` before implementation.
+Implementation is verified locally; owner acceptance of the working visuals remains. Not committed.
+
+Presence is home, with the room, greeting and shared prompt. It starts/continues the identity's free
+thread and opens Threads; returning home clears a delegated-thread selection. The Three.js core uses
+168 deterministic junctions, connected lines, translucent shards and a violet crystalline centre.
+Profile parameters are exposed; only Vesper is built. Prompt focus means listening; queued/running
+turns mean thinking, active streamed text or message items mean speaking, and pending approvals take
+precedence. Completed/failed turns cannot leave the core speaking. Idle and approval draw on demand;
+hidden and reduced-motion modes stop the loop. An SVG fallback covers WebGL absence/context loss.
+
+Raw turn/message event lines and technical approval fields start behind closed native Details.
+Replies, outputs, cancellation, the exact action, cost and reversal consequences remain visible.
+The phone gate includes Presence and still checks 44 px controls and no document/sideways scroll.
+
+Red first: navigation lacked Presence; geometry/scheduling assertions and closed Details assertions
+failed before implementation. All went green. Browser review corrected overly white centre fragments
+and opaque glass, then increased mesh detail. Earlier browser checks needed visible-heading selection,
+Command navigation after reload, and the new requested-action label. Those regressions are green.
+
+| Check, using checksum-verified Node 22.23.2 and the unchanged dependency lock | Result                                        |
+| ----------------------------------------------------------------------------- | --------------------------------------------- |
+| Full Vitest suite                                                             | 108 files, 1,935 tests passed                 |
+| Browser suite, Chrome, isolated test cores                                    | 17 tests passed                               |
+| S6 capture and WebGL-unavailable gates                                        | 2 tests passed; all five states at both sizes |
+| Donor boundary                                                                | 6 tests passed; no donor code copied          |
+| TypeScript, ESLint, formatting, diff check                                    | Passed                                        |
+| Web production build                                                          | Passed, isolated at `.noctis/s6/web-dist`     |
+
+Captures are in `.noctis/s6/evidence/`: ten named state PNGs, `desktop-all-states.webm` and
+`phone-all-states.webm`, plus reduced-motion and WebGL-fallback PNGs. Measurements are in
+`measurements.json`. These record the production renderer driven by scripted local transport events;
+the existing conversation/browser gates separately exercise a real throwaway core and fake node.
+Desktop is 1440 x 900; phone is 400 x 860 (2x screenshot density); Chrome 153.0.8010.47.
+
+| Budget                                         | Desktop measurement | Phone-size measurement |
+| ---------------------------------------------- | ------------------- | ---------------------- |
+| Active frame rate, target 60 fps               | 59.94 to 60.19 fps  | 59.99 to 60.22 fps     |
+| Mean CPU draw submission, target below 16.7 ms | 0.24 to 0.29 ms     | 0.24 to 0.29 ms        |
+| Idle frames during 2.4 s sample                | 0                   | 0                      |
+| Idle renderer-process CPU, budget at most 1%   | 0.154%              | 0.164%                 |
+| Approval frames during 2.4 s sample            | 0                   | 0                      |
+
+Renderer CPU comes from Chrome SystemInfo process CPU-time deltas; it sums renderer processes in
+the isolated browser. Draw submission excludes GPU time. Physical-phone GPU/thermal behaviour and
+owner visual acceptance are still unverified. No live workers, Vault, services or production bundle
+were changed. ESLint ignores `.noctis/` so isolated generated bundles are not treated as source.

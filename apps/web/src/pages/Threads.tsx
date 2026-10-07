@@ -123,18 +123,20 @@ export function ItemRow({
             output · {item.mediaType}
             {item.path === undefined ? "" : ` · ${item.path}`}
           </span>
-          {item.attachmentId !== undefined &&
-            outputUrl !== undefined &&
-            item.mediaType.startsWith("image/") && (
-              <a href={outputUrl(item.attachmentId)} target="_blank" rel="noreferrer">
+          {item.attachmentId !== undefined && outputUrl !== undefined && (
+            <a href={outputUrl(item.attachmentId)} target="_blank" rel="noreferrer">
+              {item.mediaType.startsWith("image/") ? (
                 <img
                   src={outputUrl(item.attachmentId)}
                   alt={item.path ?? "generated image"}
                   loading="lazy"
                   style={{ maxWidth: "100%", maxHeight: 480, borderRadius: corner.sm }}
                 />
-              </a>
-            )}
+              ) : (
+                `Open or download ${item.path ?? "output"}`
+              )}
+            </a>
+          )}
         </span>
       );
   }
@@ -150,6 +152,8 @@ function TurnRow({
   outputUrl: ((attachmentId: string) => string) | undefined;
 }): JSX.Element {
   const running = turn.status === "queued" || turn.status === "running";
+  const outputs = turn.items.filter((item) => item.kind === "output");
+  const rawItems = turn.items.filter((item) => item.kind !== "output");
 
   return (
     <li
@@ -178,7 +182,15 @@ function TurnRow({
         }}
       >
         <span style={{ color: typography.color.muted, minWidth: 0 }}>
-          turn · {turn.status} · {modelLabel(turn.model)}
+          {turn.status === "queued"
+            ? "Waiting to start"
+            : turn.status === "running"
+              ? "Working"
+              : turn.status === "completed"
+                ? "Finished"
+                : turn.status === "failed"
+                  ? "Failed"
+                  : "Cancelled"}
           {turn.failureReason === undefined ? "" : ` — ${turn.failureReason}`}
         </span>
         <span style={{ flex: 1 }} />
@@ -188,15 +200,28 @@ function TurnRow({
           </button>
         )}
       </p>
-      {turn.items.length > 0 && (
-        <ul aria-label="Turn items" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
-          {turn.items.map((item) => (
+      {outputs.length > 0 && (
+        <ul aria-label="Outputs" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
+          {outputs.map((item) => (
             <li key={item.itemId} data-item-kind={item.kind} data-item-status={item.status}>
               <ItemRow item={item} outputUrl={outputUrl} />
             </li>
           ))}
         </ul>
       )}
+      <details style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+        <summary style={{ minHeight: 44, lineHeight: "44px", cursor: "pointer" }}>Details</summary>
+        <p style={{ margin: 0 }}>{modelLabel(turn.model)}</p>
+        {rawItems.length > 0 && (
+          <ul aria-label="Turn items" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
+            {rawItems.map((item) => (
+              <li key={item.itemId} data-item-kind={item.kind} data-item-status={item.status}>
+                <ItemRow item={item} outputUrl={outputUrl} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </li>
   );
 }

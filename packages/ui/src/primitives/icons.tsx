@@ -10,6 +10,7 @@ import type { RailItem } from "./rail-items.js";
  */
 
 const PATHS: Readonly<Record<RailItem | "More", readonly string[]>> = {
+  Presence: ["M12 3 19 8l-2 10-5 3-5-3L5 8l7-5Z", "M5 8l7 4 7-4M7 18l5-6 5 6M12 3v9"],
   Threads: [
     "M4 5.5h10a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H8.5L5 17.5v-3H4A1.5 1.5 0 0 1 2.5 13V7A1.5 1.5 0 0 1 4 5.5Z",
     "M18 9h2a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 20 18h-1v3l-3.5-3H11",

@@ -33,7 +33,7 @@ function Field({ label, value }: { label: string; value: string }): JSX.Element 
   return (
     <div style={{ display: "contents" }}>
       <dt style={{ color: typography.color.muted }}>{label}</dt>
-      <dd style={{ margin: 0 }}>{value}</dd>
+      <dd style={{ margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>{value}</dd>
     </div>
   );
 }
@@ -115,18 +115,37 @@ export function ApprovalSurface({
 
   return (
     <div style={{ display: "grid", gap: spacing.md }}>
-      <p style={{ margin: 0, maxWidth: typography.measurePx }}>{consequenceSummary}</p>
-
-      <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: spacing.sm }}>
-        <Field label="Operation" value={operationClass} />
-        <Field label="Capability" value={capability} />
-        <Field label="Target" value={`${targetType}: ${targetId}`} />
-        <Field label="Reversibility" value={reversibility.replace(/_/g, " ")} />
-        {estimatedCostGbp !== undefined && (
-          <Field label="Estimated cost" value={`GBP ${estimatedCostGbp.toFixed(2)}`} />
-        )}
-        <Field label="Policy" value={`${OUTCOME_WORDS[outcome]} — ${reasonCodes.join(", ")}`} />
-      </dl>
+      <p style={{ margin: 0, maxWidth: typography.measurePx, overflowWrap: "anywhere" }}>
+        <strong>Requested action: </strong>
+        {consequenceSummary}
+      </p>
+      <p style={{ margin: 0 }}>
+        {reversibility === "irreversible"
+          ? "This cannot be undone."
+          : reversibility === "partially_reversible"
+            ? "Some effects may not be undone."
+            : "This can be undone."}
+        {estimatedCostGbp === undefined
+          ? ""
+          : ` Estimated cost: GBP ${estimatedCostGbp.toFixed(2)}.`}
+      </p>
+      <p style={{ margin: 0, color: typography.color.muted }}>{OUTCOME_WORDS[outcome]}.</p>
+      <details style={{ minWidth: 0 }}>
+        <summary style={{ minHeight: 44, lineHeight: "44px", cursor: "pointer" }}>Details</summary>
+        <dl
+          style={{
+            margin: 0,
+            display: "grid",
+            gridTemplateColumns: "auto minmax(0, 1fr)",
+            gap: spacing.sm,
+          }}
+        >
+          <Field label="Operation" value={operationClass} />
+          <Field label="Capability" value={capability} />
+          <Field label="Target" value={`${targetType}: ${targetId}`} />
+          <Field label="Policy reasons" value={reasonCodes.join(", ")} />
+        </dl>
+      </details>
 
       {executedAt !== undefined ? (
         <p style={{ margin: 0, color: semantic.current }}>

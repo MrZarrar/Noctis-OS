@@ -43,7 +43,7 @@ import {
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const WEB_ROOT = join(REPO_ROOT, "apps/web");
-const DIST = join(WEB_ROOT, "dist");
+const DIST = resolve(process.env.NOCTIS_E2E_DIST ?? join(WEB_ROOT, "dist"));
 
 const CORE_PORT = 8803;
 /** 127.0.0.1, not localhost: this exact string is also the origin allowlist. */

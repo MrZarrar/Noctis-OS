@@ -28,6 +28,7 @@ import { Files } from "./pages/Files.js";
 import { Login } from "./pages/Login.js";
 import { Missions } from "./pages/Missions.js";
 import { Nodes } from "./pages/Nodes.js";
+import { Presence } from "./pages/Presence.js";
 import { Settings } from "./pages/Settings.js";
 import { Threads } from "./pages/Threads.js";
 import { Vault } from "./pages/Vault.js";
@@ -136,7 +137,7 @@ function Workbench({
   /** Absent for the packaged shell and a token build, which have no session to end. */
   onSignedOut?: () => void;
 }): JSX.Element {
-  const [active, setActive] = useState<RailItem>("Threads");
+  const [active, setActive] = useState<RailItem>("Presence");
   const [handoff, setHandoff] = useState<VaultHandoff>();
   const isMobile = useIsMobile();
   // No `open` state beside it: a `<dialog>` already knows whether it is open,
@@ -159,7 +160,7 @@ function Workbench({
    * Threads because Presence sends on the same thread Threads shows (0.12),
    * and two copies of "which thread" could disagree.
    */
-  const [freeThread, setFreeThread] = useState(false);
+  const [freeThread, setFreeThread] = useState(true);
   const objectiveId = freeThread ? undefined : identity.activeObjectiveId;
   /** A delegated thread the owner opened; undefined is the identity's own thread. */
   const [openThreadId, setOpenThreadId] = useState<string | undefined>(undefined);
@@ -176,6 +177,12 @@ function Workbench({
   };
 
   const select = (item: RailItem): void => {
+    if (item === "Presence") {
+      setOpenThreadId(undefined);
+      setFreeThread(true);
+    } else if (item === "Command") {
+      setFreeThread(false);
+    }
     if (item !== "Vault") {
       setHandoff(undefined);
     }
@@ -263,6 +270,15 @@ function Workbench({
       )}
 
       <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+        {active === "Presence" && (
+          <Presence
+            identity={identity}
+            transport={transport}
+            conversation={conversation}
+            onSend={sendAndShow}
+            onReview={() => setActive("Threads")}
+          />
+        )}
         {/* Command stays mounted while the Vault is showing, so returning to
             it finds the composition it had rather than a fresh one. Mounted
             only when it can be reached at all. */}
