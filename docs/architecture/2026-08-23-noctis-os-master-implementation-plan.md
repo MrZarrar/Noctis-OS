@@ -1,6 +1,8 @@
 # Noctis OS Master Implementation Plan
 
-> **Status:** Authoritative implementation plan for a new system and new repository.
+> **Status:** Architecture reference. Since 2026-10-07 the implementation order is
+> [`2026-10-07-v1-scope.md`](2026-10-07-v1-scope.md), which replaces Section 14's phase sequence and
+> lists what is deferred.
 >
 > **Target repository:** `C:\Users\mmush\Documents\Jarvis\Noctis-OS`
 >

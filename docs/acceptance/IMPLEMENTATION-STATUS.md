@@ -2803,3 +2803,110 @@ Not covered: prefix rules match leading tokens only, so `git commit -m x --amend
 | `npm run test:deploy`                                         | exit 1 by design on this machine: "refuses to deploy anywhere but the work PC"                                                                                                                                                                                                                        |
 | `npm run test:desktop`                                        | exit 1: `cargo.exe ENOENT`                                                                                                                                                                                                                                                                            |
 | `rust:fmt:check`, `rust:clippy`, `rust:test`, `build:desktop` | not runnable: no Rust toolchain on this machine; CI is the authority                                                                                                                                                                                                                                  |
+
+### 2026-10-07 S2: agents hand work to each other through Noctis
+
+Implemented across contracts, core, node and web; not yet committed. A Claude turn calls
+`noctis_delegate`; the core records an authority decision, opens or continues a child thread linked
+to the parent, runs the child turn on the runtime asked for, and returns the reply, the child
+`threadId` and the files the child produced. The owner sees the child in Chat, opens it, and
+continues it.
+
+- **Contracts.** Node frames `delegate` (node to core) and `delegated` (core to node); runtime item
+  `output` (`mediaType`, `path`, `attachmentId`); `parentThreadId` and `parentTurnId` on a thread;
+  `threadId` on `conversation.send`.
+- **Core.** Migration `0010_delegation.sql` (parent columns; the free-thread and Objective-thread
+  unique indexes now hold for top-level threads only). `conversation/service.ts`: `sendMessage` and
+  delegation share one `openTurn`; a delegation is an authority request (`local_reversible_edit`,
+  capability `runtime.delegate`, target `runtime:<provider>`, against the parent's job), then a child
+  turn pinned to the parent's node and root unless `node` names another. A delegation may continue
+  only a thread its own parent thread started. Routes: `GET /threads/:id`,
+  `GET /threads/:id/children`, `POST /node/outputs` (node credential, only for a job that node holds,
+  stored with provenance `runtime_output`), `GET /attachments/:id/content` (served with
+  `content-security-policy: sandbox; default-src 'none'` and `nosniff`).
+- **Node.** `agent.ts` carries `delegate` like an ask (rejected on cancel and disconnect, no timeout
+  of its own) and posts outputs over HTTP. `claude.ts` hosts `noctis_delegate` in the in-process
+  `noctis` MCP server. `codex.ts` turns an `imageGeneration` item into an uploaded `output` item and
+  holds the turn's result until uploads settle.
+- **Web.** The conversation store opens any thread by id, sends to it, and lists its children.
+  Chat shows "Delegated thread N" buttons, a Back control, and an image output inline where the
+  transport can address bytes (the cookie session).
+
+| Gate clause                                               | State       | Evidence                                                                                                                                                                            |
+| --------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A Claude thread asks Codex for an image                   | implemented | live run below; `claude.test.ts` "noctis_delegate hands the work to the core and returns the child's thread, reply and outputs"                                                     |
+| The image comes back as a viewable output                 | implemented | live run: two PNGs read back through `GET /attachments/:id/content`; `codex.test.ts` image tests; the agent gate test reads the bytes back through the real core                    |
+| A second request continues the same Codex thread          | implemented | live run: both calls returned the same `threadId`; `conversation.integration.test.ts` "THE GATE: a delegated turn runs on a linked child thread, and a second request continues it" |
+| Child threads are linked and visible; the owner continues | implemented | E2E "a delegation is approved here, opens as its own thread with its image, and the owner continues it"; "the owner continues a delegated thread by naming it"                      |
+| Delegation goes through the authority service             | implemented | "outside an active Objective a delegation waits for the owner, and a decline refuses it"; live run: two `allow` rows, `objective_active_scope`                                      |
+
+Sabotage, each applied, observed failing, and reverted:
+
+| Sabotage in `conversation/service.ts`                     | Test that failed                                                                         |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Any existing thread accepted as a delegation's `threadId` | "a delegation continues only a thread its own parent started"                            |
+| Every delegation opens a new child thread                 | THE GATE (core): the follow-up job's `threadId` and `sessionRef` did not match the child |
+
+#### Live run on a real node
+
+Host `mushafzarrar` (the work PC), set up as for S1: a throwaway core from this checkout's
+`apps/core/dist` on 127.0.0.1:7790 with a temporary database, and a node agent paired to it with its
+own `NOCTIS_NODE_HOME`, both started with every `NOCTIS_*` and `CLAUDE*` variable removed. The
+production core on 7717 was not touched. The node probed Claude (`claude_ai`) and Codex (`chatgpt`).
+Under an active Objective, a `claude / sonnet` turn on an empty scratch root was told to call
+`noctis_delegate` for a lighthouse storyboard frame, then call it again on the returned `threadId`
+for the same frame with a red sky, and report both.
+
+| Step                                                     | Time (UTC) | Result                                                                                     |
+| -------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| Parent turn sent                                         | 13:50:30   | Claude, Sonnet, on the scratch root                                                        |
+| First delegation recorded and child turn opened          | 13:50:40   | approval `allow`, `objective_active_scope`, target `runtime:codex`                         |
+| First child turn (`gpt-5.6-luna`) completed              | 13:51:23   | 43 s; `output` item, 1,624,820-byte PNG uploaded                                           |
+| Second delegation, same `threadId`, child turn completed | 13:52:04   | 36 s; same child thread, resumed session; 1,657,126-byte PNG                               |
+| Parent turn completed                                    | 13:52:06   | 96.8 s in all; Claude's reply listed one `threadId` for both calls and both attachment ids |
+
+Both images were read back through `GET /attachments/:id/content` (`200`, `image/png`) and opened:
+a flat-colour lighthouse on a cliff at night, then the same composition with a red sky, which is the
+second request being answered inside the first one's context.
+
+#### Found live, fixed
+
+The first live attempt hung. Codex generated the image in 23.5 s and finished its turn in 37 s (its
+own session log in `~/.codex/sessions`), but nothing after the image reached the core. Two bugs:
+
+- **The JSON-RPC reader capped a message at 1 MB.** Codex sends a generated image inline, as base64,
+  in one `item/completed` notification of several MB, so the reader closed the stream. The Codex
+  client now allows 32 MB per message (the 10 MB output cap as base64, with room).
+- **A closed reader told nobody.** The turn waited for messages that could no longer arrive. The
+  client now reports its own close (`onClose`), and the Codex runtime fails the turn with "codex
+  app-server could not be read: ...". The turn hears the reason before the process is killed, so the
+  exit does not replace it.
+
+Tests written red first: "reads a generated image far larger than a megabyte, as real ones are"
+(hung at 5 s before the fix), "fails the turn, rather than wait forever, when the app-server sends
+what cannot be read", and "tells its owner it closed, even with nothing pending".
+
+#### Known, not fixed
+
+- **Codex cannot delegate.** Its Noctis tools run in a separate stdio process that appends to a file
+  and gets nothing back. Upgrade path: a reply file keyed by delegation id that the MCP child polls,
+  and a longer `tool_timeout_sec` for that server.
+- **Outside an active Objective every delegation asks the owner** until a standing permission covers
+  `runtime.delegate` for that runtime.
+- **A child turn keeps running when its parent turn ends.** Only a delegation still waiting for
+  approval is declined, by `system`.
+- **Outputs above 10 MB are not copied to the core.** The upload is refused and the item keeps its
+  `path`. Large files, video above all, are S4's: streamed from the node on demand, not stored.
+- **Images render inline on the cookie session only.** The token transports show the output as text.
+
+| Command                                         | Result                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `npm run format:check`                          | exit 0                                                                    |
+| `npm run lint`                                  | exit 0                                                                    |
+| `npm run typecheck`                             | exit 0                                                                    |
+| `npm run test:unit`                             | exit 0; 103 files, 1925 tests                                             |
+| `npm run test:integration`                      | exit 0; 8 files, 229 tests                                                |
+| `npm run test:boundary`                         | exit 0; 6 tests                                                           |
+| `npm run test:e2e`                              | exit 0; 14 tests, against Chrome (`NOCTIS_E2E_BROWSER_CHANNEL=chrome`)    |
+| `npm run build`, `build:web`                    | exit 0                                                                    |
+| `npm run test:deploy`, `test:desktop`, `rust:*` | not run: as recorded for the previous entry, not runnable on this machine |

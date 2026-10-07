@@ -14,8 +14,10 @@ The Jarvis Sub-Agent Dashboard is a read-only donor. No Noctis command may write
 - Rust: 1.98.0 pinned and verified on this Windows machine
 - Production activation: not authorised
 
-The authoritative roadmap is
-[`docs/architecture/2026-08-23-noctis-os-master-implementation-plan.md`](docs/architecture/2026-08-23-noctis-os-master-implementation-plan.md).
+The current implementation order is
+[`docs/architecture/2026-10-07-v1-scope.md`](docs/architecture/2026-10-07-v1-scope.md). The
+[master plan](docs/architecture/2026-08-23-noctis-os-master-implementation-plan.md) remains the
+architecture reference and holds every deferred item.
 
 ## Local commands
 
