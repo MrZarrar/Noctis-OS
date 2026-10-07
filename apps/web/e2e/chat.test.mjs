@@ -58,9 +58,9 @@ let scratch;
 /** Reloads and walks to Chat with the keyboard. */
 async function openChat() {
   await page.goto(WEB_URL);
-  await tabTo(page, "Chat");
+  await tabTo(page, "Threads");
   await page.keyboard.press("Enter");
-  await waitFor(readPage, (state) => state.heading === "Chat", "Chat never opened");
+  await waitFor(readPage, (state) => state.heading === "Threads", "Threads never opened");
 }
 
 async function prompt(text) {

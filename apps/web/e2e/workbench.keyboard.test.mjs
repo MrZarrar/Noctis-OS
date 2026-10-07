@@ -112,6 +112,8 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
           ...process.env,
           VITE_CORE_URL: WEB_URL,
           VITE_CORE_TOKEN: TOKEN,
+          // Command and Artifacts are behind the all-pages flag since v1.
+          VITE_NOCTIS_ALL_PAGES: "1",
           NOCTIS_CORE_PROXY_TARGET: CORE_URL,
         },
       },
@@ -140,6 +142,9 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
     { timeout: 120_000 },
     async () => {
       await page.goto(WEB_URL);
+      // Threads is the home page since v1; Command is one of the flagged pages.
+      await tabTo(page, "Command");
+      await page.keyboard.press("Enter");
       await page.getByLabel("New Objective").waitFor();
 
       // Propose. Enter in the field submits the form, because it is a form.

@@ -1,14 +1,16 @@
+import type { CSSProperties } from "react";
+
 import {
   corner,
-  depth,
   elevation,
   identityAccent,
   material,
   spacing,
   typography,
 } from "../tokens/index.js";
+import { NavIcon } from "./icons.js";
 import type { RailItem } from "./rail-items.js";
-import { tabsFor } from "./tab-items.js";
+import { HIDDEN_ITEMS, NAV_ITEMS } from "./rail-items.js";
 
 /**
  * Ported from the donor's `client/src/components/MobileTabBar.tsx` (commit
@@ -24,9 +26,12 @@ import { tabsFor } from "./tab-items.js";
  */
 
 /**
- * Section 5.2's touch floor, and the thing that actually sets the bar's height.
+ * Section 5.2's touch floor.
  */
 export const TAB_TARGET = 44;
+
+/** A tab carries an icon over its word, which needs more than the bare floor. */
+const TAB_BUTTON = 54;
 
 /** The hairline between the bar and the page above it. */
 const BORDER_PX = 1;
@@ -35,48 +40,62 @@ const BORDER_PX = 1;
  * The bar's height without the safe-area inset, which the page area pads by so
  * the last row of content is not sitting under the bar.
  *
- * Derived, not declared: the bar is one row of `TAB_TARGET` buttons inside
- * `spacing.xs` of padding, over a hairline. Every term is here because a
- * literal was wrong twice — first because the nav carried its own `minHeight`
- * too (65px rendered against 56px reserved), then because the border is a
- * pixel nobody counts (53 against 52). Writing the sum down means raising the
- * touch floor, the padding, or the hairline moves the reservation with it.
+ * Derived, not declared: the bar is one row of buttons inside `spacing.xs` of
+ * padding, over a hairline. Every term is here because a literal was wrong
+ * twice, once by a second `minHeight` on the nav and once by the border pixel
+ * nobody counts. Writing the sum down means changing the button, the padding,
+ * or the hairline moves the reservation with it.
  */
-export const TAB_BAR_HEIGHT = TAB_TARGET + spacing.xs * 2 + BORDER_PX;
+export const TAB_BAR_HEIGHT = TAB_BUTTON + spacing.xs * 2 + BORDER_PX;
 
 export interface TabBarProps {
   active: RailItem;
   onSelect: (item: RailItem) => void;
-  onMore: () => void;
+  /** Present only when the all-pages flag is set; opens the sheet of hidden pages. */
+  onMore?: () => void;
 }
 
 const buttonStyle = {
   flex: 1,
   minWidth: 0,
-  // Border-box so the declared floor is the whole button, padding included:
-  // with content-box the same number means 44px *plus* padding, which is how
-  // the bar ended up taller than the space reserved for it.
+  // Border-box so the declared floor is the whole button, padding included.
   boxSizing: "border-box",
-  // A 10px label in a 32px row is the donor's one measurement worth changing
-  // rather than keeping.
-  minHeight: TAB_TARGET,
-  font: `${String(typography.scale.xs)}px ${typography.family}`,
+  minHeight: TAB_BUTTON,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 3,
+  font: `500 11px ${typography.family}`,
   letterSpacing: typography.tracking.wide,
   background: "transparent",
   border: "none",
   borderRadius: corner.md,
-  padding: `${String(spacing.xs)}px ${String(spacing.xs)}px`,
+  padding: `${String(spacing.xs)}px 2px`,
   cursor: "pointer",
-  // Eight-character destinations in a fifth of 400px: clip rather than widen,
-  // because a bar that grows past the viewport is the horizontal scroll this
-  // whole layout exists to remove.
+  // Clip rather than widen: a bar that grows past the viewport is the
+  // horizontal scroll this whole layout exists to remove.
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
 } as const;
 
+function tabStyle(isActive: boolean): CSSProperties {
+  return {
+    ...buttonStyle,
+    color: isActive ? identityAccent.vesper.primary : typography.color.muted,
+    background: isActive ? material.fill : "transparent",
+    // A short lit line on top of the active tab, the bar's one bit of glow.
+    boxShadow: isActive
+      ? `inset 0 2px 0 ${identityAccent.vesper.primary}, 0 -8px 16px -10px ${identityAccent.vesper.primary}`
+      : "none",
+  };
+}
+
 export function TabBar({ active, onSelect, onMore }: TabBarProps): JSX.Element {
-  const { tabs } = tabsFor(active);
+  // A hidden page has no tab of its own, so More stands in for it: the bar
+  // must always show where the owner is.
+  const moreActive = (HIDDEN_ITEMS as readonly RailItem[]).includes(active);
 
   return (
     <nav
@@ -88,19 +107,19 @@ export function TabBar({ active, onSelect, onMore }: TabBarProps): JSX.Element {
         display: "flex",
         alignItems: "stretch",
         gap: spacing.xs,
-        // No height of its own: the buttons set it, and `TAB_BAR_HEIGHT` is
-        // the arithmetic of that. A `minHeight` here as well would be a second
-        // source of truth for one measurement.
         padding: spacing.xs,
-        // The donor's one piece of geometry kept verbatim: without it the bar
-        // sits under a phone's home indicator.
+        // Without it the bar sits under a phone's home indicator.
         paddingBottom: `calc(${String(spacing.xs)}px + env(safe-area-inset-bottom))`,
-        background: depth.layers[0],
+        // Translucent over the page so content scrolling under it reads as
+        // depth, with the blur keeping the labels legible over anything.
+        background: "rgba(11, 10, 18, 0.88)",
+        backdropFilter: `blur(${String(material.blurPx)}px)`,
+        WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
         borderTop: `${String(BORDER_PX)}px solid ${material.border}`,
         zIndex: elevation.rail,
       }}
     >
-      {tabs.map((item) => {
+      {NAV_ITEMS.map((item) => {
         const isActive = item === active;
 
         return (
@@ -111,24 +130,25 @@ export function TabBar({ active, onSelect, onMore }: TabBarProps): JSX.Element {
             onClick={() => {
               onSelect(item);
             }}
-            style={{
-              ...buttonStyle,
-              color: isActive ? identityAccent.vesper.primary : typography.color.primary,
-              background: isActive ? material.fillElevated : "transparent",
-            }}
+            style={tabStyle(isActive)}
           >
+            <NavIcon item={item} />
             {item}
           </button>
         );
       })}
 
-      <button
-        type="button"
-        onClick={onMore}
-        style={{ ...buttonStyle, color: typography.color.primary }}
-      >
-        More
-      </button>
+      {onMore !== undefined && (
+        <button
+          type="button"
+          aria-current={moreActive ? "page" : undefined}
+          onClick={onMore}
+          style={tabStyle(moreActive)}
+        >
+          <NavIcon item="More" />
+          More
+        </button>
+      )}
     </nav>
   );
 }

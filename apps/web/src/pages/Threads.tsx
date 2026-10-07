@@ -3,16 +3,21 @@ import {
   ApprovalSurface,
   IDENTITY_PROFILES,
   corner,
+  depth,
+  identityAccent,
   material,
   semantic,
   spacing,
   typography,
 } from "@noctis/ui";
+import type { CSSProperties } from "react";
+import { useEffect, useRef } from "react";
 
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
 import type { ConversationState, Turn } from "../conversation/useConversation.js";
+import { Page, buttonStyle, glass } from "../layout/Page.js";
 
-export interface ChatProps {
+export interface ThreadsProps {
   identityId: ConversationalIdentityId;
   conversation: ConversationState;
   /** Absent in a browser with no core configured; the prompt is then disabled. */
@@ -30,16 +35,21 @@ export interface ChatProps {
 
 const listStyle = { listStyle: "none", margin: 0, padding: 0, display: "grid" } as const;
 
-const buttonStyle = {
-  background: material.fillElevated,
-  color: "inherit",
-  border: `1px solid ${material.border}`,
-  borderRadius: corner.sm,
-  padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
-  cursor: "pointer",
+const mono = {
+  fontFamily: typography.monoFamily,
+  whiteSpace: "pre-wrap",
+  overflowWrap: "anywhere",
 } as const;
 
-const mono = { fontFamily: typography.monoFamily, whiteSpace: "pre-wrap" } as const;
+/** Read by a screen reader, so "You: hello" is announced as one sentence. */
+const spoken = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+} as const;
 
 /**
  * One thing the runtime did, in a line. Text says what happened; nothing is
@@ -147,15 +157,27 @@ function TurnRow({
       data-turn-status={turn.status}
       style={{
         border: `1px solid ${material.border}`,
+        borderLeft: `2px solid ${running ? identityAccent.vesper.primary : material.highlight}`,
         borderRadius: corner.md,
-        padding: spacing.sm,
+        padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
         display: "grid",
         gap: spacing.xs,
-        font: `${String(typography.scale.xs)}px ${typography.family}`,
+        minWidth: 0,
+        background: material.fill,
+        font: `${String(typography.scale.xs)}px/1.5 ${typography.family}`,
+        color: typography.color.muted,
       }}
     >
-      <p style={{ margin: 0, display: "flex", gap: spacing.sm, alignItems: "center" }}>
-        <span style={{ color: typography.color.muted }}>
+      <p
+        style={{
+          margin: 0,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: spacing.sm,
+          alignItems: "center",
+        }}
+      >
+        <span style={{ color: typography.color.muted, minWidth: 0 }}>
           turn · {turn.status} · {modelLabel(turn.model)}
           {turn.failureReason === undefined ? "" : ` — ${turn.failureReason}`}
         </span>
@@ -167,7 +189,7 @@ function TurnRow({
         )}
       </p>
       {turn.items.length > 0 && (
-        <ul aria-label="Turn items" style={{ ...listStyle, gap: spacing.xs }}>
+        <ul aria-label="Turn items" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
           {turn.items.map((item) => (
             <li key={item.itemId} data-item-kind={item.kind} data-item-status={item.status}>
               <ItemRow item={item} outputUrl={outputUrl} />
@@ -214,20 +236,20 @@ function timelineOf(
 }
 
 /**
- * Chat: the identity's thread — free chat, or the active Objective's (0.12).
+ * Threads: the identity's thread — free chat, or the active Objective's (0.12).
  *
  * Everything shown is read from the core except the streamed text, which lives
  * only until the message it was streaming commits. Approval cards are the same
  * Surface the canvas uses, so a typed phrase is typed here too.
  */
-export function Chat({
+export function Threads({
   identityId,
   conversation,
   connected,
   freeThread,
   onUseFreeThread,
   onOpenThread,
-}: ChatProps): JSX.Element {
+}: ThreadsProps): JSX.Element {
   const {
     thread,
     messages,
@@ -241,64 +263,66 @@ export function Chat({
     error,
   } = conversation;
   const delegated = thread?.parentThreadId !== undefined;
+  const end = useRef<HTMLDivElement>(null);
+  const streamedLength = [...streaming.values()].reduce((total, text) => total + text.length, 0);
+
+  // Follow the conversation as it grows. On a phone the newest entry is
+  // otherwise under the composer, and the reply arrives where nobody is
+  // looking. ponytail: always follows, even when the owner has scrolled up
+  // to read; hold position while scrolled up if that gets in the way.
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [messages.length, turns.length, pendingApprovals.length, streamedLength]);
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
   const roleLabel = (role: string): string =>
     role === "user" ? "You" : role === "identity" ? displayName : "System";
 
-  return (
-    <section
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        gap: spacing.md,
-        padding: spacing.lg,
-        minWidth: 0,
-        overflow: "auto",
-      }}
-    >
-      <header style={{ display: "flex", alignItems: "baseline", gap: spacing.md }}>
-        <h1 style={{ margin: 0, font: `${String(typography.scale.lg)}px ${typography.family}` }}>
-          Chat
-        </h1>
-        <span style={{ color: typography.color.muted }}>
-          {thread === undefined
-            ? `${displayName} · nothing said yet`
-            : delegated
-              ? `${displayName} · delegated thread`
-              : thread.objectiveId === undefined
-                ? `${displayName} · free chat`
-                : `${displayName} · Objective thread`}
-        </span>
-        {/* An Objective being active used to mean every question went into it.
-            A question that has nothing to do with the work in progress now has
-            somewhere to go that does not require pausing the Objective. */}
-        {delegated && onOpenThread !== undefined && (
-          <button
-            type="button"
-            onClick={() => {
-              onOpenThread(undefined);
-            }}
-            style={buttonStyle}
-          >
-            Back
-          </button>
-        )}
-        {!delegated && onUseFreeThread !== undefined && (
-          <button
-            type="button"
-            aria-pressed={freeThread === true}
-            onClick={() => {
-              onUseFreeThread(freeThread !== true);
-            }}
-            style={buttonStyle}
-          >
-            {freeThread === true ? "Back to the Objective" : "Ask something else"}
-          </button>
-        )}
-      </header>
+  const subtitle =
+    thread === undefined
+      ? `${displayName} · nothing said yet`
+      : delegated
+        ? `${displayName} · delegated thread`
+        : thread.objectiveId === undefined
+          ? `${displayName} · free chat`
+          : `${displayName} · Objective thread`;
 
+  return (
+    <Page
+      title="Threads"
+      maxWidth={880}
+      subtitle={subtitle}
+      actions={
+        <>
+          {/* An Objective being active used to mean every question went into
+              it. A question that has nothing to do with the work in progress
+              now has somewhere to go that does not require pausing it. */}
+          {delegated && onOpenThread !== undefined && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenThread(undefined);
+              }}
+              style={buttonStyle}
+            >
+              Back
+            </button>
+          )}
+          {!delegated && onUseFreeThread !== undefined && (
+            <button
+              type="button"
+              aria-pressed={freeThread === true}
+              onClick={() => {
+                onUseFreeThread(freeThread !== true);
+              }}
+              style={buttonStyle}
+            >
+              {freeThread === true ? "Back to the Objective" : "Ask something else"}
+            </button>
+          )}
+        </>
+      }
+    >
       {/* Where agents on this thread handed work: each one opens, and the
           prompt below then continues it. */}
       {children.length > 0 && onOpenThread !== undefined && (
@@ -323,7 +347,14 @@ export function Chat({
         </nav>
       )}
 
-      <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.sm }}>
+      {messages.length === 0 && turns.length === 0 && streaming.size === 0 && (
+        <p style={{ margin: 0, color: typography.color.muted, maxWidth: typography.measurePx }}>
+          Pick an agent and a PC below, then say what you want done. Follow-ups continue the same
+          thread on the same machine.
+        </p>
+      )}
+
+      <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
         {timelineOf(messages, turns, pendingApprovals).map((entry) => {
           if (entry.kind === "message") {
             return (
@@ -331,12 +362,26 @@ export function Chat({
                 key={entry.message.id}
                 data-entry="message"
                 data-role={entry.message.role}
-                style={{ maxWidth: typography.measurePx }}
+                style={bubbleStyle(entry.message.role === "user")}
               >
-                <span style={{ color: typography.color.muted }}>
-                  {roleLabel(entry.message.role)}:{" "}
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: typography.scale.xs,
+                    letterSpacing: typography.tracking.wide,
+                    color:
+                      entry.message.role === "user"
+                        ? typography.color.muted
+                        : identityAccent.vesper.primary,
+                    marginBottom: 2,
+                  }}
+                >
+                  {roleLabel(entry.message.role)}
+                  <span style={spoken}>: </span>
                 </span>
-                <span style={{ whiteSpace: "pre-wrap" }}>{entry.message.body}</span>
+                <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                  {entry.message.body}
+                </span>
               </li>
             );
           }
@@ -363,9 +408,10 @@ export function Chat({
               key={approval.id}
               data-entry="approval"
               style={{
-                border: `1px solid ${semantic.approval}`,
-                borderRadius: corner.md,
-                padding: spacing.md,
+                ...glass,
+                borderLeft: `2px solid ${semantic.approval}`,
+                padding: spacing.lg,
+                minWidth: 0,
               }}
             >
               <ApprovalSurface
@@ -402,10 +448,18 @@ export function Chat({
             data-entry="streaming"
             data-streaming={itemId}
             aria-live="polite"
-            style={{ maxWidth: typography.measurePx, color: typography.color.muted }}
+            style={{ ...bubbleStyle(false), color: typography.color.muted }}
           >
-            <span>{displayName} (typing): </span>
-            <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>
+            <span
+              style={{
+                display: "block",
+                fontSize: typography.scale.xs,
+                color: identityAccent.vesper.primary,
+              }}
+            >
+              {displayName} (typing)<span style={spoken}>: </span>
+            </span>
+            <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</span>
           </li>
         ))}
       </ul>
@@ -438,19 +492,49 @@ export function Chat({
         </p>
       )}
 
-      <span style={{ flex: 1 }} />
-
-      <PromptForm
-        identityId={identityId}
-        models={models}
-        defaultModel={defaultModel}
-        disabled={!connected}
-        canAttach={conversation.canAttach}
-        roots={conversation.roots}
-        onSend={(text, options) => {
-          void conversation.send(text, options);
+      {/* Pinned to the bottom of the scroll, so the box to type in stays under
+          the thumb however long the thread gets. */}
+      <div
+        style={{
+          position: "sticky",
+          bottom: 0,
+          marginTop: "auto",
+          padding: spacing.sm,
+          borderRadius: corner.lg,
+          background: `linear-gradient(180deg, rgba(11, 10, 18, 0.72), ${depth.layers[0]})`,
+          backdropFilter: `blur(${String(material.blurPx)}px)`,
+          WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
+          border: `1px solid ${material.border}`,
         }}
-      />
-    </section>
+      >
+        <PromptForm
+          identityId={identityId}
+          models={models}
+          defaultModel={defaultModel}
+          disabled={!connected}
+          canAttach={conversation.canAttach}
+          roots={conversation.roots}
+          onSend={(text, options) => {
+            void conversation.send(text, options);
+          }}
+        />
+      </div>
+      {/* After the composer, so scrolling it into view reaches the very end
+          rather than leaving the last entry under the sticky composer. */}
+      <div ref={end} />
+    </Page>
   );
+}
+
+function bubbleStyle(own: boolean): CSSProperties {
+  return {
+    justifySelf: own ? "end" : "start",
+    maxWidth: `min(${String(typography.measurePx)}px, 88%)`,
+    boxSizing: "border-box",
+    padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
+    borderRadius: own ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+    border: `1px solid ${own ? identityAccent.vesper.secondary : material.border}`,
+    background: own ? "rgba(91, 79, 224, 0.18)" : material.fillElevated,
+    lineHeight: 1.5,
+  };
 }

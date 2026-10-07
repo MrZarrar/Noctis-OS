@@ -1083,6 +1083,7 @@ export function VaultSphere({
                   }
                 }}
                 style={{
+                  minHeight: 44,
                   font: `${String(typography.scale.xs)}px ${typography.family}`,
                   background: isFocus ? material.fillElevated : material.fill,
                   color: "inherit",
@@ -1125,6 +1126,7 @@ function Control({ label, onAct, disabled = false }: ControlProps): JSX.Element 
       onClick={onAct}
       disabled={disabled}
       style={{
+        minHeight: 44,
         font: `${String(typography.scale.xs)}px ${typography.family}`,
         background: material.fill,
         color: "inherit",

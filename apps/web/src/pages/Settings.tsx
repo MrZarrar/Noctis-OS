@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { modelKey, modelLabel } from "../conversation/PromptForm.js";
+import { Page, SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import type { PushState } from "../notify/subscribe.js";
 import { enablePush, initialPushState } from "../notify/subscribe.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
@@ -292,25 +293,9 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
   return (
-    <section
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        gap: spacing.lg,
-        padding: spacing.lg,
-        minWidth: 0,
-        overflow: "auto",
-      }}
-    >
-      <h1 style={{ margin: 0, font: `${String(typography.scale.lg)}px ${typography.family}` }}>
-        Settings
-      </h1>
-
-      <section style={{ display: "grid", gap: spacing.sm }}>
-        <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
-          Default model
-        </h2>
+    <Page title="Settings" subtitle="Defaults, notifications and standing permissions">
+      <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+        <SectionHeading>Default model</SectionHeading>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
           What each identity runs on when a prompt does not choose. The list is what connected nodes
           offer right now; a model appears here as data, never as a role.
@@ -327,11 +312,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
               : catalogue;
 
           return (
-            <label
-              key={profile.id}
-              style={{ display: "flex", alignItems: "center", gap: spacing.sm }}
-            >
-              <span style={{ minWidth: 80 }}>{profile.displayName}</span>
+            <label key={profile.id} style={{ display: "grid", gap: spacing.xs, maxWidth: 420 }}>
+              <span>{profile.displayName}</span>
               <select
                 value={currentKey}
                 disabled={transport === undefined || options.length === 0}
@@ -342,13 +324,7 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
                     void setDefaultModel(profile.id, chosen);
                   }
                 }}
-                style={{
-                  background: material.fill,
-                  border: `1px solid ${material.border}`,
-                  borderRadius: corner.sm,
-                  color: "inherit",
-                  padding: spacing.xs,
-                }}
+                style={fieldStyle}
               >
                 {current === undefined && (
                   <option value="">
@@ -366,10 +342,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
         })}
       </section>
 
-      <section style={{ display: "grid", gap: spacing.sm }}>
-        <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
-          Notifications
-        </h2>
+      <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+        <SectionHeading>Notifications</SectionHeading>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
           This device is told when an approval is waiting and when a turn fails or is blocked —
           those two, and nothing else. Per device: turning them on here does not turn them on
@@ -403,14 +377,7 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
               onClick={() => {
                 void turnOnPush();
               }}
-              style={{
-                background: material.fillElevated,
-                color: "inherit",
-                border: `1px solid ${material.border}`,
-                borderRadius: corner.sm,
-                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
-                cursor: "pointer",
-              }}
+              style={buttonStyle}
             >
               {push === "enabled" ? "Re-register this device" : "Turn on notifications"}
             </button>
@@ -418,10 +385,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
         )}
       </section>
 
-      <section style={{ display: "grid", gap: spacing.sm }}>
-        <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
-          Standing permissions
-        </h2>
+      <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+        <SectionHeading>Standing permissions</SectionHeading>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
           A standing permission turns one confirmation into an allow, for one actor, one capability,
           and the exact targets it names. It can never cover spending, a destructive operation, a
@@ -448,10 +413,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
       </section>
 
       {revoked.length > 0 && (
-        <section style={{ display: "grid", gap: spacing.sm }}>
-          <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
-            Revoked
-          </h2>
+        <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+          <SectionHeading>Revoked</SectionHeading>
           <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
             Kept, not deleted. A decision these once upgraded has to stay explainable.
           </p>
@@ -464,10 +427,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
       )}
 
       {onSignedOut !== undefined && (
-        <section style={{ display: "grid", gap: spacing.sm }}>
-          <h2 style={{ margin: 0, font: `${String(typography.scale.md)}px ${typography.family}` }}>
-            This browser
-          </h2>
+        <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+          <SectionHeading>This browser</SectionHeading>
           <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
             Signing out ends this browser&apos;s session and asks for the core token again. It
             affects nothing anywhere else, and it does not turn notifications off — this device
@@ -479,14 +440,7 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
               onClick={() => {
                 void signOut();
               }}
-              style={{
-                background: material.fillElevated,
-                color: "inherit",
-                border: `1px solid ${material.border}`,
-                borderRadius: corner.sm,
-                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
-                cursor: "pointer",
-              }}
+              style={buttonStyle}
             >
               Sign out
             </button>
@@ -495,7 +449,7 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
       )}
 
       {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
-    </section>
+    </Page>
   );
 }
 
@@ -564,18 +518,7 @@ function PermissionRow({
       ) : (
         onRevoke !== undefined && (
           <div>
-            <button
-              type="button"
-              onClick={onRevoke}
-              style={{
-                background: material.fillElevated,
-                color: "inherit",
-                border: `1px solid ${material.border}`,
-                borderRadius: corner.sm,
-                padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
-                cursor: "pointer",
-              }}
-            >
+            <button type="button" onClick={onRevoke} style={buttonStyle}>
               Revoke {permission.capability}
             </button>
           </div>

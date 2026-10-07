@@ -1,26 +1,21 @@
-import { RemoteDesktopTargetSchema } from "@noctis/contracts";
-import { corner, material, spacing, typography } from "@noctis/ui";
+import { NodeDescriptorSchema, RemoteDesktopTargetSchema } from "@noctis/contracts";
+import { NavIcon, identityAccent, semantic, spacing, typography } from "@noctis/ui";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
+import { Page, SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { useIsMobile } from "../layout/useIsMobile.js";
 import { mountRemoteDesktop } from "../remote/component.js";
 import type { RemoteHandle, RemoteState, RemoteUserInteraction } from "../remote/session.js";
 import { connectRemote, describeFailure } from "../remote/session.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
-import { buttonStyle } from "./ObjectiveList.js";
-
 const HostsSchema = z.object({ hosts: z.array(RemoteDesktopTargetSchema) });
+const NodesSchema = z.object({
+  nodes: z.array(NodeDescriptorSchema.extend({ connected: z.boolean() })),
+});
 
-const fieldStyle = {
-  background: material.fill,
-  border: `1px solid ${material.border}`,
-  borderRadius: corner.sm,
-  color: "inherit",
-  padding: spacing.sm,
-  minHeight: 44,
-  boxSizing: "border-box",
-} as const;
+type NodeView = z.infer<typeof NodesSchema>["nodes"][number];
 
 function statusLine(state: RemoteState): string {
   switch (state.phase) {
@@ -40,8 +35,8 @@ function statusLine(state: RemoteState): string {
 }
 
 /**
- * The Nodes destination, which today is the embedded remote desktop (Task 3.9,
- * ADR-0035). The node list itself is a later task.
+ * Nodes: the owner's PCs, which agents each one can run, and the embedded
+ * remote desktop onto them (Task 3.9, ADR-0035).
  *
  * The Windows password lives in this component's state only between typing it
  * and pressing Connect: it is handed to `connectRemote` and the field is
@@ -49,6 +44,8 @@ function statusLine(state: RemoteState): string {
  * nothing is submitted for a browser to offer to remember.
  */
 export function Nodes({ transport }: { transport: CoreTransport | undefined }): JSX.Element {
+  const isMobile = useIsMobile();
+  const [nodes, setNodes] = useState<readonly NodeView[]>();
   const [hosts, setHosts] = useState<string[]>();
   const [hostsError, setHostsError] = useState<string>();
   const [host, setHost] = useState("");
@@ -64,6 +61,17 @@ export function Nodes({ transport }: { transport: CoreTransport | undefined }): 
     }
 
     let cancelled = false;
+
+    void transport.request("GET", "/nodes").then(
+      (response) => {
+        const parsed = NodesSchema.safeParse(response.body);
+
+        if (!cancelled && response.status === 200 && parsed.success) {
+          setNodes(parsed.data.nodes.filter((node) => node.revokedAt === undefined));
+        }
+      },
+      () => undefined,
+    );
 
     void transport.request("GET", "/remote/hosts").then(
       (response) => {
@@ -139,131 +147,266 @@ export function Nodes({ transport }: { transport: CoreTransport | undefined }): 
     }
   };
 
+  const online = nodes?.filter((node) => node.connected).length ?? 0;
+
   return (
-    <section
-      aria-label="Nodes"
-      style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: spacing.sm }}
+    <Page
+      title="Nodes"
+      subtitle={
+        nodes === undefined
+          ? "Your PCs"
+          : `${String(nodes.length)} PC${nodes.length === 1 ? "" : "s"}, ${String(online)} online`
+      }
     >
-      <div style={{ padding: spacing.md, display: "grid", gap: spacing.sm }}>
-        <h1 style={{ margin: 0, fontSize: typography.scale.lg }}>Remote desktop</h1>
-
-        {hostsError !== undefined && <p role="alert">{hostsError}</p>}
-
-        {hosts !== undefined && hosts.length === 0 && (
-          <p>
-            No remote desktop is set up on this core. AnyDesk is still the way in until it is
-            (docs/operations/remote-access.md).
+      <section aria-label="PCs" style={{ display: "grid", gap: spacing.md }}>
+        <SectionHeading>PCs</SectionHeading>
+        {nodes !== undefined && nodes.length === 0 && (
+          <p style={{ margin: 0, color: typography.color.muted }}>
+            No PC is paired with this core yet.
           </p>
         )}
-
-        {hosts !== undefined && hosts.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: spacing.sm, alignItems: "end" }}>
-            <label style={{ display: "grid", gap: spacing.xs }}>
-              <span>Host</span>
-              <select
-                value={host}
-                disabled={busy || connected}
-                onChange={(event) => {
-                  setHost(event.target.value);
-                }}
-                style={fieldStyle}
-              >
-                {hosts.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {!connected && (
-              <>
-                <label style={{ display: "grid", gap: spacing.xs }}>
-                  <span>Windows user</span>
-                  <input
-                    value={username}
-                    autoComplete="username"
-                    disabled={busy}
-                    onChange={(event) => {
-                      setUsername(event.target.value);
-                    }}
-                    style={fieldStyle}
-                  />
-                </label>
-                <label style={{ display: "grid", gap: spacing.xs }}>
-                  <span>Windows password (not saved)</span>
-                  <input
-                    type="password"
-                    value={password}
-                    autoComplete="off"
-                    disabled={busy}
-                    onChange={(event) => {
-                      setPassword(event.target.value);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && username !== "" && password !== "") {
-                        void connect();
-                      }
-                    }}
-                    style={fieldStyle}
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={busy || host === "" || username === "" || password === ""}
-                  onClick={() => {
-                    void connect();
-                  }}
-                  style={{ ...buttonStyle, minHeight: 44 }}
-                >
-                  Connect
-                </button>
-              </>
-            )}
-
-            {connected && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    session.current?.ui.ctrlAltDel();
-                  }}
-                  style={{ ...buttonStyle, minHeight: 44 }}
-                >
-                  Ctrl+Alt+Del
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    session.current?.handle.disconnect();
-                  }}
-                  style={{ ...buttonStyle, minHeight: 44 }}
-                >
-                  Disconnect
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        <p
-          role={state.phase === "failed" ? "alert" : "status"}
-          style={{ margin: 0, color: typography.color.muted }}
+        <ul
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 260px), 1fr))",
+            gap: spacing.md,
+          }}
         >
-          {statusLine(state)}
-          {connected && " Keyboard input goes to the desktop while the pointer is over it."}
-        </p>
-      </div>
+          {(nodes ?? []).map((node) => (
+            <NodeCard key={node.id} node={node} />
+          ))}
+        </ul>
+      </section>
 
-      {/* Always mounted, so the component has a box to fit into before it connects. */}
-      <div
-        ref={display}
-        style={{
-          flex: 1,
-          minHeight: 0,
-          background: state.phase === "idle" ? "transparent" : "#000",
-        }}
-      />
-    </section>
+      <section aria-label="Remote desktop" style={{ display: "grid", gap: spacing.md }}>
+        <SectionHeading>Remote desktop</SectionHeading>
+
+        <div style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+          {hostsError !== undefined && (
+            <p role="alert" style={{ margin: 0 }}>
+              {hostsError}
+            </p>
+          )}
+
+          {hosts !== undefined && hosts.length === 0 && (
+            <p style={{ margin: 0 }}>
+              No remote desktop is set up on this core. AnyDesk is still the way in until it is
+              (docs/operations/remote-access.md).
+            </p>
+          )}
+
+          {hosts !== undefined && hosts.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile
+                  ? "minmax(0, 1fr)"
+                  : "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: spacing.md,
+                alignItems: "end",
+              }}
+            >
+              <label style={labelStyle}>
+                <span>Host</span>
+                <select
+                  value={host}
+                  disabled={busy || connected}
+                  onChange={(event) => {
+                    setHost(event.target.value);
+                  }}
+                  style={fieldStyle}
+                >
+                  {hosts.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {!connected && (
+                <>
+                  <label style={labelStyle}>
+                    <span>Windows user</span>
+                    <input
+                      value={username}
+                      autoComplete="username"
+                      disabled={busy}
+                      onChange={(event) => {
+                        setUsername(event.target.value);
+                      }}
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <label style={labelStyle}>
+                    <span>Windows password (not saved)</span>
+                    <input
+                      type="password"
+                      value={password}
+                      autoComplete="off"
+                      disabled={busy}
+                      onChange={(event) => {
+                        setPassword(event.target.value);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && username !== "" && password !== "") {
+                          void connect();
+                        }
+                      }}
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={busy || host === "" || username === "" || password === ""}
+                    onClick={() => {
+                      void connect();
+                    }}
+                    style={primaryButton}
+                  >
+                    Connect
+                  </button>
+                </>
+              )}
+
+              {connected && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      session.current?.ui.ctrlAltDel();
+                    }}
+                    style={buttonStyle}
+                  >
+                    Ctrl+Alt+Del
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      session.current?.handle.disconnect();
+                    }}
+                    style={buttonStyle}
+                  >
+                    Disconnect
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          <p
+            role={state.phase === "failed" ? "alert" : "status"}
+            style={{ margin: 0, color: typography.color.muted, fontSize: typography.scale.sm }}
+          >
+            {statusLine(state)}
+            {connected && " Keyboard input goes to the desktop while the pointer is over it."}
+          </p>
+        </div>
+
+        {/* Always mounted, so the component has a box to fit into. Sized from
+            the moment a connect starts, because the element scales to fit
+            whatever box it finds when it mounts. */}
+        <div
+          ref={display}
+          style={{
+            height: state.phase === "idle" ? 0 : "min(70vh, 760px)",
+            borderRadius: 12,
+            overflow: "hidden",
+            background: state.phase === "idle" ? "transparent" : "#000",
+          }}
+        />
+      </section>
+    </Page>
   );
 }
+
+function NodeCard({ node }: { node: NodeView }): JSX.Element {
+  const agents = node.providers.filter((provider) => provider.available);
+
+  return (
+    <li
+      data-node={node.hostId}
+      style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.sm }}
+    >
+      <p style={{ margin: 0, display: "flex", alignItems: "center", gap: spacing.sm }}>
+        <span
+          style={{
+            color: node.connected ? identityAccent.vesper.primary : typography.color.muted,
+          }}
+        >
+          <NavIcon item="Nodes" />
+        </span>
+        <strong style={{ fontWeight: 600, fontSize: typography.scale.md }}>{node.hostId}</strong>
+        <span style={{ flex: 1 }} />
+        <span
+          aria-hidden="true"
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: node.connected ? semantic.current : semantic.unavailable,
+            boxShadow: node.connected ? `0 0 8px ${semantic.current}` : "none",
+          }}
+        />
+        <span style={{ fontSize: typography.scale.sm }}>
+          {node.connected ? "Online" : "Offline"}
+        </span>
+      </p>
+      <p style={{ margin: 0, color: typography.color.muted, fontSize: typography.scale.sm }}>
+        {node.connected
+          ? "Connected now"
+          : node.lastSeenAt === undefined
+            ? "Never connected"
+            : `Last seen ${new Date(node.lastSeenAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}`}
+      </p>
+      <p style={{ margin: 0, display: "flex", flexWrap: "wrap", gap: spacing.xs }}>
+        {agents.length === 0 ? (
+          <span style={{ color: typography.color.muted, fontSize: typography.scale.sm }}>
+            No agent found on this PC
+          </span>
+        ) : (
+          agents.map((agent) => (
+            <span key={agent.providerId} style={chipStyle}>
+              {AGENT_NAMES[agent.providerId] ?? agent.providerId}
+            </span>
+          ))
+        )}
+      </p>
+    </li>
+  );
+}
+
+const AGENT_NAMES: Readonly<Record<string, string>> = {
+  claude: "Claude",
+  codex: "Codex",
+  hermes: "Hermes",
+  local: "Local model",
+};
+
+const labelStyle = {
+  display: "grid",
+  gap: spacing.xs,
+  fontSize: typography.scale.sm,
+  color: typography.color.muted,
+} as const;
+
+const primaryButton = {
+  ...buttonStyle,
+  background: identityAccent.vesper.secondary,
+  borderColor: identityAccent.vesper.primary,
+} as const;
+
+const chipStyle = {
+  fontSize: typography.scale.xs,
+  letterSpacing: typography.tracking.wide,
+  padding: `2px ${String(spacing.sm)}px`,
+  borderRadius: 999,
+  border: `1px solid ${identityAccent.vesper.secondary}`,
+  color: typography.color.primary,
+} as const;

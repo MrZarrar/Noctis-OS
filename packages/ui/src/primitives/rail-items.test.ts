@@ -1,22 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { RAIL_ITEMS } from "./rail-items.js";
+import { HIDDEN_ITEMS, NAV_ITEMS, railItems } from "./rail-items.js";
 
-describe("RAIL_ITEMS", () => {
-  it("is exactly the eight permanent items from Section 5.1, in order", () => {
-    expect(RAIL_ITEMS).toEqual([
-      "Command",
-      "Chat",
-      "Missions",
-      "Artifacts",
-      "Vault",
-      "Nodes",
-      "Automations",
-      "Settings",
-    ]);
+describe("v1 navigation", () => {
+  it("is exactly the five v1 destinations, in order", () => {
+    expect(NAV_ITEMS).toEqual(["Threads", "Files", "Nodes", "Approvals", "Vault"]);
+  });
+
+  it("shows only the v1 destinations unless every page is asked for", () => {
+    expect(railItems(false)).toEqual(NAV_ITEMS);
+  });
+
+  it("keeps the earlier pages reachable behind the flag, after the v1 ones", () => {
+    expect(railItems(true)).toEqual([...NAV_ITEMS, ...HIDDEN_ITEMS]);
+    expect(HIDDEN_ITEMS).toEqual(["Command", "Missions", "Artifacts", "Automations"]);
+  });
+
+  it("never lists Settings as a destination, because it has its own control", () => {
+    expect(railItems(true)).not.toContain("Settings");
   });
 
   it("has no duplicate item", () => {
-    expect(new Set(RAIL_ITEMS).size).toBe(RAIL_ITEMS.length);
+    const all = railItems(true);
+
+    expect(new Set(all).size).toBe(all.length);
   });
 });

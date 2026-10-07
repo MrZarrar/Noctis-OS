@@ -1,12 +1,16 @@
 import {
+  HIDDEN_ITEMS,
+  NavIcon,
+  NoctisMark,
   Rail,
   TAB_BAR_HEIGHT,
   TabBar,
   corner,
   depth,
+  elevation,
+  identityAccent,
   material,
   spacing,
-  tabsFor,
   typography,
 } from "@noctis/ui";
 import type { RailItem } from "@noctis/ui";
@@ -17,13 +21,15 @@ import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
 import { useIsMobile } from "./layout/useIsMobile.js";
+import { Approvals } from "./pages/Approvals.js";
 import { Artifacts } from "./pages/Artifacts.js";
-import { Chat } from "./pages/Chat.js";
 import { Command } from "./pages/Command.js";
+import { Files } from "./pages/Files.js";
 import { Login } from "./pages/Login.js";
 import { Missions } from "./pages/Missions.js";
 import { Nodes } from "./pages/Nodes.js";
 import { Settings } from "./pages/Settings.js";
+import { Threads } from "./pages/Threads.js";
 import { Vault } from "./pages/Vault.js";
 import { resumeSession } from "./session/login.js";
 import type { CoreTransport } from "./transport/CoreTransport.js";
@@ -41,6 +47,12 @@ interface VaultHandoff {
   entityId: string;
   returnTo: RailItem;
 }
+
+/**
+ * Command, Missions, Artifacts and Automations predate v1's narrower product.
+ * They stay built and working, and a build with this flag offers them again.
+ */
+const ALL_PAGES = import.meta.env.VITE_NOCTIS_ALL_PAGES === "1";
 
 /**
  * A page with no token cannot build a transport until it has a session, and it
@@ -124,17 +136,17 @@ function Workbench({
   /** Absent for the packaged shell and a token build, which have no session to end. */
   onSignedOut?: () => void;
 }): JSX.Element {
-  const [active, setActive] = useState<RailItem>("Command");
+  const [active, setActive] = useState<RailItem>("Threads");
   const [handoff, setHandoff] = useState<VaultHandoff>();
   const isMobile = useIsMobile();
   // No `open` state beside it: a `<dialog>` already knows whether it is open,
   // and `showModal` gives the focus trap and Escape-to-close that a hand-rolled
   // sheet would otherwise need a library for.
   const moreRef = useRef<HTMLDialogElement>(null);
-  const { overflow } = tabsFor(active);
 
-  // Identity and conversation live here, above Command and Chat, so Presence's
-  // prompt and Chat's history are one thread with one subscription (0.12).
+  // Identity and conversation live here, above Command and Threads, so
+  // Presence's prompt and the thread's history are one thread with one
+  // subscription (0.12).
   const identity = useIdentityRuntime(transport);
   const identityId = identity.activeIdentityId ?? "vesper";
   /**
@@ -144,8 +156,8 @@ function Workbench({
    * `activeObjectiveId` the only thread anything could name, so a question that
    * had nothing to do with the work in progress had to be asked inside it — or
    * the Objective had to be paused first. The flag lives here rather than in
-   * Chat because Presence sends on the same thread Chat shows (0.12), and two
-   * copies of "which thread" could disagree.
+   * Threads because Presence sends on the same thread Threads shows (0.12),
+   * and two copies of "which thread" could disagree.
    */
   const [freeThread, setFreeThread] = useState(false);
   const objectiveId = freeThread ? undefined : identity.activeObjectiveId;
@@ -160,7 +172,7 @@ function Workbench({
 
   const sendAndShow = (text: string, options: SendOptions): void => {
     void conversation.send(text, options);
-    setActive("Chat");
+    setActive("Threads");
   };
 
   const select = (item: RailItem): void => {
@@ -176,10 +188,12 @@ function Workbench({
       style={{
         display: "flex",
         // Side by side where there is width for it, stacked where there is
-        // not: the rail's 72px column is 18% of a 400px phone.
+        // not: a rail column is a fifth of a 400px phone.
         flexDirection: isMobile ? "column" : "row",
         boxSizing: "border-box",
-        height: "100vh",
+        // The dynamic height, so a phone's collapsing address bar does not
+        // leave the tab bar sitting below the fold.
+        height: "100dvh",
         // The bar is fixed, so it is out of flow and would otherwise sit on top
         // of the last row of whatever page is showing. The inset is in the sum
         // because the bar pads by it too — without it a phone with a home
@@ -189,86 +203,141 @@ function Workbench({
               paddingBottom: `calc(${String(TAB_BAR_HEIGHT)}px + env(safe-area-inset-bottom))`,
             }
           : {}),
-        background: depth.floor,
+        // The room the pages sit in. Darkened over the image so every ground
+        // stays at the floor's depth and text keeps its contrast; the image
+        // only shows through as light at the edges.
+        background: `linear-gradient(180deg, rgba(5, 4, 9, 0.55), rgba(5, 4, 9, 0.78)), url(${isMobile ? BACKDROP_PORTRAIT : BACKDROP_LANDSCAPE}) center / cover no-repeat, ${depth.floor}`,
         color: typography.color.primary,
         fontFamily: typography.family,
       }}
     >
-      {!isMobile && <Rail active={active} onSelect={select} />}
+      {!isMobile && <Rail active={active} onSelect={select} allPages={ALL_PAGES} />}
 
-      {/* Command stays mounted while the Vault is showing, so returning to it
-          finds the composition it had rather than a fresh one. */}
-      <div style={{ display: active === "Command" ? "contents" : "none" }}>
-        <Command
-          transport={transport}
-          identity={identity}
-          conversation={conversation}
-          onSend={sendAndShow}
-          onOpenInVault={openInVault}
-        />
-      </div>
-
-      {active === "Chat" && (
-        <Chat
-          identityId={identityId}
-          conversation={conversation}
-          connected={transport !== undefined}
-          // Only offered when there is a second thread to go to. Without an
-          // active Objective, free chat is the only thread there is.
-          {...(identity.activeObjectiveId === undefined
-            ? {}
-            : { freeThread, onUseFreeThread: setFreeThread })}
-          onOpenThread={setOpenThreadId}
-        />
-      )}
-
-      {active === "Vault" && (
-        <Vault
-          transport={transport}
-          {...(handoff === undefined ? {} : { focusId: handoff.entityId })}
-          {...(handoff === undefined
-            ? {}
-            : {
-                onReturn: () => {
-                  setActive(handoff.returnTo);
-                  setHandoff(undefined);
-                },
-              })}
-        />
-      )}
-
-      {active === "Missions" && (
-        <Missions
-          transport={transport}
-          onOpenChat={(turn) => {
-            // The thread the turn ran on, not merely the Chat page: a turn
-            // under an Objective is invisible from the free thread and vice
-            // versa, and arriving at the wrong one looks like lost history.
-            if (turn.identityId !== identityId) {
-              void identity.activate(turn.identityId);
-            }
-
-            setFreeThread(turn.objectiveId === undefined);
-            setActive("Chat");
+      {isMobile && (
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: spacing.sm,
+            flexShrink: 0,
+            padding: `calc(${String(spacing.xs)}px + env(safe-area-inset-top)) ${String(spacing.sm)}px ${String(spacing.xs)}px ${String(spacing.lg)}px`,
+            borderBottom: `1px solid ${material.border}`,
+            background: "rgba(5, 4, 9, 0.6)",
+            backdropFilter: `blur(${String(material.blurPx)}px)`,
+            WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
+            zIndex: elevation.rail,
           }}
-        />
+        >
+          <NoctisMark size={24} />
+          <span
+            style={{
+              font: `600 ${String(typography.scale.xs)}px ${typography.family}`,
+              letterSpacing: "0.32em",
+            }}
+          >
+            NOCTIS
+          </span>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            aria-label="Settings"
+            aria-current={active === "Settings" ? "page" : undefined}
+            onClick={() => {
+              select("Settings");
+            }}
+            style={{
+              display: "grid",
+              placeItems: "center",
+              width: 44,
+              height: 44,
+              color: active === "Settings" ? identityAccent.vesper.primary : typography.color.muted,
+              background: "transparent",
+              border: "none",
+              borderRadius: corner.md,
+              cursor: "pointer",
+            }}
+          >
+            <NavIcon item="Settings" />
+          </button>
+        </header>
       )}
 
-      {active === "Artifacts" && <Artifacts transport={transport} />}
+      <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+        {/* Command stays mounted while the Vault is showing, so returning to
+            it finds the composition it had rather than a fresh one. Mounted
+            only when it can be reached at all. */}
+        {ALL_PAGES && (
+          <div style={{ display: active === "Command" ? "contents" : "none" }}>
+            <Command
+              transport={transport}
+              identity={identity}
+              conversation={conversation}
+              onSend={sendAndShow}
+              onOpenInVault={openInVault}
+            />
+          </div>
+        )}
 
-      {active === "Nodes" && <Nodes transport={transport} />}
+        {active === "Threads" && (
+          <Threads
+            identityId={identityId}
+            conversation={conversation}
+            connected={transport !== undefined}
+            // Only offered when there is a second thread to go to. Without an
+            // active Objective, free chat is the only thread there is.
+            {...(identity.activeObjectiveId === undefined
+              ? {}
+              : { freeThread, onUseFreeThread: setFreeThread })}
+            onOpenThread={setOpenThreadId}
+          />
+        )}
 
-      {active === "Settings" && (
-        <Settings transport={transport} {...(onSignedOut === undefined ? {} : { onSignedOut })} />
-      )}
+        {active === "Files" && <Files roots={conversation.roots} />}
 
-      {active !== "Command" &&
-        active !== "Chat" &&
-        active !== "Vault" &&
-        active !== "Missions" &&
-        active !== "Artifacts" &&
-        active !== "Nodes" &&
-        active !== "Settings" && (
+        {active === "Approvals" && <Approvals transport={transport} />}
+
+        {active === "Vault" && (
+          <Vault
+            transport={transport}
+            {...(handoff === undefined ? {} : { focusId: handoff.entityId })}
+            {...(handoff === undefined
+              ? {}
+              : {
+                  onReturn: () => {
+                    setActive(handoff.returnTo);
+                    setHandoff(undefined);
+                  },
+                })}
+          />
+        )}
+
+        {active === "Missions" && (
+          <Missions
+            transport={transport}
+            onOpenChat={(turn) => {
+              // The thread the turn ran on, not merely the Threads page: a
+              // turn under an Objective is invisible from the free thread and
+              // vice versa, and arriving at the wrong one looks like lost
+              // history.
+              if (turn.identityId !== identityId) {
+                void identity.activate(turn.identityId);
+              }
+
+              setFreeThread(turn.objectiveId === undefined);
+              setActive("Threads");
+            }}
+          />
+        )}
+
+        {active === "Artifacts" && <Artifacts transport={transport} />}
+
+        {active === "Nodes" && <Nodes transport={transport} />}
+
+        {active === "Settings" && (
+          <Settings transport={transport} {...(onSignedOut === undefined ? {} : { onSignedOut })} />
+        )}
+
+        {active === "Automations" && (
           <section
             style={{
               flex: 1,
@@ -277,9 +346,10 @@ function Workbench({
               justifyContent: "center",
             }}
           >
-            {active} is not built yet — later phases add it behind this same navigation.
+            Automations is not built yet — later phases add it behind this same navigation.
           </section>
         )}
+      </main>
 
       {/* After the pages in source order, never before them: a bottom bar that
           comes first is the first thing a screen reader announces on every
@@ -289,59 +359,73 @@ function Workbench({
           <TabBar
             active={active}
             onSelect={select}
-            onMore={() => {
-              moreRef.current?.showModal();
-            }}
+            {...(ALL_PAGES
+              ? {
+                  onMore: () => {
+                    moreRef.current?.showModal();
+                  },
+                }
+              : {})}
           />
 
-          <dialog
-            ref={moreRef}
-            aria-label="More"
-            style={{
-              margin: "auto auto 0",
-              width: "min(100%, 480px)",
-              border: `1px solid ${material.border}`,
-              borderRadius: `${String(corner.lg)}px ${String(corner.lg)}px 0 0`,
-              background: depth.layers[1],
-              color: typography.color.primary,
-              fontFamily: typography.family,
-              padding: spacing.md,
-              paddingBottom: `calc(${String(spacing.md)}px + env(safe-area-inset-bottom))`,
-            }}
-          >
-            <div style={{ display: "grid", gap: spacing.xs }}>
-              {overflow.map((item) => (
+          {ALL_PAGES && (
+            <dialog
+              ref={moreRef}
+              aria-label="More"
+              style={{
+                margin: "auto auto 0",
+                width: "min(100%, 480px)",
+                border: `1px solid ${material.border}`,
+                borderRadius: `${String(corner.lg)}px ${String(corner.lg)}px 0 0`,
+                background: depth.layers[1],
+                color: typography.color.primary,
+                fontFamily: typography.family,
+                padding: spacing.md,
+                paddingBottom: `calc(${String(spacing.md)}px + env(safe-area-inset-bottom))`,
+              }}
+            >
+              <div style={{ display: "grid", gap: spacing.xs }}>
+                {HIDDEN_ITEMS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-current={item === active ? "page" : undefined}
+                    onClick={() => {
+                      select(item);
+                      moreRef.current?.close();
+                    }}
+                    style={moreButtonStyle}
+                  >
+                    <NavIcon item={item} />
+                    {item}
+                  </button>
+                ))}
+
                 <button
-                  key={item}
                   type="button"
                   onClick={() => {
-                    select(item);
                     moreRef.current?.close();
                   }}
                   style={moreButtonStyle}
                 >
-                  {item}
+                  Close
                 </button>
-              ))}
-
-              <button
-                type="button"
-                onClick={() => {
-                  moreRef.current?.close();
-                }}
-                style={moreButtonStyle}
-              >
-                Close
-              </button>
-            </div>
-          </dialog>
+              </div>
+            </dialog>
+          )}
         </>
       )}
     </div>
   );
 }
 
+const BACKDROP_PORTRAIT = "/assets/generated/backdrop-portrait.webp";
+const BACKDROP_LANDSCAPE = "/assets/generated/backdrop-landscape.webp";
+
 const moreButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: spacing.md,
   minHeight: 44,
   font: `${String(typography.scale.sm)}px ${typography.family}`,
   textAlign: "left",

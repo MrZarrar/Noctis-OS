@@ -1,7 +1,7 @@
 export * from "./tokens/index.js";
 export * from "./identities/profiles.js";
 export * from "./primitives/rail-items.js";
-export * from "./primitives/tab-items.js";
+export { NavIcon, NoctisMark } from "./primitives/icons.js";
 export { Rail } from "./primitives/Rail.js";
 export type { RailProps } from "./primitives/Rail.js";
 export { TabBar, TAB_BAR_HEIGHT, TAB_TARGET } from "./primitives/TabBar.js";

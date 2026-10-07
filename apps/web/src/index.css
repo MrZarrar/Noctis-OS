@@ -9,6 +9,39 @@
  * `'unsafe-inline'`. Everything else the app draws is a React `style` prop,
  * which is a CSSOM write and outside CSP's reach.
  */
+:root {
+  /* Native controls, scrollbars and the date picker draw dark to match. */
+  color-scheme: dark;
+  background: #050409;
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   margin: 0;
+}
+
+/* One focus ring for every control, in the accent, so keyboard focus is never
+   the browser's blue on a violet interface. */
+:focus-visible {
+  outline: 2px solid #8b7cf6;
+  outline-offset: 2px;
+}
+
+/* The Attach control is a label over an invisible file input; the ring has to
+   go on the label the eye sees. */
+.noctis-file-pick:focus-within {
+  outline: 2px solid #8b7cf6;
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }

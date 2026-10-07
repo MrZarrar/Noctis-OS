@@ -235,12 +235,12 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
       //    reaching this page over SSE. The browser attaches the cookie to the
       //    `EventSource` on its own — nothing in the page can, because
       //    `EventSource` takes no headers.
-      await tabTo(page, "Chat");
+      await tabTo(page, "Threads");
       await page.keyboard.press("Enter");
 
       const history = await waitFor(
         readPage,
-        (state) => state.heading === "Chat" && state.messages.length >= 1,
+        (state) => state.heading === "Threads" && state.messages.length >= 1,
         "Chat never loaded the seeded thread",
       );
 
@@ -282,11 +282,11 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
       assert.equal(requested.status, 200, JSON.stringify(requested.body));
       assert.equal(requested.body.outcome, "require_confirmation");
 
-      await tabTo(page, "Artifacts");
+      await tabTo(page, "Approvals");
       await page.keyboard.press("Enter");
       await waitFor(
         readPage,
-        (state) => state.heading === "Artifacts" && state.approvals.length === 1,
+        (state) => state.heading === "Approvals" && state.approvals.length === 1,
         "the seeded approval never reached the page",
       );
 

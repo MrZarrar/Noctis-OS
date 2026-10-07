@@ -19,6 +19,8 @@ const buttonStyle = {
   // consequence is the wrong place to be short of the touch floor. Shared by
   // Confirm, Decline, and Execute now, because they are equally answers.
   minHeight: 44,
+  font: "inherit",
+  fontWeight: 500,
   background: material.fillElevated,
   color: "inherit",
   border: `1px solid ${material.border}`,

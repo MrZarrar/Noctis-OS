@@ -3,6 +3,7 @@ import { ATTACHMENT_MEDIA_TYPES } from "@noctis/contracts";
 import {
   IDENTITY_PROFILES,
   corner,
+  identityAccent,
   material,
   promptPlaceholder,
   spacing,
@@ -10,6 +11,7 @@ import {
 } from "@noctis/ui";
 import { useState } from "react";
 
+import { buttonStyle, fieldStyle } from "../layout/Page.js";
 import type { RuntimeRootOption, SendOptions } from "./useConversation.js";
 
 export interface PromptFormProps {
@@ -57,13 +59,30 @@ const attachedItemStyle = {
   fontSize: typography.scale.sm,
 } as const;
 
-const selectStyle = {
-  background: material.fill,
-  border: `1px solid ${material.border}`,
-  borderRadius: corner.sm,
-  color: "inherit",
-  padding: spacing.xs,
+const pickerStyle = {
+  display: "grid",
+  gap: 2,
+  minWidth: 0,
+  fontSize: typography.scale.xs,
+  letterSpacing: typography.tracking.wide,
+  color: typography.color.muted,
 } as const;
+
+const sendStyle = {
+  ...buttonStyle,
+  background: identityAccent.vesper.secondary,
+  borderColor: identityAccent.vesper.primary,
+} as const;
+
+/** The last segment of a granted folder's path: the name the owner knows it by. */
+export function folderName(path: string): string {
+  return (
+    path
+      .split(/[\\/]+/)
+      .filter((part) => part !== "")
+      .at(-1) ?? path
+  );
+}
 
 /**
  * A folder named the way the owner thinks of it: the machine, the last path
@@ -75,13 +94,7 @@ const selectStyle = {
  * looking for the only root they wanted.
  */
 export function rootLabel(root: RuntimeRootOption): string {
-  const leaf =
-    root.path
-      .split(/[\\/]+/)
-      .filter((part) => part !== "")
-      .at(-1) ?? root.path;
-
-  return `${leaf} on ${root.hostId}${root.connected ? "" : " (offline)"}${root.mode === "read" ? " — read only" : ""}`;
+  return `${folderName(root.path)} on ${root.hostId}${root.connected ? "" : " (offline)"}${root.mode === "read" ? " — read only" : ""}`;
 }
 
 export function modelKey(model: ModelRef): string {
@@ -148,36 +161,52 @@ export function PromptForm({
         event.preventDefault();
         submit();
       }}
-      style={{ display: "grid", gap: spacing.sm, width: "100%", maxWidth: 720 }}
+      style={{ display: "grid", gap: spacing.sm, width: "100%" }}
     >
-      <textarea
-        aria-label={`Message ${displayName}`}
-        placeholder={promptPlaceholder(identityId)}
-        value={text}
-        disabled={disabled}
-        rows={2}
-        onChange={(event) => {
-          setText(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            submit();
-          }
-        }}
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
-          background: material.fill,
-          border: `1px solid ${material.border}`,
-          borderRadius: spacing.md,
-          color: "inherit",
-          fontFamily: typography.family,
-          fontSize: typography.scale.base,
-          resize: "vertical",
-        }}
-      />
+      <div style={{ display: "flex", gap: spacing.sm, alignItems: "stretch" }}>
+        <textarea
+          aria-label={`Message ${displayName}`}
+          placeholder={promptPlaceholder(identityId)}
+          value={text}
+          disabled={disabled}
+          rows={2}
+          onChange={(event) => {
+            setText(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              submit();
+            }
+          }}
+          style={{
+            width: "100%",
+            minHeight: 52,
+            boxSizing: "border-box",
+            padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
+            background: material.fill,
+            border: `1px solid ${material.border}`,
+            borderRadius: corner.lg,
+            color: "inherit",
+            fontFamily: typography.family,
+            // 16px or more, or iOS zooms the page in when the box takes focus.
+            fontSize: 16,
+            lineHeight: 1.45,
+            resize: "none",
+          }}
+        />
+        <button
+          type="submit"
+          disabled={disabled || text.trim() === ""}
+          style={{
+            ...sendStyle,
+            opacity: disabled || text.trim() === "" ? 0.55 : 1,
+            cursor: disabled ? "default" : "pointer",
+          }}
+        >
+          Send
+        </button>
+      </div>
       {files.length > 0 && (
         // Named and removable before the send, because an attachment the owner
         // cannot see is one they cannot take back — and the upload only happens
@@ -193,6 +222,8 @@ export function PromptForm({
                   setFiles(files.filter((candidate) => candidate !== file));
                 }}
                 style={{
+                  minWidth: 44,
+                  minHeight: 44,
                   background: "transparent",
                   border: "none",
                   color: typography.color.muted,
@@ -206,17 +237,74 @@ export function PromptForm({
         </ul>
       )}
 
-      <div style={{ display: "flex", gap: spacing.sm, alignItems: "center" }}>
+      {/* Which agent, and which PC it runs on: the two choices a thread is
+          started with. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: canAttach
+            ? "minmax(0, 1fr) minmax(0, 1fr) auto"
+            : "minmax(0, 1fr) minmax(0, 1fr)",
+          alignItems: "end",
+          gap: spacing.sm,
+        }}
+      >
+        <label style={pickerStyle}>
+          <span>Agent</span>
+          <select
+            value={selectedKey}
+            disabled={disabled || options.length === 0}
+            onChange={(event) => {
+              setChosen(event.target.value);
+            }}
+            style={fieldStyle}
+          >
+            {options.length === 0 && <option value="">No agent offered by any PC</option>}
+            {options.map((model) => (
+              <option key={modelKey(model)} value={modelKey(model)}>
+                {modelLabel(model)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {roots.length > 0 && (
+          <label style={pickerStyle}>
+            <span>PC and folder</span>
+            <select
+              value={rootGrantId}
+              disabled={disabled}
+              onChange={(event) => {
+                setRootGrantId(event.target.value);
+              }}
+              style={fieldStyle}
+            >
+              {/* The core's own rule when nothing is named: the chosen node's
+                  first writable root. Said out loud rather than left blank. */}
+              <option value="">Wherever Noctis chooses</option>
+              {roots.map((root) => (
+                <option key={root.grantId} value={root.grantId}>
+                  {rootLabel(root)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {canAttach && (
+          // The native picker, invisible and stretched over a button-shaped
+          // label: it keeps the keyboard and the file dialog without the
+          // browser's own control, which no two platforms draw alike.
           <label
+            className="noctis-file-pick"
             style={{
-              display: "flex",
+              ...buttonStyle,
+              position: "relative",
+              display: "inline-flex",
               alignItems: "center",
-              gap: spacing.xs,
+              color: typography.color.muted,
               cursor: disabled ? "default" : "pointer",
             }}
           >
-            <span style={{ color: typography.color.muted }}>Attach</span>
+            Attach
             <input
               type="file"
               multiple
@@ -230,65 +318,16 @@ export function PromptForm({
                 // Cleared so picking the same file twice in a row still fires.
                 event.target.value = "";
               }}
-              style={{ maxWidth: 160, color: typography.color.muted }}
+              style={{
+                position: "absolute",
+                // Over the border too, so the input is the whole button.
+                inset: -1,
+                opacity: 0,
+                cursor: "inherit",
+              }}
             />
           </label>
         )}
-        <label style={{ display: "flex", alignItems: "center", gap: spacing.xs }}>
-          <span style={{ color: typography.color.muted }}>Model</span>
-          <select
-            value={selectedKey}
-            disabled={disabled || options.length === 0}
-            onChange={(event) => {
-              setChosen(event.target.value);
-            }}
-            style={selectStyle}
-          >
-            {options.length === 0 && <option value="">No model offered by any node</option>}
-            {options.map((model) => (
-              <option key={modelKey(model)} value={modelKey(model)}>
-                {modelLabel(model)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {roots.length > 0 && (
-          <label style={{ display: "flex", alignItems: "center", gap: spacing.xs }}>
-            <span style={{ color: typography.color.muted }}>Where</span>
-            <select
-              value={rootGrantId}
-              disabled={disabled}
-              onChange={(event) => {
-                setRootGrantId(event.target.value);
-              }}
-              style={selectStyle}
-            >
-              {/* The core's own rule when nothing is named: the chosen node's
-                  first writable root. Said out loud rather than left blank. */}
-              <option value="">Wherever Noctis chooses</option>
-              {roots.map((root) => (
-                <option key={root.grantId} value={root.grantId}>
-                  {rootLabel(root)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <span style={{ flex: 1 }} />
-        <button
-          type="submit"
-          disabled={disabled || text.trim() === ""}
-          style={{
-            background: material.fillElevated,
-            color: "inherit",
-            border: `1px solid ${material.border}`,
-            borderRadius: corner.sm,
-            padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
-            cursor: disabled ? "default" : "pointer",
-          }}
-        >
-          Send
-        </button>
       </div>
     </form>
   );

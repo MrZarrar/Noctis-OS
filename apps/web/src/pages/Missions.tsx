@@ -7,7 +7,7 @@ import { modelLabel } from "../conversation/PromptForm.js";
 import type { Turn } from "../conversation/useConversation.js";
 import { TurnSchema } from "../conversation/useConversation.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
-import { ItemRow } from "./Chat.js";
+import { ItemRow } from "./Threads.js";
 
 /**
  * Missions: every turn Noctis has run, across every thread.

@@ -1,17 +1,10 @@
 import type { VaultSphereEdge, VaultSphereNode } from "@noctis/ui";
-import {
-  RecallSurface,
-  VaultSphere,
-  corner,
-  material,
-  semantic,
-  spacing,
-  typography,
-} from "@noctis/ui";
+import { RecallSurface, VaultSphere, semantic, spacing, typography } from "@noctis/ui";
 import type { RecallEvidenceView } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
+import { Page, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 /**
@@ -201,61 +194,44 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
   }, [transport, query]);
 
   return (
-    <section
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        gap: spacing.md,
-        padding: spacing.lg,
-        minWidth: 0,
-        overflow: "auto",
-      }}
-    >
-      <header style={{ display: "flex", alignItems: "center", gap: spacing.md }}>
-        <h1 style={{ margin: 0, font: `${String(typography.scale.lg)}px ${typography.family}` }}>
-          Vault
-        </h1>
-        <VaultStatus status={status} />
-        <span style={{ flex: 1 }} />
-        {onReturn !== undefined && (
-          <button type="button" onClick={onReturn} style={buttonStyle}>
-            Return to the Objective
+    <Page
+      title="Vault"
+      subtitle={<VaultStatus status={status} />}
+      actions={
+        <>
+          {onReturn !== undefined && (
+            <button type="button" onClick={onReturn} style={buttonStyle}>
+              Return to the Objective
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              void reindex();
+            }}
+            style={buttonStyle}
+          >
+            Reindex
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => {
-            void reindex();
-          }}
-          style={buttonStyle}
-        >
-          Reindex
-        </button>
-      </header>
-
+        </>
+      }
+    >
       <form
         onSubmit={(event) => {
           event.preventDefault();
           void search();
         }}
-        style={{ display: "flex", gap: spacing.sm }}
+        style={{ display: "flex", gap: spacing.sm, alignItems: "center", maxWidth: 560 }}
       >
-        <label style={{ display: "flex", alignItems: "center", gap: spacing.sm }}>
+        <label style={{ display: "flex", alignItems: "center", gap: spacing.sm, flex: 1 }}>
           <span>Recall</span>
           <input
             value={query}
+            placeholder="Ask the Vault what it knows"
             onChange={(event) => {
               setQuery(event.target.value);
             }}
-            style={{
-              width: 320,
-              background: material.fill,
-              border: `1px solid ${material.border}`,
-              borderRadius: corner.sm,
-              color: "inherit",
-              padding: spacing.sm,
-            }}
+            style={fieldStyle}
           />
         </label>
         <button type="submit" style={buttonStyle}>
@@ -264,13 +240,7 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
       </form>
 
       {recall !== undefined && (
-        <div
-          style={{
-            border: `1px solid ${material.border}`,
-            borderRadius: corner.lg,
-            padding: spacing.md,
-          }}
-        >
+        <div style={{ ...glass, padding: spacing.lg }}>
           <RecallSurface
             query={recall.query}
             freshness={recall.freshness}
@@ -297,18 +267,9 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
       />
 
       {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
-    </section>
+    </Page>
   );
 }
-
-const buttonStyle = {
-  background: material.fill,
-  color: "inherit",
-  border: `1px solid ${material.border}`,
-  borderRadius: corner.sm,
-  padding: `${String(spacing.xs)}px ${String(spacing.md)}px`,
-  cursor: "pointer",
-} as const;
 
 function VaultStatus({
   status,

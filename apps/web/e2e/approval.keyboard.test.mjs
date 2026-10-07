@@ -52,20 +52,20 @@ async function coreCommand(name, body) {
 }
 
 /**
- * Reloads and walks to Artifacts with the keyboard.
+ * Reloads and walks to a page with the keyboard.
  *
  * A reload is deliberate rather than a React state refresh: the rail returns to
- * Command, so every visit re-reads the core rather than trusting what the page
+ * Threads, so every visit re-reads the core rather than trusting what the page
  * happened to be holding.
  */
-async function openArtifacts() {
+async function open(name) {
   await page.goto(WEB_URL);
-  await tabTo(page, "Artifacts");
+  await tabTo(page, name);
   await page.keyboard.press("Enter");
-  await waitFor(readPage, (state) => state.heading === "Artifacts", "Artifacts never opened");
+  await waitFor(readPage, (state) => state.heading === name, `${name} never opened`);
 }
 
-/** What the Artifacts page currently shows, in the terms the gate is written in. */
+/** What the Approvals or Artifacts page shows, in the terms the gate is written in. */
 function readPage() {
   return page.evaluate(() => {
     const confirm = [...document.querySelectorAll("button")].find(
@@ -130,6 +130,8 @@ describe("the consequence boundary, driven only by the keyboard", () => {
           ...process.env,
           VITE_CORE_URL: WEB_URL,
           VITE_CORE_TOKEN: TOKEN,
+          // Command and Artifacts are behind the all-pages flag since v1.
+          VITE_NOCTIS_ALL_PAGES: "1",
           NOCTIS_CORE_PROXY_TARGET: CORE_URL,
         },
       },
@@ -178,7 +180,7 @@ describe("the consequence boundary, driven only by the keyboard", () => {
 
       assert.equal(phrase, "SPEND GBP 8.00 ON provider:suno");
 
-      await openArtifacts();
+      await open("Approvals");
 
       const waiting = await waitFor(
         readPage,
@@ -276,7 +278,7 @@ describe("the consequence boundary, driven only by the keyboard", () => {
 
       assert.equal(external.status, 200);
 
-      await openArtifacts();
+      await open("Artifacts");
 
       const listed = await waitFor(
         readPage,
@@ -297,7 +299,7 @@ describe("the consequence boundary, driven only by the keyboard", () => {
         checksum: "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
       });
 
-      await openArtifacts();
+      await open("Artifacts");
 
       const afterImport = await waitFor(
         readPage,

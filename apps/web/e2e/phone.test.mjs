@@ -44,16 +44,11 @@ const DESKTOP = { width: 1280, height: 800 };
 /** Section 5.2's touch floor. */
 const MIN_TARGET = 44;
 
-const RAIL_ITEMS = [
-  "Command",
-  "Chat",
-  "Missions",
-  "Artifacts",
-  "Vault",
-  "Nodes",
-  "Automations",
-  "Settings",
-];
+/** The v1 destinations, in the order the bar and the rail show them. */
+const NAV_ITEMS = ["Threads", "Files", "Nodes", "Approvals", "Vault"];
+
+/** Every page the owner can reach without the all-pages flag, with the heading it shows. */
+const V1_PAGES = [...NAV_ITEMS, "Settings"];
 
 let core;
 let agent;
@@ -127,10 +122,47 @@ function readPage() {
   }));
 }
 
-async function openChat() {
-  await tabTo(page, "Chat");
+/** Walks to a page with the keyboard, the way the owner's thumb would tap it. */
+async function open(name) {
+  await tabTo(page, name);
   await page.keyboard.press("Enter");
-  await waitFor(readPage, (state) => state.heading === "Chat", "Chat never opened");
+  await waitFor(readPage, (state) => state.heading === name, `${name} never opened`);
+}
+
+/**
+ * Every control on the page a thumb could aim at, measured. Hidden ones are
+ * left out: a `<details>` body or a closed sheet is not on screen to miss.
+ */
+function readControls() {
+  return page.evaluate(() =>
+    [...document.querySelectorAll("button, select, textarea, input:not([type=hidden]), a[href]")]
+      .filter((element) => element.checkVisibility())
+      .map((element) => {
+        const box = element.getBoundingClientRect();
+        const name =
+          element.getAttribute("aria-label") ??
+          element.labels?.[0]?.textContent?.trim() ??
+          element.textContent?.trim() ??
+          element.tagName;
+
+        return { name, left: box.left, right: box.right, height: box.height };
+      }),
+  );
+}
+
+/** What the Files page shows before S4 gives it anything to browse. */
+function readFiles() {
+  return page.evaluate(() => {
+    const art = document.querySelector('[data-region="viewer"] img');
+
+    return {
+      places: [...document.querySelectorAll('[aria-label="Places"] li')].map(
+        (item) => item.textContent?.trim() ?? "",
+      ),
+      viewer: document.querySelector('[data-region="viewer"]')?.textContent?.trim() ?? "",
+      artLoaded: art !== null && art.complete && art.naturalWidth > 0,
+    };
+  });
 }
 
 describe("the phone shell: the rail becomes a tab bar where a rail does not fit", () => {
@@ -207,7 +239,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   });
 
   it(
-    "THE GATE: a tab bar instead of a rail, every target thumb-sized, and nothing to scroll sideways",
+    "THE GATE: the v1 tab bar instead of a rail, every target thumb-sized, and nothing to scroll sideways",
     { timeout: 120_000 },
     async () => {
       await page.setViewportSize(PHONE);
@@ -224,7 +256,8 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         "fixed",
         `the rail is still rendered at ${String(PHONE.width)}px: ${JSON.stringify(bar.labels)}`,
       );
-      assert.deepEqual(bar.labels, ["Command", "Chat", "Missions", "Vault", "More"]);
+      // No "More": the pages behind the flag are not offered unless it is set.
+      assert.deepEqual(bar.labels, NAV_ITEMS);
 
       for (const [index, height] of bar.heights.entries()) {
         assert.ok(
@@ -238,10 +271,8 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       }
 
       // The bar's height and the padding the page reserves for it are one
-      // number in two files. There is no slack in it — the bar is 4 + 44 + 4 =
-      // 52 clamped up to 56, and the shell pads by 56 — so raising either the
-      // touch floor or `spacing.xs` slides content under the bar with nothing
-      // failing unless this is asserted.
+      // number in two files, so raising the touch floor or the padding slides
+      // content under the bar with nothing failing unless this is asserted.
       assert.equal(bar.height, TAB_BAR_HEIGHT, "the bar is not the height it is exported as");
       assert.equal(
         bar.shellPaddingBottom,
@@ -249,59 +280,78 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         "the page reserves a different amount of room than the bar occupies",
       );
 
-      // A bar whose own buttons overflow it is the horizontal scroll this
-      // layout exists to remove, moved one element inward.
       const barWidth = bar.widths.reduce((total, width) => total + width, 0);
 
       assert.ok(barWidth <= PHONE.width, `the bar's buttons total ${String(barWidth)}px`);
-
-      await openChat();
-
-      const chat = await readPage();
-
-      assert.ok(
-        chat.scrollWidth <= PHONE.width,
-        `the page scrolls sideways: scrollWidth ${String(chat.scrollWidth)} at ${String(PHONE.width)}px`,
-      );
-
-      // And not vertically either. Without `body { margin: 0 }` the UA's 8px
-      // makes a `height: 100vh` shell overflow by 16px on every viewport, which
-      // reads on a phone as a shell that rubber-bands for no reason.
-      assert.ok(
-        chat.scrollHeight <= PHONE.height,
-        `the page scrolls vertically past the shell: scrollHeight ${String(chat.scrollHeight)} at ${String(PHONE.height)}px`,
-      );
+      assert.equal((await readPage()).heading, "Threads", "the phone does not open on Threads");
     },
   );
 
   it(
-    "reaches an overflow destination through More, and shows where it went",
+    "THE GATE: every v1 page fits a phone, with nothing under the touch floor",
+    { timeout: 180_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+
+      for (const name of V1_PAGES) {
+        // A reload per page, so each one is measured as it first draws rather
+        // than after another page left something behind.
+        await page.goto(WEB_URL);
+        await waitFor(readNav, (nav) => nav.present === true, "no navigation rendered");
+        await open(name);
+        // Long enough for the page's first read from the core to land.
+        await page.waitForTimeout(500);
+
+        const shown = await readPage();
+
+        assert.ok(
+          shown.scrollWidth <= PHONE.width,
+          `${name} scrolls sideways: scrollWidth ${String(shown.scrollWidth)} at ${String(PHONE.width)}px`,
+        );
+        // The page scrolls inside the shell; the document itself never does,
+        // or the bar rubber-bands with it.
+        assert.ok(
+          shown.scrollHeight <= PHONE.height,
+          `${name} scrolls the whole document: scrollHeight ${String(shown.scrollHeight)}`,
+        );
+
+        for (const control of await readControls()) {
+          assert.ok(
+            control.left >= 0 && control.right <= PHONE.width,
+            `${name}: "${control.name}" sits at ${String(Math.round(control.left))}–${String(Math.round(control.right))}px, outside a ${String(PHONE.width)}px screen`,
+          );
+          assert.ok(
+            control.height >= MIN_TARGET,
+            `${name}: "${control.name}" is ${String(Math.round(control.height))}px tall, under the ${String(MIN_TARGET)}px touch floor`,
+          );
+        }
+      }
+    },
+  );
+
+  it(
+    "THE GATE: the Files page is laid out for browsing, and says plainly that it is not on yet",
     { timeout: 120_000 },
     async () => {
       await page.setViewportSize(PHONE);
       await page.goto(WEB_URL);
-      await waitFor(readNav, (nav) => nav.present === true, "no navigation rendered");
+      await open("Files");
 
-      await tabTo(page, "More");
-      await page.keyboard.press("Enter");
-
-      // `<dialog.showModal()` traps focus, so reaching Nodes from here is only
-      // possible if the sheet is genuinely open.
-      await tabTo(page, "Nodes");
-      await page.keyboard.press("Enter");
-
-      const shown = await waitFor(
-        readPage,
-        (state) => state.body.includes("Remote desktop"),
-        "More did not reach Nodes",
+      const files = await waitFor(
+        readFiles,
+        (state) => state.places.length > 0 && state.artLoaded,
+        "Files never listed the granted folders beside its empty state",
       );
 
-      assert.ok(shown.scrollWidth <= PHONE.width, "the overflow sheet left the page scrolling");
-
-      // The bar must say where it is, so Nodes takes the last primary slot.
-      const bar = await readNav();
-
-      assert.deepEqual(bar.labels, ["Command", "Chat", "Missions", "Nodes", "More"]);
+      // The folder the fake node was granted, on the machine that holds it:
+      // the places S4 makes browsable.
+      assert.ok(
+        files.places.some(
+          (place) => place.includes("noctis-e2e-phone-scratch") && place.includes("e2e"),
+        ),
+        `the granted folder is not among the places: ${JSON.stringify(files.places)}`,
+      );
+      assert.match(files.viewer, /not switched on yet/);
     },
   );
 
@@ -311,7 +361,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     async () => {
       await page.setViewportSize(PHONE);
       await page.goto(WEB_URL);
-      await openChat();
+      await waitFor(readPage, (state) => state.heading === "Threads", "Threads never opened");
 
       await tabTo(page, "Message Vesper");
       await page.keyboard.type("ASK: hello");
@@ -345,6 +395,18 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         "Confirm",
         "Decline",
       ]);
+
+      // The same ask waits on the Approvals page, which is where a push
+      // notification sends the owner.
+      await open("Approvals");
+
+      const listed = await waitFor(
+        readPage,
+        (state) => state.consequenceControls.length >= 2,
+        "the ask is not on the Approvals page",
+      );
+
+      assert.ok(listed.scrollWidth <= PHONE.width, "the Approvals page scrolls sideways");
     },
   );
 
@@ -354,12 +416,12 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
 
     const rail = await waitFor(
       readNav,
-      (nav) => nav.present === true && nav.labels.length === RAIL_ITEMS.length,
+      (nav) => nav.present === true && nav.labels.length === NAV_ITEMS.length + 1,
       "the rail did not come back at desktop width",
     );
 
-    assert.deepEqual(rail.labels, RAIL_ITEMS);
+    // Settings sits at the foot of the rail, apart from the destinations.
+    assert.deepEqual(rail.labels, [...NAV_ITEMS, "Settings"]);
     assert.notEqual(rail.position, "fixed", "the tab bar is still rendered at desktop width");
-    assert.ok(!rail.labels.includes("More"), "the desktop shell is offering a phone's overflow");
   });
 });
