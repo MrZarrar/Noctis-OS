@@ -2587,3 +2587,140 @@ Noctis and these Claude numbers are Sonnet.
 | `npm run test:unit`        | with this shell's 8.3 `TEMP`: 1831 passed, 4 failed, the four short-path tests named above                   |
 | `npm run test:integration` | 8 files, 220 tests passed; exit 1 from the same two unhandled errors                                         |
 | `npm run build`            | exit 0                                                                                                       |
+
+### 2026-10-07 Before S2: the owner's own setup, agent-led permissions, clean test exits
+
+Three changes the owner asked for after S1, replacing the earlier wish to isolate the runtimes.
+Commits `7a15a56` (tests), `6c3a870` (setup and permissions), and the follow-up recorded below.
+
+**1. Noctis turns run on the owner's real setup.** Claude loads `settingSources: ["user",
+"project", "local"]` with `skills: "all"` and without `strictMcpConfig`, so CLAUDE.md, user and
+project skills (including a repo's `.claude/skills`), plugins, hooks and MCP servers all load.
+Codex keeps the owner's `~/.codex`: the `--disable plugins/apps/computer_use/browser_use` flags
+and the per-server `enabled=false` overrides are gone. The Noctis MCP server is still added to both.
+
+**2. The agents' own permission systems do the everyday work.**
+
+| Runtime | Mode                                                          | Noctis intervenes                                                                                                                     |
+| ------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude  | `permissionMode: "auto"` (accepted live, see below)           | a `PreToolUse` hook stops every confirm-level call until the core answers; `canUseTool` (the CLI's own ask) is forwarded to the owner |
+| Codex   | `workspace-write` on the granted roots, approval `on-request` | every ask Codex raises is forwarded to the owner; the network stays off so an external call has to escalate                           |
+
+Confirm-level is `isConfirmLevel` in `packages/domain/src/authority/evaluate.ts`: every Section 9.1
+class except `read_inspect` and `local_reversible_edit`. An ask now says who raised it
+(`RuntimeAsk.askedBy`). One the agent raised itself is never answered by policy alone:
+`evaluateAuthority` raises an `allow` to `require_confirmation` with reason `runtime_asked`, and
+`require_confirmation` is what `notify/triggers.ts` sends a push for. An unanswered approval fails
+the turn after 10 minutes (`APPROVAL_TIMEOUT_MS`, or `NOCTIS_APPROVAL_TIMEOUT_SECONDS` on the
+node) with `approval timed out: "<what>" was not answered within <time>`. That failure is itself
+pushed ("Turn failed"), and the core declines the still-open approval as `system` when the turn
+ends, so the card cannot be confirmed afterwards.
+
+The classifier fix: Codex on Windows wraps every command as `"...\powershell.exe" -Command "..."`,
+so the wrapper hid the head and a plain `Get-Content` read classified `local_reversible_edit`. The
+wrapper (and `pwsh -c`, `cmd /c`) is now unwrapped before any rule runs; a write, a redirect or a
+disk format inside it still classifies as before. An MCP tool named for a read (`get_`, `list_`,
+`query-`, ...) is `read_inspect`. The existing row that pinned the wrapped read as a local edit now
+expects `read_inspect`.
+
+Found while running it live: on Windows the CLI offers **`PowerShell`, not `Bash`**, unless
+`CLAUDE_CODE_GIT_BASH_PATH` is set (it is, at user scope, on this machine). The gate first mapped
+only `Bash`, so every PowerShell call would have been stopped as an unknown tool. Both now map to
+the command classifier. The CLI's built-ins that reach out (`CronCreate`, `CronDelete`,
+`RemoteTrigger`, `SendMessage`, `ShareOnboardingGuide`, `DesignSync`, and anything not yet listed)
+are confirm-level; the local ones (`Skill`, `Workflow`, `ListAgents`, worktrees, `PushNotification`
+to the owner's own devices, ...) are left to the agent.
+
+**3. `test:unit` and `test:integration` exit 0 in a normal shell.** The shutdown race was eight
+detached `void read(...)` polls in `conversation.integration.test.ts` still in flight when
+`afterEach` closed the core; `waitFor` now awaits an async predicate. The four short-path failures
+compared against the JS `realpathSync`, which keeps an 8.3 `TEMP` path that the native `realpath`
+in `roots.ts` expands; the tests now expect `realpathSync.native`. Production code was right.
+
+Sabotage, each applied, observed failing, and reverted:
+
+| Sabotage                                              | Tests that failed                                                    |
+| ----------------------------------------------------- | -------------------------------------------------------------------- |
+| Claude gate treats every class as below confirm-level | 5 Claude permission tests                                            |
+| Claude ignores `ApprovalTimedOut`                     | "fails the turn with the timeout's own words ..." (hangs, times out) |
+| Core drops `askedByRuntime`                           | "an ask the agent raised itself waits for a person ..."              |
+| Core never closes open asks at turn end               | "a turn that ends while its approval waits closes the approval ..."  |
+| Timeout worded only in ms                             | "fails the turn with a clear error when nobody answers ..."          |
+
+#### Live, on the work PC (throwaway core on 7790, node from this checkout)
+
+**What the CLI loaded** (one turn through the built runtime, init message read directly):
+`apiKeySource: "none"`, `permissionMode: "auto"`, model `claude-sonnet-5`, 16 plugins
+(superpowers, ponytail, postman, expo, github, playwright, ...), the owner's user and plugin skills
+plus the project skill `noctis-probe`, and the owner's MCP servers (several report `needs-auth`,
+`plugin:github:github` reports `failed`, as they do in the owner's own sessions).
+
+**A repo's `.claude/skills` is seen and used.** A scratch git repo held
+`.claude/skills/noctis-probe/SKILL.md` naming a codeword. Asked "What is the Noctis probe
+codeword?", Claude called `Skill` (`Launching skill: noctis-probe`) and answered
+`heliotrope-forty-two`, through the runtime directly and through the real node.
+
+**Latency with the full setup**, free chat, no Objective, same measurement as S1 (send to
+`completed`); two runs, process ids unchanged across each thread's warm turns:
+
+| Runtime         | First message | Warm follow-ups (10 samples)                           | Spawn and resume after restart | S1, isolated, for comparison           |
+| --------------- | ------------- | ------------------------------------------------------ | ------------------------------ | -------------------------------------- |
+| Claude, Sonnet  | 6.9 s, 5.4 s  | median 1.94 s; 1.63 to 2.60 s, 3 of 10 at 4.6 to 7.2 s | 3.4 s, 3.6 s                   | first 1.8 to 2.1 s, warm median 1.23 s |
+| Codex, 5.6-luna | 13.2 s, 5.3 s | median 1.85 s; 1.42 to 2.08 s, 1 of 10 at 4.5 s        | 5.8 s, 4.3 s                   | first 3.9 to 5.3 s, warm median 1.22 s |
+
+The cold start costs roughly 3 to 4 s more for Claude (plugins, hooks and MCP servers starting) and
+the first Codex turn now also reads the owner's superpowers `SKILL.md` before answering. Warm turns
+stay warm (same process, no reload) but are about 0.6 s slower than S1's isolated runs, consistent
+with a larger context and the owner's per-prompt hooks; that cause is inferred, not measured.
+
+**Noctis's gate, live (Claude).** Asked to run `curl -X POST https://example.invalid/noctis-gate-test`
+with nobody answering and a 20 s approval timeout: the call was stopped before it ran, recorded as
+`external_write`, `require_confirmation` (the outcome that pushes), and after 20 s the turn failed
+with `approval timed out: "curl -X POST https://example.invalid/noctis-gate-test" was not answered
+within 20000 ms` (now worded "20 seconds"). The approval was then declined by `system`.
+
+**Codex, live: contained, not asked.** The same request ran inside Codex's sandbox without an ask,
+as `on-request` allows, and the network-off sandbox blocked it (`Failed to connect to
+example.invalid:443 over proxy 127.0.0.1`). Codex reported the failure rather than requesting
+escalation, so the path where Codex's own ask is forwarded and pushed is proven by
+`codex.test.ts` and the core tests, not yet observed live.
+
+#### What this design does not cover, stated plainly
+
+- **Codex has no pre-execution hook.** Noctis sees a Codex action only when Codex asks. Inside
+  the sandbox Codex may run a destructive local command (`rm -rf` within the granted roots)
+  without anyone being asked; the containment is the sandbox (writes only in the granted roots, no
+  network), not Noctis. MCP tools from the owner's `~/.codex` (plugins, apps) run outside the
+  sandbox and are equally unseen. Closing this would mean Codex exec-policy rules (`prompt` on
+  chosen command prefixes) or a narrower `~/.codex` for Noctis.
+- **WebFetch and WebSearch are reads**, left to auto mode. The automated security review flagged
+  that a GET can carry data out in its URL; auto mode's classifier is what judges that now.
+- **A granted root's project settings run with the owner's authority**, hooks included. The
+  automated review flagged this too; it is the requested behaviour, and granting a root is the
+  trust decision.
+- **Codex keeps writing project trust into `~/.codex/config.toml`**: three scratch-folder entries
+  from these runs (lines 272 to 279) are left for the owner to remove.
+- **The automated security review also flagged Codex running the owner's plugins and MCP servers
+  with approval `on-request`, and MCP tools trusted by name.** Both are as asked; the first is the
+  Codex gap described above. On the second: the name only decides whether Noctis stops a call
+  before auto mode sees it, and a server whose `fetch_` or `query_` tool writes would be read as a
+  read. An explicit per-tool allowlist is the stricter alternative if that matters more than the
+  noise.
+
+| Command                                                               | Result                                                                                                                 |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `npm run format:check`                                                | exit 0                                                                                                                 |
+| `npm run lint`                                                        | exit 0                                                                                                                 |
+| `npm run typecheck`                                                   | exit 0                                                                                                                 |
+| `npm run test:unit`                                                   | exit 0; 102 files, 1855 tests, in a shell with the 8.3 `TEMP`                                                          |
+| `npm run test:integration`                                            | exit 0; 8 files, 223 tests                                                                                             |
+| `npm run test:migrations`                                             | exit 0; 6 files, 30 tests                                                                                              |
+| `npm run test:boundary`                                               | exit 0; 6 tests                                                                                                        |
+| `npm run test:security`                                               | exit 0; no dedicated tests                                                                                             |
+| `npm run test:performance`                                            | exit 0; no dedicated tests                                                                                             |
+| `npm run build`                                                       | exit 0                                                                                                                 |
+| `npm run build:web`                                                   | exit 0                                                                                                                 |
+| `npm run test:e2e`                                                    | exit 0; 13 tests, run against Edge (`NOCTIS_E2E_BROWSER_CHANNEL=msedge`, Phase 6 note)                                 |
+| `npm run test:deploy`                                                 | exit 1; 3 pass, 1 fail by design: "refuses to deploy anywhere but the work PC" asserts it is not run on `mushafzarrar` |
+| `npm run test:desktop`                                                | exit 1; 5 pass, 1 fail: `cargo.exe ENOENT`, no Rust toolchain on this machine                                          |
+| `npm run rust:fmt:check`, `rust:clippy`, `rust:test`, `build:desktop` | not runnable here: `cargo` is not installed; CI is the authority, as before                                            |
