@@ -20,7 +20,9 @@ export class ApprovalTimedOut extends Error {
     const within =
       timeoutMs >= 60_000
         ? `${String(Math.round(timeoutMs / 60_000))} minutes`
-        : `${String(timeoutMs)} ms`;
+        : timeoutMs >= 1_000
+          ? `${String(Math.round(timeoutMs / 1_000))} seconds`
+          : `${String(timeoutMs)} ms`;
 
     super(`approval timed out: "${summary}" was not answered within ${within}`);
   }

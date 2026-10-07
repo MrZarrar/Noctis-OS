@@ -432,6 +432,48 @@ describe("the Claude Agent SDK runtime", () => {
       expect(r.asks).toEqual([]);
     });
 
+    it("reads a PowerShell call the way it reads Bash: on Windows the CLI has no Bash tool", async () => {
+      const { r, gate } = await held("allow");
+
+      await expect(gate("PowerShell", { command: "Get-ChildItem | Format-List" })).resolves.toEqual(
+        {},
+      );
+      await expect(gate("PowerShell", { command: "git push origin main" })).resolves.toEqual(
+        allowed,
+      );
+      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.summary])).toEqual([
+        ["command", "external_write", "git push origin main"],
+      ]);
+    });
+
+    it("leaves the CLI's local orchestration tools to it, and stops the ones that reach out", async () => {
+      const { r, gate } = await held("allow");
+
+      for (const name of [
+        "CronList",
+        "ListAgents",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "Workflow",
+        "PushNotification",
+      ]) {
+        await expect(gate(name, {}), name).resolves.toEqual({});
+      }
+
+      for (const name of ["CronCreate", "RemoteTrigger", "SendMessage", "ShareOnboardingGuide"]) {
+        await gate(name, {});
+      }
+
+      expect(r.asks.map((ask) => [ask.target.id, ask.operationClass])).toEqual([
+        ["CronCreate", "external_write"],
+        ["RemoteTrigger", "external_write"],
+        ["SendMessage", "external_write"],
+        ["ShareOnboardingGuide", "external_write"],
+      ]);
+    });
+
     it("stops an edit outside every writable root, an MCP send, and a tool it does not know", async () => {
       const { r, gate } = await held("allow");
 

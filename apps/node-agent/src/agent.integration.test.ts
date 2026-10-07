@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AgentOptions, RunningAgent } from "./agent.js";
+import { ApprovalTimedOut } from "./runtimes/Runtime.js";
 import { startAgent } from "./agent.js";
 import { FAKE_PROBE, createFakeRuntime } from "./runtimes/fake.js";
 
@@ -496,6 +497,9 @@ describe("a runtime turn through the real core", () => {
     const job = await readJob(core, id);
 
     expect(job.failureReason).toMatch(/^approval timed out: .+ was not answered within 150 ms$/);
+    expect(new ApprovalTimedOut("x", 20_000).message).toBe(
+      'approval timed out: "x" was not answered within 20 seconds',
+    );
   });
 
   it("runs two turns on one node at the same time", async () => {

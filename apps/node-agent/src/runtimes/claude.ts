@@ -55,6 +55,8 @@ export interface ClaudeRuntimeOptions {
   idleMs?: number;
 }
 
+/** On Windows the CLI offers PowerShell where it would offer Bash; both take `command`. */
+const COMMAND_TOOLS = new Set(["Bash", "PowerShell"]);
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const AGENT_TOOLS = new Set(["Task", "Agent"]);
 /**
@@ -87,6 +89,15 @@ const LOCAL_TOOLS = new Set([
   "AskUserQuestion",
   "ListMcpResourcesTool",
   "ReadMcpResourceTool",
+  "CronList",
+  "ListAgents",
+  "EnterWorktree",
+  "ExitWorktree",
+  "ReportFindings",
+  "ScheduleWakeup",
+  "Workflow",
+  // A notification to the owner's own devices, which is where approvals go anyway.
+  "PushNotification",
   ...AGENT_TOOLS,
 ]);
 const NOCTIS_PREFIX = "mcp__noctis__";
@@ -144,7 +155,7 @@ function describeCall(
   const input = fields(raw);
   const scope = { writableRoots: roots.writable, readableRoots: roots.readable };
 
-  if (toolName === "Bash") {
+  if (COMMAND_TOOLS.has(toolName)) {
     const command = input.command ?? "";
     const cwd = input.cwd ?? roots.cwd;
     const cls = classifyAsk({ kind: "command", command, cwd, ...scope });
@@ -212,7 +223,7 @@ function toolItem(
   const input = fields(raw);
   const base = { itemId, status } as const;
 
-  if (toolName === "Bash") {
+  if (COMMAND_TOOLS.has(toolName)) {
     return {
       ...base,
       kind: "command",
