@@ -2464,3 +2464,126 @@ did not do by hand; Automatic Restart Sign-On or Windows Hello face sign-in woul
 and the Security log that would distinguish them needs elevation. So the agent connected with a
 user session present, and a boot with no session at all is not directly observed. Unattended mode is
 what removes Tailscale's dependency on that session, and it is on.
+
+## v1 scope
+
+### 2026-10-07 S1: fast agent turns, one live process per thread
+
+Implemented: `apps/node-agent/src/runtimes/sessions.ts` (the per-thread process pool), Claude
+through one streaming `query()` per thread fed one user message per turn
+(`runtimes/claude.ts`), Codex through one `codex app-server` per thread where a follow-up is one
+`turn/start` (`runtimes/codex.ts`), `Runtime.close()`, and `main.ts` closing every live process on
+SIGINT/SIGTERM. Commit `c9cc2fe`. No core, contract or web change; the core already sends the
+stored `sessionRef` on every turn of a thread, which is what the reuse rule keys on.
+
+**The reuse rule.** A turn reuses the thread's live process only when it is alive, was opened with
+the same model, roots and `objectiveActive`, and holds the session the core names. Anything else
+closes it and opens a new one that resumes `sessionRef` (Claude `resume`, Codex `thread/resume`),
+which is exactly the path every turn took before. A turn with no `sessionRef` never inherits a live
+process, because that process carries context the core does not know about. A thread's turns run
+one at a time. A process idle for 10 minutes (`RUNTIME_IDLE_MS`) is closed and the next message
+resumes. `canUseTool`, the in-process `noctis` MCP tools and Codex's approval requests are bound
+once per process and routed to the turn currently running; a tool call arriving between turns is
+denied because nobody could answer it.
+
+| Gate clause                                            | State       | Evidence                                                                                                                                                                                  |
+| ------------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Second message in a thread reuses the process (Claude) | implemented | `claude.test.ts`: "THE GATE: the second message in a thread reuses the process instead of spawning one": one `query()` call, both prompts streamed into it, controller not aborted        |
+| Second message in a thread reuses the process (Codex)  | implemented | `codex.test.ts`: "THE GATE: the second message in a thread reuses the process: one spawn, one thread, two turns": one spawn, one `initialize`, one `thread/start`, two `turn/start`       |
+| Idle timeout closes, next message resumes              | implemented | "closes an idle process, and the next message resumes ..." in both suites: the process is closed, the next turn spawns once and passes `resume` / `thread/resume` with the stored session |
+| Reuse only for the session the core names              | implemented | "reopens rather than reuse when ..." in both suites: no `sessionRef`, another root, or a dead process each open a new one                                                                 |
+| Measured latency on a real node                        | implemented | the live table below                                                                                                                                                                      |
+| Never `--bare`, never an API key                       | implemented | unchanged guards: the `--bare` source scan, the billing-key refusal, the `apiKeySource !== "none"` refusal; the live probe reported `claude_ai` and `chatgpt` logins                      |
+
+Sabotage, each applied, observed failing, and reverted:
+
+| Sabotage in `sessions.ts`                    | Tests that failed                                  |
+| -------------------------------------------- | -------------------------------------------------- |
+| Reuse check forced to always reopen          | both THE GATE tests and the one-at-a-time test (3) |
+| Idle timer left in place but closing nothing | both idle tests (2)                                |
+| Per-thread queue removed                     | "runs a thread's turns one at a time" (1)          |
+
+Existing tests that changed meaning rather than being worked around: the Codex happy path and
+decline tests now assert the child is **not** killed after a turn; the proposals file is named for
+the thread rather than the message, because the MCP child it is handed lives as long as the process;
+the Claude `canUseTool` and proposal-tool tests now call into a turn that is held open, since a call
+with no turn running is denied by design.
+
+#### Live measurement on a real node
+
+Host `mushafzarrar` (the work PC). A throwaway core from this checkout's `apps/core/dist` on
+127.0.0.1:7790 with a temporary database, and a node agent paired to it with its own
+`NOCTIS_NODE_HOME`; the production core on 7717 and its database were not touched, and no node
+agent was running on this machine. Both processes were started with every `NOCTIS_*` and `CLAUDE*`
+variable removed from the environment, as a scheduled-task node would have them.
+
+Runtimes as probed by the node: Claude through Agent SDK 0.3.270, login `claude_ai`; Codex
+`codex-cli 0.154.0-alpha.6.2`, login `chatgpt`. Models `claude / sonnet` and `codex / gpt-5.6-luna`.
+Prompt: "Do not run any commands or read any files. Reply with exactly one word: pong", under an
+active Objective, rootGrantId on an empty scratch folder. Every turn returned one `agent_message`
+"pong" with no command, no file change and no approval row.
+
+Latency is wall clock from `POST /commands/conversation.send` to the turn reading `completed` on
+`GET /threads/:id/turns`, polled every 25 ms: core routing, the node socket, the runtime, and the
+result being recorded. "After agent restart" kills the agent mid-thread so no process is live, which
+is the spawn-and-resume path every turn took before S1.
+
+| Runtime | Message                             | Run A (ms) | Run B (ms) | Runtime process               |
+| ------- | ----------------------------------- | ---------- | ---------- | ----------------------------- |
+| Claude  | first (new session)                 | 2142       | 1802       | one `claude.exe` for all four |
+| Claude  | follow-up 1                         | 1280       | 826        | same PID                      |
+| Claude  | follow-up 2                         | 1283       | 1239       | same PID                      |
+| Claude  | follow-up 3                         | 2013       | 904        | same PID                      |
+| Claude  | after agent restart (spawn, resume) | 2262       | 1515       | new PID                       |
+| Claude  | follow-up after resume              | 1217       | 1052       | same PID as the resume        |
+| Codex   | first (new thread)                  | 3872       | 5296       | one `codex.exe` for all four  |
+| Codex   | follow-up 1                         | 1174       | 2121       | same PID                      |
+| Codex   | follow-up 2                         | 1143       | 1234       | same PID                      |
+| Codex   | follow-up 3                         | 1719       | 1154       | same PID                      |
+| Codex   | after agent restart (spawn, resume) | 3216       | 2741       | new PID                       |
+| Codex   | follow-up after resume              | 1452       | 1200       | same PID as the resume        |
+
+Warm follow-ups: Claude median 1.23 s (0.83 to 2.01 s), Codex median 1.22 s (1.14 to 2.12 s).
+Spawn and resume: Claude 1.5 to 2.3 s, Codex 2.7 to 3.2 s; a brand-new Codex thread 3.9 to 5.3 s.
+The process ids are the live proof of reuse: the same `claude.exe` and `codex.exe` answered every
+turn of their thread until the agent was restarted.
+
+**Against the scope doc's baseline.** The 6 s fresh and 2.4 to 3.4 s warm figures were `claude -p`
+with Haiku. On the node a cold Claude turn is 1.5 to 2.3 s, not 6 s, because the node's spawn loads
+no settings, plugins or MCP servers (`settingSources: []`, `strictMcpConfig`). So what S1 removes
+per follow-up is about 0.3 to 1 s for Claude and 1.5 to 2 s for Codex, rather than about 3 s for
+each. The node's Claude probe offers `sonnet` and `opus` only, so Haiku cannot be chosen through
+Noctis and these Claude numbers are Sonnet.
+
+#### Found while measuring, not fixed (outside S1)
+
+- **The owner's Codex skills reach Noctis turns.** On a free-chat turn Codex first ran
+  `powershell.exe -Command "Get-Content -Raw '~\.agents\skills\superpowers\skills\using-superpowers\SKILL.md'"`.
+  `--disable plugins` does not stop it. An isolation gap, and a cost on every Codex turn that obeys it.
+- **`classifyAsk` calls that read a local edit.** A quoted `"...\powershell.exe" -Command "Get-Content ..."`
+  classified `local_reversible_edit`, so with no Objective active a plain read raised an approval and
+  the turn waited for a person (the first measurement attempt waited 9 minutes until it was stopped).
+  This predates S1.
+- **Codex writes project trust into `~/.codex/config.toml`.** Each workspace-write turn added a
+  `[projects.'<root>'] trust_level = "trusted"` entry; the two runs above left two entries for
+  scratch folders that no longer exist. Left in place for the owner to remove.
+- **`roots.test.ts` (3) and one `adapters.test.ts` assertion fail when `TEMP` is an 8.3 short path**
+  (`C:\Users\MUSHAF~1.ZAR\...`), because `realpath` expands it. 138/138 node-agent tests pass with
+  `TEMP` set to the long path. Predates S1.
+- **`conversation.integration.test.ts` reports unhandled `fetch failed` rejections** on every run
+  here: a `read()` poll still in flight when its test's core shuts down. All its tests pass, but
+  vitest exits 1. The file imports only the core, contracts and `ws`, none of which S1 changed.
+- **Ceilings kept deliberately.** A turn with attachments reopens the process, because the staging
+  folder joins the readable roots and so changes the process key. Cancelling a Claude turn closes
+  its process and the next turn resumes; cancelling a Codex turn interrupts and keeps it.
+- **Node is 22.23.1 here**, not the 22.23.2 `AGENTS.md` pins. Every result above is on 22.23.1.
+
+| Command                    | Result                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `npm run format:check`     | exit 0                                                                                                       |
+| `npm run lint`             | exit 0; 0 errors                                                                                             |
+| `npm run typecheck`        | exit 0                                                                                                       |
+| `npm run test:unit`        | 102 files, 1835 tests passed with `TEMP` on the long path; exit 1 from the two pre-existing unhandled errors |
+| `npm run test:unit`        | with this shell's 8.3 `TEMP`: 1831 passed, 4 failed, the four short-path tests named above                   |
+| `npm run test:integration` | 8 files, 220 tests passed; exit 1 from the same two unhandled errors                                         |
+| `npm run build`            | exit 0                                                                                                       |
