@@ -1,0 +1,5 @@
+01a116ae-1a1a-7273-950e-99e1ed19e08a
+
+Codex session for every Noctis design asset. Continue it with
+`codex exec resume <id> "<follow-up>"`, passing approved assets back with -i.
+Brief: docs/design/codex-brief.md

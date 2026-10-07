@@ -2910,3 +2910,66 @@ what cannot be read", and "tells its owner it closed, even with nothing pending"
 | `npm run test:e2e`                              | exit 0; 14 tests, against Chrome (`NOCTIS_E2E_BROWSER_CHANNEL=chrome`)    |
 | `npm run build`, `build:web`                    | exit 0                                                                    |
 | `npm run test:deploy`, `test:desktop`, `rust:*` | not run: as recorded for the previous entry, not runnable on this machine |
+
+### 2026-10-07 S5: the v1 navigation and a phone-first design
+
+Built before S4 at the owner's request, with the owner's done-check: every existing page works well
+on the phone in the new design, and the Files page layout is ready for S4. Not yet committed.
+
+- **Navigation.** `NAV_ITEMS` (`packages/ui/src/primitives/rail-items.ts`): Threads, Files, Nodes,
+  Approvals, Vault. Command, Missions, Artifacts and Automations only with `VITE_NOCTIS_ALL_PAGES=1`.
+  Settings is a gear on the rail and in the phone's top bar. `tab-items.ts` and its displacement
+  rule are gone: the bar no longer has more destinations than slots.
+- **Shell and pages.** `layout/Page.tsx` frames every v1 page. Threads (renamed from Chat),
+  Approvals (new, from half of Artifacts), Nodes (a PC list above the remote desktop), Files (new),
+  Vault and Settings were rebuilt on it. `pages/waiting.ts` decides what Approvals lists.
+- **Assets.** Codex session `01a116ae-1a1a-7273-950e-99e1ed19e08a` (`docs/design/codex-session.txt`),
+  `gpt-5.6-sol` at high effort, signed in with ChatGPT. Five images from the brief, then two
+  revisions of the icon sheet (it came back on white, then with three shapes changed). Every image
+  was opened and checked. Shipped as WebP; the mark and icons redrawn as SVG.
+
+| Gate clause                                    | State       | Evidence                                                                                                                          |
+| ---------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| The v1 navigation, and nothing else by default | implemented | `rail-items.test.ts`; E2E "THE GATE: the v1 tab bar instead of a rail..." and "puts the rail back where there is width for one"   |
+| Every existing page works on a phone           | implemented | E2E "THE GATE: every v1 page fits a phone, with nothing under the touch floor": Threads, Files, Nodes, Approvals, Vault, Settings |
+| The Files layout is ready for S4               | implemented | E2E "THE GATE: the Files page is laid out for browsing, and says plainly that it is not on yet"                                   |
+| Approvals answers a phone's ask                | implemented | E2E "keeps both answers to a consequence on screen at a phone's width" (now also on the Approvals page); `waiting.test.ts`        |
+| The flagged pages still work                   | implemented | `workbench.keyboard` (Command) and `approval.keyboard` (Artifacts) run with the flag on                                           |
+
+Red first: the phone suite failed on the old shell for the expected reasons (the old tab labels,
+"Threads" and "Files" not reachable). Then the page gate caught two real defects in the new one:
+the Attach control was 42 px tall (the invisible file input filled the padding box, not the border
+box), and the Vault sphere's controls and note chips were 26 px. Both fixed, gate green.
+
+Reviewed by eye at 400 x 860 (2x) and 1440 x 900 in Chrome, against a throwaway core and the fake
+node. That review found three more things the tests do not measure, also fixed: the thread did not
+follow its newest entry, so a reply landed under the composer; the illustration showed its black
+square on the glass card; and the approval buttons were in the browser's default font.
+
+#### Known, not fixed
+
+- **Not yet seen on the owner's phone.** Chrome at a phone's size only; iOS Safari is the owner's
+  check.
+- **The flagged pages keep their old look,** inside the new shell.
+- **No count on the Approvals tab.**
+- **Threads always follows the newest entry,** even while the owner reads further up.
+- **The E2E suites race on this PC.** The owner's environment sets `NOCTIS_WEB_ROOT` to
+  `apps/web/dist` for the core on 7717, every suite's core inherits it, and `tokenless` rebuilds
+  `dist` (emptying it) while the suites run in parallel. A core that starts in that window refuses
+  to boot; the first full run lost the phone suite to it. Not new with S5. Run the suites with
+  `NOCTIS_WEB_ROOT` unset; the harness could delete it from each core's environment.
+- **`build:web` changes what the work PC's core serves.** The core on 7717 serves `apps/web/dist`
+  from disk, so this verification put the S5 design in front of the owner's phone before any commit
+  (checked: 7717 served the new bundle, `index-Cu_YDrB1.js`).
+
+| Command                                         | Result                                                                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `npm run format:check`                          | exit 0                                                                                                        |
+| `npm run lint`                                  | exit 0                                                                                                        |
+| `npm run typecheck`                             | exit 0                                                                                                        |
+| `npm run test:unit`                             | exit 0; 103 files, 1927 tests                                                                                 |
+| `npm run test:integration`                      | exit 0; 8 files, 229 tests                                                                                    |
+| `npm run test:boundary`                         | exit 0                                                                                                        |
+| `npm run test:e2e`                              | exit 0; 15 tests, against Chrome, with `NOCTIS_WEB_ROOT` unset (the first run lost a suite to the race above) |
+| `npm run build`, `build:web`                    | exit 0                                                                                                        |
+| `npm run test:deploy`, `test:desktop`, `rust:*` | not run: not runnable on this machine, as before                                                              |
