@@ -3114,3 +3114,59 @@ with the Tab key"; "never offered from the thread") before passing on the new on
 | full `test:unit`, `test:integration`, `test:e2e`               | not run here; handed to the owner                           |
 
 Node here is the pinned 22.23.2.
+
+### 2026-10-08 Continue sessions from elsewhere, and many conversations
+
+The owner's next two after S4, in their order: pick up an agent session started outside Noctis
+(the trip that sent them to Claude Code's Remote Control), then a list of conversations. Commits
+`ab84471` (node), `84a8101` (core: adopt), `e3b014f` (core: list), `b16bc97` (web), `2d95197`.
+
+- **Listing a folder's sessions.** `session.list`, covered by a `runtime.turn` grant, asks each
+  agent the folder is shared with. Claude: the Agent SDK's `listSessions({ dir,
+includeProgrammatic: false })`, which leaves out SDK sessions, Noctis's own included. Codex:
+  `thread/list` on an app-server started for the call and stopped after it, filtered by both
+  spellings of the drive letter (VS Code writes `c:`), sorted by `updated_at`. Checked live on the
+  home PC against the hyperframes folder: 4 Claude and 3 Codex sessions, all from VS Code.
+- **Adopting one.** `conversation.adopt_session` makes a named thread pinned to that PC, folder and
+  agent, and stores the session with `fork_pending`. Its first turn asks the runtime to fork
+  (`forkSession: true`; `thread/fork`), so a session VS Code still has open is never written
+  under; the fork's own ref replaces it and later turns resume that. A pinned thread refuses
+  another agent's model or another folder.
+- **Many conversations.** Migration 0011 adds `kind` (`free` | `named`), `title` and the pins to
+  threads; the one-free-thread index and lookup now name `kind = 'free'`.
+  `conversation.create_thread` opens a conversation; `GET /conversations?identityId=` lists the
+  free and named ones by last activity with the newest message.
+- **Web.** Threads → Conversations: the list, New conversation, Continue a session (folder, then
+  its sessions). A pinned thread's composer says "Continuing in Claude · folder on PC" instead of
+  offering the pickers.
+
+| Gate clause                                          | State       | Evidence                                                                                                     |
+| ---------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| Adopt, fork on the first turn, resume the fork after | implemented | "THE GATE: is adopted as a pinned thread, forked on its first turn, and resumed after" (core integration)    |
+| List a folder's sessions through its node            | implemented | "lists a shared folder's sessions through the node that holds it"; `files.test.ts` session.list cases        |
+| Each runtime lists and forks                         | implemented | `claude.test.ts`, `codex.test.ts`; live listing on the home PC                                               |
+| Conversations beside free chat, by last activity     | implemented | "THE GATE: the owner opens new conversations beside free chat..." (core integration)                         |
+| From the phone: continue a session, open a new one   | implemented | E2E phone "THE GATE: continues a session started outside Noctis, from the phone", "opens a new conversation" |
+
+Red first: each test above failed on the missing behaviour before passing; the two E2E tests failed
+on "Conversations is not reachable with the Tab key".
+
+Also fixed: `attachments.test.ts` counted the shared temp directory and raced other suites; it now
+stages into a base of its own.
+
+#### Known, not fixed
+
+- **An adopted thread starts with no history on the page.** The agent has the whole session; Noctis
+  shows only what is said from here on.
+- **The fork does not show in VS Code's session picker.** It is an SDK (Claude) or app-server
+  (Codex) session, which the IDE pickers hide. `claude --resume <id>` from a terminal reaches it.
+- **No rename, archive or delete** for conversations; an untitled one is named by its newest line.
+- **A real fork has not been run live.** Listing was checked live; forking a real session costs a
+  subscription turn and was left for the owner.
+
+| Command                                                      | Result                                         |
+| ------------------------------------------------------------ | ---------------------------------------------- |
+| `npx vitest run packages apps/core apps/node-agent apps/web` | exit 0; 113 files, 1983 tests (before the web) |
+| `npx vitest run apps/web apps/node-agent packages`           | exit 0; 80 files, 1465 tests                   |
+| `node --test apps/web/e2e/{phone,chat,files}.test.mjs`       | exit 0; 12 tests                               |
+| `npm run typecheck`, lint (changed packages), `format:check` | exit 0                                         |
