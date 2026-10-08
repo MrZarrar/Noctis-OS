@@ -453,10 +453,19 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
   ): Result<Mutation<Turn>> {
     const at = new Date(now).toISOString();
     const { identityId, objectiveId } = thread;
-    const model = request.model ?? defaultModelFor(tx, identityId);
+    const model =
+      identityId === "jester"
+        ? (request.model ?? modelFor(tx, thread.id, identityId, "hermes"))
+        : (request.model ?? defaultModelFor(tx, identityId));
 
     if (model === undefined) {
       return conflict({ kind: "unavailable", entity: "model", reason: "no_default_model" });
+    }
+
+    // ADR-0030: Jester is Hermes. Its turns never run on another agent, even
+    // a local one, because Jester's soul and limits live on Hermes's home.
+    if (identityId === "jester" && model.providerId !== "hermes") {
+      return conflict({ kind: "unavailable", entity: "model", reason: "jester_runs_on_hermes" });
     }
 
     const objective = objectiveId === undefined ? undefined : getObjective(tx, objectiveId);

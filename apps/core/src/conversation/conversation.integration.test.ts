@@ -1198,6 +1198,45 @@ describe("delegation", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("Jester runs on Hermes alone (ADR-0030): the first Hermes model unless one is chosen, never another agent", async () => {
+    const LOCAL_MODEL = { providerId: "local", model: "qwen3.5-9b" };
+    const HERMES_MODEL = { providerId: "hermes", model: "qwen3.5-9b" };
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, {
+      providers: ["codex", "local", "hermes"],
+      probes: [
+        CODEX_PROBE,
+        { providerId: "local", available: true, authMode: "local", models: [LOCAL_MODEL] },
+        { providerId: "hermes", available: true, authMode: "local", models: [HERMES_MODEL] },
+      ],
+    });
+
+    // A Codex default left over from before is no model Jester runs on.
+    await setDefault(core, "jester");
+    const sent = await send(core, "jester-default", { identityId: "jester" });
+
+    expect(sent.status).toBe(200);
+    await waitFor(() => node.jobs().length === 1, "Jester's turn");
+    expect(lastTurnJob(node).payload).toMatchObject({ identityId: "jester", model: HERMES_MODEL });
+
+    for (const model of [LOCAL_MODEL, MODEL]) {
+      const refused = await send(core, `jester-${model.providerId}`, {
+        identityId: "jester",
+        model,
+      });
+
+      expect(refused.status).toBe(503);
+      expect(refused.body.error).toMatchObject({
+        code: "unavailable",
+        details: { reason: "jester_runs_on_hermes" },
+      });
+    }
+    expect(node.jobs()).toHaveLength(1);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("outside an active Objective a delegation waits for the owner, and a decline refuses it", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
