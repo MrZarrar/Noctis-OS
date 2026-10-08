@@ -47,6 +47,8 @@ const TURN_TIMEOUT_MS = 2 * 60 * 60_000;
 const KILL_AFTER_CANCEL_MS = 5_000;
 /** Refused by Hermes whatever anyone answers: these leave the PC and cannot be called back. */
 const DENIED = ["*git push*", "*npm publish*", "*pnpm publish*", "*yarn publish*", "*gh release*"];
+/** Hermes's own memory, its search over past sessions, and its scheduler. */
+const MEMORYLESS = ["memory", "session_search", "cronjob"];
 
 /** `hermes-acp.exe` where Hermes's own installer puts it, unless the operator names one. */
 export function resolveHermesCommand(env: NodeJS.ProcessEnv): string | undefined {
@@ -76,6 +78,20 @@ function hermesConfig(model: string): string {
     "  timeout: 600",
     "  deny:",
     ...DENIED.map((pattern) => `    - ${JSON.stringify(pattern)}`),
+    // ADR-0030: memory off, cron off. Noctis keeps the threads; Hermes keeps
+    // nothing of its own between them and schedules nothing behind the owner.
+    "memory:",
+    "  memory_enabled: false",
+    "  user_profile_enabled: false",
+    "  nudge_interval: 0",
+    "auxiliary:",
+    "  background_review:",
+    "    enabled: false",
+    "skills:",
+    "  creation_nudge_interval: 0",
+    "agent:",
+    "  disabled_toolsets:",
+    ...MEMORYLESS.map((toolset) => `    - ${JSON.stringify(toolset)}`),
     "",
   ].join("\n");
 }

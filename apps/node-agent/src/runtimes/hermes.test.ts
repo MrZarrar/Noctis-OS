@@ -278,6 +278,22 @@ describe("the Hermes runtime (ACP)", () => {
     expect(config).toContain('"*git push*"');
   });
 
+  it("keeps no memory and schedules nothing (ADR-0030): no stores, no review fork, no memory or cron tools", async () => {
+    const { runtime: hermes } = runtime();
+
+    await hermes.turn(input(), recorder().sink);
+
+    const config = readFileSync(join(scratch, "hermes", "config.yaml"), "utf8");
+
+    expect(config).toContain("memory_enabled: false");
+    expect(config).toContain("user_profile_enabled: false");
+    expect(config).toMatch(/background_review:\n {4}enabled: false/);
+    expect(config).toContain("creation_nudge_interval: 0");
+    expect(config).toMatch(
+      /disabled_toolsets:\n {4}- "memory"\n {4}- "session_search"\n {4}- "cronjob"/,
+    );
+  });
+
   it("resumes a session in a new process without replaying its history as this turn, then reuses the process", async () => {
     const { runtime: hermes, spawned } = runtime();
     const r = recorder();
