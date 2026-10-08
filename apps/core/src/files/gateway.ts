@@ -1,14 +1,19 @@
 import type { Readable } from "node:stream";
 
-import type { FileListEvidence, NodeCapability, OrchestrationEvent } from "@noctis/contracts";
-import { FileListEvidenceSchema, RuntimeGrantConstraintsSchema } from "@noctis/contracts";
+import type {
+  ExternalSession,
+  FileListEvidence,
+  NodeCapability,
+  OrchestrationEvent,
+} from "@noctis/contracts";
+import { CAPABILITY_CONTRACTS } from "@noctis/contracts";
 
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
 import type { Dispatcher } from "../nodes/dispatch.js";
 import type { NodeJobRecord } from "../nodes/jobs.js";
 import { enqueueJobInTransaction, getJob } from "../nodes/jobs.js";
-import { getNode, listGrants } from "../nodes/registry.js";
+import { sharedFolder } from "../nodes/registry.js";
 
 /**
  * The owner opening files on a PC (v1 S4).
@@ -113,12 +118,17 @@ export interface OpenedFile {
 interface Waiting {
   nodeId: string;
   capability: NodeCapability;
-  resolve(value: FileListEvidence | OpenedFile): void;
+  resolve(value: unknown): void;
   reject(reason: FileUnavailable): void;
 }
 
 export interface FileGateway {
   list(context: CommandContext, at: FileLocation): Promise<FileListEvidence>;
+  /** The agent sessions a shared folder has: what the owner can pick up and continue. */
+  sessions(
+    context: CommandContext,
+    at: { nodeId: string; rootGrantId: string },
+  ): Promise<{ sessions: ExternalSession[] }>;
   open(
     context: CommandContext,
     at: FileLocation & { offset: number; length?: number },
@@ -145,6 +155,8 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
 
   // A failed job is how a node says "no such file"; a listing's evidence is
   // its answer. A read's success arrives after its stream, so it is ignored.
+  // ponytail: sessions ride the same gateway as files, since both are "ask the
+  // node about a shared folder". Rename it the day a third kind of question does.
   function onEvents(events: readonly OrchestrationEvent[]): void {
     for (const event of events) {
       if (event.type !== "node.job_result.v1" || !waiting.has(event.streamId)) {
@@ -162,38 +174,25 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
         settle(event.streamId)?.reject(
           new FileUnavailable(404, payload.failureReason ?? "the PC could not open that"),
         );
-      } else if (entry?.capability === "file.list") {
-        settle(event.streamId)?.resolve(FileListEvidenceSchema.parse(payload.evidence));
+      } else if (entry !== undefined && entry.capability !== "file.read") {
+        settle(event.streamId)?.resolve(
+          CAPABILITY_CONTRACTS[entry.capability].evidence.parse(payload.evidence),
+        );
       }
     }
   }
 
   const unsubscribe = kernel.broker.subscribe(onEvents);
 
-  function run<T extends FileListEvidence | OpenedFile>(
+  function run<T>(
     context: CommandContext,
-    capability: "file.list" | "file.read",
-    at: FileLocation,
+    capability: "file.list" | "file.read" | "session.list",
+    at: { nodeId: string; rootGrantId: string },
     payload: Record<string, unknown>,
   ): Promise<T> {
-    // From the grants, not from the probed runtimes: a folder is shared
-    // whether or not an agent happens to be installed beside it.
-    const node = getNode(kernel.db, at.nodeId);
-    const now = kernel.clock.now();
-    const shared =
-      node !== undefined &&
-      node.status !== "revoked" &&
-      listGrants(kernel.db, at.nodeId).some(
-        (grant) =>
-          grant.capability === "runtime.turn" &&
-          grant.revokedAt === undefined &&
-          (grant.expiresAt === undefined || Date.parse(grant.expiresAt) > now) &&
-          RuntimeGrantConstraintsSchema.parse(grant.constraints).roots.some(
-            (root) => root.grantId === at.rootGrantId,
-          ),
-      );
+    const node = sharedFolder(kernel.db, at.nodeId, at.rootGrantId, kernel.clock.now());
 
-    if (node === undefined || !shared) {
+    if (node === undefined) {
       return Promise.reject(new FileUnavailable(404, "That PC shares no such folder"));
     }
 
@@ -209,7 +208,7 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
         enqueueJobInTransaction(tx, kernel, context, {
           id: jobId,
           capability,
-          payload: { rootGrantId: at.rootGrantId, relativePath: at.relativePath, ...payload },
+          payload: { rootGrantId: at.rootGrantId, ...payload },
           idempotencyKey: `files:${jobId}`,
           pinnedNodeId: at.nodeId,
         }),
@@ -246,9 +245,12 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
   }
 
   return {
-    list: (context, at) => run<FileListEvidence>(context, "file.list", at, {}),
+    list: (context, at) =>
+      run<FileListEvidence>(context, "file.list", at, { relativePath: at.relativePath }),
+    sessions: (context, at) => run(context, "session.list", at, {}),
     open: (context, at) =>
       run<OpenedFile>(context, "file.read", at, {
+        relativePath: at.relativePath,
         offset: at.offset,
         ...(at.length === undefined ? {} : { length: at.length }),
       }),

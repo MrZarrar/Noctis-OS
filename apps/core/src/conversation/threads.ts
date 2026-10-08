@@ -1,4 +1,8 @@
-import type { ConversationalIdentityId, ConversationThread } from "@noctis/contracts";
+import type {
+  ConversationalIdentityId,
+  ConversationThread,
+  RuntimeProviderId,
+} from "@noctis/contracts";
 import { ConversationThreadSchema } from "@noctis/contracts";
 
 import type { NoctisDatabase } from "../db/connection.js";
@@ -90,6 +94,49 @@ export function createChildThread(
   }
 
   return thread;
+}
+
+/**
+ * A thread the owner opened: a new conversation, or a session continued from
+ * elsewhere. Any number per identity, beside its one free thread. A pinned
+ * one runs on that node, in that folder, with that agent, every time.
+ */
+export function createNamedThread(
+  tx: NoctisDatabase,
+  kernel: Kernel,
+  thread: {
+    identityId: ConversationalIdentityId;
+    title?: string;
+    nodeId?: string;
+    rootGrantId?: string;
+    providerId?: RuntimeProviderId;
+  },
+  now: string,
+): ConversationThread {
+  const id = kernel.ids.nextId();
+
+  tx.prepare(
+    `INSERT INTO identity_threads
+       (id, identity_id, kind, title, node_id, root_grant_id, provider_id, revision, created_at, updated_at)
+     VALUES (?, ?, 'named', ?, ?, ?, ?, 0, ?, ?)`,
+  ).run(
+    id,
+    thread.identityId,
+    thread.title ?? null,
+    thread.nodeId ?? null,
+    thread.rootGrantId ?? null,
+    thread.providerId ?? null,
+    now,
+    now,
+  );
+
+  const created = getThread(tx, id);
+
+  if (created === undefined) {
+    throw new Error(`Thread ${id} vanished mid-transaction`);
+  }
+
+  return created;
 }
 
 /**

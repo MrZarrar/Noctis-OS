@@ -1297,3 +1297,131 @@ describe("delegation", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 });
+
+describe("a session started outside Noctis", () => {
+  async function adopt(core: TestCore, node: FakeNode, extra: Record<string, unknown> = {}) {
+    return command(core, "conversation.adopt_session", {
+      idempotencyKey: `adopt-${JSON.stringify(extra)}`,
+      identityId: "vesper",
+      nodeId: node.nodeId,
+      rootGrantId: "d",
+      providerId: "codex",
+      sessionRef: "vscode-thread",
+      title: "Draft the cold open",
+      ...extra,
+    });
+  }
+
+  it("THE GATE: is adopted as a pinned thread, forked on its first turn, and resumed after", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+
+    const adopted = await adopt(core, node);
+    expect(adopted.status).toBe(200);
+    expect(adopted.body).toMatchObject({
+      kind: "named",
+      title: "Draft the cold open",
+      nodeId: node.nodeId,
+      rootGrantId: "d",
+      providerId: "codex",
+    });
+    const threadId = adopted.body.id as string;
+
+    // No default model is set: a pinned thread's agent chooses its own.
+    const first = await send(core, "adopted-1", { threadId });
+    expect(first.status).toBe(200);
+    expect(first.body.threadId).toBe(threadId);
+    await waitFor(() => node.jobs().length === 1, "the first job");
+
+    const forked = lastTurnJob(node);
+    expect(forked.payload).toMatchObject({
+      sessionRef: "vscode-thread",
+      forkSession: true,
+      primaryRootGrantId: "d",
+      model: MODEL,
+    });
+    expect(forked.assignment.nodeId).toBe(node.nodeId);
+
+    node.frame({
+      kind: "result",
+      jobId: forked.assignment.jobId,
+      outcome: "succeeded",
+      evidence: { model: MODEL, sessionRef: "fork-1", itemCount: 1, stoppedReason: "completed" },
+    });
+    await waitFor(
+      async () =>
+        (await read(core, `/turns/${first.body.id as string}`)).body.status === "completed",
+      "the forked turn to complete",
+    );
+
+    await send(core, "adopted-2", { threadId });
+    await waitFor(() => node.jobs().length === 2, "the second job");
+
+    const resumed = lastTurnJob(node).payload;
+    expect(resumed.sessionRef).toBe("fork-1");
+    expect(resumed.forkSession).toBe(undefined);
+
+    // Free chat is still its own thread beside it.
+    await setDefault(core);
+    const free = await send(core, "free-1");
+    expect(free.status).toBe(200);
+    expect(free.body.threadId).not.toBe(threadId);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("refuses another agent's model on a thread pinned to one", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const adopted = await adopt(core, node);
+
+    const refused = await send(core, "other-agent", {
+      threadId: adopted.body.id,
+      model: { providerId: "claude", model: "sonnet" },
+    });
+    expect(refused.status).toBe(503);
+    expect(JSON.stringify(refused.body)).toContain("thread_runs_on_codex");
+    expect(node.jobs()).toHaveLength(0);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("refuses a folder the PC does not share with that agent", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+
+    expect((await adopt(core, node, { providerId: "claude" })).status).toBe(404);
+    expect((await adopt(core, node, { rootGrantId: "elsewhere" })).status).toBe(404);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("lists a shared folder's sessions through the node that holds it", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const sessions = [
+      {
+        providerId: "codex",
+        sessionRef: "vscode-thread",
+        title: "Draft the cold open",
+        lastActiveAt: "2026-10-08T12:00:00.000Z",
+        source: "vscode",
+      },
+    ];
+
+    const listing = read(core, `/sessions?node=${node.nodeId}&root=d`);
+    await waitFor(() => node.jobs().length === 1, "the session.list job");
+
+    const job = NodeJobAssignmentSchema.parse(JSON.parse(node.jobs()[0]?.assignment ?? "{}"));
+    expect(job).toMatchObject({ capability: "session.list", payload: { rootGrantId: "d" } });
+    node.frame({ kind: "result", jobId: job.jobId, outcome: "succeeded", evidence: { sessions } });
+
+    expect(await listing).toEqual({ status: 200, body: { sessions } });
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+});

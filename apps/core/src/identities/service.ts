@@ -20,13 +20,19 @@ export type ThreadRow = {
   parent_thread_id: string | null;
   parent_turn_id: string | null;
   active_objective_id: string | null;
+  kind: string;
+  title: string | null;
+  node_id: string | null;
+  root_grant_id: string | null;
+  provider_id: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
 };
 
 export const THREAD_COLUMNS = `id, identity_id, objective_id, parent_thread_id, parent_turn_id,
-                               active_objective_id, revision, created_at, updated_at`;
+                               active_objective_id, kind, title, node_id, root_grant_id,
+                               provider_id, revision, created_at, updated_at`;
 
 export function toThread(row: ThreadRow): ConversationThread {
   return ConversationThreadSchema.parse({
@@ -36,6 +42,11 @@ export function toThread(row: ThreadRow): ConversationThread {
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
     ...(row.parent_turn_id === null ? {} : { parentTurnId: row.parent_turn_id }),
     ...(row.active_objective_id === null ? {} : { activeObjectiveId: row.active_objective_id }),
+    kind: row.kind,
+    ...(row.title === null ? {} : { title: row.title }),
+    ...(row.node_id === null ? {} : { nodeId: row.node_id }),
+    ...(row.root_grant_id === null ? {} : { rootGrantId: row.root_grant_id }),
+    ...(row.provider_id === null ? {} : { providerId: row.provider_id }),
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -56,7 +67,8 @@ export function getThreadForIdentity(
   const row = db
     .prepare(
       `SELECT ${THREAD_COLUMNS} FROM identity_threads
-        WHERE identity_id = ? AND objective_id IS NULL AND parent_thread_id IS NULL`,
+        WHERE identity_id = ? AND objective_id IS NULL AND parent_thread_id IS NULL
+          AND kind = 'free'`,
     )
     .get(identityId) as ThreadRow | undefined;
 

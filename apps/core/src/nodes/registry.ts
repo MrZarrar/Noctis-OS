@@ -6,6 +6,7 @@ import type {
   PairNodeRequest,
   RevokeNodeCommand,
   RuntimeProbe,
+  RuntimeProviderId,
   RuntimeRoot,
 } from "@noctis/contracts";
 import {
@@ -219,6 +220,46 @@ export function listRuntimeCandidates(
   }
 
   return candidates;
+}
+
+/**
+ * A folder a live node shares with its agents, read from the grants rather
+ * than from the probed runtimes: a folder is shared whether or not an agent
+ * happens to be installed beside it. Undefined for a revoked node, or a folder
+ * no live `runtime.turn` grant names.
+ */
+export function sharedFolder(
+  db: NoctisDatabase,
+  nodeId: string,
+  rootGrantId: string,
+  /** Epoch milliseconds from the injected clock, for grant expiry. */
+  now: number,
+): { hostId: string; providers: RuntimeProviderId[] } | undefined {
+  const node = getNode(db, nodeId);
+
+  if (node === undefined || node.status === "revoked") {
+    return undefined;
+  }
+
+  const providers = new Set<RuntimeProviderId>();
+
+  for (const grant of listGrants(db, nodeId)) {
+    if (
+      grant.capability !== "runtime.turn" ||
+      grant.revokedAt !== undefined ||
+      (grant.expiresAt !== undefined && Date.parse(grant.expiresAt) <= now)
+    ) {
+      continue;
+    }
+
+    const constraints = RuntimeGrantConstraintsSchema.parse(grant.constraints);
+
+    if (constraints.roots.some((root) => root.grantId === rootGrantId)) {
+      constraints.providers.forEach((provider) => providers.add(provider));
+    }
+  }
+
+  return providers.size === 0 ? undefined : { hostId: node.hostId, providers: [...providers] };
 }
 
 /** A granted root a turn can be pinned to, named for a person rather than for a router. */

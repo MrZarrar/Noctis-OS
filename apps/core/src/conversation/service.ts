@@ -1,4 +1,5 @@
 import type {
+  AdoptRuntimeSessionCommand,
   CancelConversationTurnCommand,
   ConversationThread,
   ConversationalIdentityId,
@@ -11,6 +12,7 @@ import type {
   RuntimeDelta,
   RuntimeItem,
   RuntimeOutput,
+  RuntimeProviderId,
   RuntimeTurnPayload,
   SendConversationMessageCommand,
   StreamType,
@@ -37,7 +39,7 @@ import { runCommand } from "../kernel.js";
 import type { Dispatcher } from "../nodes/dispatch.js";
 import type { NodeJobRecord } from "../nodes/jobs.js";
 import { cancelJob, enqueueJobInTransaction, getJob } from "../nodes/jobs.js";
-import { listRuntimeCandidates } from "../nodes/registry.js";
+import { listRuntimeCandidates, sharedFolder } from "../nodes/registry.js";
 import type { RuntimeFrameHub } from "../nodes/runtime-frames.js";
 import { getObjective } from "../objectives/service.js";
 import type { VaultRoot } from "../vault/root.js";
@@ -46,7 +48,7 @@ import { answerFromEvent, closePendingAsks, handleAsk } from "./asks.js";
 import { catalogue, defaultModelFor } from "./models.js";
 import { applyProposal } from "./proposals.js";
 import { promptWithRecall, recallForPrompt } from "./recall-context.js";
-import { createChildThread, getThread, threadFor } from "./threads.js";
+import { createChildThread, createNamedThread, getThread, threadFor } from "./threads.js";
 
 export type TurnStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -234,15 +236,17 @@ function sessionOn(
   threadId: string,
   providerId: string,
   nodeId: string,
-): string | undefined {
+): { sessionRef: string; forkPending: boolean } | undefined {
   const row = db
     .prepare(
-      `SELECT node_id, session_ref FROM identity_sessions
+      `SELECT session_ref, fork_pending FROM identity_sessions
         WHERE thread_id = ? AND provider_id = ? AND node_id = ?`,
     )
-    .get(threadId, providerId, nodeId) as SessionRow | undefined;
+    .get(threadId, providerId, nodeId) as { session_ref: string; fork_pending: number } | undefined;
 
-  return row?.session_ref;
+  return row === undefined
+    ? undefined
+    : { sessionRef: row.session_ref, forkPending: row.fork_pending === 1 };
 }
 
 /** The model the thread's latest turn ran on. */
@@ -316,6 +320,10 @@ export interface ConversationServiceDeps {
 
 export interface ConversationService {
   sendMessage(context: CommandContext, command: SendConversationMessageCommand): Result<Turn>;
+  adoptSession(
+    context: CommandContext,
+    command: AdoptRuntimeSessionCommand,
+  ): Result<ConversationThread>;
   cancelTurn(context: CommandContext, command: CancelConversationTurnCommand): Result<Turn>;
   onStreamItem(nodeId: string, jobId: string, sequence: number, item: RuntimeItem): void;
   onDelta(nodeId: string, jobId: string, delta: RuntimeDelta): void;
@@ -374,6 +382,29 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
 
   function nowIso(): string {
     return new Date(kernel.clock.now()).toISOString();
+  }
+
+  /**
+   * The model a thread that belongs to one agent runs on, when nobody chose:
+   * its own last model for that agent, else the identity's default if it is
+   * that agent, else the first model any connected node offers for it.
+   */
+  function modelFor(
+    tx: NoctisDatabase,
+    threadId: string,
+    identityId: ConversationalIdentityId,
+    providerId: RuntimeProviderId,
+  ): ModelRef | undefined {
+    const previous = lastModel(tx, threadId);
+    const fallback = defaultModelFor(tx, identityId);
+
+    return previous?.providerId === providerId
+      ? previous
+      : fallback?.providerId === providerId
+        ? fallback
+        : catalogue(tx, (id) => dispatcher.isConnected(id)).find(
+            (candidate) => candidate.providerId === providerId,
+          );
   }
 
   function identityContext(turn: Turn): CommandContext {
@@ -513,7 +544,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     let job: NodeJobRecord | undefined;
 
     if (selected !== undefined && primaryRootGrantId !== undefined) {
-      const sessionRef = sessionOn(tx, thread.id, model.providerId, selected.nodeId);
+      const session = sessionOn(tx, thread.id, model.providerId, selected.nodeId);
       const payload: RuntimeTurnPayload = {
         threadId: thread.id,
         identityId,
@@ -521,7 +552,8 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         userMessageId,
         prompt: promptWithRecall(request.text, recallForPrompt(tx, request.text, deps)),
         primaryRootGrantId,
-        ...(sessionRef === undefined ? {} : { sessionRef }),
+        ...(session === undefined ? {} : { sessionRef: session.sessionRef }),
+        ...(session?.forkPending === true ? { forkSession: true } : {}),
         ...(objectiveId === undefined ? {} : { objectiveId }),
         objectiveActive,
         ...(attachments.length === 0 ? {} : { attachments }),
@@ -689,18 +721,54 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           thread = threadFor(tx, kernel, command.identityId, command.objectiveId, at);
         }
 
+        // A pinned thread holds one agent's session in one folder on one PC;
+        // anything else would start that agent somewhere its session is not.
+        const pinned = thread.providerId;
+
+        if (
+          pinned !== undefined &&
+          command.model !== undefined &&
+          command.model.providerId !== pinned
+        ) {
+          return conflict({
+            kind: "unavailable",
+            entity: "thread",
+            reason: `thread_runs_on_${pinned}`,
+          });
+        }
+
+        if (
+          thread.rootGrantId !== undefined &&
+          command.rootGrantId !== undefined &&
+          command.rootGrantId !== thread.rootGrantId
+        ) {
+          return conflict({
+            kind: "unavailable",
+            entity: "thread",
+            reason: `thread_runs_in_${thread.rootGrantId}`,
+          });
+        }
+
+        const model =
+          command.model ??
+          (pinned !== undefined
+            ? modelFor(tx, thread.id, thread.identityId, pinned)
+            : // A delegated thread belongs to the runtime that was asked, not to
+              // the identity's default, so the owner's follow-up stays on it.
+              thread.parentThreadId === undefined
+              ? undefined
+              : lastModel(tx, thread.id));
+        const rootGrantId = command.rootGrantId ?? thread.rootGrantId;
+
         return openTurn(
           tx,
           context,
           thread,
           {
             text: command.text,
-            // A delegated thread belongs to the runtime that was asked, not to
-            // the identity's default, so the owner's follow-up stays on it.
-            model:
-              command.model ??
-              (thread.parentThreadId === undefined ? undefined : lastModel(tx, thread.id)),
-            ...(command.rootGrantId === undefined ? {} : { rootGrantId: command.rootGrantId }),
+            model,
+            ...(rootGrantId === undefined ? {} : { rootGrantId }),
+            ...(thread.nodeId === undefined ? {} : { nodeId: thread.nodeId }),
             attachmentIds: command.attachmentIds ?? [],
           },
           turnId,
@@ -712,6 +780,64 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     dispatchOpened(outcome);
 
     return outcome;
+  }
+
+  /**
+   * A session an agent already keeps on a PC becomes a thread pinned to that
+   * PC, folder and agent. Its first turn forks the session (`fork_pending`),
+   * so VS Code, which may still have it open, is never written under.
+   */
+  function adoptSession(
+    context: CommandContext,
+    command: AdoptRuntimeSessionCommand,
+  ): Result<ConversationThread> {
+    const now = nowIso();
+    const threadId = kernel.ids.nextId();
+
+    return runCommand<ConversationThread>(
+      kernel,
+      { scope: "conversation.adopt_session", key: command.idempotencyKey, resultId: threadId },
+      (tx) => {
+        const shared = sharedFolder(tx, command.nodeId, command.rootGrantId, kernel.clock.now());
+
+        if (shared === undefined || !shared.providers.includes(command.providerId)) {
+          return conflict({
+            kind: "not_found",
+            entity: "shared_folder",
+            id: `${command.rootGrantId}:${command.providerId}`,
+          });
+        }
+
+        const thread = createNamedThread(
+          tx,
+          kernel,
+          {
+            identityId: command.identityId,
+            title: command.title,
+            nodeId: command.nodeId,
+            rootGrantId: command.rootGrantId,
+            providerId: command.providerId,
+          },
+          now,
+        );
+
+        tx.prepare(
+          `INSERT INTO identity_sessions
+             (id, thread_id, provider_id, node_id, session_ref, fork_pending, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        ).run(
+          kernel.ids.nextId(),
+          thread.id,
+          command.providerId,
+          command.nodeId,
+          command.sessionRef,
+          now,
+          now,
+        );
+
+        return ok({ value: thread, events: [] });
+      },
+    );
   }
 
   function cancelTurn(
@@ -1009,15 +1135,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           return conflict({ kind: "not_found", entity: "thread", id: delegation.threadId ?? "" });
         }
 
-        const previous = lastModel(tx, thread.id);
-        const model =
-          previous?.providerId === delegation.runtime
-            ? previous
-            : defaultModelFor(tx, parentTurn.identityId)?.providerId === delegation.runtime
-              ? defaultModelFor(tx, parentTurn.identityId)
-              : catalogue(tx, (id) => dispatcher.isConnected(id)).find(
-                  (candidate) => candidate.providerId === delegation.runtime,
-                );
+        const model = modelFor(tx, thread.id, parentTurn.identityId, delegation.runtime);
 
         if (model === undefined) {
           return conflict({
@@ -1149,6 +1267,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (thread_id, provider_id, node_id) DO UPDATE SET
                session_ref = excluded.session_ref,
+               fork_pending = 0,
                updated_at = excluded.updated_at`,
           ).run(
             kernel.ids.nextId(),
@@ -1298,6 +1417,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
 
   return {
     sendMessage,
+    adoptSession,
     cancelTurn,
     onStreamItem,
     onDelta,

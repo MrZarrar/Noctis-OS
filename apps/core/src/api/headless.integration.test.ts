@@ -328,7 +328,7 @@ describe("headless kernel loop", () => {
     // subscriptions that die with the session they belong to; 0009 the
     // attachments a prompt carries and the turns that carried them; 0010 the
     // child threads a delegation runs on.
-    expect(diagnostics.body.schemaVersion).toBe(10);
+    expect(diagnostics.body.schemaVersion).toBe(11);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {

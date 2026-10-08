@@ -124,6 +124,7 @@ describe("migrate", () => {
     const nodeJobs = columns("node_jobs");
     const nodes = columns("nodes");
     const threads = columns("identity_threads");
+    const runtimeSessions = columns("identity_sessions");
     const version = db.prepare("SELECT MAX(version) v FROM schema_migrations").get() as {
       v: number;
     };
@@ -160,8 +161,18 @@ describe("migrate", () => {
     expect(nodeJobs).toContain("pinned_node_id");
     expect(nodes).toContain("providers_json");
     expect(threads).toEqual(
-      expect.arrayContaining(["objective_id", "parent_thread_id", "parent_turn_id"]),
+      expect.arrayContaining([
+        "objective_id",
+        "parent_thread_id",
+        "parent_turn_id",
+        "kind",
+        "title",
+        "node_id",
+        "root_grant_id",
+        "provider_id",
+      ]),
     );
-    expect(version.v).toBe(10);
+    expect(runtimeSessions).toContain("fork_pending");
+    expect(version.v).toBe(11);
   });
 });

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   ActivateIdentityCommandSchema,
+  AdoptRuntimeSessionCommandSchema,
   AttentionStateSchema,
   CancelConversationTurnCommandSchema,
   CancelNodeJobCommandSchema,
@@ -554,6 +555,11 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     SendConversationMessageCommandSchema,
     (deps, context, command) => deps.conversation.sendMessage(context, command),
     (db, id) => getTurn(db, id),
+  ),
+  "conversation.adopt_session": defineDepsCommand(
+    AdoptRuntimeSessionCommandSchema,
+    (deps, context, command) => deps.conversation.adoptSession(context, command),
+    (db, id) => getThread(db, id),
   ),
   "conversation.cancel": defineDepsCommand(
     CancelConversationTurnCommandSchema,
@@ -1351,6 +1357,43 @@ async function handleFiles(
   file.body.pipe(res);
 }
 
+/**
+ * `GET /sessions?node=&root=`: the agent sessions a shared folder has, asked
+ * of the node that holds it, for the owner to pick one up and continue it.
+ */
+async function handleSessions(
+  deps: ApiDeps,
+  url: URL,
+  res: ServerResponse,
+  correlationId: string,
+): Promise<void> {
+  const nodeId = url.searchParams.get("node") ?? "";
+  const rootGrantId = url.searchParams.get("root") ?? "";
+
+  if (
+    !UuidSchema.safeParse(nodeId).success ||
+    rootGrantId.length === 0 ||
+    rootGrantId.length > 128
+  ) {
+    send(res, 400, errorBody("invalid_request", "Name a node and a shared folder"), correlationId);
+    return;
+  }
+
+  try {
+    send(
+      res,
+      200,
+      await deps.files.sessions(
+        { correlationId, actorType: "user", actorId: "local" },
+        { nodeId, rootGrantId },
+      ),
+      correlationId,
+    );
+  } catch (error) {
+    sendUnavailable(res, error, correlationId);
+  }
+}
+
 function handlePair(
   deps: ApiDeps,
   context: CommandContext,
@@ -1816,6 +1859,11 @@ export async function handleRequest(
         "x-correlation-id": correlationId,
       });
       res.end(bytes);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/sessions") {
+      await handleSessions(deps, url, res, correlationId);
       return;
     }
 
