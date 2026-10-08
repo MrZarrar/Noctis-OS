@@ -3240,3 +3240,70 @@ stashing `local` out of `RUNTIME_PROVIDERS`: the send answered 500.
 | `node --test apps/web/e2e/{approval.keyboard,chat,files}.test.mjs`           | exit 0; 2 + 3 + 1 tests                              |
 | `npm run typecheck`, `npx eslint .`, `npx prettier --check .`                | exit 0 (lint: `files.test.mjs` now imports `Buffer`) |
 | full `test:e2e` and the remaining browser suites                             | not run here; handed to the owner                    |
+
+### 2026-10-08 Jester on Hermes (ADR-0030)
+
+On the home PC (`zarrarpc`), the same night as S3. Commits `2e3f8e6`, `c1ea808`, `8363c96`,
+`6741461`, `59bcc7c`, `26efe08`, `66cb475`, `63d7e59`, `2f6cc24`, `73c7e49`. Nothing deployed.
+
+- **The owner's picks** (from Codex's stills in `docs/design/assets/jester/`): core variant C,
+  "hidden grin"; the cap glyph; a Vesper/Jester switch plus the typed commands; Jester on Hermes
+  alone, chosen automatically.
+- **ADR-0030 on the node.** Noctis's Hermes home turns off Hermes's memory and user profile, the
+  background review that writes memories and skills, the skill nudge, and the `memory`,
+  `session_search` and `cronjob` toolsets (ACP already left out `cronjob_manage`). Each Hermes
+  session gets the node's `noctis` MCP server through ACP, with a proposals file per thread, as
+  Codex has it. A Jester turn runs on its own home (`<node home>\hermes-jester`) whose `SOUL.md`
+  says who Jester is; Hermes's ACP sessions ignore `display.personality`, so the soul is the
+  route, and Vesper's Hermes stays plain. Every Hermes turn asks the local model server first and
+  refuses at once ("LM Studio is not running...") when it is down; nothing else carries it.
+- **Skills.** Hermes cannot switch off `skill_manage` alone. Read as "Noctis only reads Hermes's
+  skills"; the self-nudge and review that would write them unasked are off. `GET /skills` is not
+  built.
+- **Core.** A Jester turn with no model takes the thread's last Hermes model, else a Hermes
+  default, else the first Hermes model a connected node offers (`modelFor`). Naming any other
+  agent, the plain `local` one included, is refused as `jester_runs_on_hermes`. `local_only`
+  routing for Jester was already there and covers its delegated children.
+- **Core look.** `core.ts` holds the profile (`JESTER_PROFILE`, `profileFor`), per-state `face`
+  and `fault` levels, and deterministic marks: two fault lines along the cage's own edges, an
+  11-point grin, the eyes, drips. Codex wrote the renderer to `docs/handoffs/jester-renderer.md`
+  against tests written first; Claude reviewed it, moved the fault drips into the spinning
+  network, and turned the faults, drips and grin into chains of point lights, because WebGL lines
+  are one pixel wide and the first render was too faint to read. Vesper's core is unchanged.
+- **Web.** The switch sits above the box on Presence and Threads; exactly `JESTER` or `VESPER`
+  alone switches instead of sending; switching leaves a conversation that belongs to the other
+  identity. Jester's picker offers Hermes alone, and says "Jester needs Hermes and LM Studio on a
+  connected PC" when there is none. Presence shows `JESTER · ACTIVE` with the cap.
+- **Codex.** Drew the stills (its home-PC design session `01a11d61...`), wrote the renderer, and
+  reviewed the diff. Its sandbox still cannot read files here, so everything went in on stdin;
+  the `codex` skill now says so.
+
+| Gate clause                                                       | State       | Evidence                                                                                |
+| ----------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| Hermes keeps no memory and schedules nothing                      | implemented | `hermes.test.ts` "keeps no memory and schedules nothing"                                |
+| Hermes gets the Noctis MCP tools; their proposals come back       | implemented | `hermes.test.ts` "attaches the Noctis MCP tools..."                                     |
+| Jester speaks as itself on its own home; Vesper's Hermes is plain | implemented | `hermes.test.ts` "speaks as Jester on Jester's own Hermes home..."                      |
+| Unavailable, not cloud-backed, when LM Studio is down             | implemented | `hermes.test.ts` "refuses at once..." (no process spawned)                              |
+| Jester runs on Hermes alone, chosen automatically                 | implemented | `conversation.integration.test.ts` "Jester runs on Hermes alone (ADR-0030)..."          |
+| Jester's core: faults at rest, face thinking and speaking, amber  | implemented | `core.test.ts`, `renderer.test.ts`; screenshots `docs/design/assets/jester/live/`       |
+| Switch from Presence, typed commands, Hermes-only picker          | implemented | E2E "THE GATE (Jester)..." (`apps/web/e2e/jester.test.mjs`), desktop and phone          |
+| Live: a Jester thread on Hermes from the phone                    | not yet     | Needs the work PC's core redeployed and the home node restarted (owner steps, deferred) |
+
+Red first: each node, core and unit test above failed on the missing behaviour; the E2E gate was
+shown red by stashing the web wiring (no Jester button), then green.
+
+| Command                                                                                                                                                          | Result                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `npx vitest run` on `hermes`, `runtimes/index`, `conversation.integration`, `headless`, `objectives`, `packages/ui/src/intelligence`, `profiles`, `apps/web/src` | exit 0                        |
+| `node --test apps/web/e2e/{presence,chat,phone,jester}.test.mjs`                                                                                                 | exit 0 after the 44px fix     |
+| `npm run typecheck`, `npx eslint` and `npx prettier --check` on the changed files                                                                                | exit 0                        |
+| the full sweep (`npx vitest run`, `npm run test:e2e`, which now includes `jester.test.mjs`)                                                                      | not run here; owner, deferred |
+
+#### Known, not fixed
+
+- **The config race** noted in `hermes.ts` now also covers two Jester threads opening on
+  different models at the same moment.
+- **Jester's home prepares Hermes's dependencies on its first turn** (Hermes does this per data
+  root), so the first Jester turn on a PC is slower than later ones.
+- **Jester's voice is a SOUL.md.** Qwen3.5-9B may not hold it; judge it live.
+- **A Jester default set to another agent before this change** is ignored rather than cleared.
