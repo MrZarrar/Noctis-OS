@@ -38,6 +38,9 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   "file.search": 200,
   "verification.noop": 200,
   "runtime.turn": 100_000,
+  "file.list": 200,
+  /** A heartbeat every ten seconds while bytes flow: hours of film. */
+  "file.read": 2_000,
 };
 
 /** In-flight jobs the core will track frames for on one connection. */

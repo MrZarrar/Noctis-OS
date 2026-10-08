@@ -1,4 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { Readable } from "node:stream";
+import type { ReadableStream } from "node:stream/web";
 
 import type {
   CapabilityGrant,
@@ -14,11 +16,12 @@ import {
   NODE_ENVELOPE_VERSION,
   NodeJobAssignmentSchema,
   NodeServerFrameSchema,
+  grantCovers,
 } from "@noctis/contracts";
 import { createIdFactory, systemClock } from "@noctis/domain";
 import { WebSocket } from "ws";
 
-import type { Adapter, AdapterContext } from "./adapters.js";
+import type { Adapter, AdapterContext, StreamedFile } from "./adapters.js";
 import { ADAPTERS, AdapterRefused } from "./adapters.js";
 import type { Runtime } from "./runtimes/Runtime.js";
 import { APPROVAL_TIMEOUT_MS, ApprovalTimedOut } from "./runtimes/Runtime.js";
@@ -195,6 +198,33 @@ export function startAgent(options: AgentOptions): RunningAgent {
     return id;
   }
 
+  /**
+   * One file range to the core for a `file.read` job, streamed rather than
+   * buffered so a film costs the node no more memory than a script.
+   */
+  async function streamFile(jobId: string, file: StreamedFile, signal: AbortSignal): Promise<void> {
+    const response = await fetch(new URL("/node/files", credential.coreUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential.nodeId}.${credential.credential}`,
+        "content-type": "application/octet-stream",
+        "x-noctis-job": jobId,
+        "x-noctis-file-size": String(file.sizeBytes),
+        "x-noctis-file-offset": String(file.offset),
+        "x-noctis-file-length": String(file.length),
+      },
+      body: Readable.toWeb(file.body) as ReadableStream<Uint8Array>,
+      duplex: "half",
+      signal,
+    });
+
+    await response.body?.cancel();
+
+    if (!response.ok) {
+      throw new AdapterRefused(`the core refused the file with ${String(response.status)}`);
+    }
+  }
+
   function rejectAsks(jobId: string, reason: string): void {
     for (const pending of pendingAsks.get(jobId)?.values() ?? []) {
       pending.reject(new AdapterRefused(reason));
@@ -228,6 +258,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
       runtimes,
       fetchAttachment: (id) => fetchAttachment(id, controller.signal),
       uploadOutput: (output) => uploadOutput(jobId, output, controller.signal),
+      streamFile: (file) => streamFile(jobId, file, controller.signal),
       delegate(delegation) {
         if (controller.signal.aborted) {
           return Promise.reject(new AdapterRefused("job was cancelled"));
@@ -390,7 +421,8 @@ export function startAgent(options: AgentOptions): RunningAgent {
     }
 
     const granted = grants.some(
-      (grant) => grant.capability === assignment.capability && grant.revokedAt === undefined,
+      (grant) =>
+        grantCovers(grant.capability, assignment.capability) && grant.revokedAt === undefined,
     );
 
     if (!granted) {

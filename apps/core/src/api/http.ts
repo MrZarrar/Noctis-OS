@@ -36,6 +36,7 @@ import {
   SetSurfaceOverrideCommandSchema,
   SurfaceDisplaySchema,
   UpsertSurfaceIntentCommandSchema,
+  FileRelativePathSchema,
   MAX_ATTACHMENT_BYTES,
   UuidSchema,
 } from "@noctis/contracts";
@@ -75,6 +76,8 @@ import {
 import { findThread, getThread, listChildThreads } from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
+import type { FileGateway, FileLocation } from "../files/gateway.js";
+import { FileUnavailable, fileMediaType, parseRange } from "../files/gateway.js";
 import type { LiveBroker } from "../events/live.js";
 import {
   activateIdentity,
@@ -176,6 +179,12 @@ export const ATTACHMENT_FILENAME_HEADER = "x-noctis-filename";
 export const NODE_OUTPUT_PATH = "/node/outputs";
 /** The job the output belongs to. The node must hold it. */
 export const OUTPUT_JOB_HEADER = "x-noctis-job";
+/** `POST /node/files` — the bytes of a `file.read` job, streamed by the node holding it. */
+export const NODE_FILE_PATH = "/node/files";
+/** The file's whole size, and the range the body carries. */
+export const FILE_SIZE_HEADER = "x-noctis-file-size";
+export const FILE_OFFSET_HEADER = "x-noctis-file-offset";
+export const FILE_LENGTH_HEADER = "x-noctis-file-length";
 
 /** Exchanges the core token for a cookie. The other path that runs before the gate. */
 export const LOGIN_PATH = "/session/login";
@@ -199,6 +208,8 @@ export interface ApiDeps {
   startedAt: number;
   dispatcher: Dispatcher;
   conversation: ConversationService;
+  /** Files on a PC, listed and streamed through jobs on its node (v1 S4). */
+  files: FileGateway;
   /** Token deltas for streaming clients. Never persisted. */
   live: LiveBroker;
   /** Web push. Present always; without VAPID keys its `publicKey()` is undefined. */
@@ -1165,6 +1176,181 @@ function handleNodeOutput(
   return { status: 200, body: outcome.value };
 }
 
+/** A whole number from a header the node set, or undefined. */
+function headerCount(raw: string | string[] | undefined): number | undefined {
+  const value = Number(headerValue(raw) ?? "x");
+
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * The bytes of a `file.read` job, from the node holding it. Handed to the
+ * browser waiting for them and answered once that browser has them all; a
+ * stream nobody asked for is refused unread.
+ */
+async function handleNodeFile(
+  deps: ApiDeps,
+  req: IncomingMessage,
+  res: ServerResponse,
+  correlationId: string,
+): Promise<void> {
+  const nodeId = verifiedNode(deps, headerValue(req.headers.authorization));
+
+  if (nodeId === undefined) {
+    req.resume();
+    send(res, 401, errorBody("unauthorized", "A node credential is required"), correlationId);
+    return;
+  }
+
+  const jobId = headerValue(req.headers[OUTPUT_JOB_HEADER]) ?? "";
+  const sizeBytes = headerCount(req.headers[FILE_SIZE_HEADER]);
+  const offset = headerCount(req.headers[FILE_OFFSET_HEADER]);
+  const length = headerCount(req.headers[FILE_LENGTH_HEADER]);
+
+  if (
+    !UuidSchema.safeParse(jobId).success ||
+    sizeBytes === undefined ||
+    offset === undefined ||
+    length === undefined ||
+    offset + length > sizeBytes
+  ) {
+    req.resume();
+    send(
+      res,
+      400,
+      errorBody("invalid_request", "A file stream must name its job and range"),
+      correlationId,
+    );
+    return;
+  }
+
+  const accepted = await deps.files.accept(nodeId, jobId, { sizeBytes, offset, length, body: req });
+
+  if (!accepted) {
+    req.resume();
+    send(res, 403, errorBody("forbidden", "Nobody is waiting for that file"), correlationId);
+    return;
+  }
+
+  if (!res.destroyed) {
+    send(res, 200, { status: "sent" }, correlationId);
+  }
+}
+
+/** Where `/files/*` points, or undefined when the query does not name a place. */
+function fileLocation(url: URL): FileLocation | undefined {
+  const nodeId = url.searchParams.get("node") ?? "";
+  const rootGrantId = url.searchParams.get("root") ?? "";
+  const path = FileRelativePathSchema.safeParse(url.searchParams.get("path") ?? "");
+
+  return UuidSchema.safeParse(nodeId).success &&
+    rootGrantId.length > 0 &&
+    rootGrantId.length <= 128 &&
+    path.success
+    ? { nodeId, rootGrantId, relativePath: path.data }
+    : undefined;
+}
+
+function sendUnavailable(res: ServerResponse, error: unknown, correlationId: string): void {
+  if (!(error instanceof FileUnavailable)) {
+    throw error;
+  }
+
+  send(
+    res,
+    error.status,
+    errorBody(error.status === 404 ? "not_found" : "unavailable", error.message),
+    correlationId,
+  );
+}
+
+/**
+ * `GET /files/list` and `GET /files/content` (v1 S4): a folder on a PC, or one
+ * file from it with `Range` honoured so a video seeks. A file is served as
+ * what its extension says it is, never as a page: anything that could run is
+ * text, and the sandbox policy makes even a mistaken type inert.
+ */
+async function handleFiles(
+  deps: ApiDeps,
+  action: "list" | "content",
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  correlationId: string,
+): Promise<void> {
+  const at = fileLocation(url);
+
+  if (at === undefined || (action === "content" && at.relativePath === "")) {
+    send(
+      res,
+      400,
+      errorBody("invalid_request", "Name a node, a shared folder and a path inside it"),
+      correlationId,
+    );
+    return;
+  }
+
+  const context: CommandContext = { correlationId, actorType: "user", actorId: "local" };
+
+  if (action === "list") {
+    try {
+      send(res, 200, await deps.files.list(context, at), correlationId);
+    } catch (error) {
+      sendUnavailable(res, error, correlationId);
+    }
+
+    return;
+  }
+
+  const range = parseRange(headerValue(req.headers.range));
+  let file;
+
+  try {
+    file = await deps.files.open(context, {
+      ...at,
+      offset: range?.offset ?? 0,
+      ...(range?.length === undefined ? {} : { length: range.length }),
+    });
+  } catch (error) {
+    sendUnavailable(res, error, correlationId);
+    return;
+  }
+
+  if (range !== undefined && range.offset >= file.sizeBytes) {
+    file.body.resume();
+    res.writeHead(416, {
+      "content-range": `bytes */${String(file.sizeBytes)}`,
+      "x-correlation-id": correlationId,
+    });
+    res.end();
+    return;
+  }
+
+  const name = at.relativePath.split("/").at(-1) ?? "file";
+
+  res.writeHead(range === undefined ? 200 : 206, {
+    "content-type": fileMediaType(name),
+    "content-length": file.length,
+    "accept-ranges": "bytes",
+    ...(range === undefined
+      ? {}
+      : {
+          "content-range": `bytes ${String(file.offset)}-${String(file.offset + file.length - 1)}/${String(file.sizeBytes)}`,
+        }),
+    "content-disposition": `${url.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(name)}`,
+    // A file on a PC can change under the same path; nothing keeps a stale copy.
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "sandbox; default-src 'none'",
+    "x-correlation-id": correlationId,
+  });
+
+  // A browser that stops listening (a video seeking elsewhere) ends the
+  // node's upload too, and the node reports the job as cut short.
+  res.once("close", () => file.body.destroy());
+  file.body.pipe(res);
+}
+
 function handlePair(
   deps: ApiDeps,
   context: CommandContext,
@@ -1383,6 +1569,12 @@ export async function handleRequest(
       }
 
       send(res, result.status, result.body, correlationId);
+      return;
+    }
+
+    // Node realm, like outputs: the node's own credential, checked inside.
+    if (req.method === "POST" && url.pathname === NODE_FILE_PATH) {
+      await handleNodeFile(deps, req, res, correlationId);
       return;
     }
 
@@ -1624,6 +1816,16 @@ export async function handleRequest(
         "x-correlation-id": correlationId,
       });
       res.end(bytes);
+      return;
+    }
+
+    if (
+      req.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "files" &&
+      (segments[1] === "list" || segments[1] === "content")
+    ) {
+      await handleFiles(deps, segments[1], req, res, url, correlationId);
       return;
     }
 

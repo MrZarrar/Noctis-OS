@@ -52,6 +52,7 @@ function context(overrides: Partial<AdapterContext> = {}): AdapterContext {
     fetchAttachment: () => Promise.reject(new Error("no attachment expected")),
     delegate: () => Promise.reject(new Error("no delegation expected")),
     uploadOutput: () => Promise.reject(new Error("no output expected")),
+    streamFile: () => Promise.reject(new Error("no file expected")),
     ...overrides,
   };
 }

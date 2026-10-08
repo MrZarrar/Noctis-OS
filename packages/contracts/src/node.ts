@@ -95,6 +95,9 @@ export const NODE_CAPABILITIES = [
   "verification.noop",
   /** Phase 10: one conversational turn on a spawned runtime. */
   "runtime.turn",
+  /** v1 S4: the owner browsing and opening files in a granted root. */
+  "file.list",
+  "file.read",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -118,7 +121,28 @@ export const CAPABILITY_OPERATION_CLASS = {
    * arrives as an `ask` and is classed by its own capability, not by this one.
    */
   "runtime.turn": "read_inspect",
+  "file.list": "read_inspect",
+  "file.read": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
+
+/**
+ * Grants that cover more than their own capability. A folder granted to the
+ * agents is a folder the owner may open: a `runtime.turn` grant already lets
+ * the core have an agent read anything in it, so listing and reading it
+ * directly is less, not more. Roots stay on the `runtime.turn` grant, so there
+ * is one list of shared folders per PC rather than two that drift apart.
+ */
+const GRANT_ALSO_COVERS: Partial<Record<NodeCapability, readonly NodeCapability[]>> = {
+  "runtime.turn": ["file.list", "file.read"],
+};
+
+/** Whether a grant of `granted` lets a node run a job of `capability`. */
+export function grantCovers(granted: string, capability: NodeCapability): boolean {
+  return (
+    granted === capability ||
+    (GRANT_ALSO_COVERS[granted as NodeCapability]?.includes(capability) ?? false)
+  );
+}
 
 /** No parameters: the adapter reports the environment it is already running in. */
 export const EnvironmentInspectPayloadSchema = z.object({}).strict();
@@ -164,6 +188,74 @@ export const FileSearchEvidenceSchema = z
   })
   .strict();
 
+/**
+ * A path inside a granted root, `/`-separated, `""` for the root itself. Every
+ * form that could name something outside the root is refused here, before a
+ * node sees it; the node still resolves the result and checks containment,
+ * because a junction inside the root points wherever it likes.
+ */
+export const FileRelativePathSchema = z
+  .string()
+  .max(1024)
+  .refine(
+    (path) =>
+      path === "" ||
+      path
+        .split("/")
+        .every(
+          (segment) =>
+            segment !== "" && segment !== "." && segment !== ".." && !/[\\:\0]/.test(segment),
+        ),
+    "must be a relative path inside the root",
+  );
+
+export const FileListPayloadSchema = z
+  .object({
+    rootGrantId: z.string().trim().min(1).max(128),
+    relativePath: FileRelativePathSchema,
+  })
+  .strict();
+
+/** ponytail: one page per folder. Paging when a real folder outgrows it. */
+export const MAX_FILE_LIST_ENTRIES = 2_000;
+
+export const FileListEvidenceSchema = z
+  .object({
+    entries: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(255),
+            kind: z.enum(["file", "directory"]),
+            sizeBytes: z.int().nonnegative(),
+            modifiedAt: UtcTimestampSchema,
+          })
+          .strict(),
+      )
+      .max(MAX_FILE_LIST_ENTRIES),
+    truncated: z.boolean(),
+  })
+  .strict();
+
+/**
+ * One byte range of one file. The bytes do not travel in the evidence: the
+ * node streams them to `POST /node/files` for this job, and the core pipes
+ * them to whoever asked. Evidence records only what was sent.
+ */
+export const FileReadPayloadSchema = z
+  .object({
+    rootGrantId: z.string().trim().min(1).max(128),
+    relativePath: FileRelativePathSchema.refine((path) => path !== "", "must name a file"),
+    offset: z.int().nonnegative(),
+    /** Absent reads to the end of the file. */
+    length: z.int().positive().optional(),
+  })
+  .strict();
+
+export const FileReadEvidenceSchema = z
+  .object({ sizeBytes: z.int().nonnegative(), sentBytes: z.int().nonnegative() })
+  .strict();
+
 export const VerificationNoopPayloadSchema = z
   .object({ note: z.string().trim().max(200).optional() })
   .strict();
@@ -189,6 +281,8 @@ export const CAPABILITY_CONTRACTS = {
     evidence: VerificationNoopEvidenceSchema,
   },
   "runtime.turn": { payload: RuntimeTurnPayloadSchema, evidence: RuntimeTurnEvidenceSchema },
+  "file.list": { payload: FileListPayloadSchema, evidence: FileListEvidenceSchema },
+  "file.read": { payload: FileReadPayloadSchema, evidence: FileReadEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**
@@ -372,3 +466,5 @@ export type NodeFrame = z.infer<typeof NodeFrameSchema>;
 export type NodeServerFrame = z.infer<typeof NodeServerFrameSchema>;
 export type FileSearchConstraints = z.infer<typeof FileSearchConstraintsSchema>;
 export type FileSearchPayload = z.infer<typeof FileSearchPayloadSchema>;
+export type FileListEvidence = z.infer<typeof FileListEvidenceSchema>;
+export type FileReadPayload = z.infer<typeof FileReadPayloadSchema>;

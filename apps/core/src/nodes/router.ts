@@ -1,4 +1,5 @@
 import type { MissionHostPolicy, NodeCapability, NodeStatus } from "@noctis/contracts";
+import { grantCovers } from "@noctis/contracts";
 
 /**
  * Why a job could not be placed. Every refusal names one, and the name is
@@ -45,9 +46,9 @@ export interface RouteInput {
 
 export type RouteOutcome = { ok: true; nodeId: string } | { ok: false; reason: RouteRefusal };
 
-function isUsable(grant: CandidateGrant, capability: string, now: number): boolean {
+function isUsable(grant: CandidateGrant, capability: NodeCapability, now: number): boolean {
   return (
-    grant.capability === capability &&
+    grantCovers(grant.capability, capability) &&
     grant.revokedAt === undefined &&
     (grant.expiresAt === undefined || Date.parse(grant.expiresAt) > now)
   );
@@ -100,7 +101,7 @@ export function routeJob(input: RouteInput): RouteOutcome {
   }
 
   const granted = onHost.filter((candidate) =>
-    candidate.grants.some((grant) => grant.capability === input.capability),
+    candidate.grants.some((grant) => grantCovers(grant.capability, input.capability)),
   );
 
   if (granted.length === 0) {

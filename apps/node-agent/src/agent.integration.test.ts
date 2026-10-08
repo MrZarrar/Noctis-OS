@@ -373,6 +373,117 @@ describe("the real agent against the real core", () => {
   });
 });
 
+describe("files on a node, opened through the real core (v1 S4)", () => {
+  const VIDEO = Buffer.from(Array.from({ length: 100_000 }, (_, index) => index % 251));
+
+  /** A node sharing one folder with its agents, holding a script, a frame and a video. */
+  async function sharingAgent(): Promise<{ core: TestCore; nodeId: string }> {
+    const core = await startTestCore();
+    const credential = await pair(core);
+    const shared = mkdtempSync(join(tmpdir(), "noctis-shared-"));
+
+    scratches.push(shared);
+    mkdirSync(join(shared, "frames"));
+    writeFileSync(join(shared, "script.md"), "# Episode one\n");
+    writeFileSync(join(shared, "frames", "frame-01.png"), "not really a png");
+    writeFileSync(join(shared, "render.mp4"), VIDEO);
+
+    // Only runtime.turn: the folder the agents share is the folder the owner opens.
+    await command(core, "node.grant_capability", {
+      idempotencyKey: "g-turn",
+      nodeId: credential.nodeId,
+      capability: "runtime.turn",
+      constraints: {
+        providers: ["claude"],
+        roots: [{ grantId: "channel", path: shared, mode: "write" }],
+      },
+    });
+
+    await connectAgent(core, credential);
+
+    return { core, nodeId: credential.nodeId };
+  }
+
+  function files(core: TestCore, url: string, headers: Record<string, string> = {}) {
+    return fetch(`${core.base}${url}`, {
+      headers: { authorization: `Bearer ${TOKEN}`, ...headers },
+    });
+  }
+
+  it("THE GATE: lists a shared folder and opens a script, a frame and a video range from the node", async () => {
+    const { core, nodeId } = await sharingAgent();
+    const at = (path: string) => `node=${nodeId}&root=channel&path=${encodeURIComponent(path)}`;
+
+    const listing = await files(core, `/files/list?${at("")}`);
+    expect(listing.status).toBe(200);
+    expect(
+      ((await listing.json()) as { entries: Array<{ name: string; kind: string }> }).entries.map(
+        ({ name, kind }) => `${kind}:${name}`,
+      ),
+    ).toEqual(["directory:frames", "file:render.mp4", "file:script.md"]);
+
+    const script = await files(core, `/files/content?${at("script.md")}`);
+    expect(script.status).toBe(200);
+    expect(script.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+    expect(script.headers.get("accept-ranges")).toBe("bytes");
+    expect(script.headers.get("content-security-policy")).toContain("sandbox");
+    expect(await script.text()).toBe("# Episode one\n");
+
+    const frame = await files(core, `/files/content?${at("frames/frame-01.png")}`);
+    expect(frame.headers.get("content-type")).toBe("image/png");
+    expect(await frame.text()).toBe("not really a png");
+
+    const range = await files(core, `/files/content?${at("render.mp4")}`, {
+      range: "bytes=1000-1999",
+    });
+    expect(range.status).toBe(206);
+    expect(range.headers.get("content-type")).toBe("video/mp4");
+    expect(range.headers.get("content-range")).toBe("bytes 1000-1999/100000");
+    expect(Buffer.from(await range.arrayBuffer())).toEqual(VIDEO.subarray(1000, 2000));
+
+    // What a <video> sends first: from a point to the end.
+    const tail = await files(core, `/files/content?${at("render.mp4")}`, {
+      range: "bytes=99990-",
+    });
+    expect(tail.status).toBe(206);
+    expect(tail.headers.get("content-range")).toBe("bytes 99990-99999/100000");
+    expect(Buffer.from(await tail.arrayBuffer())).toEqual(VIDEO.subarray(99990));
+
+    const past = await files(core, `/files/content?${at("render.mp4")}`, {
+      range: "bytes=100000-",
+    });
+    expect(past.status).toBe(416);
+    expect(past.headers.get("content-range")).toBe("bytes */100000");
+    await past.body?.cancel();
+
+    const download = await files(core, `/files/content?${at("render.mp4")}&download=1`);
+    expect(download.headers.get("content-disposition")).toBe(
+      `attachment; filename*=UTF-8''render.mp4`,
+    );
+    expect((await download.arrayBuffer()).byteLength).toBe(100_000);
+  });
+
+  it("refuses what is not in a shared folder, and anyone without a credential", async () => {
+    const { core, nodeId } = await sharingAgent();
+
+    const climb = await files(core, `/files/content?node=${nodeId}&root=channel&path=..%2Fx`);
+    expect(climb.status).toBe(400);
+    await climb.body?.cancel();
+
+    const missing = await files(core, `/files/content?node=${nodeId}&root=channel&path=nope.md`);
+    expect(missing.status).toBe(404);
+    await missing.body?.cancel();
+
+    const otherRoot = await files(core, `/files/list?node=${nodeId}&root=elsewhere&path=`);
+    expect(otherRoot.status).toBe(404);
+    await otherRoot.body?.cancel();
+
+    const anonymous = await fetch(`${core.base}/files/list?node=${nodeId}&root=channel&path=`);
+    expect(anonymous.status).toBe(401);
+    await anonymous.body?.cancel();
+  });
+});
+
 describe("a runtime turn through the real core", () => {
   const TURN = {
     threadId: "0199a000-0000-7000-8000-0000000000e1",

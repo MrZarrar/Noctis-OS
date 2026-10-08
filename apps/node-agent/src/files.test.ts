@@ -1,0 +1,213 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { text } from "node:stream/consumers";
+
+import type { CapabilityGrant } from "@noctis/contracts";
+import { FileListEvidenceSchema, FileReadEvidenceSchema } from "@noctis/contracts";
+import { afterEach, describe, expect, it } from "vitest";
+
+import type { AdapterContext, StreamedFile } from "./adapters.js";
+import { ADAPTERS, AdapterRefused } from "./adapters.js";
+
+let scratch: string | undefined;
+
+afterEach(() => {
+  if (scratch !== undefined) {
+    rmSync(scratch, { recursive: true, force: true });
+    scratch = undefined;
+  }
+});
+
+/** The owner's shared folder is the agents' folder: a `runtime.turn` grant. */
+function runtimeGrant(path: string, overrides: Partial<CapabilityGrant> = {}): CapabilityGrant {
+  return {
+    id: "0199a000-0000-7000-8000-00000000000a",
+    nodeId: "0199a000-0000-7000-8000-00000000000b",
+    capability: "runtime.turn",
+    operationClass: "read_inspect",
+    constraintsVersion: 1,
+    constraints: {
+      providers: ["claude"],
+      roots: [{ grantId: "tu", path, mode: "write", localOnly: false }],
+    },
+    grantedAt: "2026-09-01T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** `root/` holds a script, a folder of frames and a link back out over itself. */
+function channel(): string {
+  scratch = mkdtempSync(join(tmpdir(), "noctis-files-"));
+
+  const root = join(scratch, "root");
+
+  mkdirSync(join(root, "frames"), { recursive: true });
+  mkdirSync(join(scratch, "outside"));
+  writeFileSync(join(root, "script.md"), "# Episode one\n");
+  writeFileSync(join(root, "frames", "frame-01.png"), "0123456789");
+  writeFileSync(join(scratch, "outside", "secret.txt"), "secret");
+
+  try {
+    symlinkSync(scratch, join(root, "escape"), "dir");
+  } catch {
+    symlinkSync(scratch, join(root, "escape"), "junction");
+  }
+
+  return root;
+}
+
+function context(root: string, overrides: Partial<AdapterContext> = {}): AdapterContext {
+  return {
+    grants: [runtimeGrant(root)],
+    signal: new AbortController().signal,
+    progress: () => undefined,
+    stream: () => undefined,
+    delta: () => undefined,
+    ask: () => Promise.reject(new Error("no ask expected")),
+    env: {},
+    runtimes: {},
+    fetchAttachment: () => Promise.reject(new Error("no attachment expected")),
+    delegate: () => Promise.reject(new Error("no delegation expected")),
+    uploadOutput: () => Promise.reject(new Error("no output expected")),
+    streamFile: () => Promise.reject(new Error("no file expected")),
+    ...overrides,
+  };
+}
+
+/** A `streamFile` that keeps what the adapter handed it. */
+function capture(): {
+  files: Array<StreamedFile & { content: string }>;
+  context: Partial<AdapterContext>;
+} {
+  const files: Array<StreamedFile & { content: string }> = [];
+
+  return {
+    files,
+    context: {
+      async streamFile(file) {
+        files.push({ ...file, content: await text(file.body) });
+      },
+    },
+  };
+}
+
+describe("file.list", () => {
+  it("lists a shared folder, folders first, and nothing behind a link", async () => {
+    const root = channel();
+    const evidence = FileListEvidenceSchema.parse(
+      await ADAPTERS["file.list"]({ rootGrantId: "tu", relativePath: "" }, context(root)),
+    );
+
+    expect(evidence.truncated).toBe(false);
+    expect(
+      evidence.entries.map(({ name, kind, sizeBytes }) => ({ name, kind, sizeBytes })),
+    ).toEqual([
+      { name: "frames", kind: "directory", sizeBytes: 0 },
+      { name: "script.md", kind: "file", sizeBytes: 14 },
+    ]);
+  });
+
+  it("lists a folder inside the root", async () => {
+    const root = channel();
+    const evidence = FileListEvidenceSchema.parse(
+      await ADAPTERS["file.list"]({ rootGrantId: "tu", relativePath: "frames" }, context(root)),
+    );
+
+    expect(evidence.entries.map((entry) => entry.name)).toEqual(["frame-01.png"]);
+  });
+
+  it("refuses to list through a link out of the root", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["file.list"]({ rootGrantId: "tu", relativePath: "escape/outside" }, context(root)),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+
+  it("refuses a root no runtime.turn grant names", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["file.list"]({ rootGrantId: "other", relativePath: "" }, context(root)),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+    await expect(
+      ADAPTERS["file.list"](
+        { rootGrantId: "tu", relativePath: "" },
+        context(root, { grants: [runtimeGrant(root, { revokedAt: "2026-09-02T00:00:00.000Z" })] }),
+      ),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+
+  it("refuses a path that climbs out, before touching the disk", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["file.list"]({ rootGrantId: "tu", relativePath: "../outside" }, context(root)),
+    ).rejects.toThrow();
+  });
+});
+
+describe("file.read", () => {
+  it("streams a whole file to the core and reports its size", async () => {
+    const root = channel();
+    const { files, context: sink } = capture();
+    const evidence = FileReadEvidenceSchema.parse(
+      await ADAPTERS["file.read"](
+        { rootGrantId: "tu", relativePath: "script.md", offset: 0 },
+        context(root, sink),
+      ),
+    );
+
+    expect(evidence).toEqual({ sizeBytes: 14, sentBytes: 14 });
+    expect(files).toEqual([
+      expect.objectContaining({ sizeBytes: 14, offset: 0, length: 14, content: "# Episode one\n" }),
+    ]);
+  });
+
+  it("streams only the range asked for, which is how a video seeks", async () => {
+    const root = channel();
+    const { files, context: sink } = capture();
+    const evidence = await ADAPTERS["file.read"](
+      { rootGrantId: "tu", relativePath: "frames/frame-01.png", offset: 2, length: 3 },
+      context(root, sink),
+    );
+
+    expect(evidence).toEqual({ sizeBytes: 10, sentBytes: 3 });
+    expect(files[0]?.content).toBe("234");
+  });
+
+  it("sends nothing for a range past the end, but still says how big the file is", async () => {
+    const root = channel();
+    const { files, context: sink } = capture();
+    const evidence = await ADAPTERS["file.read"](
+      { rootGrantId: "tu", relativePath: "script.md", offset: 99 },
+      context(root, sink),
+    );
+
+    expect(evidence).toEqual({ sizeBytes: 14, sentBytes: 0 });
+    expect(files[0]).toEqual(expect.objectContaining({ sizeBytes: 14, length: 0, content: "" }));
+  });
+
+  it("refuses a file reached through a link out of the root", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["file.read"](
+        { rootGrantId: "tu", relativePath: "escape/outside/secret.txt", offset: 0 },
+        context(root, capture().context),
+      ),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+
+  it("refuses a folder", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["file.read"](
+        { rootGrantId: "tu", relativePath: "frames", offset: 0 },
+        context(root, capture().context),
+      ),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+});

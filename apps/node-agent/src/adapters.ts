@@ -1,6 +1,8 @@
+import { createReadStream } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { arch, cpus, platform, totalmem } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
 
 import type {
   CapabilityGrant,
@@ -14,8 +16,12 @@ import type {
 } from "@noctis/contracts";
 import {
   EnvironmentInspectPayloadSchema,
+  FileListPayloadSchema,
+  FileReadPayloadSchema,
   FileSearchConstraintsSchema,
   FileSearchPayloadSchema,
+  MAX_FILE_LIST_ENTRIES,
+  RuntimeGrantConstraintsSchema,
   RuntimeTurnEvidenceSchema,
   RuntimeTurnPayloadSchema,
   VerificationNoopPayloadSchema,
@@ -28,6 +34,15 @@ import { childEnvironment } from "./runtimes/env.js";
 import { resolveRoots } from "./runtimes/roots.js";
 
 export { AdapterRefused };
+
+/** One byte range of a file, on its way to the core for the job reading it. */
+export interface StreamedFile {
+  /** The whole file's size, so the core can answer a range request. */
+  sizeBytes: number;
+  offset: number;
+  length: number;
+  body: Readable;
+}
 
 export interface AdapterContext {
   /** Only the grants the core sent in `welcome`. The node trusts nothing else. */
@@ -54,6 +69,8 @@ export interface AdapterContext {
   delegate(delegation: Omit<RuntimeDelegation, "delegationId">): Promise<RuntimeDelegationResult>;
   /** A file the turn made, given to the core for this job. Resolves to its attachment id. */
   uploadOutput(output: RuntimeUpload): Promise<string>;
+  /** Streams a file range to the core for this job; resolves once the core has it all. */
+  streamFile(file: StreamedFile): Promise<void>;
 }
 
 export type Adapter = (payload: unknown, context: AdapterContext) => Promise<unknown>;
@@ -308,6 +325,144 @@ const runtimeTurn: Adapter = async (payload, context) => {
 };
 
 /**
+ * A path in a shared folder, as a real path inside it (v1 S4).
+ *
+ * The shared folders are the ones granted to the agents (`runtime.turn`), so
+ * each PC has one list of them. The contract has already refused a path that
+ * climbs; this still resolves every link and insists the result lands inside
+ * the real root, because a junction inside a shared folder points anywhere.
+ */
+async function resolveInSharedFolder(
+  grants: readonly CapabilityGrant[],
+  rootGrantId: string,
+  relativePath: string,
+): Promise<string> {
+  const root = grants
+    .filter((grant) => grant.capability === "runtime.turn" && grant.revokedAt === undefined)
+    .flatMap((grant) => {
+      const parsed = RuntimeGrantConstraintsSchema.safeParse(grant.constraints);
+
+      return parsed.success ? parsed.data.roots : [];
+    })
+    .find((candidate) => candidate.grantId === rootGrantId);
+
+  if (root === undefined) {
+    throw new AdapterRefused(`no shared folder ${rootGrantId}`);
+  }
+
+  let real: string;
+  let target: string;
+
+  try {
+    real = await realpath(resolve(root.path));
+    target = await realpath(relativePath === "" ? real : join(real, ...relativePath.split("/")));
+  } catch {
+    throw new AdapterRefused(`${relativePath || "the shared folder"} does not exist`);
+  }
+
+  if (!isInside(real, target)) {
+    throw new AdapterRefused(`${relativePath} is outside the shared folder`);
+  }
+
+  return target;
+}
+
+const fileList: Adapter = async (payload, context) => {
+  const request = FileListPayloadSchema.parse(payload);
+  const directory = await resolveInSharedFolder(
+    context.grants,
+    request.rootGrantId,
+    request.relativePath,
+  );
+
+  if (!(await stat(directory)).isDirectory()) {
+    throw new AdapterRefused(`${request.relativePath} is not a folder`);
+  }
+
+  const entries: Array<{
+    name: string;
+    kind: "file" | "directory";
+    sizeBytes: number;
+    modifiedAt: string;
+  }> = [];
+  let truncated = false;
+
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    // Left out rather than followed, as `file.search` does: a link is opened
+    // only if it stays inside the root, and a row that cannot open is noise.
+    if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+      continue;
+    }
+
+    if (entries.length >= MAX_FILE_LIST_ENTRIES) {
+      truncated = true;
+      break;
+    }
+
+    try {
+      const info = await stat(join(directory, entry.name));
+
+      entries.push({
+        name: entry.name,
+        kind: entry.isDirectory() ? "directory" : "file",
+        sizeBytes: entry.isDirectory() ? 0 : info.size,
+        modifiedAt: info.mtime.toISOString(),
+      });
+    } catch {
+      // Gone or locked between the listing and the stat. Not listed.
+    }
+  }
+
+  entries.sort(
+    (left, right) =>
+      Number(right.kind === "directory") - Number(left.kind === "directory") ||
+      left.name.localeCompare(right.name),
+  );
+
+  return { entries, truncated };
+};
+
+/**
+ * One byte range of one file, streamed to the core for this job.
+ *
+ * A range past the end still answers, with nothing, so the core can tell the
+ * browser how big the file is. The lease is renewed while the bytes flow: a
+ * film on a slow uplink takes longer than one lease.
+ */
+const fileRead: Adapter = async (payload, context) => {
+  const request = FileReadPayloadSchema.parse(payload);
+  const file = await resolveInSharedFolder(
+    context.grants,
+    request.rootGrantId,
+    request.relativePath,
+  );
+  const info = await stat(file);
+
+  if (!info.isFile()) {
+    throw new AdapterRefused(`${request.relativePath} is not a file`);
+  }
+
+  const offset = Math.min(request.offset, info.size);
+  const length = Math.min(request.length ?? info.size, info.size - offset);
+  // `end` is inclusive, and Node refuses an `end` before `start`.
+  const body =
+    length === 0
+      ? Readable.from([])
+      : createReadStream(file, { start: offset, end: offset + length - 1 });
+  const heartbeat = setInterval(() => context.progress(0, "sending file"), TURN_HEARTBEAT_MS);
+  heartbeat.unref();
+
+  try {
+    await context.streamFile({ sizeBytes: info.size, offset, length, body });
+  } finally {
+    clearInterval(heartbeat);
+    body.destroy();
+  }
+
+  return { sizeBytes: info.size, sentBytes: length };
+};
+
+/**
  * Every capability this agent can execute. A job naming anything else is refused
  * before it runs, so the set of things a node can do is this object, not whatever
  * the core happens to send.
@@ -317,4 +472,6 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "file.search": fileSearch,
   "verification.noop": verificationNoop,
   "runtime.turn": runtimeTurn,
+  "file.list": fileList,
+  "file.read": fileRead,
 };

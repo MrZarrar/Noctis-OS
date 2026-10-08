@@ -19,6 +19,7 @@ import type { LiveBroker } from "./events/live.js";
 import { createLiveBroker } from "./events/live.js";
 import type { Dispatcher } from "./nodes/dispatch.js";
 import { createDispatcher } from "./nodes/dispatch.js";
+import { createFileGateway } from "./files/gateway.js";
 import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { createRuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { attachNodeSocket } from "./nodes/ws.js";
@@ -173,6 +174,8 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     vaultEnv: env,
   });
 
+  const files = createFileGateway({ kernel, dispatcher });
+
   const notifier = createNotifier({
     db,
     clock,
@@ -209,6 +212,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     startedAt: clock.now(),
     dispatcher,
     conversation,
+    files,
     live,
     notifier,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
@@ -265,6 +269,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     conversation,
     async close() {
       conversation.close();
+      files.close();
       dispatcher.stop();
 
       for (const realm of [clients, nodes]) {

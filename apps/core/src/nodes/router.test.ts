@@ -35,6 +35,27 @@ describe("routeJob", () => {
     });
   });
 
+  it("places a file read on a node whose runtime.turn grant covers it (v1 S4)", () => {
+    const agentNode = candidate({ grants: [{ capability: "runtime.turn" }] });
+
+    expect(route([agentNode], { capability: "file.read" })).toEqual({
+      ok: true,
+      nodeId: "0199a000-0000-7000-8000-00000000000a",
+    });
+    expect(
+      route(
+        [
+          candidate({
+            grants: [{ capability: "runtime.turn", revokedAt: "2026-08-01T00:00:00.000Z" }],
+          }),
+        ],
+        {
+          capability: "file.list",
+        },
+      ),
+    ).toEqual({ ok: false, reason: "grant_expired" });
+  });
+
   it("refuses a core_only Mission before looking at any node", () => {
     expect(route([candidate()], { hostPolicy: "core_only" })).toEqual({
       ok: false,

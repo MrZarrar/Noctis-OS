@@ -33,6 +33,7 @@ export const API_SEGMENTS = [
   "commands",
   "diagnostics",
   "events",
+  "files",
   "health",
   "identities",
   "jobs",
