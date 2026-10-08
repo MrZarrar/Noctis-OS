@@ -161,13 +161,12 @@ async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
   };
 }
 
-/** One probe per provider, always all three, never a token. */
+/**
+ * The two CLIs, probed here, never a token. Hermes and the local model server
+ * answer for themselves (`runtimes/index.ts`): what they offer is theirs to say.
+ */
 export async function probeProviders(deps: ProbeDeps): Promise<RuntimeProbe[]> {
-  return [
-    await probeCodex(deps),
-    await probeClaude(deps),
-    unavailable("hermes", "local", "slice_4"),
-  ];
+  return [await probeCodex(deps), await probeClaude(deps)];
 }
 
 /** The real thing, for `main.ts`: spawned children see the stripped environment only. */

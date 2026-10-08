@@ -130,7 +130,10 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
         // Loopback is checked on this URL only; a redirect would lead elsewhere.
         redirect: "error",
       });
-      const models = ModelsSchema.parse(await response.json()).data.slice(0, 64);
+      // An embedding model is listed beside the chat models, and cannot hold a conversation.
+      const models = ModelsSchema.parse(await response.json())
+        .data.filter((model) => !/embed/i.test(model.id))
+        .slice(0, 64);
 
       return {
         providerId: "local",

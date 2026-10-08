@@ -25,7 +25,7 @@ describe("selectRuntimes", () => {
     expect(runtimes.codex?.providerId).toBe("codex");
     expect(typeof runtimes.codex?.probe).toBe("function");
     expect(runtimes.claude?.providerId).toBe("claude");
-    expect(runtimes.hermes).toBe(undefined);
+    expect(runtimes.hermes?.providerId).toBe("hermes");
   });
 
   it("wires the local model runtime, at the server the operator names or LM Studio's", async () => {
@@ -37,6 +37,12 @@ describe("selectRuntimes", () => {
 
     expect(probe).toMatchObject({ providerId: "local", available: false });
     expect(probe?.reason).toContain("127.0.0.1:9");
+  });
+
+  it("reports Hermes as unavailable, not missing, when it is not installed", async () => {
+    const probe = await selectRuntimes({ PATH: "", NOCTIS_HERMES_PATH: "" }).hermes?.probe();
+
+    expect(probe).toMatchObject({ providerId: "hermes", available: false });
   });
 
   it("wires claude whatever the machine has: the Agent SDK carries its own CLI", () => {

@@ -86,7 +86,7 @@ const LOGGED_IN_CLAUDE = JSON.stringify({
 });
 
 describe("probeProviders", () => {
-  it("reports all three providers, each parsing as a probe, when nothing is installed", async () => {
+  it("reports the installed CLIs, each parsing as a probe, when nothing is installed", async () => {
     const probes = await probeProviders(deps({}));
 
     expect(probes.map((probe) => RuntimeProbeSchema.parse(probe))).toEqual([
@@ -104,7 +104,6 @@ describe("probeProviders", () => {
         reason: "claude_not_found",
         models: [],
       },
-      { providerId: "hermes", available: false, authMode: "local", reason: "slice_4", models: [] },
     ]);
   });
 

@@ -8,6 +8,7 @@ import { resolveCodexCommand } from "./codex-command.js";
 import { createClaudeRuntime } from "./claude.js";
 import { createCodexRuntime } from "./codex.js";
 import { createFakeRuntime } from "./fake.js";
+import { createHermesRuntime } from "./hermes.js";
 import { createLocalRuntime } from "./local.js";
 import { probeInstalledProviders } from "./probe.js";
 
@@ -25,7 +26,11 @@ export function selectProbes(
     : async () => [
         ...(await probeInstalledProviders(env)),
         // The model server answers for itself: which models it has is its to say.
-        ...(runtimes.local === undefined ? [] : [await runtimes.local.probe()]),
+        ...(await Promise.all(
+          [runtimes.hermes, runtimes.local].flatMap((runtime) =>
+            runtime === undefined ? [] : [runtime.probe()],
+          ),
+        )),
       ];
 }
 
@@ -50,11 +55,19 @@ export function selectRuntimes(
   const home = env.NOCTIS_NODE_HOME?.trim();
   const nodeHome = home === undefined || home === "" ? join(tmpdir(), "noctis") : home;
 
+  const local = createLocalRuntime({
+    baseUrl: env.NOCTIS_LOCAL_MODEL_URL,
+    sessionsDir: join(nodeHome, "local-sessions"),
+  });
+
   return {
     claude: createClaudeRuntime({ env }),
-    local: createLocalRuntime({
-      baseUrl: env.NOCTIS_LOCAL_MODEL_URL,
-      sessionsDir: join(nodeHome, "local-sessions"),
+    local,
+    // Wired whether or not it is installed: its probe says which.
+    hermes: createHermesRuntime({
+      env,
+      hermesHome: join(nodeHome, "hermes"),
+      localProbe: () => local.probe(),
     }),
     ...(command === undefined
       ? {}

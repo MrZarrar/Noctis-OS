@@ -1133,15 +1133,17 @@ describe("delegation", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("THE GATE (S3): a thread runs on the PC's local model, and Claude's turn delegates to it", async () => {
+  it("THE GATE (S3): a thread runs on the PC's local model, and Claude's turn delegates to it and to Hermes", async () => {
     const LOCAL_MODEL = { providerId: "local", model: "qwen3.5-9b" };
+    const HERMES_MODEL = { providerId: "hermes", model: "qwen3.5-9b" };
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
     const node = await connectFake(core, directory, {
-      providers: ["codex", "local"],
+      providers: ["codex", "local", "hermes"],
       probes: [
         CODEX_PROBE,
         { providerId: "local", available: true, authMode: "local", models: [LOCAL_MODEL] },
+        { providerId: "hermes", available: true, authMode: "local", models: [HERMES_MODEL] },
       ],
     });
 
@@ -1179,6 +1181,19 @@ describe("delegation", () => {
       outcome: "completed",
       reply: "tighter",
     });
+
+    // The agent that does things on the PC, thinking on the same local model.
+    node.frame({
+      kind: "delegate",
+      jobId: parentJob,
+      delegation: {
+        delegationId: DELEGATION_B,
+        runtime: "hermes",
+        prompt: "tidy the renders folder",
+      },
+    });
+    await waitFor(() => node.jobs().length === 4, "the Hermes child turn");
+    expect(lastTurnJob(node).payload).toMatchObject({ model: HERMES_MODEL });
 
     rmSync(directory, { recursive: true, force: true });
   });

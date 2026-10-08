@@ -36,8 +36,16 @@ beforeEach(async () => {
   server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.method === "GET" && req.url === "/v1/models") {
       res.writeHead(200, { "content-type": "application/json" });
+      // LM Studio lists its embedding model beside the chat models; nobody talks to that one.
       res.end(
-        JSON.stringify({ object: "list", data: [{ id: "qwen3.5-9b" }, { id: "gemma-4-12b" }] }),
+        JSON.stringify({
+          object: "list",
+          data: [
+            { id: "qwen3.5-9b" },
+            { id: "gemma-4-12b" },
+            { id: "text-embedding-nomic-embed-text-v1.5" },
+          ],
+        }),
       );
       return;
     }

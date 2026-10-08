@@ -1,0 +1,588 @@
+import { spawn as spawnChild } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
+import { classifyAsk } from "@noctis/domain";
+import { z } from "zod";
+
+import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
+import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
+import type { CodexSpawn } from "./codex.js";
+import { childEnvironment } from "./env.js";
+import type { JsonRpcClient } from "./jsonrpc.js";
+import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
+import type { LiveProcess } from "./sessions.js";
+import { createProcessPool, processKey } from "./sessions.js";
+
+/**
+ * Hermes Agent behind the node boundary (ADR-0030, v1 S3), over the Agent
+ * Client Protocol: `hermes-acp` on stdio, one process per thread, kept open
+ * between turns like Codex's app-server. A thread's Hermes session is its
+ * session ref; a cold turn resumes it with `session/load`.
+ *
+ * Hermes runs on a home Noctis owns, never the owner's own: the model server
+ * on this PC is its only provider, its approvals stay on (`manual`), and
+ * pushing and publishing are refused outright by `approvals.deny`, because
+ * Hermes has no sandbox. Whatever Hermes asks about comes to the owner as an
+ * ask. It thinks on the local model, so its turns are costed as local.
+ */
+
+export interface HermesRuntimeOptions {
+  /** `hermes-acp.exe`; resolved from the machine when absent. */
+  command?: string | undefined;
+  spawn?: CodexSpawn;
+  /** Noctis's own Hermes home: its config, sessions and state. */
+  hermesHome: string;
+  /** The local model server's probe: Hermes thinks with what it serves. */
+  localProbe: () => Promise<RuntimeProbe>;
+  env?: NodeJS.ProcessEnv;
+  idleMs?: number;
+}
+
+/** What Hermes needs to plan with tools: below this it refuses to start. */
+const HERMES_CONTEXT = 65_536;
+/** A turn is the agent working, so it may take a long while; cancel is how it ends early. */
+const TURN_TIMEOUT_MS = 2 * 60 * 60_000;
+const KILL_AFTER_CANCEL_MS = 5_000;
+/** Refused by Hermes whatever anyone answers: these leave the PC and cannot be called back. */
+const DENIED = ["*git push*", "*npm publish*", "*pnpm publish*", "*yarn publish*", "*gh release*"];
+
+/** `hermes-acp.exe` where Hermes's own installer puts it, unless the operator names one. */
+export function resolveHermesCommand(env: NodeJS.ProcessEnv): string | undefined {
+  const named = env.NOCTIS_HERMES_PATH?.trim();
+  const installed =
+    env.LOCALAPPDATA === undefined
+      ? undefined
+      : join(env.LOCALAPPDATA, "hermes", "bin", "hermes-acp.exe");
+
+  if (named !== undefined && named !== "") {
+    return named;
+  }
+
+  return installed !== undefined && existsSync(installed) ? installed : undefined;
+}
+
+/** The config Noctis writes for its Hermes home before each process starts. */
+function hermesConfig(model: string): string {
+  return [
+    "model:",
+    `  default: ${JSON.stringify(model)}`,
+    '  provider: "lmstudio"',
+    `  context_length: ${String(HERMES_CONTEXT)}`,
+    "approvals:",
+    "  mode: manual",
+    // As long as Noctis waits for the owner; Hermes denies by itself after it.
+    "  timeout: 600",
+    "  deny:",
+    ...DENIED.map((pattern) => `    - ${JSON.stringify(pattern)}`),
+    "",
+  ].join("\n");
+}
+
+const UpdateSchema = z
+  .object({
+    sessionId: z.string(),
+    update: z
+      .object({
+        sessionUpdate: z.string(),
+        messageId: z.string().optional(),
+        content: z.unknown().optional(),
+        toolCallId: z.string().optional(),
+        title: z.string().optional(),
+        kind: z.string().optional(),
+        status: z.string().optional(),
+        rawInput: z.object({ command: z.string().optional() }).loose().nullish(),
+      })
+      .loose(),
+  })
+  .loose();
+const PermissionSchema = z
+  .object({
+    sessionId: z.string(),
+    toolCall: z
+      .object({
+        toolCallId: z.string(),
+        title: z.string().nullish(),
+        kind: z.string().nullish(),
+        locations: z.array(z.object({ path: z.string() }).loose()).nullish(),
+        rawInput: z.object({ command: z.string().optional() }).loose().nullish(),
+      })
+      .loose(),
+    options: z.array(z.object({ optionId: z.string(), kind: z.string() }).loose()),
+  })
+  .loose();
+const PromptResultSchema = z
+  .object({
+    stopReason: z.string(),
+    usage: z
+      .object({ inputTokens: z.number().int(), outputTokens: z.number().int() })
+      .loose()
+      .nullish(),
+  })
+  .loose();
+const NewSessionSchema = z.object({ sessionId: z.string().min(1) }).loose();
+const TextSchema = z.object({ type: z.literal("text"), text: z.string() }).loose();
+
+const STOPPED: Readonly<Record<string, RuntimeTurnEvidence["stoppedReason"]>> = {
+  end_turn: "completed",
+  cancelled: "cancelled",
+};
+
+function clip(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+/** The text in an ACP content value: one block, or a tool's list of content entries. */
+function textOf(content: unknown): string {
+  if (Array.isArray(content)) {
+    return content
+      .map((entry) => textOf((entry as { content?: unknown } | null)?.content ?? entry))
+      .join("");
+  }
+
+  const block = TextSchema.safeParse(content);
+
+  return block.success ? block.data.text : "";
+}
+
+/** The turn a live Hermes process is running. Everything it says goes to it. */
+interface HermesTurn {
+  update(params: unknown): void;
+  permission(params: unknown): Promise<unknown>;
+}
+
+interface HermesProcess extends LiveProcess {
+  rpc: JsonRpcClient;
+  /** Set while `session/load` replays history, which is no turn's to report. */
+  loading: boolean;
+  current: HermesTurn | undefined;
+  killSoon(): void;
+}
+
+export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
+  const spawn: CodexSpawn =
+    options.spawn ??
+    ((file, args, spawnOptions) =>
+      spawnChild(file, [...args], {
+        ...spawnOptions,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      }));
+  const pool = createProcessPool<HermesProcess>(options.idleMs);
+
+  function open(input: RuntimeTurnInput, key: string, command: string): HermesProcess {
+    // ponytail: one config per home, so two threads opening on different models
+    // at the same moment race for it. A Hermes profile per model if that happens.
+    mkdirSync(options.hermesHome, { recursive: true });
+    writeFileSync(join(options.hermesHome, "config.yaml"), hermesConfig(input.payload.model.model));
+
+    const child = spawn(command, [], {
+      cwd: input.roots.cwd,
+      env: { ...childEnvironment(input.env), HERMES_HOME: options.hermesHome },
+    });
+    let alive = true;
+    let killTimer: NodeJS.Timeout | undefined;
+    const rpc = createJsonRpcClient(
+      { input: child.stdout, output: child.stdin },
+      { timeoutMs: TURN_TIMEOUT_MS },
+    );
+
+    const proc: HermesProcess = {
+      key,
+      sessionRef: undefined,
+      loading: false,
+      current: undefined,
+      rpc,
+      get alive() {
+        return alive && child.exitCode === null;
+      },
+      killSoon() {
+        killTimer ??= setTimeout(() => proc.close(), KILL_AFTER_CANCEL_MS);
+        killTimer.unref();
+      },
+      close() {
+        if (alive) {
+          alive = false;
+          clearTimeout(killTimer);
+          rpc.close();
+
+          if (child.exitCode === null) {
+            child.kill();
+          }
+        }
+      },
+    };
+
+    child.on("exit", () => {
+      alive = false;
+      rpc.close("hermes exited");
+    });
+    child.on("error", () => proc.close());
+    rpc.onNotification((method, params) => {
+      if (method === "session/update" && !proc.loading) {
+        proc.current?.update(params);
+      }
+    });
+    rpc.onRequest((method, params) => {
+      if (method === "session/request_permission" && proc.current !== undefined) {
+        return proc.current.permission(params);
+      }
+
+      // No file system or terminal is offered to Hermes; it uses its own tools.
+      return Promise.reject(new JsonRpcError(METHOD_NOT_FOUND, `${method} is not offered`));
+    });
+
+    return proc;
+  }
+
+  /** The process's session: the one the core names, resumed, else a new one. */
+  async function session(
+    proc: HermesProcess,
+    input: RuntimeTurnInput,
+    sink: RuntimeSink,
+  ): Promise<string> {
+    if (proc.sessionRef !== undefined) {
+      return proc.sessionRef;
+    }
+
+    await proc.rpc.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    });
+
+    const cwd = input.roots.cwd;
+    const named = input.payload.sessionRef;
+
+    if (named !== undefined) {
+      proc.loading = true;
+
+      try {
+        await proc.rpc.request("session/load", { sessionId: named, cwd, mcpServers: [] });
+        proc.sessionRef = named;
+
+        return named;
+      } catch {
+        sink.item({
+          itemId: "resume-failed",
+          kind: "agent_message",
+          status: "completed",
+          text: `Hermes could not resume session ${named}; started a new one.`,
+        });
+      } finally {
+        proc.loading = false;
+      }
+    }
+
+    const created = NewSessionSchema.parse(
+      await proc.rpc.request("session/new", { cwd, mcpServers: [] }),
+    );
+
+    proc.sessionRef = created.sessionId;
+
+    return created.sessionId;
+  }
+
+  async function run(
+    proc: HermesProcess,
+    input: RuntimeTurnInput,
+    sink: RuntimeSink,
+  ): Promise<RuntimeTurnEvidence> {
+    const { payload, roots, signal } = input;
+    const sessionId = await session(proc, input, sink);
+    const commands = new Map<string, string>();
+    /** Tool calls Hermes started; it also closes its permission requests' bubbles, which are not. */
+    const started = new Set<string>();
+    const messages = new Map<string, string>();
+    let lastMessage: string | undefined;
+    let itemCount = 0;
+    let timedOut: ApprovalTimedOut | undefined;
+
+    const item = (value: RuntimeItem): void => {
+      itemCount += 1;
+      sink.item(value);
+    };
+
+    /** The owner's answer to Hermes's own ask; false when nobody could answer. */
+    async function decide(ask: Omit<RuntimeAsk, "askId">): Promise<boolean> {
+      try {
+        return (await sink.ask({ ...ask, askedBy: "runtime" })).decision === "allow";
+      } catch (error) {
+        if (error instanceof ApprovalTimedOut) {
+          timedOut = error;
+        }
+
+        return false;
+      }
+    }
+
+    /** The option Hermes offered that says what the owner decided, once only. */
+    function answer(p: z.infer<typeof PermissionSchema>, allowed: boolean): unknown {
+      const kind = allowed ? "allow" : "reject";
+      const optionId =
+        p.options.find((option) => option.kind === `${kind}_once`)?.optionId ??
+        p.options.find((option) => option.kind.startsWith(kind))?.optionId;
+
+      return {
+        outcome:
+          optionId === undefined ? { outcome: "cancelled" } : { outcome: "selected", optionId },
+      };
+    }
+
+    /** Hermes asking to write files: the owner sees which. */
+    function editAsk(p: z.infer<typeof PermissionSchema>): Omit<RuntimeAsk, "askId"> {
+      const paths = (
+        p.toolCall.locations?.map((location) => location.path) ?? [
+          (p.toolCall.title ?? "").replace(/^Approve edit:\s*/, ""),
+        ]
+      )
+        .filter((path) => path !== "")
+        .slice(0, 200)
+        .map((path) => clip(path, 1024));
+      const cls = classifyAsk({
+        kind: "file_change",
+        paths,
+        writableRoots: roots.writable,
+        readableRoots: roots.readable,
+      });
+
+      return {
+        itemId: clip(p.toolCall.toolCallId, 128),
+        kind: "file_change",
+        summary: clip(`edit ${paths.join(", ")}`, 2000),
+        operationClass: cls.operationClass,
+        reversibility: cls.reversibility,
+        capability: cls.capability,
+        target: { type: "file_change", id: clip(paths[0] ?? p.toolCall.toolCallId, 200) },
+        detail: { paths },
+      };
+    }
+
+    /** A message is finished once another starts, or the turn ends. */
+    const closeMessage = (): void => {
+      if (lastMessage !== undefined) {
+        item({
+          itemId: clip(lastMessage, 128),
+          kind: "agent_message",
+          status: "completed",
+          text: clip(messages.get(lastMessage) ?? "", 20_000),
+        });
+      }
+    };
+
+    proc.current = {
+      update(params) {
+        const parsed = UpdateSchema.safeParse(params);
+
+        if (!parsed.success || parsed.data.sessionId !== sessionId) {
+          return;
+        }
+
+        const u = parsed.data.update;
+
+        switch (u.sessionUpdate) {
+          case "agent_message_chunk": {
+            const id = u.messageId ?? lastMessage ?? "message";
+            const text = textOf(u.content);
+
+            if (id !== lastMessage) {
+              closeMessage();
+              lastMessage = id;
+            }
+
+            messages.set(id, (messages.get(id) ?? "") + text);
+
+            if (text !== "") {
+              sink.delta(clip(id, 128), clip(text, 2000));
+            }
+
+            break;
+          }
+          case "tool_call":
+          case "tool_call_update": {
+            if (
+              u.toolCallId === undefined ||
+              (u.sessionUpdate === "tool_call_update" && !started.has(u.toolCallId))
+            ) {
+              break;
+            }
+
+            started.add(u.toolCallId);
+
+            const status =
+              u.status === "completed"
+                ? "completed"
+                : u.status === "failed"
+                  ? "failed"
+                  : "in_progress";
+            const output = textOf(u.content);
+
+            if (u.kind === "execute" || commands.has(u.toolCallId)) {
+              const command =
+                u.rawInput?.command ??
+                commands.get(u.toolCallId) ??
+                (u.title ?? "").replace(/^terminal:\s*/, "");
+
+              commands.set(u.toolCallId, command);
+              item({
+                itemId: clip(u.toolCallId, 128),
+                kind: "command",
+                status,
+                command: clip(command, 4000),
+                cwd: clip(roots.cwd, 1024),
+                ...(u.sessionUpdate === "tool_call_update" && output !== ""
+                  ? { output: clip(output, 4000) }
+                  : {}),
+              });
+            } else {
+              item({
+                itemId: clip(u.toolCallId, 128),
+                kind: "tool_call",
+                status,
+                tool: clip(u.title ?? u.kind ?? "tool", 128),
+                ...(u.sessionUpdate === "tool_call_update" && output !== ""
+                  ? { output: clip(output, 4000) }
+                  : {}),
+              });
+            }
+
+            break;
+          }
+          default:
+            // Thoughts, plans, usage, commands lists: Hermes's bookkeeping, not evidence.
+            break;
+        }
+      },
+      async permission(params) {
+        const p = PermissionSchema.parse(params);
+
+        if (p.toolCall.kind === "edit") {
+          return answer(p, await decide(editAsk(p)));
+        }
+
+        const command = p.toolCall.rawInput?.command ?? p.toolCall.title ?? "";
+        const cls = classifyAsk({
+          kind: "command",
+          command,
+          cwd: roots.cwd,
+          writableRoots: roots.writable,
+          readableRoots: roots.readable,
+        });
+        return answer(
+          p,
+          await decide({
+            itemId: clip(p.toolCall.toolCallId, 128),
+            kind: "command",
+            summary: clip(command, 2000).trim() || "run a command",
+            operationClass: cls.operationClass,
+            reversibility: cls.reversibility,
+            capability: cls.capability,
+            target: { type: "command", id: clip(command, 200).trim() || "command" },
+            detail: { command: clip(command, 4000), cwd: clip(roots.cwd, 1024) },
+          }),
+        );
+      },
+    };
+
+    const cancel = (): void => {
+      proc.rpc.notify("session/cancel", { sessionId });
+      proc.killSoon();
+    };
+
+    signal.addEventListener("abort", cancel, { once: true });
+
+    try {
+      const result = PromptResultSchema.parse(
+        await proc.rpc.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: payload.prompt }],
+        }),
+      );
+
+      closeMessage();
+
+      if (timedOut !== undefined) {
+        throw timedOut;
+      }
+
+      const finalText = lastMessage === undefined ? "" : (messages.get(lastMessage) ?? "");
+
+      return {
+        model: payload.model,
+        sessionRef: sessionId,
+        itemCount,
+        ...(finalText === "" ? {} : { finalText: clip(finalText, 20_000) }),
+        ...(result.usage == null
+          ? {}
+          : {
+              usage: {
+                inputTokens: result.usage.inputTokens,
+                outputTokens: result.usage.outputTokens,
+              },
+            }),
+        stoppedReason: signal.aborted ? "cancelled" : (STOPPED[result.stopReason] ?? "failed"),
+      };
+    } catch (error) {
+      if (signal.aborted) {
+        return {
+          model: payload.model,
+          sessionRef: sessionId,
+          itemCount,
+          stoppedReason: "cancelled",
+        };
+      }
+
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      proc.current = undefined;
+    }
+  }
+
+  return {
+    providerId: "hermes",
+    /** Installed, and something to think with: the local server's models are Hermes's. */
+    async probe(): Promise<RuntimeProbe> {
+      if ((options.command ?? resolveHermesCommand(options.env ?? process.env)) === undefined) {
+        return {
+          providerId: "hermes",
+          available: false,
+          authMode: "local",
+          reason: "hermes_not_found",
+          models: [],
+        };
+      }
+
+      const local = await options.localProbe();
+
+      return {
+        providerId: "hermes",
+        available: local.available,
+        authMode: "local",
+        ...(local.reason === undefined ? {} : { reason: local.reason }),
+        models: local.models.map((model) => ({ ...model, providerId: "hermes" as const })),
+      };
+    },
+    turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
+      const command = options.command ?? resolveHermesCommand(input.env);
+
+      if (command === undefined) {
+        return Promise.reject(new AdapterRefused("hermes_not_found"));
+      }
+
+      if (input.signal.aborted) {
+        return Promise.reject(new AdapterRefused("job was cancelled"));
+      }
+
+      const key = processKey(input.payload, input.roots);
+
+      return pool.run(
+        input.payload.threadId,
+        { key, sessionRef: input.payload.sessionRef },
+        () => open(input, key, command),
+        (proc) => run(proc, input, sink),
+      );
+    },
+    close: () => pool.closeAll(),
+  };
+}
