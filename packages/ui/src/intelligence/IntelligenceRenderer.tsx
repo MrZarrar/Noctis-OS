@@ -43,6 +43,32 @@ const JESTER_SHARDS = CORE.shards.map((shard, index) => {
     ]),
   };
 });
+/**
+ * Points every `1 / steps` of the way along each segment, ends included once.
+ * WebGL draws lines one pixel wide, so a mark that has to glow is a chain of
+ * point lights rather than a thicker line.
+ */
+function along(
+  segments: ReadonlyArray<readonly [CorePoint, CorePoint]>,
+  steps: number,
+): CorePoint[] {
+  return segments.flatMap(([from, to], segment) =>
+    Array.from({ length: steps + (segment === segments.length - 1 ? 1 : 0) }, (_, step) => {
+      const t = step / steps;
+      return [
+        from[0] + (to[0] - from[0]) * t,
+        from[1] + (to[1] - from[1]) * t,
+        from[2] + (to[2] - from[2]) * t,
+      ] as CorePoint;
+    }),
+  );
+}
+/** Points per grin segment: the grin jitters a whole segment at a time, so it reads jagged. */
+const GRIN_STEPS = 5;
+const GRIN = along(
+  JESTER.grin.slice(1).map((point, index) => [JESTER.grin[index]!, point] as const),
+  GRIN_STEPS,
+);
 const LABEL: Record<IntelligenceState, string> = {
   idle: "idle",
   listening: "listening",
@@ -291,8 +317,11 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     faultMaterial,
   );
   const faultLights = lights(
-    JESTER.faults.flat().map((index) => CORE.points[index]!),
-    18,
+    along(
+      faultEdges.map(([a, b]) => [CORE.points[a]!, CORE.points[b]!] as const),
+      6,
+    ),
+    11,
     jesterColors.lime,
   );
   const redSparks = lights(
@@ -325,15 +354,25 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
       ),
       dripMaterial,
     );
+  const dripGlow = (fromFault: boolean): THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial> =>
+    lights(
+      JESTER.drips
+        .filter(([top]) => faultPoints.has(top) === fromFault)
+        .flatMap(([top, bottom]) => along([[top, bottom]], 4)),
+      9,
+      jesterColors.lime,
+    );
   const drips = new THREE.Group();
-  const faultDrips = dripLines(true);
-  drips.add(dripLines(false));
+  const shardDripGlow = dripGlow(false);
+  const faultDripGlow = dripGlow(true);
+  drips.add(dripLines(false), shardDripGlow);
   drips.visible = false;
   shell.add(drips);
-  faults.add(faultDrips);
+  faults.add(dripLines(true), faultDripGlow);
 
-  const redEye = lights([JESTER.redEye], 62, jesterColors.red);
-  const grinLights = lights(JESTER.grin, 21, jesterColors.lime);
+  const redEye = lights([JESTER.redEye], 150, jesterColors.red);
+  const redEyeCore = lights([JESTER.redEye], 34, jesterColors.red);
+  const grinLights = lights(GRIN, 16, jesterColors.lime);
   const grinMaterial = new THREE.LineBasicMaterial({
     color: jesterColors.lime,
     transparent: true,
@@ -341,14 +380,22 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  const grin = new THREE.Line(buffer(JESTER.grin), grinMaterial);
+  const grin = new THREE.Line(buffer(GRIN), grinMaterial);
   const grinPositions = grin.geometry.getAttribute("position") as THREE.BufferAttribute;
   const grinLightPositions = grinLights.geometry.getAttribute("position") as THREE.BufferAttribute;
   const faceMarks = new THREE.Group();
-  faceMarks.add(redEye, grin, grinLights);
+  faceMarks.add(redEye, redEyeCore, grin, grinLights);
   faceMarks.visible = false;
   world.add(faceMarks);
-  const jesterLights = [faultLights, redSparks, redEye, grinLights];
+  const jesterLights = [
+    faultLights,
+    shardDripGlow,
+    faultDripGlow,
+    redSparks,
+    redEye,
+    redEyeCore,
+    grinLights,
+  ];
 
   scene.add(new THREE.AmbientLight(0xc3bcdd, 0.8));
   const key = new THREE.DirectionalLight(0xbbb6d4, 1.4);
@@ -517,16 +564,23 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
       for (const points of jesterLights) {
         points.material.uniforms.pixelRatio!.value = dpr;
         (points.material.uniforms.color!.value as THREE.Color).set(
-          points === redEye || points === redSparks ? jester.red : jester.lime,
+          points === redEye || points === redEyeCore || points === redSparks
+            ? jester.red
+            : jester.lime,
         );
         points.material.uniforms.intensity!.value =
-          points === redEye ? face * 1.3 : points === grinLights ? faceLight : fault;
+          points === redEye || points === redEyeCore
+            ? face * 1.6
+            : points === grinLights
+              ? faceLight * 1.3
+              : fault * 1.4;
       }
-      for (let index = 0; index < JESTER.grin.length; index += 1) {
-        const point = JESTER.grin[index]!;
+      for (let index = 0; index < GRIN.length; index += 1) {
+        const point = GRIN[index]!;
+        const segment = Math.round(index / GRIN_STEPS);
         const jitter =
-          moving && state === "thinking" && index % 2 === 1
-            ? Math.sin(elapsed * 27 + index * 2.3) * 0.035
+          moving && state === "thinking" && segment % 2 === 1
+            ? Math.sin(elapsed * 27 + segment * 2.3) * 0.035
             : 0;
         grinPositions.setXYZ(index, point[0], point[1] + jitter, point[2]);
         grinLightPositions.setXYZ(index, point[0], point[1] + jitter, point[2]);

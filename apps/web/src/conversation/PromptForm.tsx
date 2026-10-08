@@ -2,6 +2,8 @@ import type { ConversationalIdentityId, ModelRef } from "@noctis/contracts";
 import { ATTACHMENT_MEDIA_TYPES } from "@noctis/contracts";
 import {
   IDENTITY_PROFILES,
+  JesterGlyph,
+  activationFor,
   corner,
   identityAccent,
   material,
@@ -41,6 +43,11 @@ export interface PromptFormProps {
   lockedTo?: string;
   onSend: (text: string, options: SendOptions) => void;
   onListeningChange?: (listening: boolean) => void;
+  /**
+   * Offered, the Vesper/Jester switch shows above the box, and typing exactly
+   * `JESTER` or `VESPER` switches instead of sending (master plan §6).
+   */
+  onSwitchIdentity?: (identityId: ConversationalIdentityId) => void;
 }
 
 /** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
@@ -76,9 +83,34 @@ const pickerStyle = {
 } as const;
 
 const sendStyle = {
-  ...buttonStyle,
-  background: identityAccent.vesper.secondary,
-  borderColor: identityAccent.vesper.primary,
+  vesper: {
+    ...buttonStyle,
+    background: identityAccent.vesper.secondary,
+    borderColor: identityAccent.vesper.primary,
+  },
+  // Lime on dark rather than a lime fill: white type does not read on lime.
+  jester: {
+    ...buttonStyle,
+    background: "rgba(182, 255, 59, 0.12)",
+    borderColor: identityAccent.jester.primary,
+    color: identityAccent.jester.primary,
+  },
+} as const;
+
+const switchStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: spacing.xs,
+  minHeight: 32,
+  padding: `0 ${String(spacing.sm)}px`,
+  background: "transparent",
+  border: `1px solid ${material.border}`,
+  borderRadius: corner.sm,
+  color: typography.color.muted,
+  fontFamily: typography.family,
+  fontSize: typography.scale.xs,
+  letterSpacing: typography.tracking.wide,
+  cursor: "pointer",
 } as const;
 
 /** The last segment of a granted folder's path: the name the owner knows it by. */
@@ -135,6 +167,7 @@ export function PromptForm({
   lockedTo,
   onSend,
   onListeningChange,
+  onSwitchIdentity,
 }: PromptFormProps): JSX.Element {
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string>();
@@ -143,19 +176,34 @@ export function PromptForm({
 
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
-  const defaultKey = defaultModel === undefined ? undefined : modelKey(defaultModel);
+  const offered = offeredModels(identityId, models);
+  // A default Jester cannot run on (one set before ADR-0030 held) is no default.
+  const usableDefault =
+    defaultModel !== undefined && offeredModels(identityId, [defaultModel]).length === 1
+      ? defaultModel
+      : undefined;
+  const defaultKey = usableDefault === undefined ? undefined : modelKey(usableDefault);
   // The default belongs in the list even when no node currently offers it, so
   // the selector never shows an empty choice for a configured identity.
   const options =
-    defaultModel !== undefined && !models.some((model) => modelKey(model) === defaultKey)
-      ? [defaultModel, ...models]
-      : models;
+    usableDefault !== undefined && !offered.some((model) => modelKey(model) === defaultKey)
+      ? [usableDefault, ...offered]
+      : offered;
   const selectedKey = chosen ?? defaultKey ?? "";
 
   const submit = (): void => {
     const trimmed = text.trim();
 
     if (disabled || trimmed === "") {
+      return;
+    }
+
+    const activates = onSwitchIdentity === undefined ? undefined : activationFor(trimmed);
+
+    if (activates !== undefined) {
+      onSwitchIdentity?.(activates);
+      setText("");
+      setChosen(undefined);
       return;
     }
 
@@ -185,6 +233,39 @@ export function PromptForm({
       }}
       style={{ display: "grid", gap: spacing.sm, width: "100%" }}
     >
+      {onSwitchIdentity !== undefined && lockedTo === undefined && (
+        <div role="group" aria-label="Who to talk to" style={{ display: "flex", gap: spacing.xs }}>
+          {IDENTITY_PROFILES.map((profile) => {
+            const active = profile.id === identityId;
+            const accent = identityAccent[profile.id].primary;
+
+            return (
+              <button
+                key={profile.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  if (!active) {
+                    setChosen(undefined);
+                    onSwitchIdentity(profile.id);
+                  }
+                }}
+                style={{
+                  ...switchStyle,
+                  ...(active ? { borderColor: accent, color: accent } : {}),
+                }}
+              >
+                {profile.id === "jester" ? (
+                  <JesterGlyph size={14} />
+                ) : (
+                  <span aria-hidden="true">✦</span>
+                )}
+                {profile.displayName}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "stretch" }}>
         <textarea
           aria-label={`Message ${displayName}`}
@@ -223,7 +304,7 @@ export function PromptForm({
           type="submit"
           disabled={disabled || text.trim() === ""}
           style={{
-            ...sendStyle,
+            ...sendStyle[identityId],
             opacity: disabled || text.trim() === "" ? 0.55 : 1,
             cursor: disabled ? "default" : "pointer",
           }}
@@ -296,7 +377,13 @@ export function PromptForm({
                 }}
                 style={fieldStyle}
               >
-                {options.length === 0 && <option value="">No agent offered by any PC</option>}
+                {options.length === 0 && (
+                  <option value="">
+                    {identityId === "jester"
+                      ? "Jester needs Hermes and LM Studio on a connected PC"
+                      : "No agent offered by any PC"}
+                  </option>
+                )}
                 {options.map((model) => (
                   <option key={modelKey(model)} value={modelKey(model)}>
                     {modelLabel(model)}

@@ -1,4 +1,11 @@
-﻿import { IntelligenceRenderer, identityAccent, semantic, typography } from "@noctis/ui";
+﻿import type { ConversationalIdentityId } from "@noctis/contracts";
+import {
+  IntelligenceRenderer,
+  JesterGlyph,
+  identityAccent,
+  semantic,
+  typography,
+} from "@noctis/ui";
 import { useState } from "react";
 
 import { PromptForm } from "../conversation/PromptForm.js";
@@ -16,6 +23,7 @@ export interface PresenceProps {
     Partial<Pick<ConversationState, "turns" | "streaming" | "pendingApprovals" | "error">>;
   onSend: (text: string, options: SendOptions) => void;
   onReview?: () => void;
+  onSwitchIdentity?: (identityId: ConversationalIdentityId) => void;
 }
 
 const STATE_WORDS = {
@@ -32,6 +40,7 @@ export function Presence({
   conversation,
   onSend,
   onReview,
+  onSwitchIdentity,
 }: PresenceProps): JSX.Element {
   const [listening, setListening] = useState(false);
   const mobile = useIsMobile();
@@ -47,6 +56,7 @@ export function Presence({
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening.";
   const error = conversation.error ?? identity.error;
+  const accent = identityAccent[identityId].primary;
 
   return (
     <section
@@ -75,6 +85,25 @@ export function Presence({
       >
         Presence
       </h1>
+      {identityId === "jester" && (
+        // The mockups' marker: which identity is listening, in its own colour.
+        <p
+          style={{
+            alignSelf: "flex-start",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            margin: 0,
+            color: accent,
+            fontFamily: typography.monoFamily,
+            fontSize: 12,
+            letterSpacing: "0.14em",
+          }}
+        >
+          <JesterGlyph size={16} />
+          JESTER · ACTIVE
+        </p>
+      )}
       <div
         style={{
           flex: "1 1 320px",
@@ -98,7 +127,10 @@ export function Presence({
             left: "25%",
             right: "25%",
             height: 22,
-            background: "radial-gradient(ellipse, rgba(139,124,246,.38), transparent 70%)",
+            background:
+              identityId === "jester"
+                ? "radial-gradient(ellipse, rgba(139,124,246,.3), rgba(182,255,59,.08) 45%, transparent 70%)"
+                : "radial-gradient(ellipse, rgba(139,124,246,.38), transparent 70%)",
             filter: "blur(5px)",
             pointerEvents: "none",
           }}
@@ -126,10 +158,7 @@ export function Presence({
             textAlign: "center",
           }}
         >
-          <span
-            aria-hidden="true"
-            style={{ color: identityAccent.vesper.primary, marginRight: 12 }}
-          >
+          <span aria-hidden="true" style={{ color: accent, marginRight: 12 }}>
             ✦
           </span>
           {greeting}
@@ -152,6 +181,7 @@ export function Presence({
           roots={conversation.roots}
           onSend={onSend}
           onListeningChange={setListening}
+          {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
         />
         {error !== undefined && (
           <p role="alert" style={{ color: semantic.error }}>

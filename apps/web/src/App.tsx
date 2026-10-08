@@ -1,3 +1,4 @@
+import type { ConversationalIdentityId } from "@noctis/contracts";
 import {
   HIDDEN_ITEMS,
   NavIcon,
@@ -169,6 +170,11 @@ function Workbench({
   /** A delegated thread the owner opened; undefined is the identity's own thread. */
   const [openThreadId, setOpenThreadId] = useState<string | undefined>(undefined);
   const conversation = useConversation(transport, identityId, objectiveId, openThreadId);
+  /** An open conversation belongs to the identity it was opened under, so switching leaves it. */
+  const switchIdentity = (next: ConversationalIdentityId): void => {
+    setOpenThreadId(undefined);
+    void identity.activate(next);
+  };
   /** What waits on the owner, on the Approvals tab wherever they are. */
   const counts = { Approvals: useWaitingCount(transport) };
 
@@ -283,6 +289,7 @@ function Workbench({
             conversation={conversation}
             onSend={sendAndShow}
             onReview={() => setActive("Threads")}
+            onSwitchIdentity={switchIdentity}
           />
         )}
         {/* Command stays mounted while the Vault is showing, so returning to
@@ -311,6 +318,7 @@ function Workbench({
               ? {}
               : { freeThread, onUseFreeThread: setFreeThread })}
             onOpenThread={setOpenThreadId}
+            onSwitchIdentity={switchIdentity}
             transport={transport}
             onOpenFile={(target) => {
               setFileTarget(target);

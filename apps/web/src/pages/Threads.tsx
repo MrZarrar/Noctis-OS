@@ -53,6 +53,8 @@ export interface ThreadsProps {
    */
   freeThread?: boolean;
   onUseFreeThread?: (free: boolean) => void;
+  /** Switches between Vesper and Jester from the composer. */
+  onSwitchIdentity?: (identityId: ConversationalIdentityId) => void;
   /** Opens a thread an agent delegated to, or (undefined) goes back to the identity's own. */
   onOpenThread?: (threadId: string | undefined) => void;
   /** Opens a file a turn wrote in Files. Absent, the files are listed but not offered. */
@@ -362,6 +364,7 @@ export function Threads({
   connected,
   freeThread,
   onUseFreeThread,
+  onSwitchIdentity,
   onOpenThread,
   onOpenFile,
   transport,
@@ -692,6 +695,7 @@ export function Threads({
               canAttach={conversation.canAttach}
               roots={conversation.roots}
               {...(pinned === undefined ? {} : { lockedTo: pinned })}
+              {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
               onSend={(text, options) => {
                 follow.current = true;
                 void conversation.send(text, options);
