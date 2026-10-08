@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import type { CodexSpawn, SpawnedChild } from "./codex.js";
+import { AdapterRefused } from "./Runtime.js";
 import { createHermesRuntime } from "./hermes.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { createJsonRpcClient } from "./jsonrpc.js";
@@ -458,6 +459,37 @@ describe("the Hermes runtime (ACP)", () => {
 
     expect((await turn).stoppedReason).toBe("cancelled");
     expect(spawned[0]?.notes).toContainEqual(["session/cancel", { sessionId: "hs-1" }]);
+  });
+
+  it("speaks as Jester on Jester's own Hermes home, and leaves Vesper's Hermes plain", async () => {
+    const { runtime: hermes, spawned } = runtime();
+
+    await hermes.turn(input({ identityId: "jester" }), recorder().sink);
+    await hermes.turn(
+      input({ identityId: "vesper", threadId: "0199a000-0000-7000-8000-0000000000f1" }),
+      recorder().sink,
+    );
+
+    const jesterHome = join(scratch, "hermes-jester");
+    const soul = readFileSync(join(jesterHome, "SOUL.md"), "utf8");
+
+    expect(spawned[0]?.env.HERMES_HOME).toBe(jesterHome);
+    expect(soul).toMatch(/^You are Jester/);
+    expect(soul).toContain("never send, publish, spend");
+    expect(readFileSync(join(jesterHome, "config.yaml"), "utf8")).toContain(
+      "memory_enabled: false",
+    );
+    expect(spawned[1]?.env.HERMES_HOME).toBe(join(scratch, "hermes"));
+    expect(existsSync(join(scratch, "hermes", "SOUL.md"))).toBe(false);
+  });
+
+  it("refuses at once, never falling back elsewhere, when the local model server is down (ADR-0030)", async () => {
+    const { runtime: hermes, spawned } = runtime(HAPPY, []);
+    const turn = hermes.turn(input({ identityId: "jester" }), recorder().sink);
+
+    await expect(turn).rejects.toBeInstanceOf(AdapterRefused);
+    await expect(turn).rejects.toThrow(/LM Studio is not running/);
+    expect(spawned).toHaveLength(0);
   });
 
   it("offers the local server's models as Hermes models, and is unavailable without them", async () => {

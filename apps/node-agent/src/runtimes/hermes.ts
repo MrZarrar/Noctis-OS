@@ -54,6 +54,13 @@ const TURN_TIMEOUT_MS = 2 * 60 * 60_000;
 const KILL_AFTER_CANCEL_MS = 5_000;
 /** Refused by Hermes whatever anyone answers: these leave the PC and cannot be called back. */
 const DENIED = ["*git push*", "*npm publish*", "*pnpm publish*", "*yarn publish*", "*gh release*"];
+/** Who Jester is: Hermes's SOUL.md on Jester's home. */
+const JESTER_SOUL = `You are Jester, one of the two identities in Noctis, running on the owner's own PC on a local model. Vesper is the calm one; you are the contrarian.
+
+Your job is to make the owner's ideas better by attacking them. Find the premise doing the most work and test it. Name the part they are pretending will solve itself. Ask the one uncomfortable question that matters. Be specific, brief and a little irreverent: wit, never contempt. You are on the owner's side. When an idea survives, say so plainly and propose the cheapest real test of it.
+
+You prepare; you do not commit. Draft the offer, the message, the list, the plan, for the owner to review. You never send, publish, spend money or change anything outside this PC. Noctis asks the owner before anything consequential, and a refusal is final.
+`;
 /** Hermes's own memory, its search over past sessions, and its scheduler. */
 const MEMORYLESS = ["memory", "session_search", "cronjob"];
 
@@ -199,12 +206,21 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
   function open(input: RuntimeTurnInput, key: string, command: string): HermesProcess {
     // ponytail: one config per home, so two threads opening on different models
     // at the same moment race for it. A Hermes profile per model if that happens.
-    mkdirSync(options.hermesHome, { recursive: true });
-    writeFileSync(join(options.hermesHome, "config.yaml"), hermesConfig(input.payload.model.model));
+    // Jester is Hermes with its own soul (ADR-0030), on a home of its own, so
+    // its sessions never mix with Vesper's. Hermes reads SOUL.md as who it is.
+    const jester = input.payload.identityId === "jester";
+    const home = jester ? `${options.hermesHome}-jester` : options.hermesHome;
+
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.yaml"), hermesConfig(input.payload.model.model));
+
+    if (jester) {
+      writeFileSync(join(home, "SOUL.md"), JESTER_SOUL);
+    }
 
     const child = spawn(command, [], {
       cwd: input.roots.cwd,
-      env: { ...childEnvironment(input.env), HERMES_HOME: options.hermesHome },
+      env: { ...childEnvironment(input.env), HERMES_HOME: home },
     });
     let alive = true;
     let killTimer: NodeJS.Timeout | undefined;
@@ -611,15 +627,25 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
         models: local.models.map((model) => ({ ...model, providerId: "hermes" as const })),
       };
     },
-    turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
+    async turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const command = options.command ?? resolveHermesCommand(input.env);
 
       if (command === undefined) {
-        return Promise.reject(new AdapterRefused("hermes_not_found"));
+        throw new AdapterRefused("hermes_not_found");
+      }
+
+      // Asked every turn, not just at hello: LM Studio may have stopped since.
+      // Hermes is then unavailable, never quietly carried by something else.
+      const local = await options.localProbe();
+
+      if (!local.available) {
+        throw new AdapterRefused(
+          `LM Studio is not running, so Hermes has nothing to think with (${local.reason ?? "no models"})`,
+        );
       }
 
       if (input.signal.aborted) {
-        return Promise.reject(new AdapterRefused("job was cancelled"));
+        throw new AdapterRefused("job was cancelled");
       }
 
       const key = processKey(input.payload, input.roots);
