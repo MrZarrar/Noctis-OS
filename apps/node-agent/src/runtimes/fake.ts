@@ -50,6 +50,17 @@ export function createFakeRuntime(): Runtime {
   return {
     providerId: "codex",
     probe: () => Promise.resolve(FAKE_PROBE),
+    /** One session "VS Code" left in every folder, for the adopt path. */
+    listSessions: () =>
+      Promise.resolve([
+        {
+          providerId: "codex",
+          sessionRef: "fake-vscode-session",
+          title: "Cold open from VS Code",
+          lastActiveAt: new Date().toISOString(),
+          source: "vscode",
+        },
+      ]),
     async turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
       const slow = payload.prompt.includes("SLOW:");
@@ -70,13 +81,18 @@ export function createFakeRuntime(): Runtime {
         sink.item(value);
       };
 
-      const finalText = `Hello ${payload.prompt}`;
+      // Says so when asked to fork, so a test can see the adopted session
+      // was continued in a copy rather than written into.
+      const forked = payload.forkSession === true && payload.sessionRef !== undefined;
+      const finalText = forked
+        ? `Hello ${payload.prompt} (forked ${payload.sessionRef ?? ""})`
+        : `Hello ${payload.prompt}`;
 
       const evidence = (
         stoppedReason: RuntimeTurnEvidence["stoppedReason"],
       ): RuntimeTurnEvidence => ({
         model: payload.model,
-        sessionRef: payload.sessionRef ?? "fake-session-1",
+        sessionRef: forked ? "fake-fork-1" : (payload.sessionRef ?? "fake-session-1"),
         itemCount,
         finalText,
         stoppedReason,

@@ -11,7 +11,7 @@ import {
   typography,
 } from "@noctis/ui";
 import type { CSSProperties } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
 import type {
@@ -20,6 +20,9 @@ import type {
   Turn,
 } from "../conversation/useConversation.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
+import type { CoreTransport } from "../transport/CoreTransport.js";
+import { Conversations } from "./Conversations.js";
+import { conversationLabel, pinnedTo } from "./conversations-view.js";
 import type { FileTarget } from "./files-view.js";
 import { locateInRoots } from "./files-view.js";
 
@@ -39,6 +42,8 @@ export interface ThreadsProps {
   onOpenThread?: (threadId: string | undefined) => void;
   /** Opens a file a turn wrote in Files. Absent, the files are listed but not offered. */
   onOpenFile?: (target: FileTarget<RuntimeRootOption>) => void;
+  /** For the conversation list. Absent, there is no list to open. */
+  transport?: CoreTransport | undefined;
 }
 
 /**
@@ -344,7 +349,9 @@ export function Threads({
   onUseFreeThread,
   onOpenThread,
   onOpenFile,
+  transport,
 }: ThreadsProps): JSX.Element {
+  const [listing, setListing] = useState(false);
   const {
     thread,
     messages,
@@ -373,14 +380,17 @@ export function Threads({
   const roleLabel = (role: string): string =>
     role === "user" ? "You" : role === "identity" ? displayName : "System";
 
+  const pinned = thread === undefined ? undefined : pinnedTo(thread, conversation.roots);
   const subtitle =
     thread === undefined
       ? `${displayName} · nothing said yet`
       : delegated
         ? `${displayName} · delegated thread`
-        : thread.objectiveId === undefined
-          ? `${displayName} · free chat`
-          : `${displayName} · Objective thread`;
+        : thread.kind === "named"
+          ? `${displayName} · ${conversationLabel(thread)}`
+          : thread.objectiveId === undefined
+            ? `${displayName} · free chat`
+            : `${displayName} · Objective thread`;
 
   return (
     <Page
@@ -389,6 +399,11 @@ export function Threads({
       subtitle={subtitle}
       actions={
         <>
+          {transport !== undefined && onOpenThread !== undefined && !listing && (
+            <button type="button" onClick={() => setListing(true)} style={buttonStyle}>
+              Conversations
+            </button>
+          )}
           {/* An Objective being active used to mean every question went into
               it. A question that has nothing to do with the work in progress
               now has somewhere to go that does not require pausing it. */}
@@ -418,207 +433,221 @@ export function Threads({
         </>
       }
     >
-      {/* Where agents on this thread handed work: each one opens, and the
+      {listing && transport !== undefined && onOpenThread !== undefined ? (
+        <Conversations
+          transport={transport}
+          identityId={identityId}
+          roots={conversation.roots}
+          currentThreadId={thread?.kind === "named" ? thread.id : undefined}
+          onOpen={onOpenThread}
+          onClose={() => setListing(false)}
+        />
+      ) : (
+        <>
+          {/* Where agents on this thread handed work: each one opens, and the
           prompt below then continues it. */}
-      {children.length > 0 && onOpenThread !== undefined && (
-        <nav
-          aria-label="Delegated threads"
-          style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
-        >
-          {children.map((child, index) => (
-            <button
-              key={child.id}
-              type="button"
-              data-thread={child.id}
-              onClick={() => {
-                onOpenThread(child.id);
-              }}
-              title={`Started ${new Date(child.createdAt).toLocaleString()}`}
-              style={buttonStyle}
+          {children.length > 0 && onOpenThread !== undefined && (
+            <nav
+              aria-label="Delegated threads"
+              style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
             >
-              Delegated thread {String(index + 1)}
-            </button>
-          ))}
-        </nav>
-      )}
+              {children.map((child, index) => (
+                <button
+                  key={child.id}
+                  type="button"
+                  data-thread={child.id}
+                  onClick={() => {
+                    onOpenThread(child.id);
+                  }}
+                  title={`Started ${new Date(child.createdAt).toLocaleString()}`}
+                  style={buttonStyle}
+                >
+                  Delegated thread {String(index + 1)}
+                </button>
+              ))}
+            </nav>
+          )}
 
-      {messages.length === 0 && turns.length === 0 && streaming.size === 0 && (
-        <p style={{ margin: 0, color: typography.color.muted, maxWidth: typography.measurePx }}>
-          Pick an agent and a PC below, then say what you want done. Follow-ups continue the same
-          thread on the same machine.
-        </p>
-      )}
+          {messages.length === 0 && turns.length === 0 && streaming.size === 0 && (
+            <p style={{ margin: 0, color: typography.color.muted, maxWidth: typography.measurePx }}>
+              Pick an agent and a PC below, then say what you want done. Follow-ups continue the
+              same thread on the same machine.
+            </p>
+          )}
 
-      <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
-        {timelineOf(messages, turns, pendingApprovals).map((entry) => {
-          if (entry.kind === "message") {
-            return (
+          <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
+            {timelineOf(messages, turns, pendingApprovals).map((entry) => {
+              if (entry.kind === "message") {
+                return (
+                  <li
+                    key={entry.message.id}
+                    data-entry="message"
+                    data-role={entry.message.role}
+                    style={bubbleStyle(entry.message.role === "user")}
+                  >
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: typography.scale.xs,
+                        letterSpacing: typography.tracking.wide,
+                        color:
+                          entry.message.role === "user"
+                            ? typography.color.muted
+                            : identityAccent.vesper.primary,
+                        marginBottom: 2,
+                      }}
+                    >
+                      {roleLabel(entry.message.role)}
+                      <span style={spoken}>: </span>
+                    </span>
+                    <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                      {entry.message.body}
+                    </span>
+                  </li>
+                );
+              }
+
+              if (entry.kind === "turn") {
+                return (
+                  <TurnRow
+                    key={entry.turn.id}
+                    turn={entry.turn}
+                    outputUrl={outputUrl}
+                    written={writtenFiles(entry.turn, conversation.roots)}
+                    onOpenFile={onOpenFile}
+                    onCancel={() => {
+                      if (entry.turn.jobId !== undefined) {
+                        void conversation.cancel(entry.turn.jobId);
+                      }
+                    }}
+                  />
+                );
+              }
+
+              const { approval } = entry;
+
+              return (
+                <li
+                  key={approval.id}
+                  data-entry="approval"
+                  style={{
+                    ...glass,
+                    borderLeft: `2px solid ${semantic.approval}`,
+                    padding: spacing.lg,
+                    minWidth: 0,
+                  }}
+                >
+                  <ApprovalSurface
+                    id={approval.id}
+                    consequenceSummary={approval.consequenceSummary}
+                    operationClass={approval.operationClass}
+                    capability={approval.capability}
+                    targetType={approval.target.type}
+                    targetId={approval.target.id}
+                    reversibility={approval.reversibility}
+                    outcome={approval.outcome}
+                    reasonCodes={approval.reasonCodes}
+                    {...(approval.estimatedCostGbp === undefined
+                      ? {}
+                      : { estimatedCostGbp: approval.estimatedCostGbp })}
+                    {...(approval.confirmationPhrase === undefined
+                      ? {}
+                      : { confirmationPhrase: approval.confirmationPhrase })}
+                    onConfirm={(typedConfirmation) => {
+                      void conversation.confirm(approval.id, typedConfirmation);
+                    }}
+                    onDecline={() => {
+                      void conversation.decline(approval.id);
+                    }}
+                  />
+                </li>
+              );
+            })}
+
+            {/* In progress, so always last: it is the newest thing on the page. */}
+            {[...streaming.entries()].map(([itemId, text]) => (
               <li
-                key={entry.message.id}
-                data-entry="message"
-                data-role={entry.message.role}
-                style={bubbleStyle(entry.message.role === "user")}
+                key={`streaming-${itemId}`}
+                data-entry="streaming"
+                data-streaming={itemId}
+                aria-live="polite"
+                style={{ ...bubbleStyle(false), color: typography.color.muted }}
               >
                 <span
                   style={{
                     display: "block",
                     fontSize: typography.scale.xs,
-                    letterSpacing: typography.tracking.wide,
-                    color:
-                      entry.message.role === "user"
-                        ? typography.color.muted
-                        : identityAccent.vesper.primary,
-                    marginBottom: 2,
+                    color: identityAccent.vesper.primary,
                   }}
                 >
-                  {roleLabel(entry.message.role)}
-                  <span style={spoken}>: </span>
+                  {displayName} (typing)<span style={spoken}>: </span>
                 </span>
-                <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                  {entry.message.body}
-                </span>
+                <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</span>
               </li>
-            );
-          }
+            ))}
+          </ul>
 
-          if (entry.kind === "turn") {
-            return (
-              <TurnRow
-                key={entry.turn.id}
-                turn={entry.turn}
-                outputUrl={outputUrl}
-                written={writtenFiles(entry.turn, conversation.roots)}
-                onOpenFile={onOpenFile}
-                onCancel={() => {
-                  if (entry.turn.jobId !== undefined) {
-                    void conversation.cancel(entry.turn.jobId);
-                  }
-                }}
-              />
-            );
-          }
-
-          const { approval } = entry;
-
-          return (
-            <li
-              key={approval.id}
-              data-entry="approval"
+          {error !== undefined && (
+            <p
               style={{
-                ...glass,
-                borderLeft: `2px solid ${semantic.approval}`,
-                padding: spacing.lg,
-                minWidth: 0,
+                color: semantic.error,
+                margin: 0,
+                display: "flex",
+                gap: spacing.sm,
+                alignItems: "center",
               }}
             >
-              <ApprovalSurface
-                id={approval.id}
-                consequenceSummary={approval.consequenceSummary}
-                operationClass={approval.operationClass}
-                capability={approval.capability}
-                targetType={approval.target.type}
-                targetId={approval.target.id}
-                reversibility={approval.reversibility}
-                outcome={approval.outcome}
-                reasonCodes={approval.reasonCodes}
-                {...(approval.estimatedCostGbp === undefined
-                  ? {}
-                  : { estimatedCostGbp: approval.estimatedCostGbp })}
-                {...(approval.confirmationPhrase === undefined
-                  ? {}
-                  : { confirmationPhrase: approval.confirmationPhrase })}
-                onConfirm={(typedConfirmation) => {
-                  void conversation.confirm(approval.id, typedConfirmation);
-                }}
-                onDecline={() => {
-                  void conversation.decline(approval.id);
-                }}
-              />
-            </li>
-          );
-        })}
-
-        {/* In progress, so always last: it is the newest thing on the page. */}
-        {[...streaming.entries()].map(([itemId, text]) => (
-          <li
-            key={`streaming-${itemId}`}
-            data-entry="streaming"
-            data-streaming={itemId}
-            aria-live="polite"
-            style={{ ...bubbleStyle(false), color: typography.color.muted }}
-          >
-            <span
-              style={{
-                display: "block",
-                fontSize: typography.scale.xs,
-                color: identityAccent.vesper.primary,
-              }}
-            >
-              {displayName} (typing)<span style={spoken}>: </span>
-            </span>
-            <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</span>
-          </li>
-        ))}
-      </ul>
-
-      {error !== undefined && (
-        <p
-          style={{
-            color: semantic.error,
-            margin: 0,
-            display: "flex",
-            gap: spacing.sm,
-            alignItems: "center",
-          }}
-        >
-          <span>{error}</span>
-          {/* Task 2.6: a pinned host that is asleep refused the send before
+              <span>{error}</span>
+              {/* Task 2.6: a pinned host that is asleep refused the send before
               anything was written, so the offer is real — the same prompt, on
               whichever machine can take it. */}
-          {conversation.offlineRetry !== undefined && (
-            <button
-              type="button"
-              onClick={() => {
-                void conversation.retryElsewhere();
-              }}
-              style={buttonStyle}
-            >
-              Send it elsewhere
-            </button>
+              {conversation.offlineRetry !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void conversation.retryElsewhere();
+                  }}
+                  style={buttonStyle}
+                >
+                  Send it elsewhere
+                </button>
+              )}
+            </p>
           )}
-        </p>
-      )}
 
-      {/* Pinned to the bottom of the scroll, so the box to type in stays under
+          {/* Pinned to the bottom of the scroll, so the box to type in stays under
           the thumb however long the thread gets. */}
-      <div
-        style={{
-          position: "sticky",
-          bottom: 0,
-          marginTop: "auto",
-          padding: spacing.sm,
-          borderRadius: corner.lg,
-          background: `linear-gradient(180deg, rgba(11, 10, 18, 0.72), ${depth.layers[0]})`,
-          backdropFilter: `blur(${String(material.blurPx)}px)`,
-          WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
-          border: `1px solid ${material.border}`,
-        }}
-      >
-        <PromptForm
-          identityId={identityId}
-          models={models}
-          defaultModel={defaultModel}
-          disabled={!connected}
-          canAttach={conversation.canAttach}
-          roots={conversation.roots}
-          onSend={(text, options) => {
-            void conversation.send(text, options);
-          }}
-        />
-      </div>
-      {/* After the composer, so scrolling it into view reaches the very end
+          <div
+            style={{
+              position: "sticky",
+              bottom: 0,
+              marginTop: "auto",
+              padding: spacing.sm,
+              borderRadius: corner.lg,
+              background: `linear-gradient(180deg, rgba(11, 10, 18, 0.72), ${depth.layers[0]})`,
+              backdropFilter: `blur(${String(material.blurPx)}px)`,
+              WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
+              border: `1px solid ${material.border}`,
+            }}
+          >
+            <PromptForm
+              identityId={identityId}
+              models={models}
+              defaultModel={defaultModel}
+              disabled={!connected}
+              canAttach={conversation.canAttach}
+              roots={conversation.roots}
+              {...(pinned === undefined ? {} : { lockedTo: pinned })}
+              onSend={(text, options) => {
+                void conversation.send(text, options);
+              }}
+            />
+          </div>
+          {/* After the composer, so scrolling it into view reaches the very end
           rather than leaving the last entry under the sticky composer. */}
-      <div ref={end} />
+          <div ref={end} />
+        </>
+      )}
     </Page>
   );
 }

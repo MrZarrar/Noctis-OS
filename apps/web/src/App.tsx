@@ -308,6 +308,7 @@ function Workbench({
               ? {}
               : { freeThread, onUseFreeThread: setFreeThread })}
             onOpenThread={setOpenThreadId}
+            transport={transport}
             onOpenFile={(target) => {
               setFileTarget(target);
               setActive("Files");

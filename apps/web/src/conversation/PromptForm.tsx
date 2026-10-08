@@ -33,6 +33,12 @@ export interface PromptFormProps {
    * no way to name a root at all.
    */
   roots?: readonly RuntimeRootOption[];
+  /**
+   * Where a pinned thread always runs ("Claude · hyperframes on home"). Set,
+   * the agent and folder pickers give way to saying so: the thread holds one
+   * agent's session in one folder, and choosing another would start afresh.
+   */
+  lockedTo?: string;
   onSend: (text: string, options: SendOptions) => void;
   onListeningChange?: (listening: boolean) => void;
 }
@@ -118,6 +124,7 @@ export function PromptForm({
   disabled,
   canAttach = false,
   roots = [],
+  lockedTo,
   onSend,
   onListeningChange,
 }: PromptFormProps): JSX.Element {
@@ -146,12 +153,16 @@ export function PromptForm({
 
     const override = options.find((model) => modelKey(model) === selectedKey);
 
-    const model = override !== undefined && selectedKey !== defaultKey ? override : undefined;
+    // A pinned thread chooses its own model; the core refuses another agent's.
+    const model =
+      lockedTo === undefined && override !== undefined && selectedKey !== defaultKey
+        ? override
+        : undefined;
 
     onSend(text, {
       ...(model === undefined ? {} : { model }),
       ...(files.length === 0 ? {} : { files }),
-      ...(rootGrantId === "" ? {} : { rootGrantId }),
+      ...(rootGrantId === "" || lockedTo !== undefined ? {} : { rootGrantId }),
     });
     setText("");
     onListeningChange?.(false);
@@ -254,45 +265,60 @@ export function PromptForm({
           gap: spacing.sm,
         }}
       >
-        <label style={pickerStyle}>
-          <span>Agent</span>
-          <select
-            value={selectedKey}
-            disabled={disabled || options.length === 0}
-            onChange={(event) => {
-              setChosen(event.target.value);
+        {lockedTo !== undefined ? (
+          <p
+            style={{
+              ...pickerStyle,
+              gridColumn: canAttach ? "1 / 3" : "1 / -1",
+              margin: 0,
+              alignSelf: "center",
             }}
-            style={fieldStyle}
           >
-            {options.length === 0 && <option value="">No agent offered by any PC</option>}
-            {options.map((model) => (
-              <option key={modelKey(model)} value={modelKey(model)}>
-                {modelLabel(model)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {roots.length > 0 && (
-          <label style={pickerStyle}>
-            <span>PC and folder</span>
-            <select
-              value={rootGrantId}
-              disabled={disabled}
-              onChange={(event) => {
-                setRootGrantId(event.target.value);
-              }}
-              style={fieldStyle}
-            >
-              {/* The core's own rule when nothing is named: the chosen node's
+            Continuing in {lockedTo}
+          </p>
+        ) : (
+          <>
+            <label style={pickerStyle}>
+              <span>Agent</span>
+              <select
+                value={selectedKey}
+                disabled={disabled || options.length === 0}
+                onChange={(event) => {
+                  setChosen(event.target.value);
+                }}
+                style={fieldStyle}
+              >
+                {options.length === 0 && <option value="">No agent offered by any PC</option>}
+                {options.map((model) => (
+                  <option key={modelKey(model)} value={modelKey(model)}>
+                    {modelLabel(model)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {roots.length > 0 && (
+              <label style={pickerStyle}>
+                <span>PC and folder</span>
+                <select
+                  value={rootGrantId}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    setRootGrantId(event.target.value);
+                  }}
+                  style={fieldStyle}
+                >
+                  {/* The core's own rule when nothing is named: the chosen node's
                   first writable root. Said out loud rather than left blank. */}
-              <option value="">Wherever Noctis chooses</option>
-              {roots.map((root) => (
-                <option key={root.grantId} value={root.grantId}>
-                  {rootLabel(root)}
-                </option>
-              ))}
-            </select>
-          </label>
+                  <option value="">Wherever Noctis chooses</option>
+                  {roots.map((root) => (
+                    <option key={root.grantId} value={root.grantId}>
+                      {rootLabel(root)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </>
         )}
         {canAttach && (
           // The native picker, invisible and stretched over a button-shaped

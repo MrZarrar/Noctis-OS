@@ -429,6 +429,98 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   );
 
   it(
+    "THE GATE: continues a session started outside Noctis, from the phone",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+
+      await tabTo(page, "Conversations");
+      await page.keyboard.press("Enter");
+      await tabTo(page, "Continue a session");
+      await page.keyboard.press("Enter");
+
+      // The folder the fake node shares, then the session its agent keeps there.
+      const places = await waitFor(
+        readPage,
+        (state) => state.body.includes("noctis-e2e-phone-scratch"),
+        "Continue a session never offered the shared folder",
+      );
+      const place = places.body.match(/noctis-e2e-phone-scratch-[A-Za-z0-9]+ on e2e/)?.[0];
+      assert.ok(place, "no place label found");
+      await tabTo(page, place);
+      await page.keyboard.press("Enter");
+
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Cold open from VS Code"),
+        "the folder's sessions were never listed",
+        30_000,
+      );
+      await tabTo(page, "Cold open from VS Code");
+      await page.keyboard.press("Enter");
+
+      const opened = await waitFor(
+        readPage,
+        (state) => state.heading === "Threads" && state.body.includes("Continuing"),
+        "the session did not open as a pinned thread",
+      );
+      assert.ok(
+        !opened.body.includes("PC and folder"),
+        "a pinned thread still offers to run somewhere else",
+      );
+
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type("carry on");
+      await page.keyboard.press("Enter");
+
+      // The fake says when it was asked to fork, and which session it forked.
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.includes("forked fake-vscode-session")),
+        "the first turn did not fork the adopted session",
+        60_000,
+      );
+    },
+  );
+
+  it(
+    "opens a new conversation beside free chat, and lists both",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+
+      await tabTo(page, "Conversations");
+      await page.keyboard.press("Enter");
+      await tabTo(page, "New conversation");
+      await page.keyboard.press("Enter");
+
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type("a fresh topic");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.includes("Hello a fresh topic")),
+        "the new conversation never answered",
+        60_000,
+      );
+
+      await tabTo(page, "Conversations");
+      await page.keyboard.press("Enter");
+
+      const listed = await waitFor(
+        readPage,
+        (state) => state.body.includes("a fresh topic") && state.body.includes("Free chat"),
+        "the list does not show the new conversation beside free chat",
+      );
+      assert.ok(listed.body.indexOf("a fresh topic") < listed.body.indexOf("Free chat"));
+    },
+  );
+
+  it(
     "keeps both answers to a consequence on screen at a phone's width",
     { timeout: 120_000 },
     async () => {
