@@ -3307,3 +3307,56 @@ shown red by stashing the web wiring (no Jester button), then green.
   root), so the first Jester turn on a PC is slower than later ones.
 - **Jester's voice is a SOUL.md.** Qwen3.5-9B may not hold it; judge it live.
 - **A Jester default set to another agent before this change** is ignored rather than cleared.
+
+### 2026-10-09 Deployed: S3, S7, S8 and Jester live; LM Studio on demand; a stream that heals
+
+Past midnight, with the owner at the home PC. Commits `278a93f`, `92eb667`, `934aeb7`. The owner
+deployed the work-PC core twice (`scripts/deploy/work-pc.ps1`) and restarted the home node with
+`.noctis/home-node.ps1 -ShareWithLocal`; both nodes are connected, and the core offers Claude,
+Codex, Hermes and local.
+
+- **First live Jester turns.** Three turns on Hermes from the browser: 52 s cold (the node started
+  LM Studio's server, loaded Qwen3.5-9B at 64K, and Hermes prepared Jester's home for the first
+  time), then 4.5 s and 2.6 s. The reply was in Jester's voice and asked a premise question back.
+- **LM Studio on demand** (`278a93f`, owner: keep the VRAM free until needed). The node drives
+  LM Studio through `lms`: `hello` offers the chat models on disk without loading anything, so
+  Jester is offered with LM Studio stopped and needs no node restart; the first local or Hermes
+  turn starts the server on loopback and loads the model at 64K with a 10-minute idle unload
+  (`lms load --ttl 600`). Seen live: `lms ps` showed the node's load with `TTL 9m / 10m`; VRAM
+  went from 2.8 GB to 11.5 GB on the first turn. `home-node.ps1` no longer pre-loads the model.
+- **The live stream heals itself** (`92eb667`). "The live subscription failed" and turns stuck at
+  "Waiting to start" were one bug: the browser gives up on an EventSource for good when a response
+  is unreadable (the proxy's 502 while the core restarts), and the page then heard nothing more.
+  The core's ledger showed all three Jester turns completed while the page still waited.
+  `SessionTransport` now reopens a stream the browser gave up on, from the last event it
+  delivered, with backoff to 15 s, and reports only an outage of 30 s or more.
+- **Presence keeps the owner with the core** (`934aeb7`, owner's choice: both). Sending from
+  Presence no longer jumps to Threads; the exchange in progress shows under the core, as in the
+  Jester mockup, with Open in Threads. Threads carries a small live core in its header.
+- **The home PC at boot.** The scheduled task "Noctis node agent" (S4U, at startup) already starts
+  the node; `NOCTIS_NODE_HOME` is now set at user scope to `%LOCALAPPDATA%\Noctis\node`, so the
+  boot agent and `home-node.ps1` share one home (Jester's Hermes home, proposals, transcripts).
+  The work PC's core and node stay manual (owner).
+- **The core token, not typed.** `home-node.ps1` (git-ignored, this PC only) takes the token from
+  the clipboard (`[Environment]::GetEnvironmentVariable('NOCTIS_CORE_TOKEN','User') | Set-Clipboard`
+  on the work PC), strips a terminal's bracketed-paste markers if typed, and keeps it encrypted to
+  the Windows account (DPAPI, `%LOCALAPPDATA%\Noctis\core-token.dpapi`) once the core accepts it.
+  Pasting had failed before because those markers were rejected as control characters.
+
+| Gate clause                                                 | State       | Evidence                                                                            |
+| ----------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------- |
+| Offers the models on disk with LM Studio stopped            | implemented | `local.test.ts`, `lmstudio.test.ts`                                                 |
+| Loads on demand at 64K with idle unload; one load at a time | implemented | `lmstudio.test.ts`; live `lms ps` (TTL 10m)                                         |
+| A failed load refuses the turn and says why                 | implemented | `local.test.ts`, `hermes.test.ts`                                                   |
+| The stream reconnects from its cursor; blips are quiet      | implemented | `SessionTransport.test.ts` "when the stream drops"                                  |
+| Presence stays after a send; Threads shows a small core     | implemented | E2E "THE GATE: Presence reflects every state..." (updated), `last-exchange.test.ts` |
+| Live: Jester on Hermes, from the browser                    | implemented | three completed turns in the core's ledger, 52 s cold then 2.6 to 4.5 s             |
+| Live: from the phone after the second deploy                | not yet     | owner                                                                               |
+| Cold reboot of the home PC with the on-demand node          | not yet     | owner; the GPU load under S4U with nobody logged in is untested                     |
+
+| Command                                                          | Result                  |
+| ---------------------------------------------------------------- | ----------------------- |
+| `npx vitest run apps/node-agent/src` / `apps/web/src`            | exit 0; 239 / 173 tests |
+| `node --test apps/web/e2e/{presence,phone,chat,jester}.test.mjs` | exit 0                  |
+| `.noctis/home-node.test.ps1`                                     | exit 0                  |
+| typecheck, eslint, prettier on the changed files                 | exit 0                  |
