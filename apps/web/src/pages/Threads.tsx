@@ -443,16 +443,6 @@ export function Threads({
       subtitle={subtitle}
       actions={
         <>
-          {/* The core, small: the turn's state is visible here too (owner, 2026-10-09). */}
-          <div
-            data-threads-core="true"
-            style={{ width: 56, height: 56, flexShrink: 0, alignSelf: "center" }}
-          >
-            <IntelligenceRenderer
-              identityId={identityId}
-              state={intelligenceState(conversation, false)}
-            />
-          </div>
           {transport !== undefined && onOpenThread !== undefined && !listing && (
             <button type="button" onClick={() => setListing(true)} style={buttonStyle}>
               Conversations
@@ -708,6 +698,27 @@ export function Threads({
               roots={conversation.roots}
               {...(pinned === undefined ? {} : { lockedTo: pinned })}
               {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
+              // The core beside the composer, which stays put while the thread
+              // scrolls, so its state is always in view (owner, 2026-10-09).
+              aside={
+                <div
+                  data-threads-core="true"
+                  style={{
+                    width: 76,
+                    height: 76,
+                    flexShrink: 0,
+                    marginBottom: -6,
+                    // Round, fading out: the canvas is a square on the composer's glass.
+                    maskImage: "radial-gradient(circle, #000 55%, transparent 71%)",
+                    WebkitMaskImage: "radial-gradient(circle, #000 55%, transparent 71%)",
+                  }}
+                >
+                  <IntelligenceRenderer
+                    identityId={identityId}
+                    state={intelligenceState(conversation, false)}
+                  />
+                </div>
+              }
               onSend={(text, options) => {
                 follow.current = true;
                 void conversation.send(text, options);

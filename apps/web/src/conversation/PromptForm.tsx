@@ -11,6 +11,7 @@ import {
   spacing,
   typography,
 } from "@noctis/ui";
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { buttonStyle, fieldStyle } from "../layout/Page.js";
@@ -48,6 +49,8 @@ export interface PromptFormProps {
    * `JESTER` or `VESPER` switches instead of sending (master plan §6).
    */
   onSwitchIdentity?: (identityId: ConversationalIdentityId) => void;
+  /** At the right of the switch row, which never scrolls away: Threads puts the core here. */
+  aside?: ReactNode;
 }
 
 /** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
@@ -169,6 +172,7 @@ export function PromptForm({
   onSend,
   onListeningChange,
   onSwitchIdentity,
+  aside,
 }: PromptFormProps): JSX.Element {
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string>();
@@ -234,37 +238,55 @@ export function PromptForm({
       }}
       style={{ display: "grid", gap: spacing.sm, width: "100%" }}
     >
-      {onSwitchIdentity !== undefined && lockedTo === undefined && (
-        <div role="group" aria-label="Who to talk to" style={{ display: "flex", gap: spacing.xs }}>
-          {IDENTITY_PROFILES.map((profile) => {
-            const active = profile.id === identityId;
-            const accent = identityAccent[profile.id].primary;
+      {((onSwitchIdentity !== undefined && lockedTo === undefined) || aside !== undefined) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            gap: spacing.sm,
+          }}
+        >
+          {onSwitchIdentity !== undefined && lockedTo === undefined ? (
+            <div
+              role="group"
+              aria-label="Who to talk to"
+              style={{ display: "flex", gap: spacing.xs }}
+            >
+              {IDENTITY_PROFILES.map((profile) => {
+                const active = profile.id === identityId;
+                const accent = identityAccent[profile.id].primary;
 
-            return (
-              <button
-                key={profile.id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => {
-                  if (!active) {
-                    setChosen(undefined);
-                    onSwitchIdentity(profile.id);
-                  }
-                }}
-                style={{
-                  ...switchStyle,
-                  ...(active ? { borderColor: accent, color: accent } : {}),
-                }}
-              >
-                {profile.id === "jester" ? (
-                  <JesterGlyph size={14} />
-                ) : (
-                  <span aria-hidden="true">✦</span>
-                )}
-                {profile.displayName}
-              </button>
-            );
-          })}
+                return (
+                  <button
+                    key={profile.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => {
+                      if (!active) {
+                        setChosen(undefined);
+                        onSwitchIdentity(profile.id);
+                      }
+                    }}
+                    style={{
+                      ...switchStyle,
+                      ...(active ? { borderColor: accent, color: accent } : {}),
+                    }}
+                  >
+                    {profile.id === "jester" ? (
+                      <JesterGlyph size={14} />
+                    ) : (
+                      <span aria-hidden="true">✦</span>
+                    )}
+                    {profile.displayName}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <span />
+          )}
+          {aside}
         </div>
       )}
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "stretch" }}>

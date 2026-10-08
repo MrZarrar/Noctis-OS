@@ -250,6 +250,19 @@ it(
           .some((call) => call.path === "/commands/conversation.send"),
       );
       assert.deepEqual(await activations(page), ["jester", "vesper"]);
+
+      // In Threads the core sits in the composer, which never scrolls away.
+      await page.getByRole("button", { name: "Open in Threads →" }).click();
+      await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+      const small = page.locator('form [data-threads-core="true"] .noctis-intelligence');
+      await small.waitFor();
+      assert.equal(await small.isVisible(), true);
+      const bounds = await small.boundingBox();
+      assert.ok(
+        bounds !== null && bounds.y + bounds.height <= viewport.height,
+        "core below the fold",
+      );
+      if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, `threads-${name}.png`) });
       assert.deepEqual(errors, []);
       await context.close();
     }
