@@ -1,6 +1,7 @@
 import { spawn as spawnChild } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
 import { classifyAsk } from "@noctis/domain";
@@ -8,6 +9,8 @@ import { z } from "zod";
 
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
+import type { ProposalChannel } from "../proposals-file.js";
+import { createProposalChannel } from "../proposals-file.js";
 import type { CodexSpawn } from "./codex.js";
 import { childEnvironment } from "./env.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
@@ -34,6 +37,10 @@ export interface HermesRuntimeOptions {
   spawn?: CodexSpawn;
   /** Noctis's own Hermes home: its config, sessions and state. */
   hermesHome: string;
+  /** One proposals file per thread lands here, for the Noctis MCP tools (ADR-0030). */
+  proposalsDir: string;
+  /** `dist/noctis-mcp.js`; the sibling of this file's parent in the build. */
+  mcpEntry?: string;
   /** The local model server's probe: Hermes thinks with what it serves. */
   localProbe: () => Promise<RuntimeProbe>;
   env?: NodeJS.ProcessEnv;
@@ -173,6 +180,7 @@ interface HermesProcess extends LiveProcess {
   /** Set while `session/load` replays history, which is no turn's to report. */
   loading: boolean;
   current: HermesTurn | undefined;
+  proposals: ProposalChannel;
   killSoon(): void;
 }
 
@@ -185,6 +193,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       }));
+  const mcpEntry = options.mcpEntry ?? fileURLToPath(new URL("../noctis-mcp.js", import.meta.url));
   const pool = createProcessPool<HermesProcess>(options.idleMs);
 
   function open(input: RuntimeTurnInput, key: string, command: string): HermesProcess {
@@ -210,6 +219,8 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       loading: false,
       current: undefined,
       rpc,
+      // Named for the thread, because the MCP child Hermes is handed lives as long as this process.
+      proposals: createProposalChannel(options.proposalsDir, `hermes-${input.payload.threadId}`),
       get alive() {
         return alive && child.exitCode === null;
       },
@@ -269,12 +280,21 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
 
     const cwd = input.roots.cwd;
     const named = input.payload.sessionRef;
+    // The Noctis MCP tools, as Codex has them: what they propose lands in this thread's file.
+    const mcpServers = [
+      {
+        name: "noctis",
+        command: process.execPath,
+        args: [mcpEntry, "--proposals", proc.proposals.path],
+        env: [],
+      },
+    ];
 
     if (named !== undefined) {
       proc.loading = true;
 
       try {
-        await proc.rpc.request("session/load", { sessionId: named, cwd, mcpServers: [] });
+        await proc.rpc.request("session/load", { sessionId: named, cwd, mcpServers });
         proc.sessionRef = named;
 
         return named;
@@ -291,7 +311,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     }
 
     const created = NewSessionSchema.parse(
-      await proc.rpc.request("session/new", { cwd, mcpServers: [] }),
+      await proc.rpc.request("session/new", { cwd, mcpServers }),
     );
 
     proc.sessionRef = created.sessionId;
@@ -507,6 +527,17 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
 
     signal.addEventListener("abort", cancel, { once: true });
 
+    let proposals = 0;
+    const stopChannel = proc.proposals.start((proposal) => {
+      proposals += 1;
+      item({
+        itemId: `proposal-${String(proposals)}`,
+        kind: "proposal",
+        status: "completed",
+        proposal,
+      });
+    });
+
     try {
       const result = PromptResultSchema.parse(
         await proc.rpc.request("session/prompt", {
@@ -550,6 +581,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
 
       throw error;
     } finally {
+      stopChannel();
       signal.removeEventListener("abort", cancel);
       proc.current = undefined;
     }

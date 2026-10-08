@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -16,6 +16,8 @@ import { createJsonRpcClient } from "./jsonrpc.js";
 
 const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: [], localOnly: true };
 const MODEL = { providerId: "hermes" as const, model: "qwen/qwen3.5-9b" };
+const THREAD = "0199a000-0000-7000-8000-0000000000e1";
+const MCP_ENTRY = "C:\\noctis\\dist\\noctis-mcp.js";
 
 class FakeChild extends EventEmitter implements SpawnedChild {
   stdin = new PassThrough();
@@ -160,9 +162,21 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
+/** The Noctis MCP server as ACP names it to Hermes: the node's own, writing to this thread's file. */
+function noctisMcp(): unknown[] {
+  return [
+    {
+      name: "noctis",
+      command: process.execPath,
+      args: [MCP_ENTRY, "--proposals", join(scratch, "proposals", `hermes-${THREAD}.jsonl`)],
+      env: [],
+    },
+  ];
+}
+
 function payload(overrides: Partial<RuntimeTurnPayload> = {}): RuntimeTurnPayload {
   return {
-    threadId: "0199a000-0000-7000-8000-0000000000e1",
+    threadId: THREAD,
     identityId: "vesper",
     model: MODEL,
     userMessageId: "0199a000-0000-7000-8000-0000000000e2",
@@ -212,6 +226,8 @@ function runtime(script: Script = HAPPY, models = ["qwen/qwen3.5-9b"]) {
       command: "C:\\hermes\\bin\\hermes-acp.exe",
       spawn: fake.spawn,
       hermesHome: join(scratch, "hermes"),
+      proposalsDir: join(scratch, "proposals"),
+      mcpEntry: MCP_ENTRY,
       localProbe: () =>
         Promise.resolve({
           providerId: "local",
@@ -231,7 +247,9 @@ describe("the Hermes runtime (ACP)", () => {
     const evidence = RuntimeTurnEvidenceSchema.parse(await hermes.turn(input(), r.sink));
 
     expect(spawned[0]?.cwd).toBe("C:\\work");
-    expect(spawned[0]?.requests.get("session/new")).toEqual([{ cwd: "C:\\work", mcpServers: [] }]);
+    expect(spawned[0]?.requests.get("session/new")).toEqual([
+      { cwd: "C:\\work", mcpServers: noctisMcp() },
+    ]);
     expect(spawned[0]?.requests.get("session/prompt")).toEqual([
       { sessionId: "hs-1", prompt: [{ type: "text", text: "what does notes.txt say?" }] },
     ]);
@@ -294,6 +312,36 @@ describe("the Hermes runtime (ACP)", () => {
     );
   });
 
+  it("attaches the Noctis MCP tools, and turns what they propose into proposal items (ADR-0030)", async () => {
+    const proposing: Script = (_server, sessionId) => {
+      // The model's MCP tool wrote a proposal; the runtime tails the file named in the MCP args.
+      const servers = (
+        fake.spawned[0]?.requests.get("session/new")?.[0] as {
+          mcpServers: Array<{ args: string[] }>;
+        }
+      ).mcpServers;
+      const args = servers[0]?.args ?? [];
+
+      appendFileSync(
+        args[args.indexOf("--proposals") + 1] ?? "",
+        `${JSON.stringify({ kind: "objective", title: "Suggested", intent: "later" })}\n`,
+      );
+
+      return Promise.resolve(sessionId === "hs-1" ? "end_turn" : "refusal");
+    };
+    const fake = runtime(proposing);
+    const r = recorder();
+
+    await fake.runtime.turn(input(), r.sink);
+
+    expect(r.items).toContainEqual({
+      itemId: "proposal-1",
+      kind: "proposal",
+      status: "completed",
+      proposal: { kind: "objective", title: "Suggested", intent: "later" },
+    });
+  });
+
   it("resumes a session in a new process without replaying its history as this turn, then reuses the process", async () => {
     const { runtime: hermes, spawned } = runtime();
     const r = recorder();
@@ -301,7 +349,7 @@ describe("the Hermes runtime (ACP)", () => {
     const evidence = await hermes.turn(input({ sessionRef: "hs-9" }), r.sink);
 
     expect(spawned[0]?.requests.get("session/load")).toEqual([
-      { sessionId: "hs-9", cwd: "C:\\work", mcpServers: [] },
+      { sessionId: "hs-9", cwd: "C:\\work", mcpServers: noctisMcp() },
     ]);
     expect(spawned[0]?.requests.has("session/new")).toBe(false);
     expect(r.deltas).not.toContain("an old reply");

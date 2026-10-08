@@ -67,6 +67,7 @@ export function selectRuntimes(
     hermes: createHermesRuntime({
       env,
       hermesHome: join(nodeHome, "hermes"),
+      proposalsDir: join(nodeHome, "proposals"),
       localProbe: () => local.probe(),
     }),
     ...(command === undefined
