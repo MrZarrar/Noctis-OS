@@ -308,7 +308,7 @@ function Workbench({
           />
         )}
 
-        {active === "Files" && <Files roots={conversation.roots} />}
+        {active === "Files" && <Files roots={conversation.roots} transport={transport} />}
 
         {active === "Approvals" && <Approvals transport={transport} />}
 

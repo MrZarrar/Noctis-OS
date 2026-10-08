@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -150,17 +150,22 @@ function readControls() {
   );
 }
 
-/** What the Files page shows before S4 gives it anything to browse. */
+/** The Files page: its places, the open folder's rows, and the viewer if one is up. */
 function readFiles() {
   return page.evaluate(() => {
-    const art = document.querySelector('[data-region="viewer"] img');
+    const viewer = document.querySelector('[data-region="viewer"]');
+    const box = viewer?.getBoundingClientRect();
 
     return {
       places: [...document.querySelectorAll('[aria-label="Places"] li')].map(
         (item) => item.textContent?.trim() ?? "",
       ),
-      viewer: document.querySelector('[data-region="viewer"]')?.textContent?.trim() ?? "",
-      artLoaded: art !== null && art.complete && art.naturalWidth > 0,
+      rows: [...document.querySelectorAll('[aria-label="Folder contents"] li')].map(
+        (item) => item.textContent?.trim() ?? "",
+      ),
+      viewer: viewer?.textContent?.trim() ?? "",
+      viewerWidth: box?.width ?? 0,
+      viewerHeight: box?.height ?? 0,
     };
   });
 }
@@ -177,6 +182,9 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     databaseDirectory = mkdtempSync(join(tmpdir(), "noctis-e2e-phone-db-"));
     nodeHome = mkdtempSync(join(tmpdir(), "noctis-e2e-phone-node-"));
     scratch = mkdtempSync(join(tmpdir(), "noctis-e2e-phone-scratch-"));
+    // What the Files gate opens: a script and a folder of frames, as an agent leaves them.
+    mkdirSync(join(scratch, "frames"));
+    writeFileSync(join(scratch, "script.md"), "# Episode one\n\nCold open on the lighthouse.\n");
 
     core = startProcess(process.execPath, [join(REPO_ROOT, "apps/core/dist/main.js")], {
       cwd: REPO_ROOT,
@@ -330,7 +338,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   );
 
   it(
-    "THE GATE: the Files page is laid out for browsing, and says plainly that it is not on yet",
+    "THE GATE: from the phone, a shared folder opens and a script in it fills the screen",
     { timeout: 120_000 },
     async () => {
       await page.setViewportSize(PHONE);
@@ -339,19 +347,55 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
 
       const files = await waitFor(
         readFiles,
-        (state) => state.places.length > 0 && state.artLoaded,
-        "Files never listed the granted folders beside its empty state",
+        (state) => state.places.length > 0,
+        "Files never listed the shared folders",
       );
 
-      // The folder the fake node was granted, on the machine that holds it:
-      // the places S4 makes browsable.
-      assert.ok(
-        files.places.some(
-          (place) => place.includes("noctis-e2e-phone-scratch") && place.includes("e2e"),
-        ),
-        `the granted folder is not among the places: ${JSON.stringify(files.places)}`,
+      // The folder the fake node shares, on the machine that holds it.
+      const place = files.places.find(
+        (candidate) => candidate.includes("noctis-e2e-phone-scratch") && candidate.includes("e2e"),
       );
-      assert.match(files.viewer, /not switched on yet/);
+      assert.ok(
+        place,
+        `the shared folder is not among the places: ${JSON.stringify(files.places)}`,
+      );
+
+      await tabTo(page, place);
+      await page.keyboard.press("Enter");
+
+      const folder = await waitFor(
+        readFiles,
+        (state) => state.rows.some((row) => row.includes("script.md")),
+        "opening the place never listed what is in it, through the node",
+      );
+      assert.ok(
+        folder.rows.some((row) => row.startsWith("frames") && row.includes("folder")),
+        `the subfolder is not listed as one: ${JSON.stringify(folder.rows)}`,
+      );
+
+      await tabTo(page, folder.rows.find((row) => row.startsWith("script.md")) ?? "script.md");
+      await page.keyboard.press("Enter");
+
+      const opened = await waitFor(
+        readFiles,
+        (state) => state.viewer.includes("# Episode one"),
+        "the script never opened in the viewer",
+      );
+
+      // A phone shows a file as its own screen, not a box under the list.
+      assert.equal(Math.round(opened.viewerWidth), PHONE.width);
+      assert.ok(
+        opened.viewerHeight >= PHONE.height - 1,
+        `the viewer is ${String(opened.viewerHeight)}px tall on an ${String(PHONE.height)}px phone`,
+      );
+
+      await tabTo(page, "Close");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readFiles,
+        (state) => state.rows.length > 0 && state.viewer === "",
+        "Close did not go back to the folder",
+      );
     },
   );
 
