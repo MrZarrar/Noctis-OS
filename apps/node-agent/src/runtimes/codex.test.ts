@@ -638,7 +638,9 @@ describe("the Codex App Server runtime", () => {
     ]);
     // VS Code records the drive in lower case; the filter is an exact match.
     expect(spawned[0]?.requests.get("thread/list")).toEqual([
-      expect.objectContaining({ cwd: ["C:\\work", "c:\\work"] }),
+      // Newest activity first, as the list shows them; created_at would drop
+      // an old thread touched today off the end of the page.
+      expect.objectContaining({ cwd: ["C:\\work", "c:\\work"], sortKey: "updated_at" }),
     ]);
     expect(spawned[0]?.args).not.toContain("mcp_servers.noctis.command");
     expect(spawned[0]?.child.killed).toBe(true);

@@ -890,6 +890,8 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             await rpc.request("thread/list", {
               cwd: cwdSpellings(cwd),
               limit: MAX_LISTED_SESSIONS,
+              // The default, created_at, drops an old thread touched today.
+              sortKey: "updated_at",
             }),
           );
         })(),
