@@ -3052,3 +3052,65 @@ The direct core videos omit the idle CSS transform; the full-page videos include
 CPU is 2.09% desktop / 1.85% phone-size: the breathing compositor exceeds the earlier 1% idle budget.
 These are Chrome viewport measurements, not physical-phone or GPU/thermal qualification. No live
 workers, Vault, production bundle, services or paid agents were activated.
+
+### 2026-10-08 S4: files and outputs from any machine
+
+Built on the home PC (`zarrarpc`) after the owner approved S6 live. Commits `5cdee68` (core and
+node), `0efe0b0` (the Files page), `735b830` (opening a file from the thread that wrote it).
+
+- **Which folders.** `file.list` and `file.read` are node capabilities covered by a `runtime.turn`
+  grant (`grantCovers` in `packages/contracts/src/node.ts`, used by the router and the agent's job
+  gate). The folders a PC shares with its agents are the folders the owner opens; an agent could
+  already read anything in them, so this grants the owner less than it grants the agents. No new
+  grant to issue per PC.
+- **How bytes travel.** Each listing and each byte range is a job pinned to the node, through the
+  ledger, the authority check and a signed assignment. The node streams the range to
+  `POST /node/files` for its job and the core pipes that request into the browser's response
+  (`apps/core/src/files/gateway.ts`). Nothing is stored on the core, so a film of any size plays
+  and seeks. The node renews its lease every 10 s while bytes flow.
+- **Containment.** The contract refuses any path that could climb (`FileRelativePathSchema`); the
+  node then resolves every link and refuses a target outside the real root, and lists no links.
+- **Serving.** `GET /files/list` and `GET /files/content` (with `Range`, `download=1`). The type
+  comes from the extension; code and markup are `text/plain`, unknown types download, and every
+  response is `nosniff` with a sandbox policy.
+- **Page.** A place opens as its folder; a file opens in the viewer beside the list, or as its own
+  screen on a phone. Text comes through the transport; images, video and Download need the cookie
+  session's URL, as S2's inline images do. A turn's completed `file_change` paths that lie in a
+  shared folder are offered in the thread as "Open <name>", which opens Files at the file.
+
+| Gate clause                                                  | State       | Evidence                                                                                                                       |
+| ------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| List a shared folder and stream a file, range and all        | implemented | "THE GATE: lists a shared folder and opens a script, a frame and a video range from the node" (real core, real agent)          |
+| Refuse what is not shared, and anyone without a token        | implemented | "refuses what is not in a shared folder, and anyone without a credential"; `files.test.ts` (node); `files.test.ts` (contracts) |
+| A frame draws and a video range streams on the cookie        | implemented | E2E `files.test.mjs` "THE GATE: a storyboard frame draws and a video streams by range..."                                      |
+| The phone opens a folder and a script, full screen           | implemented | E2E phone "THE GATE: from the phone, a shared folder opens and a script in it fills the screen"                                |
+| Turns record the files they create, openable                 | implemented | E2E phone "opens a file an agent wrote straight from the thread it wrote it in"; `files-view.test.ts`                          |
+| From the phone, a script, a frame and a video on the home PC | not yet     | Needs the work PC's core updated and the home PC paired as a node (owner steps)                                                |
+
+Red first throughout: the contract, router, adapter and gate tests failed on missing behaviour, and
+the two E2E gates were run against the previous page (`git stash`) and failed there ("not reachable
+with the Tab key"; "never offered from the thread") before passing on the new one.
+
+#### Known, not fixed
+
+- **Places come from probed agents.** `GET /models` lists a node's roots only for the providers it
+  probed, so a PC with neither Claude nor Codex installed shows no places, though the file routes
+  themselves read the grants directly and would serve it.
+- **Video is proved by its 206, not by playing.** Playwright's Chromium has no H.264.
+- **The desktop shell and dev browser show text only.** As with S2's images, a token transport
+  cannot put a credential on an `<img>` or `<video>`; the viewer says so.
+- **One page per folder** (2,000 entries) and no search in the page.
+- **A text preview is capped at 2 MB**; larger text is a download.
+- **`attachments.test.ts` flaked once** under the parallel run ("leaves no directory behind when one
+  file of several fails") and passed three times alone. Not touched by S4.
+
+| Command                                                        | Result                                                      |
+| -------------------------------------------------------------- | ----------------------------------------------------------- |
+| `npx vitest run packages/contracts apps/core apps/node-agent`  | exit 0; 64 files, 1217 tests (after the core and node work) |
+| `npx vitest run apps/web packages/ui`                          | exit 0; 30 files, 295 tests                                 |
+| `npx vitest run apps/web apps/node-agent`                      | 355 of 356; the one failure is the flake above              |
+| `node --test apps/web/e2e/{phone,files,chat}.test.mjs`         | exit 0; 7 + 3 tests, Playwright Chromium                    |
+| `npm run typecheck`, `lint` (changed packages), `format:check` | exit 0                                                      |
+| full `test:unit`, `test:integration`, `test:e2e`               | not run here; handed to the owner                           |
+
+Node here is the pinned 22.23.2.
