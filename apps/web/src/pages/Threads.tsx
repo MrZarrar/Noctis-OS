@@ -21,6 +21,7 @@ import type {
 } from "../conversation/useConversation.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { BeforeNoctis } from "./BeforeNoctis.js";
 import { Conversations } from "./Conversations.js";
 import { conversationLabel, pinnedTo } from "./conversations-view.js";
 import type { FileTarget } from "./files-view.js";
@@ -468,12 +469,27 @@ export function Threads({
             </nav>
           )}
 
-          {messages.length === 0 && turns.length === 0 && streaming.size === 0 && (
-            <p style={{ margin: 0, color: typography.color.muted, maxWidth: typography.measurePx }}>
-              Pick an agent and a PC below, then say what you want done. Follow-ups continue the
-              same thread on the same machine.
-            </p>
-          )}
+          {transport !== undefined &&
+            thread?.adoptedSessionRef !== undefined &&
+            thread.providerId !== undefined && (
+              <BeforeNoctis
+                transport={transport}
+                threadId={thread.id}
+                providerId={thread.providerId}
+              />
+            )}
+
+          {messages.length === 0 &&
+            turns.length === 0 &&
+            streaming.size === 0 &&
+            thread?.adoptedSessionRef === undefined && (
+              <p
+                style={{ margin: 0, color: typography.color.muted, maxWidth: typography.measurePx }}
+              >
+                Pick an agent and a PC below, then say what you want done. Follow-ups continue the
+                same thread on the same machine.
+              </p>
+            )}
 
           <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
             {timelineOf(messages, turns, pendingApprovals).map((entry) => {

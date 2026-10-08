@@ -61,6 +61,11 @@ export function createFakeRuntime(): Runtime {
           source: "vscode",
         },
       ]),
+    /** What was said in that session before Noctis picked it up. */
+    readHistory: () =>
+      Promise.resolve([
+        { prompt: "Find a sharper first line", reply: "Try: 'Nobody remembers the second try.'" },
+      ]),
     async turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
       const slow = payload.prompt.includes("SLOW:");

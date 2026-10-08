@@ -5,6 +5,8 @@ import type {
   FileListEvidence,
   NodeCapability,
   OrchestrationEvent,
+  RuntimeProviderId,
+  SessionExchange,
 } from "@noctis/contracts";
 import { CAPABILITY_CONTRACTS } from "@noctis/contracts";
 
@@ -129,6 +131,11 @@ export interface FileGateway {
     context: CommandContext,
     at: { nodeId: string; rootGrantId: string },
   ): Promise<{ sessions: ExternalSession[] }>;
+  /** One of those sessions' last exchanges: what was said before Noctis picked it up. */
+  history(
+    context: CommandContext,
+    at: { nodeId: string; rootGrantId: string; providerId: RuntimeProviderId; sessionRef: string },
+  ): Promise<{ exchanges: SessionExchange[] }>;
   open(
     context: CommandContext,
     at: FileLocation & { offset: number; length?: number },
@@ -186,7 +193,7 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
 
   function run<T>(
     context: CommandContext,
-    capability: "file.list" | "file.read" | "session.list",
+    capability: "file.list" | "file.read" | "session.list" | "session.history",
     at: { nodeId: string; rootGrantId: string },
     payload: Record<string, unknown>,
   ): Promise<T> {
@@ -248,6 +255,11 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
     list: (context, at) =>
       run<FileListEvidence>(context, "file.list", at, { relativePath: at.relativePath }),
     sessions: (context, at) => run(context, "session.list", at, {}),
+    history: (context, at) =>
+      run(context, "session.history", at, {
+        providerId: at.providerId,
+        sessionRef: at.sessionRef,
+      }),
     open: (context, at) =>
       run<OpenedFile>(context, "file.read", at, {
         relativePath: at.relativePath,

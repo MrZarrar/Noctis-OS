@@ -848,6 +848,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
             nodeId: command.nodeId,
             rootGrantId: command.rootGrantId,
             providerId: command.providerId,
+            adoptedSessionRef: command.sessionRef,
           },
           now,
         );

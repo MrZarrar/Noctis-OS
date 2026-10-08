@@ -51,6 +51,10 @@ const AGENT_NAMES: Readonly<Record<string, string>> = {
   hermes: "Hermes",
 };
 
+export function agentName(providerId: string): string {
+  return AGENT_NAMES[providerId] ?? providerId;
+}
+
 /** Where a pinned thread always runs, or undefined for one that runs wherever a message says. */
 export function pinnedTo(
   thread: {
@@ -67,7 +71,7 @@ export function pinnedTo(
   const root = roots.find(
     (candidate) => candidate.grantId === thread.rootGrantId && candidate.nodeId === thread.nodeId,
   );
-  const agent = AGENT_NAMES[thread.providerId] ?? thread.providerId;
+  const agent = agentName(thread.providerId);
 
   return root === undefined ? agent : `${agent} · ${folderName(root.path)} on ${root.hostId}`;
 }

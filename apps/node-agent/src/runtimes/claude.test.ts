@@ -329,6 +329,49 @@ describe("the Claude Agent SDK runtime", () => {
     expect(calls[0]?.options).toMatchObject({ resume: SESSION, forkSession: true });
   });
 
+  it("reads a session's last exchanges: what the owner said and the reply it ended on", async () => {
+    const asked: unknown[] = [];
+    const message = (type: "user" | "assistant", content: unknown, sub = false) => ({
+      type,
+      uuid: "u",
+      session_id: SESSION,
+      message: { role: type, content },
+      parent_tool_use_id: sub ? "toolu_parent" : null,
+      parent_agent_id: null,
+    });
+    const runtime = createClaudeRuntime({
+      getSessionMessages: (sessionId, options) => {
+        asked.push({ sessionId, options });
+
+        return Promise.resolve([
+          message("user", "Draft the cold open"),
+          message("assistant", [{ type: "thinking", thinking: "hm" }]),
+          message("assistant", [{ type: "text", text: "Checking the script first." }]),
+          message("assistant", [{ type: "tool_use", id: "t1", name: "Read", input: {} }]),
+          message("user", [{ type: "tool_result", tool_use_id: "t1", content: "..." }]),
+          // A subagent's own chatter is not the conversation.
+          message("user", [{ type: "text", text: "subagent brief" }], true),
+          message("assistant", [{ type: "text", text: "Here is the cold open." }]),
+          // What VS Code and the harness wrap around a prompt is not the prompt.
+          message("user", [
+            { type: "text", text: "<ide_opened_file>The user opened script.md</ide_opened_file>" },
+            { type: "text", text: "Make it shorter" },
+          ]),
+          message("assistant", [{ type: "text", text: "Shorter now." }]),
+          message("user", "<task-notification><task-id>x</task-id></task-notification>"),
+          message("user", [{ type: "text", text: "[Request interrupted by user]" }]),
+        ]);
+      },
+    });
+
+    expect(await runtime.readHistory?.("C:\\work", SESSION, {})).toEqual([
+      { prompt: "Draft the cold open", reply: "Here is the cold open." },
+      { prompt: "Make it shorter", reply: "Shorter now." },
+    ]);
+    // Only that folder's store: a session elsewhere on the PC is not found.
+    expect(asked).toEqual([{ sessionId: SESSION, options: { dir: "C:\\work" } }]);
+  });
+
   it("lists the folder's own sessions, not the ones programs started", async () => {
     const asked: unknown[] = [];
     const runtime = createClaudeRuntime({

@@ -11,8 +11,9 @@ import type {
   RuntimeItemStatus,
   RuntimeProbe,
   RuntimeTurnEvidence,
+  SessionExchange,
 } from "@noctis/contracts";
-import { MAX_LISTED_SESSIONS } from "@noctis/contracts";
+import { MAX_HISTORY_EXCHANGES, MAX_LISTED_SESSIONS } from "@noctis/contracts";
 import { classifyAsk } from "@noctis/domain";
 import { z } from "zod";
 
@@ -144,6 +145,31 @@ const ThreadListResponseSchema = z
           /** Seconds. */
           updatedAt: z.number(),
           source: z.unknown().optional(),
+        })
+        .loose(),
+    ),
+  })
+  .loose();
+
+const ThreadReadResponseSchema = z
+  .object({ thread: z.object({ cwd: z.string().nullish() }).loose() })
+  .loose();
+const TurnsListResponseSchema = z
+  .object({
+    data: z.array(
+      z
+        .object({
+          items: z.array(
+            z
+              .object({
+                type: z.string(),
+                text: z.string().optional(),
+                content: z
+                  .array(z.object({ type: z.string(), text: z.string().optional() }).loose())
+                  .optional(),
+              })
+              .loose(),
+          ),
         })
         .loose(),
     ),
@@ -859,16 +885,20 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
   }
 
   /**
-   * The folder's Codex threads, from an app-server started for this and
-   * stopped after it: no model, no sandbox, no Noctis MCP server, because it
-   * runs no turn. Codex's default source filter already leaves out the
-   * threads Noctis made through its own app-server.
+   * One question for an app-server started for it and stopped after: no
+   * model, no sandbox, no Noctis MCP server, because it runs no turn.
+   * Undefined when Codex is not installed.
    */
-  async function listSessions(cwd: string, env: NodeJS.ProcessEnv): Promise<ExternalSession[]> {
+  async function askAppServer<T>(
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    what: string,
+    question: (rpc: JsonRpcClient) => Promise<T>,
+  ): Promise<T | undefined> {
     const command = options.command ?? resolveCodexCommand({ env });
 
     if (command === undefined) {
-      return [];
+      return undefined;
     }
 
     const child = spawn(command, ["app-server", "--listen", "stdio://"], {
@@ -879,37 +909,19 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     let timer: NodeJS.Timeout | undefined;
 
     try {
-      const listed = await Promise.race([
+      return await Promise.race([
         (async () => {
           await rpc.request("initialize", {
             clientInfo: { name: "noctis-node-agent", title: null, version: AGENT_VERSION },
             capabilities: null,
           });
 
-          return ThreadListResponseSchema.parse(
-            await rpc.request("thread/list", {
-              cwd: cwdSpellings(cwd),
-              limit: MAX_LISTED_SESSIONS,
-              // The default, created_at, drops an old thread touched today.
-              sortKey: "updated_at",
-            }),
-          );
+          return question(rpc);
         })(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("codex thread/list timed out")),
-            LIST_TIMEOUT_MS,
-          );
+          timer = setTimeout(() => reject(new Error(`codex ${what} timed out`)), LIST_TIMEOUT_MS);
         }),
       ]);
-
-      return listed.data.map((thread) => ({
-        providerId: "codex" as const,
-        sessionRef: clip(thread.id, 200),
-        title: clip(thread.name ?? thread.preview ?? "Untitled Codex thread", 200),
-        lastActiveAt: new Date(thread.updatedAt * 1000).toISOString(),
-        ...(typeof thread.source === "string" ? { source: clip(thread.source, 64) } : {}),
-      }));
     } finally {
       clearTimeout(timer);
       rpc.close();
@@ -920,10 +932,77 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     }
   }
 
+  /**
+   * The folder's Codex threads. Codex's default source filter already leaves
+   * out the threads Noctis made through its own app-server.
+   */
+  async function listSessions(cwd: string, env: NodeJS.ProcessEnv): Promise<ExternalSession[]> {
+    const listed = await askAppServer(cwd, env, "thread/list", async (rpc) =>
+      ThreadListResponseSchema.parse(
+        await rpc.request("thread/list", {
+          cwd: cwdSpellings(cwd),
+          limit: MAX_LISTED_SESSIONS,
+          // The default, created_at, drops an old thread touched today.
+          sortKey: "updated_at",
+        }),
+      ),
+    );
+
+    return (listed?.data ?? []).map((thread) => ({
+      providerId: "codex" as const,
+      sessionRef: clip(thread.id, 200),
+      title: clip(thread.name ?? thread.preview ?? "Untitled Codex thread", 200),
+      lastActiveAt: new Date(thread.updatedAt * 1000).toISOString(),
+      ...(typeof thread.source === "string" ? { source: clip(thread.source, 64) } : {}),
+    }));
+  }
+
+  /**
+   * A thread's last turns, each as its prompt and the reply it ended on: the
+   * `summary` view, read from the rollout without loading the thread. The
+   * app-server reads any thread id it is given, so the thread's own folder is
+   * checked first.
+   */
+  async function readHistory(
+    cwd: string,
+    sessionRef: string,
+    env: NodeJS.ProcessEnv,
+  ): Promise<SessionExchange[]> {
+    const turns = await askAppServer(cwd, env, "thread/turns/list", async (rpc) => {
+      const { thread } = ThreadReadResponseSchema.parse(
+        await rpc.request("thread/read", { threadId: sessionRef }),
+      );
+
+      if (!cwdSpellings(cwd).includes(thread.cwd ?? "")) {
+        throw new AdapterRefused("that Codex thread is not kept for this folder");
+      }
+
+      return TurnsListResponseSchema.parse(
+        await rpc.request("thread/turns/list", {
+          threadId: sessionRef,
+          limit: MAX_HISTORY_EXCHANGES,
+          itemsView: "summary",
+        }),
+      ).data;
+    });
+
+    // Newest first from the app-server; the page reads oldest first.
+    return [...(turns ?? [])].reverse().map((turn) => ({
+      prompt: turn.items
+        .filter((item) => item.type === "userMessage")
+        .flatMap((item) => item.content ?? [])
+        .map((input) => input.text ?? "")
+        .join("\n\n")
+        .trim(),
+      reply: turn.items.filter((item) => item.type === "agentMessage").at(-1)?.text ?? "",
+    }));
+  }
+
   return {
     providerId: "codex",
     probe: (): Promise<RuntimeProbe> => probeCodexInstalled(options.env ?? process.env),
     listSessions,
+    readHistory,
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
       const command = options.command ?? resolveCodexCommand({ env: input.env });

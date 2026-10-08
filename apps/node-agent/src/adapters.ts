@@ -21,8 +21,12 @@ import {
   FileSearchConstraintsSchema,
   FileSearchPayloadSchema,
   MAX_FILE_LIST_ENTRIES,
+  MAX_HISTORY_EXCHANGES,
+  MAX_HISTORY_PROMPT_CHARS,
+  MAX_HISTORY_REPLY_CHARS,
   MAX_LISTED_SESSIONS,
   RuntimeGrantConstraintsSchema,
+  SessionHistoryPayloadSchema,
   SessionListPayloadSchema,
   RuntimeTurnEvidenceSchema,
   RuntimeTurnPayloadSchema,
@@ -510,6 +514,47 @@ const sessionList: Adapter = async (payload, context) => {
   };
 };
 
+/** What a history may weigh: a result is one frame, and the core reads 64 KiB at most. */
+export const MAX_HISTORY_BYTES = 48_000;
+
+function clipTo(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/**
+ * The last exchanges of a session an agent keeps for a shared folder, for the
+ * page to show above the thread that continues it. Clipped, then the oldest
+ * dropped until the rest fit in one result frame.
+ */
+const sessionHistory: Adapter = async (payload, context) => {
+  const request = SessionHistoryPayloadSchema.parse(payload);
+  const folder = sharedFolder(context.grants, request.rootGrantId);
+
+  if (folder?.providers.includes(request.providerId) !== true) {
+    throw new AdapterRefused(`that folder is not shared with ${request.providerId}`);
+  }
+
+  const real = await resolveInSharedFolder(context.grants, request.rootGrantId, "");
+  const exchanges = (
+    (await context.runtimes[request.providerId]?.readHistory?.(
+      real,
+      request.sessionRef,
+      childEnvironment(context.env),
+    )) ?? []
+  )
+    .slice(-MAX_HISTORY_EXCHANGES)
+    .map((exchange) => ({
+      prompt: clipTo(exchange.prompt, MAX_HISTORY_PROMPT_CHARS),
+      reply: clipTo(exchange.reply, MAX_HISTORY_REPLY_CHARS),
+    }));
+
+  while (Buffer.byteLength(JSON.stringify({ exchanges })) > MAX_HISTORY_BYTES) {
+    exchanges.shift();
+  }
+
+  return { exchanges };
+};
+
 /**
  * Every capability this agent can execute. A job naming anything else is refused
  * before it runs, so the set of things a node can do is this object, not whatever
@@ -523,4 +568,5 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "file.list": fileList,
   "file.read": fileRead,
   "session.list": sessionList,
+  "session.history": sessionHistory,
 };

@@ -1399,6 +1399,53 @@ describe("a session started outside Noctis", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("THE GATE: shows what was said before Noctis, read from the adopted session even after the fork", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const adopted = await adopt(core, node);
+    const threadId = adopted.body.id as string;
+    expect(adopted.body.adoptedSessionRef).toBe("vscode-thread");
+
+    // The first turn swaps the thread onto its fork, whose transcript also holds Noctis's turns.
+    const first = await send(core, "adopted-1", { threadId });
+    await waitFor(() => node.jobs().length === 1, "the first job");
+    node.frame({
+      kind: "result",
+      jobId: lastTurnJob(node).assignment.jobId,
+      outcome: "succeeded",
+      evidence: { model: MODEL, sessionRef: "fork-1", itemCount: 1, stoppedReason: "completed" },
+    });
+    await waitFor(
+      async () =>
+        (await read(core, `/turns/${first.body.id as string}`)).body.status === "completed",
+      "the forked turn to complete",
+    );
+
+    const exchanges = [{ prompt: "Draft the cold open", reply: "Here it is." }];
+    const history = read(core, `/threads/${threadId}/history`);
+    await waitFor(() => node.jobs().length === 2, "the session.history job");
+
+    const job = NodeJobAssignmentSchema.parse(JSON.parse(node.jobs()[1]?.assignment ?? "{}"));
+    expect(job).toMatchObject({
+      capability: "session.history",
+      nodeId: node.nodeId,
+      payload: { rootGrantId: "d", providerId: "codex", sessionRef: "vscode-thread" },
+    });
+    node.frame({ kind: "result", jobId: job.jobId, outcome: "succeeded", evidence: { exchanges } });
+
+    expect(await history).toEqual({ status: 200, body: { exchanges } });
+
+    // A conversation that adopted nothing has no history before Noctis.
+    const fresh = await command(core, "conversation.create_thread", {
+      idempotencyKey: "fresh",
+      identityId: "vesper",
+    });
+    expect((await read(core, `/threads/${fresh.body.id as string}/history`)).status).toBe(404);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("lists a shared folder's sessions through the node that holds it", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));

@@ -5,7 +5,12 @@ import {
   CreateConversationThreadCommandSchema,
 } from "./command.js";
 import { ConversationSummarySchema, ConversationThreadSchema } from "./identity.js";
-import { CAPABILITY_CONTRACTS, CAPABILITY_OPERATION_CLASS, grantCovers } from "./node.js";
+import {
+  CAPABILITY_CONTRACTS,
+  CAPABILITY_OPERATION_CLASS,
+  MAX_HISTORY_EXCHANGES,
+  grantCovers,
+} from "./node.js";
 import { RuntimeTurnPayloadSchema } from "./runtime.js";
 
 const THREAD = {
@@ -94,6 +99,45 @@ describe("sessions started outside Noctis (v1, after S4)", () => {
         preview: "Here is the revised cold open",
       }).success,
     ).toBe(true);
+  });
+
+  it("reads an adopted session's last exchanges as a read the agents' grant covers", () => {
+    expect(grantCovers("runtime.turn", "session.history")).toBe(true);
+    expect(CAPABILITY_OPERATION_CLASS["session.history"]).toBe("read_inspect");
+
+    const { payload, evidence } = CAPABILITY_CONTRACTS["session.history"];
+    const ask = {
+      rootGrantId: "tu",
+      providerId: "codex",
+      sessionRef: "01a11225-6941-71e0-be9e-1ded83bd383e",
+    };
+
+    expect(payload.safeParse(ask).success).toBe(true);
+    // The ref names a file in the agent's own store: nothing that could climb out of it.
+    expect(payload.safeParse({ ...ask, sessionRef: "..\\..\\secrets" }).success).toBe(false);
+    expect(payload.safeParse({ ...ask, sessionRef: "a/b" }).success).toBe(false);
+    expect(
+      evidence.safeParse({ exchanges: [{ prompt: "Draft the hook", reply: "Here it is" }] })
+        .success,
+    ).toBe(true);
+    expect(
+      evidence.safeParse({
+        exchanges: Array.from({ length: MAX_HISTORY_EXCHANGES + 1 }, () => ({
+          prompt: "p",
+          reply: "r",
+        })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("remembers which session a thread adopted, so its history can be read later", () => {
+    expect(
+      ConversationThreadSchema.parse({
+        ...THREAD,
+        kind: "named",
+        adoptedSessionRef: "2d234a2a-965d-4952-9497-73754e13c865",
+      }).adoptedSessionRef,
+    ).toBe("2d234a2a-965d-4952-9497-73754e13c865");
   });
 
   it("asks a turn to fork the session it resumes, so the original is never written to", () => {

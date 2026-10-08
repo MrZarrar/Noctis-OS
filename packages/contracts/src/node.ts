@@ -101,6 +101,8 @@ export const NODE_CAPABILITIES = [
   "file.read",
   /** The agent sessions a shared folder has, started anywhere: VS Code, a terminal, Noctis. */
   "session.list",
+  /** The last exchanges of one of those sessions, shown above an adopted thread. */
+  "session.history",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -127,6 +129,7 @@ export const CAPABILITY_OPERATION_CLASS = {
   "file.list": "read_inspect",
   "file.read": "read_inspect",
   "session.list": "read_inspect",
+  "session.history": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
 /**
@@ -137,7 +140,7 @@ export const CAPABILITY_OPERATION_CLASS = {
  * is one list of shared folders per PC rather than two that drift apart.
  */
 const GRANT_ALSO_COVERS: Partial<Record<NodeCapability, readonly NodeCapability[]>> = {
-  "runtime.turn": ["file.list", "file.read", "session.list"],
+  "runtime.turn": ["file.list", "file.read", "session.list", "session.history"],
 };
 
 /** Whether a grant of `granted` lets a node run a job of `capability`. */
@@ -285,6 +288,37 @@ export const SessionListEvidenceSchema = z
   .object({ sessions: z.array(ExternalSessionSchema).max(MAX_LISTED_SESSIONS) })
   .strict();
 
+/**
+ * One session's history, asked of the folder it was kept for. The ref is what
+ * an agent names a file in its own store by, so nothing but letters, digits
+ * and dashes: never a path.
+ */
+export const SessionHistoryPayloadSchema = z
+  .object({
+    rootGrantId: z.string().trim().min(1).max(128),
+    providerId: RuntimeProviderIdSchema,
+    sessionRef: z.string().regex(/^[A-Za-z0-9-]{1,200}$/, "must be a session id"),
+  })
+  .strict();
+
+/** The newest this many exchanges. The page says the rest are where they were made. */
+export const MAX_HISTORY_EXCHANGES = 10;
+export const MAX_HISTORY_PROMPT_CHARS = 2_000;
+export const MAX_HISTORY_REPLY_CHARS = 4_000;
+
+/** One thing the owner said and what the agent last said back to it. */
+export const SessionExchangeSchema = z
+  .object({
+    prompt: z.string().max(MAX_HISTORY_PROMPT_CHARS),
+    reply: z.string().max(MAX_HISTORY_REPLY_CHARS),
+  })
+  .strict();
+
+/** Oldest first, as the page reads them. */
+export const SessionHistoryEvidenceSchema = z
+  .object({ exchanges: z.array(SessionExchangeSchema).max(MAX_HISTORY_EXCHANGES) })
+  .strict();
+
 export const VerificationNoopPayloadSchema = z
   .object({ note: z.string().trim().max(200).optional() })
   .strict();
@@ -313,6 +347,10 @@ export const CAPABILITY_CONTRACTS = {
   "file.list": { payload: FileListPayloadSchema, evidence: FileListEvidenceSchema },
   "file.read": { payload: FileReadPayloadSchema, evidence: FileReadEvidenceSchema },
   "session.list": { payload: SessionListPayloadSchema, evidence: SessionListEvidenceSchema },
+  "session.history": {
+    payload: SessionHistoryPayloadSchema,
+    evidence: SessionHistoryEvidenceSchema,
+  },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**
@@ -499,3 +537,4 @@ export type FileSearchPayload = z.infer<typeof FileSearchPayloadSchema>;
 export type FileListEvidence = z.infer<typeof FileListEvidenceSchema>;
 export type FileReadPayload = z.infer<typeof FileReadPayloadSchema>;
 export type ExternalSession = z.infer<typeof ExternalSessionSchema>;
+export type SessionExchange = z.infer<typeof SessionExchangeSchema>;

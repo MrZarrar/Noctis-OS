@@ -32,6 +32,8 @@ export const ConversationThreadSchema = z
     nodeId: UuidSchema.optional(),
     rootGrantId: z.string().trim().min(1).max(128).optional(),
     providerId: RuntimeProviderIdSchema.optional(),
+    /** The session a pinned thread continues, as adopted: where its history before Noctis is read. */
+    adoptedSessionRef: z.string().trim().min(1).max(200).optional(),
     activeObjectiveId: UuidSchema.optional(),
     revision: RevisionSchema,
     createdAt: UtcTimestampSchema,

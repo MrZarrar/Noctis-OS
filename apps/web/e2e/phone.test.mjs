@@ -471,6 +471,19 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         "a pinned thread still offers to run somewhere else",
       );
 
+      // What was said in VS Code shows above the thread, read-only and marked as such.
+      const earlier = await waitFor(
+        readPage,
+        (state) => state.body.includes("Find a sharper first line"),
+        "the session's history from before Noctis never showed",
+        30_000,
+      );
+      assert.ok(earlier.body.includes("Before Noctis"), "the history is not marked as earlier");
+      assert.ok(
+        !earlier.messages.some((m) => m.includes("Find a sharper first line")),
+        "the earlier exchange shows as one of this thread's own messages",
+      );
+
       await tabTo(page, "Message Vesper");
       await page.keyboard.type("carry on");
       await page.keyboard.press("Enter");

@@ -7,9 +7,11 @@ import type {
   SDKMessage,
   SDKSessionInfo,
   SDKUserMessage,
+  SessionMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   createSdkMcpServer,
+  getSessionMessages as sdkGetSessionMessages,
   listSessions as sdkListSessions,
   query as sdkQuery,
   tool,
@@ -20,8 +22,10 @@ import type {
   RuntimeItem,
   RuntimeProbe,
   RuntimeTurnEvidence,
+  SessionExchange,
 } from "@noctis/contracts";
 import {
+  MAX_HISTORY_EXCHANGES,
   MAX_LISTED_SESSIONS,
   RuntimeDelegationSchema,
   RuntimeProposalSchema,
@@ -68,11 +72,18 @@ export type ClaudeListSessions = (
   options: ListSessionsOptions,
 ) => Promise<Array<Pick<SDKSessionInfo, "sessionId" | "summary" | "lastModified" | "customTitle">>>;
 
+export type ClaudeGetSessionMessages = (
+  sessionId: string,
+  options: { dir: string },
+) => Promise<Array<Pick<SessionMessage, "type" | "message" | "parent_tool_use_id">>>;
+
 export interface ClaudeRuntimeOptions {
   /** The SDK's `query`; tests hand in a scripted generator. */
   query?: ClaudeQuery;
   /** The SDK's `listSessions`; tests hand in a fixed list. */
   listSessions?: ClaudeListSessions;
+  /** The SDK's `getSessionMessages`; tests hand in a transcript. */
+  getSessionMessages?: ClaudeGetSessionMessages;
   env?: NodeJS.ProcessEnv;
   /** How long a thread's CLI waits for its next message before it is closed. */
   idleMs?: number;
@@ -123,6 +134,60 @@ const LOCAL_TOOLS = new Set([
   "PushNotification",
   ...AGENT_TOOLS,
 ]);
+/**
+ * Text that arrives as a user message but was not typed as a prompt: VS Code's
+ * open-file and selection notes, background task notices, slash-command
+ * plumbing, interruption markers.
+ */
+const NOT_A_PROMPT =
+  /^\s*(?:<(?:ide_|task-notification|system-reminder|local-command|command-)|\[Request interrupted)/;
+const TextBlockSchema = z.object({ type: z.literal("text"), text: z.string() }).loose();
+
+/** A transcript message's own words, without tool calls, results, thinking or wrappers. */
+function spokenText(content: unknown): string {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+
+  return (Array.isArray(blocks) ? blocks : [])
+    .flatMap((block) => {
+      const text = TextBlockSchema.safeParse(block);
+
+      return text.success && !NOT_A_PROMPT.test(text.data.text) ? [text.data.text.trim()] : [];
+    })
+    .filter((text) => text !== "")
+    .join("\n\n");
+}
+
+/**
+ * A transcript as exchanges: each prompt the owner typed and the last thing
+ * the agent said before the next one, which is the answer it ended on.
+ * Subagents' own messages are theirs, not the conversation's.
+ */
+function exchangesOf(
+  messages: ReadonlyArray<Pick<SessionMessage, "type" | "message" | "parent_tool_use_id">>,
+): SessionExchange[] {
+  const exchanges: SessionExchange[] = [];
+
+  for (const message of messages) {
+    const text =
+      message.parent_tool_use_id === null
+        ? spokenText((message.message as { content?: unknown } | null)?.content)
+        : "";
+    const last = exchanges.at(-1);
+
+    if (text === "") {
+      continue;
+    }
+
+    if (message.type === "user") {
+      exchanges.push({ prompt: text, reply: "" });
+    } else if (message.type === "assistant" && last !== undefined) {
+      last.reply = text;
+    }
+  }
+
+  return exchanges.slice(-MAX_HISTORY_EXCHANGES);
+}
+
 const NOCTIS_PREFIX = "mcp__noctis__";
 const DECLINED = "declined by Noctis authority";
 const NO_TURN = "no Noctis turn is running";
@@ -848,6 +913,12 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         title: clip(session.customTitle ?? session.summary, 200),
         lastActiveAt: new Date(session.lastModified).toISOString(),
       }));
+    },
+    /** Looked up in that folder's store only, so a session kept elsewhere is not found. */
+    async readHistory(cwd: string, sessionRef: string): Promise<SessionExchange[]> {
+      return exchangesOf(
+        await (options.getSessionMessages ?? sdkGetSessionMessages)(sessionRef, { dir: cwd }),
+      );
     },
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;

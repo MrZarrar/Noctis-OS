@@ -7,12 +7,13 @@ import type { CapabilityGrant } from "@noctis/contracts";
 import {
   FileListEvidenceSchema,
   FileReadEvidenceSchema,
+  SessionHistoryEvidenceSchema,
   SessionListEvidenceSchema,
 } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AdapterContext, StreamedFile } from "./adapters.js";
-import { ADAPTERS, AdapterRefused } from "./adapters.js";
+import { ADAPTERS, AdapterRefused, MAX_HISTORY_BYTES } from "./adapters.js";
 import type { Runtime } from "./runtimes/Runtime.js";
 
 let scratch: string | undefined;
@@ -243,6 +244,53 @@ describe("session.list", () => {
 
     await expect(
       ADAPTERS["session.list"]({ rootGrantId: "other" }, context(root)),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+});
+
+describe("session.history", () => {
+  function reading(exchanges: Array<{ prompt: string; reply: string }>, asked: unknown[]): Runtime {
+    return {
+      providerId: "claude",
+      probe: () => Promise.reject(new Error("not probed here")),
+      turn: () => Promise.reject(new Error("no turn here")),
+      readHistory: (cwd, sessionRef) => {
+        asked.push({ cwd, sessionRef });
+
+        return Promise.resolve(exchanges);
+      },
+    };
+  }
+
+  it("reads the session from the real folder, newest exchanges kept within one frame", async () => {
+    const root = channel();
+    const asked: unknown[] = [];
+    // Ten exchanges far past every limit, in characters that take three bytes each.
+    const long = Array.from({ length: 10 }, (_, index) => ({
+      prompt: `${String(index)}${"—".repeat(5_000)}`,
+      reply: "—".repeat(9_000),
+    }));
+    const evidence = SessionHistoryEvidenceSchema.parse(
+      await ADAPTERS["session.history"](
+        { rootGrantId: "tu", providerId: "claude", sessionRef: "abc-1" },
+        context(root, { runtimes: { claude: reading(long, asked) } }),
+      ),
+    );
+
+    expect(asked).toEqual([{ cwd: realpathSync(root), sessionRef: "abc-1" }]);
+    expect(Buffer.byteLength(JSON.stringify(evidence))).toBeLessThan(MAX_HISTORY_BYTES);
+    expect(evidence.exchanges.length).toBeGreaterThan(0);
+    expect(evidence.exchanges.at(-1)?.prompt.startsWith("9")).toBe(true);
+  });
+
+  it("refuses an agent the folder is not shared with", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["session.history"](
+        { rootGrantId: "tu", providerId: "codex", sessionRef: "abc-1" },
+        context(root, { runtimes: { codex: { ...reading([], []), providerId: "codex" } } }),
+      ),
     ).rejects.toBeInstanceOf(AdapterRefused);
   });
 });

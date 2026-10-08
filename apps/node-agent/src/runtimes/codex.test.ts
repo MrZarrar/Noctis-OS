@@ -107,6 +107,8 @@ interface Scenario {
   resume?: "ok" | "fail";
   /** What `thread/list` answers. */
   threads?: unknown[];
+  /** The thread `thread/read` and `thread/turns/list` describe. */
+  history?: { cwd: string; turns: unknown[] };
 }
 
 function turnCompleted(spawned: Spawned, status: string): unknown {
@@ -161,6 +163,12 @@ function fakeAppServer(scenario: Scenario): { spawn: CodexSpawn; spawned: Spawne
           return Promise.resolve({ thread: { id: record.threadId } });
         case "thread/list":
           return Promise.resolve({ data: scenario.threads ?? [], nextCursor: null });
+        case "thread/read":
+          return Promise.resolve({
+            thread: { id: (params as { threadId: string }).threadId, cwd: scenario.history?.cwd },
+          });
+        case "thread/turns/list":
+          return Promise.resolve({ data: scenario.history?.turns ?? [], nextCursor: null });
         case "turn/start":
           setTimeout(() => void scenario.turn(server, record), 0);
 
@@ -644,6 +652,46 @@ describe("the Codex App Server runtime", () => {
     ]);
     expect(spawned[0]?.args).not.toContain("mcp_servers.noctis.command");
     expect(spawned[0]?.child.killed).toBe(true);
+  });
+
+  it("reads a folder's thread's last turns as exchanges, newest last", async () => {
+    const turn = (prompt: string, ...replies: string[]) => ({
+      id: prompt,
+      status: "completed",
+      items: [
+        { type: "userMessage", id: "u", content: [{ type: "text", text: prompt }] },
+        ...replies.map((text) => ({ type: "agentMessage", id: "a", text })),
+      ],
+    });
+    const { runtime: codex, spawned } = runtime({
+      ...HAPPY,
+      // VS Code's spelling of the folder; the app-server answers newest first.
+      history: {
+        cwd: "c:\\work",
+        turns: [turn("Make it shorter", "Shorter now."), turn("Draft the hook", "One", "Two")],
+      },
+    });
+
+    expect(await codex.readHistory?.("C:\\work", "thread-vscode", { PATH: "C:\\bin" })).toEqual([
+      { prompt: "Draft the hook", reply: "Two" },
+      { prompt: "Make it shorter", reply: "Shorter now." },
+    ]);
+    expect(spawned[0]?.requests.get("thread/turns/list")).toEqual([
+      expect.objectContaining({ threadId: "thread-vscode", limit: 10, itemsView: "summary" }),
+    ]);
+    expect(spawned[0]?.child.killed).toBe(true);
+  });
+
+  it("refuses to read a thread kept for another folder", async () => {
+    const { runtime: codex, spawned } = runtime({
+      ...HAPPY,
+      history: { cwd: "C:\\private", turns: [] },
+    });
+
+    await expect(
+      codex.readHistory?.("C:\\work", "thread-elsewhere", { PATH: "C:\\bin" }),
+    ).rejects.toThrow(/not kept for this folder/);
+    expect(spawned[0]?.requests.has("thread/turns/list")).toBe(false);
   });
 
   it("falls back to a fresh thread when the resume fails, and says so", async () => {

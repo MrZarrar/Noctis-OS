@@ -1416,6 +1416,51 @@ async function handleSessions(
   }
 }
 
+/**
+ * `GET /threads/:id/history`: what was said in the session a thread adopted,
+ * before Noctis picked it up, asked of the PC that keeps it. Read from the
+ * adopted session, never the fork, which also holds Noctis's own turns.
+ */
+async function handleThreadHistory(
+  deps: ApiDeps,
+  threadId: string,
+  res: ServerResponse,
+  correlationId: string,
+): Promise<void> {
+  const thread = UuidSchema.safeParse(threadId).success
+    ? getThread(deps.kernel.db, threadId)
+    : undefined;
+
+  if (
+    thread?.adoptedSessionRef === undefined ||
+    thread.nodeId === undefined ||
+    thread.rootGrantId === undefined ||
+    thread.providerId === undefined
+  ) {
+    send(res, 404, errorBody("not_found", "That thread adopted no session"), correlationId);
+    return;
+  }
+
+  try {
+    send(
+      res,
+      200,
+      await deps.files.history(
+        { correlationId, actorType: "user", actorId: "local" },
+        {
+          nodeId: thread.nodeId,
+          rootGrantId: thread.rootGrantId,
+          providerId: thread.providerId,
+          sessionRef: thread.adoptedSessionRef,
+        },
+      ),
+      correlationId,
+    );
+  } catch (error) {
+    sendUnavailable(res, error, correlationId);
+  }
+}
+
 function handlePair(
   deps: ApiDeps,
   context: CommandContext,
@@ -1886,6 +1931,16 @@ export async function handleRequest(
 
     if (req.method === "GET" && url.pathname === "/sessions") {
       await handleSessions(deps, url, res, correlationId);
+      return;
+    }
+
+    if (
+      req.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "threads" &&
+      segments[2] === "history"
+    ) {
+      await handleThreadHistory(deps, segments[1] ?? "", res, correlationId);
       return;
     }
 

@@ -9,6 +9,7 @@ import type {
   RuntimeProviderId,
   RuntimeTurnEvidence,
   RuntimeTurnPayload,
+  SessionExchange,
 } from "@noctis/contracts";
 
 /** The node refused the job itself. Reported to the core as a failure, not a crash. */
@@ -73,6 +74,12 @@ export interface Runtime {
    * anywhere but Noctis: what the owner can pick up and continue.
    */
   listSessions?(cwd: string, env: NodeJS.ProcessEnv): Promise<ExternalSession[]>;
+  /**
+   * The last exchanges of one session kept for `cwd`, oldest first: what the
+   * owner said and the reply the agent ended on. A session kept for another
+   * folder is not found.
+   */
+  readHistory?(cwd: string, sessionRef: string, env: NodeJS.ProcessEnv): Promise<SessionExchange[]>;
   /** Ends every process the runtime is keeping open between turns. */
   close?(): void;
 }

@@ -145,6 +145,7 @@ export function createNamedThread(
     nodeId?: string;
     rootGrantId?: string;
     providerId?: RuntimeProviderId;
+    adoptedSessionRef?: string;
   },
   now: string,
 ): ConversationThread {
@@ -152,8 +153,9 @@ export function createNamedThread(
 
   tx.prepare(
     `INSERT INTO identity_threads
-       (id, identity_id, kind, title, node_id, root_grant_id, provider_id, revision, created_at, updated_at)
-     VALUES (?, ?, 'named', ?, ?, ?, ?, 0, ?, ?)`,
+       (id, identity_id, kind, title, node_id, root_grant_id, provider_id, adopted_session_ref,
+        revision, created_at, updated_at)
+     VALUES (?, ?, 'named', ?, ?, ?, ?, ?, 0, ?, ?)`,
   ).run(
     id,
     thread.identityId,
@@ -161,6 +163,7 @@ export function createNamedThread(
     thread.nodeId ?? null,
     thread.rootGrantId ?? null,
     thread.providerId ?? null,
+    thread.adoptedSessionRef ?? null,
     now,
     now,
   );

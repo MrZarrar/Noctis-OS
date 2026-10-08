@@ -170,9 +170,10 @@ describe("migrate", () => {
         "node_id",
         "root_grant_id",
         "provider_id",
+        "adopted_session_ref",
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(11);
+    expect(version.v).toBe(12);
   });
 });
