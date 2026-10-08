@@ -3170,3 +3170,73 @@ stages into a base of its own.
 | `npx vitest run apps/web apps/node-agent packages`           | exit 0; 80 files, 1465 tests                   |
 | `node --test apps/web/e2e/{phone,chat,files}.test.mjs`       | exit 0; 12 tests                               |
 | `npm run typecheck`, lint (changed packages), `format:check` | exit 0                                         |
+
+### 2026-10-08 History for adopted sessions, tidier conversations, and S3
+
+The owner's list for the evening, in order, on the home PC (`zarrarpc`). Commits `99e5ed8`
+(history), `3d62420` (rename and archive), `f14e39d` (local runtime), `57e84dd` (scrolling and the
+Approvals count), `03c92dc` (fixes from a Codex review), `64938c6` (Hermes runtime).
+
+- **History before Noctis.** Node capability `session.history`, covered by a `runtime.turn` grant.
+  Claude: the Agent SDK's `getSessionMessages` in that folder's store, kept to the prompts the owner
+  typed (not tool results, IDE notes, task notices or interruptions) and the reply each ended on.
+  Codex: `thread/read` refuses a thread kept for another folder, then `thread/turns/list` in its
+  `summary` view gives each turn's prompt and final reply without loading the thread. The last 10
+  exchanges, clipped and trimmed to fit one 64 KiB result frame. Migration 0012 keeps the ref a
+  thread adopted, because its first turn moves it onto a fork whose transcript also holds Noctis's
+  own turns. `GET /threads/:id/history`; Threads shows the exchanges under "Before Noctis", dashed
+  and apart from the thread's own messages. Checked on real sessions here: 2 Claude and 5 Codex
+  exchanges read from the hyperframes folder.
+- **Rename and archive.** `conversation.rename_thread` and `conversation.archive_thread`
+  (`archived: true | false`, so restoring is the same command), named threads only; free chat is
+  refused as not found. Migration 0013 adds `archived_at`; `GET /conversations?archived=1`. The
+  list has Rename and Archive beside each named row, and Show archived with Restore.
+- **S3.** See the scope doc's S3 result. LM Studio's daemon (`llmster` 0.0.25, SHA-512 checked;
+  the binary is unsigned) and Qwen3.5-9B Q4_K_M; Hermes Agent 0.21.6 by its own installer, which
+  pins a SHA-256 for every download. Smart App Control let both run. Neither added anything to
+  startup (Run keys, Startup folder and scheduled tasks compared before and after). The server
+  listens on 127.0.0.1 only.
+- **Threads and Approvals.** Threads follows a growing conversation only if the owner was at its
+  end as it stood at the previous update (within 80 px); sending or opening another thread follows
+  again. The Approvals tab and rail item show how many wait, by the page's own rule, re-read on
+  every authority event.
+- **Codex review.** Codex read the day's diff and found six real issues, fixed in `03c92dc`. One
+  more was not fixed: a 20,000-character reply of control characters escapes past the 64 KiB frame.
+  That cap is shared with Claude and Codex and wants one shared fix. Codex's suggested backfill for
+  migration 0012 was declined: 0011 and 0012 deploy together, so no database has a thread adopted
+  before 0012. Codex's Windows sandbox could not start a shell (`helper_unknown_error`), so the diff
+  was passed inline.
+
+| Gate clause                                                   | State       | Evidence                                                                                                                            |
+| ------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| An adopted thread shows its history, read from the original   | implemented | "THE GATE: shows what was said before Noctis, read from the adopted session even after the fork"                                    |
+| Each runtime reads its own history, and only its folder's     | implemented | `claude.test.ts`, `codex.test.ts` (refuses another folder's thread), `files.test.ts` session.history                                |
+| From the phone, an adopted session shows its earlier exchange | implemented | E2E phone "THE GATE: continues a session started outside Noctis, from the phone"                                                    |
+| Rename, archive, restore; free chat refused                   | implemented | "renames a conversation, archives it off the list, and restores it"; E2E phone, same name                                           |
+| A thread runs on the local model, costed local                | implemented | "THE GATE (S3): ... delegates to it and to Hermes"; `local.test.ts`                                                                 |
+| Claude's turn delegates to `local` and to `hermes`            | implemented | the same gate                                                                                                                       |
+| Hermes resumes, streams, asks, cancels                        | implemented | `hermes.test.ts`                                                                                                                    |
+| Live: Hermes on Qwen3.5-9B, an ask declined                   | implemented | Home PC: first turn 31 s cold, resumed turn 3 s; a recursive delete arrived as a `destructive` ask, was declined, the folder stayed |
+| From the phone, a thread on Hermes and a delegation           | not yet     | Needs the work PC's core redeployed and `-ShareWithLocal` run (owner steps)                                                         |
+| Threads holds its place; the Approvals tab counts             | implemented | E2E phone "holds its place while the owner reads back...", "keeps both answers..." (badge)                                          |
+
+Red first: every test above failed on the missing behaviour before passing. For the S3 core gate,
+which passed on its first run because the contract change had already landed, red was shown by
+stashing `local` out of `RUNTIME_PROVIDERS`: the send answered 500.
+
+#### Known, not fixed
+
+- **Hermes has no sandbox**, lists hosted models it finds credentials for, and needs LM Studio up
+  before the node starts; the card is nearly full at 64K context (scope doc 8.4).
+- **History is read each time an adopted thread opens.** Nothing is cached; a Codex read starts an
+  app-server for the purpose (about 1 to 2 s).
+- **An archived conversation stays archived when a message is sent to it** from the archive view.
+- **An invalid grant answers 500**, not 400 (seen while showing the S3 gate red).
+
+| Command                                                                      | Result                                               |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `npx vitest run` (every unit and integration suite)                          | exit 0; 116 files, 2016 tests                        |
+| `node --test apps/web/e2e/phone.test.mjs` (run 3 times after the scroll fix) | exit 0; 10 tests each run                            |
+| `node --test apps/web/e2e/{approval.keyboard,chat,files}.test.mjs`           | exit 0; 2 + 3 + 1 tests                              |
+| `npm run typecheck`, `npx eslint .`, `npx prettier --check .`                | exit 0 (lint: `files.test.mjs` now imports `Buffer`) |
+| full `test:e2e` and the remaining browser suites                             | not run here; handed to the owner                    |
