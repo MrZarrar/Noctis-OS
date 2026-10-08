@@ -156,6 +156,51 @@ describe("the local model runtime", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   });
 
+  it("offers the models on disk while LM Studio is stopped, and loads the model before a turn asks it", async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    const ensured: string[] = [];
+    const host = {
+      downloaded: () => Promise.resolve(["qwen3.5-9b"]),
+      ensure: async (model: string) => {
+        ensured.push(model);
+        // What ensure does in life: the server is up by the time it returns.
+        await new Promise<void>((resolve) =>
+          server.listen(Number(new URL(base).port), "127.0.0.1", resolve),
+        );
+      },
+    };
+    const runtime = createLocalRuntime({ baseUrl: base, sessionsDir: scratch, host });
+
+    expect(await runtime.probe()).toEqual({
+      providerId: "local",
+      available: true,
+      authMode: "local",
+      models: [{ providerId: "local", model: "qwen3.5-9b" }],
+    });
+    expect(ensured).toEqual([]);
+
+    const evidence = await runtime.turn(input(), recorder().sink);
+
+    expect(ensured).toEqual(["qwen3.5-9b"]);
+    expect(evidence.stoppedReason).toBe("completed");
+  });
+
+  it("refuses the turn, saying why, when LM Studio cannot load the model", async () => {
+    const runtime = createLocalRuntime({
+      baseUrl: base,
+      sessionsDir: scratch,
+      host: {
+        downloaded: () => Promise.resolve([]),
+        ensure: () => Promise.reject(new Error("out of memory")),
+      },
+    });
+    const turn = runtime.turn(input(), recorder().sink);
+
+    await expect(turn).rejects.toBeInstanceOf(AdapterRefused);
+    await expect(turn).rejects.toThrow(/LM Studio could not load .*out of memory/);
+  });
+
   it("talks only to a server on this machine", async () => {
     const runtime = createLocalRuntime({
       baseUrl: "http://192.168.1.20:1234/v1",

@@ -13,6 +13,8 @@ import type { ProposalChannel } from "../proposals-file.js";
 import { createProposalChannel } from "../proposals-file.js";
 import type { CodexSpawn } from "./codex.js";
 import { childEnvironment } from "./env.js";
+import type { ModelHost } from "./lmstudio.js";
+import { ensureModel } from "./local.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
 import type { LiveProcess } from "./sessions.js";
@@ -43,6 +45,8 @@ export interface HermesRuntimeOptions {
   mcpEntry?: string;
   /** The local model server's probe: Hermes thinks with what it serves. */
   localProbe: () => Promise<RuntimeProbe>;
+  /** LM Studio's CLI, when the node drives it: the model is loaded for the turn, not kept loaded. */
+  host?: ModelHost | undefined;
   env?: NodeJS.ProcessEnv;
   idleMs?: number;
 }
@@ -636,9 +640,12 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
 
       // Asked every turn, not just at hello: LM Studio may have stopped since.
       // Hermes is then unavailable, never quietly carried by something else.
-      const local = await options.localProbe();
+      // When the node drives LM Studio it starts it and loads the model instead.
+      const local = options.host === undefined ? await options.localProbe() : undefined;
 
-      if (!local.available) {
+      await ensureModel(options.host, input.payload.model.model);
+
+      if (local !== undefined && !local.available) {
         throw new AdapterRefused(
           `LM Studio is not running, so Hermes has nothing to think with (${local.reason ?? "no models"})`,
         );

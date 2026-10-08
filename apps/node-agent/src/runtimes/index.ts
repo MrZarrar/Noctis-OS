@@ -10,6 +10,7 @@ import { createCodexRuntime } from "./codex.js";
 import { createFakeRuntime } from "./fake.js";
 import { createHermesRuntime } from "./hermes.js";
 import { createLocalRuntime } from "./local.js";
+import { createLmStudio, resolveLms } from "./lmstudio.js";
 import { probeInstalledProviders } from "./probe.js";
 
 /**
@@ -55,9 +56,14 @@ export function selectRuntimes(
   const home = env.NOCTIS_NODE_HOME?.trim();
   const nodeHome = home === undefined || home === "" ? join(tmpdir(), "noctis") : home;
 
+  // LM Studio, when it is the server and installed here, is started and loaded
+  // on demand, so the GPU is free until a turn needs the model.
+  const lms = env.NOCTIS_LOCAL_MODEL_URL?.trim() ? undefined : resolveLms(env);
+  const host = lms === undefined ? undefined : createLmStudio({ lms });
   const local = createLocalRuntime({
     baseUrl: env.NOCTIS_LOCAL_MODEL_URL,
     sessionsDir: join(nodeHome, "local-sessions"),
+    host,
   });
 
   return {
@@ -67,6 +73,7 @@ export function selectRuntimes(
     hermes: createHermesRuntime({
       env,
       hermesHome: join(nodeHome, "hermes"),
+      host,
       proposalsDir: join(nodeHome, "proposals"),
       localProbe: () => local.probe(),
     }),

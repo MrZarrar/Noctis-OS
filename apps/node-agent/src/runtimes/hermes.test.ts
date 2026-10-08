@@ -218,7 +218,11 @@ function recorder(decision: RuntimeAnswer["decision"] = "allow") {
   return { sink, items, deltas, asks };
 }
 
-function runtime(script: Script = HAPPY, models = ["qwen/qwen3.5-9b"]) {
+function runtime(
+  script: Script = HAPPY,
+  models = ["qwen/qwen3.5-9b"],
+  host?: { downloaded: () => Promise<string[]>; ensure: (model: string) => Promise<void> },
+) {
   const fake = fakeHermes(script);
 
   return {
@@ -229,6 +233,7 @@ function runtime(script: Script = HAPPY, models = ["qwen/qwen3.5-9b"]) {
       hermesHome: join(scratch, "hermes"),
       proposalsDir: join(scratch, "proposals"),
       mcpEntry: MCP_ENTRY,
+      ...(host === undefined ? {} : { host }),
       localProbe: () =>
         Promise.resolve({
           providerId: "local",
@@ -481,6 +486,35 @@ describe("the Hermes runtime (ACP)", () => {
     );
     expect(spawned[1]?.env.HERMES_HOME).toBe(join(scratch, "hermes"));
     expect(existsSync(join(scratch, "hermes", "SOUL.md"))).toBe(false);
+  });
+
+  it("starts LM Studio and loads the model before Hermes starts, when the node drives LM Studio", async () => {
+    const ensured: string[] = [];
+    // Stopped at hello: the probe says no server, but the node can start it.
+    const { runtime: hermes, spawned } = runtime(HAPPY, [], {
+      downloaded: () => Promise.resolve(["qwen/qwen3.5-9b"]),
+      ensure: (model) => {
+        ensured.push(model);
+        return Promise.resolve();
+      },
+    });
+
+    await hermes.turn(input({ identityId: "jester" }), recorder().sink);
+
+    expect(ensured).toEqual(["qwen/qwen3.5-9b"]);
+    expect(spawned).toHaveLength(1);
+  });
+
+  it("refuses, saying why and spawning nothing, when LM Studio cannot load the model", async () => {
+    const { runtime: hermes, spawned } = runtime(HAPPY, [], {
+      downloaded: () => Promise.resolve([]),
+      ensure: () => Promise.reject(new Error("out of memory")),
+    });
+    const turn = hermes.turn(input({ identityId: "jester" }), recorder().sink);
+
+    await expect(turn).rejects.toBeInstanceOf(AdapterRefused);
+    await expect(turn).rejects.toThrow(/LM Studio could not load .*out of memory/);
+    expect(spawned).toHaveLength(0);
   });
 
   it("refuses at once, never falling back elsewhere, when the local model server is down (ADR-0030)", async () => {

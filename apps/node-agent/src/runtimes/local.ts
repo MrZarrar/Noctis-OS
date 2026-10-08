@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused } from "./Runtime.js";
+import type { ModelHost } from "./lmstudio.js";
 
 /**
  * A model served on this PC (LM Studio by default, or anything else that
@@ -25,6 +26,8 @@ export interface LocalRuntimeOptions {
   baseUrl?: string | undefined;
   /** Where each thread's transcript is kept. */
   sessionsDir: string;
+  /** LM Studio's CLI, when it is the server: started and loaded on demand, so the GPU stays free. */
+  host?: ModelHost | undefined;
 }
 
 /** LM Studio's server, as `lms server start` opens it. */
@@ -124,6 +127,24 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
       return unavailable("local_model_server_not_on_this_machine");
     }
 
+    // Stopped is not unavailable when the node can start it: offer what is on disk.
+    const onDisk = async (reason: string): Promise<RuntimeProbe> => {
+      const models =
+        options.host === undefined ? [] : await options.host.downloaded().catch(() => []);
+
+      return models.length === 0
+        ? unavailable(reason)
+        : {
+            providerId: "local",
+            available: true,
+            authMode: "local",
+            models: models.slice(0, 64).map((model) => ({
+              providerId: "local" as const,
+              model: model.slice(0, 128),
+            })),
+          };
+    };
+
     try {
       const response = await fetch(`${base}/models`, {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
@@ -134,6 +155,10 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
       const models = ModelsSchema.parse(await response.json())
         .data.filter((model) => !/embed/i.test(model.id))
         .slice(0, 64);
+
+      if (models.length === 0) {
+        return await onDisk("local_model_server_has_no_models");
+      }
 
       return {
         providerId: "local",
@@ -146,7 +171,7 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
         })),
       };
     } catch {
-      return unavailable(`no local model server answered at ${base}`);
+      return onDisk(`no local model server answered at ${base}`);
     }
   }
 
@@ -181,6 +206,8 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
     if (signal.aborted) {
       throw new AdapterRefused("job was cancelled");
     }
+
+    await ensureModel(options.host, payload.model.model);
 
     const sessionRef = payload.sessionRef ?? randomUUID();
     const history = await load(payload.sessionRef);
@@ -290,4 +317,15 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
   }
 
   return { providerId: "local", probe, turn };
+}
+
+/** The model loaded before a turn asks it anything; a failure refuses the turn and says why. */
+export async function ensureModel(host: ModelHost | undefined, model: string): Promise<void> {
+  try {
+    await host?.ensure(model);
+  } catch (error) {
+    throw new AdapterRefused(
+      `LM Studio could not load ${model}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
