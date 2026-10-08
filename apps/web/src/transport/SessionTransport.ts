@@ -38,6 +38,13 @@ export interface SessionTransportOptions {
  * it cannot carry an `Authorization` header, which is why `BrowserTransport`
  * polls and this one streams.
  */
+/** `EventSource.CLOSED`, spelled out so a test's stand-in need not carry the constant. */
+const CLOSED = 2;
+const RETRY_FIRST_MS = 1_000;
+const RETRY_MAX_MS = 15_000;
+/** How long the stream may be down before the page is told; a blip is not news. */
+const OUTAGE_REPORT_MS = 30_000;
+
 export class SessionTransport implements CoreTransport {
   readonly #baseUrl: string;
   readonly #csrf: string;
@@ -103,50 +110,87 @@ export class SessionTransport implements CoreTransport {
     return { status: response.status, body: parseCoreBody(await response.text()) };
   }
 
+  /**
+   * The live stream, kept alive. The browser retries a dropped EventSource by
+   * itself, but gives up for good on a response it cannot read (a proxy's 502
+   * while the core restarts), after which the page would never hear another
+   * event. So a stream the browser has given up on is reopened here, from the
+   * last event it delivered, and only an outage that lasts is reported.
+   */
   subscribe(options: SubscribeOptions): Promise<Subscription> {
-    const url = resolveCoreUrl(this.#baseUrl, "/events/live");
-    url.searchParams.set("afterSequence", String(options.afterSequence));
-
     const Impl = this.#EventSourceImpl ?? EventSource;
-    const source = new Impl(url.href, { withCredentials: true });
+    let cursor = options.afterSequence;
+    let source: EventSource | undefined;
+    let closed = false;
+    let retryMs = RETRY_FIRST_MS;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let outage: ReturnType<typeof setTimeout> | undefined;
 
-    source.addEventListener("event", (message) => {
-      const parsed = parseCoreBody((message as MessageEvent<string>).data);
-
-      if (isEvent(parsed)) {
-        options.onEvent(parsed);
-      }
-    });
-
-    source.addEventListener("frame", (message) => {
-      const frame = readServerFrame((message as MessageEvent<string>).data);
-
-      if (frame === undefined) {
-        return;
-      }
-
-      // A gap is not something the page draws — it means this client's cursor
-      // is ahead of the core's ledger and can never catch up. It goes to the
-      // one caller that can act on it rather than down the frame channel,
-      // where every consumer would have to learn a kind it has no use for.
-      if (frame.kind === "gap") {
-        options.onGap?.(frame.fromSequence, frame.toSequence);
-        return;
-      }
-
-      options.onFrame?.(frame);
-    });
-
-    source.onerror = (error) => {
-      // The browser reconnects an EventSource on its own and resumes from the
-      // cursor in the URL, so this reports the interruption rather than tearing
-      // the subscription down.
-      options.onError?.(error);
+    const connected = (): void => {
+      retryMs = RETRY_FIRST_MS;
+      clearTimeout(outage);
+      outage = undefined;
     };
+
+    const connect = (): void => {
+      const url = resolveCoreUrl(this.#baseUrl, "/events/live");
+      url.searchParams.set("afterSequence", String(cursor));
+
+      const current = new Impl(url.href, { withCredentials: true });
+      source = current;
+
+      current.onopen = connected;
+      current.addEventListener("event", (message) => {
+        const parsed = parseCoreBody((message as MessageEvent<string>).data);
+
+        if (isEvent(parsed)) {
+          cursor = Math.max(cursor, parsed.sequence);
+          connected();
+          options.onEvent(parsed);
+        }
+      });
+
+      current.addEventListener("frame", (message) => {
+        const frame = readServerFrame((message as MessageEvent<string>).data);
+
+        if (frame === undefined) {
+          return;
+        }
+
+        // A gap is not something the page draws — it means this client's cursor
+        // is ahead of the core's ledger and can never catch up. It goes to the
+        // one caller that can act on it rather than down the frame channel,
+        // where every consumer would have to learn a kind it has no use for.
+        if (frame.kind === "gap") {
+          options.onGap?.(frame.fromSequence, frame.toSequence);
+          return;
+        }
+
+        options.onFrame?.(frame);
+      });
+
+      current.onerror = (error) => {
+        outage ??= setTimeout(() => {
+          options.onError?.(error);
+        }, OUTAGE_REPORT_MS);
+
+        // Still connecting means the browser is retrying; closed means it gave up.
+        if (current.readyState === CLOSED && !closed) {
+          current.close();
+          retry = setTimeout(connect, retryMs);
+          retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
+        }
+      };
+    };
+
+    connect();
 
     return Promise.resolve({
       close: () => {
-        source.close();
+        closed = true;
+        clearTimeout(retry);
+        clearTimeout(outage);
+        source?.close();
       },
     });
   }

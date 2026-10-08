@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionTransport } from "./SessionTransport.js";
 
@@ -9,9 +9,13 @@ interface Call {
 
 class FakeEventSource {
   static last: FakeEventSource | undefined;
+  static opened = 0;
 
   readonly listeners = new Map<string, (event: MessageEvent) => void>();
   onerror: ((event: Event) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
+  /** 0 connecting, 1 open, 2 closed: the browser gave up and will not retry. */
+  readyState = 0;
   closed = false;
 
   constructor(
@@ -19,6 +23,13 @@ class FakeEventSource {
     readonly init: EventSourceInit,
   ) {
     FakeEventSource.last = this;
+    FakeEventSource.opened += 1;
+  }
+
+  /** The browser's own failure: `gaveUp` is a response it will not retry (a proxy's 502). */
+  fail(gaveUp: boolean): void {
+    this.readyState = gaveUp ? 2 : 0;
+    this.onerror?.(new Event("error"));
   }
 
   addEventListener(name: string, listener: (event: MessageEvent) => void): void {
@@ -213,17 +224,68 @@ describe("SessionTransport", () => {
     expect(FakeEventSource.last?.closed).toBe(true);
   });
 
-  it("reports a stream error to the caller rather than failing silently", async () => {
-    const errors: unknown[] = [];
-
-    await transport().subject.subscribe({
-      afterSequence: 0,
-      onEvent: () => undefined,
-      onError: (error) => errors.push(error),
+  describe("when the stream drops", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      FakeEventSource.opened = 0;
+    });
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
-    FakeEventSource.last?.onerror?.(new Event("error"));
+    it("reconnects from the last event it saw when the browser gives up on the stream", async () => {
+      const received: unknown[] = [];
 
-    expect(errors).toHaveLength(1);
+      await transport().subject.subscribe({
+        afterSequence: 12,
+        onEvent: (event) => received.push(event),
+      });
+      const first = FakeEventSource.last!;
+
+      first.emit("event", COMMITTED);
+      first.fail(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(FakeEventSource.opened).toBe(2);
+      expect(first.closed).toBe(true);
+      expect(FakeEventSource.last?.url).toContain("afterSequence=13");
+
+      FakeEventSource.last?.emit("event", { ...COMMITTED, sequence: 14 });
+      expect(received).toHaveLength(2);
+    });
+
+    it("keeps a blip quiet, and reports an outage that lasts", async () => {
+      const errors: unknown[] = [];
+
+      await transport().subject.subscribe({
+        afterSequence: 0,
+        onEvent: () => undefined,
+        onError: (error) => errors.push(error),
+      });
+
+      FakeEventSource.last?.fail(false);
+      FakeEventSource.last?.onopen?.(new Event("open"));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(errors).toHaveLength(0);
+
+      FakeEventSource.last?.fail(false);
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(errors).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(errors).toHaveLength(1);
+    });
+
+    it("stops trying once the subscription is closed", async () => {
+      const subscription = await transport().subject.subscribe({
+        afterSequence: 0,
+        onEvent: () => undefined,
+      });
+
+      FakeEventSource.last?.fail(true);
+      subscription.close();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(FakeEventSource.opened).toBe(1);
+    });
   });
 });
