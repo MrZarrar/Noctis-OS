@@ -101,7 +101,8 @@ const switchStyle = {
   display: "inline-flex",
   alignItems: "center",
   gap: spacing.xs,
-  minHeight: 32,
+  // The phone gate's touch floor.
+  minHeight: 44,
   padding: `0 ${String(spacing.sm)}px`,
   background: "transparent",
   border: `1px solid ${material.border}`,
