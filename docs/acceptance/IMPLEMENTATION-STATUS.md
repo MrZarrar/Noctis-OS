@@ -3332,7 +3332,9 @@ Codex, Hermes and local.
   delivered, with backoff to 15 s, and reports only an outage of 30 s or more.
 - **Presence keeps the owner with the core** (`934aeb7`, owner's choice: both). Sending from
   Presence no longer jumps to Threads; the exchange in progress shows under the core, as in the
-  Jester mockup, with Open in Threads. Threads carries a small live core in its header.
+  Jester mockup, with Open in Threads. Threads carries a small live core, first in its header,
+  where it scrolled away; since `185354c` in the composer beside the Vesper/Jester switch, faded
+  round. Deployed a third time; both nodes reconnected.
 - **The home PC at boot.** The scheduled task "Noctis node agent" (S4U, at startup) already starts
   the node; `NOCTIS_NODE_HOME` is now set at user scope to `%LOCALAPPDATA%\Noctis\node`, so the
   boot agent and `home-node.ps1` share one home (Jester's Hermes home, proposals, transcripts).
