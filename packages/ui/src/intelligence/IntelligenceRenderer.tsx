@@ -3,7 +3,15 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type { CorePoint, IntelligenceProfile, IntelligenceState } from "./core.js";
-import { buildCoreGeometry, coreAppearance, shouldAnimateCore, VESPER_PROFILE } from "./core.js";
+import {
+  buildCoreGeometry,
+  buildJesterMarks,
+  coreAppearance,
+  JESTER_PROFILE,
+  profileFor,
+  shouldAnimateCore,
+  VESPER_PROFILE,
+} from "./core.js";
 
 export interface IntelligenceRendererProps {
   identityId: ConversationalIdentityId;
@@ -13,6 +21,28 @@ export interface IntelligenceRendererProps {
 }
 
 const CORE = buildCoreGeometry();
+const JESTER = buildJesterMarks(CORE);
+const JESTER_SHARDS = CORE.shards.map((shard, index) => {
+  const offset = index === 2 || index === 7 || index === 11 ? 0.22 : 0;
+  const angle = (index / CORE.shards.length) * Math.PI * 2;
+  const tilt = offset === 0 ? 0 : index % 2 === 0 ? 0.16 : -0.18;
+  const x = Math.cos(angle) * offset;
+  const y = Math.sin(angle) * offset;
+  const z = offset * 0.5;
+  const cosine = Math.cos(tilt);
+  const sine = Math.sin(tilt);
+  return {
+    x,
+    y,
+    z,
+    tilt,
+    points: shard.map<CorePoint>((point) => [
+      point[0] * cosine - point[1] * sine + x,
+      point[0] * sine + point[1] * cosine + y,
+      point[2] + z,
+    ]),
+  };
+});
 const LABEL: Record<IntelligenceState, string> = {
   idle: "idle",
   listening: "listening",
@@ -157,7 +187,9 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
   });
   world.add(shell);
   const shardLines: CorePoint[] = [];
+  const shardBorderOffsets: number[] = [];
   for (const shard of CORE.shards) {
+    shardBorderOffsets.push(shardLines.length);
     const center = shard.reduce<CorePoint>(
       (sum, point) => [
         sum[0] + point[0] / shard.length,
@@ -177,6 +209,8 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     depthWrite: false,
   });
   const borders = new THREE.LineSegments(buffer(shardLines), borderMaterial);
+  const borderPositions = borders.geometry.getAttribute("position") as THREE.BufferAttribute;
+  const baseBorderPositions = new Float32Array(borderPositions.array);
   shell.add(borders);
   const fragmentMaterial = new THREE.MeshBasicMaterial({
     color: VESPER_PROFILE.violet,
@@ -239,6 +273,83 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
   world.add(sparks);
   const pedestal = lights([[0, -2.32, 0]], 48, VESPER_PROFILE.violet);
   scene.add(pedestal);
+  const coreLights = [junctions, glow, dust, pedestal, sparks];
+
+  const jesterColors = JESTER_PROFILE.jester!;
+  const faultEdges = JESTER.faults.flatMap((chain) =>
+    chain.slice(1).map((point, index) => [chain[index]!, point] as const),
+  );
+  const faultMaterial = new THREE.LineBasicMaterial({
+    color: jesterColors.lime,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const faultLines = new THREE.LineSegments(
+    buffer(faultEdges.flatMap(([a, b]) => [CORE.points[a]!, CORE.points[b]!])),
+    faultMaterial,
+  );
+  const faultLights = lights(
+    JESTER.faults.flat().map((index) => CORE.points[index]!),
+    18,
+    jesterColors.lime,
+  );
+  const redSparks = lights(
+    Array.from({ length: 6 }, () => [0, 0, 0] as CorePoint),
+    15,
+    jesterColors.red,
+  );
+  const redSparkPositions = redSparks.geometry.getAttribute("position") as THREE.BufferAttribute;
+  const faults = new THREE.Group();
+  faults.add(faultLines, faultLights, redSparks);
+  faults.visible = false;
+  network.add(faults);
+
+  const dripMaterial = new THREE.LineBasicMaterial({
+    color: jesterColors.lime,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  // A drip hangs from a shard or from a fault point, and must turn with it:
+  // the shell sways while the network spins.
+  const faultPoints = new Set(JESTER.faults.flat().map((index) => CORE.points[index]));
+  const dripLines = (fromFault: boolean): THREE.LineSegments =>
+    new THREE.LineSegments(
+      buffer(
+        JESTER.drips
+          .filter(([top]) => faultPoints.has(top) === fromFault)
+          .flatMap(([top, bottom]) => [top, bottom]),
+      ),
+      dripMaterial,
+    );
+  const drips = new THREE.Group();
+  const faultDrips = dripLines(true);
+  drips.add(dripLines(false));
+  drips.visible = false;
+  shell.add(drips);
+  faults.add(faultDrips);
+
+  const redEye = lights([JESTER.redEye], 62, jesterColors.red);
+  const grinLights = lights(JESTER.grin, 21, jesterColors.lime);
+  const grinMaterial = new THREE.LineBasicMaterial({
+    color: jesterColors.lime,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const grin = new THREE.Line(buffer(JESTER.grin), grinMaterial);
+  const grinPositions = grin.geometry.getAttribute("position") as THREE.BufferAttribute;
+  const grinLightPositions = grinLights.geometry.getAttribute("position") as THREE.BufferAttribute;
+  const faceMarks = new THREE.Group();
+  faceMarks.add(redEye, grin, grinLights);
+  faceMarks.visible = false;
+  world.add(faceMarks);
+  const jesterLights = [faultLights, redSparks, redEye, grinLights];
+
   scene.add(new THREE.AmbientLight(0xc3bcdd, 0.8));
   const key = new THREE.DirectionalLight(0xbbb6d4, 1.4);
   key.position.set(-3, 4, 5);
@@ -256,6 +367,9 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
   let lastTime = 0;
   let elapsed = 0;
   let energy = 0;
+  let face = 0;
+  let fault = 0;
+  let jesterBorders = false;
   const heartColor = new THREE.Color(VESPER_PROFILE.violet);
   const targetHeartColor = new THREE.Color(VESPER_PROFILE.violet);
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -266,14 +380,18 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
   const render = (now: number): void => {
     const started = performance.now();
     const appearance = coreAppearance(state, profile);
+    const jester = profile.jester;
     const moving = animate();
     const delta = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
     lastTime = now;
+    const smoothing = moving ? 1 - Math.exp(-delta * 5) : 1;
     energy = THREE.MathUtils.lerp(
       energy,
       state === "speaking" ? 1 : state === "thinking" ? 0.7 : 0.35,
-      moving ? 1 - Math.exp(-delta * 5) : 1,
+      smoothing,
     );
+    face = THREE.MathUtils.lerp(face, appearance.face, smoothing);
+    fault = THREE.MathUtils.lerp(fault, appearance.fault, smoothing);
     if (moving) elapsed += delta * (0.65 + energy * 0.65);
     const beat = moving ? Math.sin(elapsed * (appearance.approval ? 2 : 4.2)) : 0;
     world.rotation.set(
@@ -288,11 +406,52 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     shell.rotation.z = moving ? Math.sin(elapsed * 0.3) * 0.12 : 0;
     for (let index = 0; index < shellShards.length; index += 1) {
       const shard = shellShards[index]!;
-      const drift = moving ? Math.sin(elapsed * 1.2 + index * 1.7) * (0.025 + energy * 0.055) : 0;
+      const displaced = JESTER_SHARDS[index]!;
+      const drift =
+        (moving ? Math.sin(elapsed * 1.2 + index * 1.7) * (0.025 + energy * 0.055) : 0) +
+        (moving && jester !== undefined
+          ? Math.sin(elapsed * (3.7 + index * 0.13) + index * 2.1) *
+            (0.012 + energy * 0.02) *
+            (0.45 + (index % 4) * 0.2)
+          : 0);
       const angle = (index / shellShards.length) * Math.PI * 2;
-      shard.position.set(Math.cos(angle) * drift, Math.sin(angle) * drift, drift * 1.6);
-      shard.rotation.z = drift * 0.4;
+      shard.position.set(
+        Math.cos(angle) * drift + (jester === undefined ? 0 : displaced.x),
+        Math.sin(angle) * drift + (jester === undefined ? 0 : displaced.y),
+        drift * 1.6 + (jester === undefined ? 0 : displaced.z),
+      );
+      shard.rotation.z = drift * 0.4 + (jester === undefined ? 0 : displaced.tilt);
+      if (jester !== undefined) {
+        const cosine = Math.cos(shard.rotation.z);
+        const sine = Math.sin(shard.rotation.z);
+        const end = shardBorderOffsets[index + 1] ?? borderPositions.count;
+        for (let vertex = shardBorderOffsets[index]!; vertex < end; vertex += 1) {
+          const x = baseBorderPositions[vertex * 3]!;
+          const y = baseBorderPositions[vertex * 3 + 1]!;
+          borderPositions.setXYZ(
+            vertex,
+            x * cosine - y * sine + shard.position.x,
+            x * sine + y * cosine + shard.position.y,
+            baseBorderPositions[vertex * 3 + 2]! + shard.position.z,
+          );
+        }
+      }
     }
+    // Vesper keeps its original border motion; Jester's borders follow its shards.
+    if (jester !== undefined) {
+      borderPositions.needsUpdate = true;
+    } else if (jesterBorders) {
+      borderPositions.copyArray(baseBorderPositions);
+      borderPositions.needsUpdate = true;
+    }
+    jesterBorders = jester !== undefined;
+    const heartFace = jester === undefined ? 0 : face;
+    heart.position.set(
+      JESTER.violetEye[0] * heartFace,
+      JESTER.violetEye[1] * heartFace,
+      JESTER.violetEye[2] * heartFace,
+    );
+    glow.position.copy(heart.position);
     heart.rotation.set(
       moving ? Math.sin(elapsed * 0.7) * 0.3 : 0,
       moving ? elapsed * 0.65 : 0,
@@ -328,7 +487,7 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
     sparks.rotation.copy(network.rotation);
     sparks.visible = moving;
     const dpr = renderer.getPixelRatio();
-    for (const points of [junctions, glow, dust, pedestal, sparks]) {
+    for (const points of coreLights) {
       points.material.uniforms.pixelRatio!.value = dpr;
       (points.material.uniforms.color!.value as THREE.Color).set(
         points === glow ? heartColor : appearance.color,
@@ -336,6 +495,61 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
       points.material.uniforms.intensity!.value =
         appearance.light + beat * (points === glow ? 0.28 : 0.16);
     }
+
+    faults.visible = jester !== undefined;
+    drips.visible = jester !== undefined;
+    faceMarks.visible = jester !== undefined && face > 0;
+    redSparks.visible = jester !== undefined && moving && faultEdges.length > 0;
+    if (jester !== undefined) {
+      faultMaterial.color.set(jester.lime);
+      faultMaterial.opacity = fault * 0.85;
+      dripMaterial.color.set(jester.lime);
+      dripMaterial.opacity = fault * 0.75;
+      grinMaterial.color.set(jester.lime);
+      const faceLight =
+        face *
+        (state === "speaking"
+          ? 1.5
+          : moving && state === "thinking"
+            ? 0.85 + Math.sin(elapsed * 31) * 0.15
+            : 1);
+      grinMaterial.opacity = Math.min(1, faceLight);
+      for (const points of jesterLights) {
+        points.material.uniforms.pixelRatio!.value = dpr;
+        (points.material.uniforms.color!.value as THREE.Color).set(
+          points === redEye || points === redSparks ? jester.red : jester.lime,
+        );
+        points.material.uniforms.intensity!.value =
+          points === redEye ? face * 1.3 : points === grinLights ? faceLight : fault;
+      }
+      for (let index = 0; index < JESTER.grin.length; index += 1) {
+        const point = JESTER.grin[index]!;
+        const jitter =
+          moving && state === "thinking" && index % 2 === 1
+            ? Math.sin(elapsed * 27 + index * 2.3) * 0.035
+            : 0;
+        grinPositions.setXYZ(index, point[0], point[1] + jitter, point[2]);
+        grinLightPositions.setXYZ(index, point[0], point[1] + jitter, point[2]);
+      }
+      grinPositions.needsUpdate = true;
+      grinLightPositions.needsUpdate = true;
+      if (redSparks.visible) {
+        for (let index = 0; index < redSparkPositions.count; index += 1) {
+          const edge = faultEdges[(index * 3) % faultEdges.length]!;
+          const from = CORE.points[edge[0]]!;
+          const to = CORE.points[edge[1]]!;
+          const travel = (elapsed * 1.6 + index * 0.217) % 1;
+          redSparkPositions.setXYZ(
+            index,
+            THREE.MathUtils.lerp(from[0], to[0], travel),
+            THREE.MathUtils.lerp(from[1], to[1], travel),
+            THREE.MathUtils.lerp(from[2], to[2], travel),
+          );
+        }
+        redSparkPositions.needsUpdate = true;
+      }
+    }
+
     renderer.render(scene, camera);
     const duration = performance.now() - started;
     frames += 1;
@@ -409,7 +623,7 @@ function createScene(host: HTMLDivElement, onUnavailable: () => void): CoreScene
       scene.traverse((object) => {
         if (
           object instanceof THREE.Mesh ||
-          object instanceof THREE.LineSegments ||
+          object instanceof THREE.Line ||
           object instanceof THREE.Points
         ) {
           const drawable = object as THREE.Mesh<
@@ -443,6 +657,16 @@ function StaticCore({
   profile: IntelligenceProfile;
 }): JSX.Element {
   const appearance = coreAppearance(state, profile);
+  const jester = profile.jester;
+  const violetEye = project(JESTER.violetEye);
+  const redEye = project(JESTER.redEye);
+  const heartTransform =
+    appearance.face > 0
+      ? `translate(${((violetEye[0] - 180) * appearance.face).toFixed(1)} ${(
+          (violetEye[1] - 183) *
+          appearance.face
+        ).toFixed(1)})`
+      : undefined;
   return (
     <svg
       viewBox="0 0 360 380"
@@ -459,7 +683,9 @@ function StaticCore({
       {CORE.shards.map((shard, index) => (
         <polygon
           key={index}
-          points={shard.map((point) => project(point).join(",")).join(" ")}
+          points={(jester === undefined ? shard : JESTER_SHARDS[index]!.points)
+            .map((point) => project(point).join(","))
+            .join(" ")}
           fill={profile.glass}
           fillOpacity={0.11 + (index % 3) * 0.04}
           stroke={profile.glass}
@@ -467,7 +693,48 @@ function StaticCore({
           strokeOpacity="0.7"
         />
       ))}
-      <g data-core-heart="true">
+      {jester !== undefined && (
+        <>
+          {JESTER.faults.map((chain, index) => (
+            <polyline
+              key={index}
+              data-jester-fault="true"
+              points={chain.map((point) => project(CORE.points[point]!).join(",")).join(" ")}
+              fill="none"
+              stroke={jester.lime}
+              strokeWidth="1.25"
+              opacity={appearance.fault}
+            />
+          ))}
+          {JESTER.faults.flat().map((point, index) => {
+            const [x, y] = project(CORE.points[point]!);
+            return (
+              <g key={index} opacity={appearance.fault}>
+                <circle cx={x} cy={y} r="3.2" fill={jester.lime} opacity="0.18" />
+                <circle cx={x} cy={y} r="1.1" fill={jester.lime} />
+              </g>
+            );
+          })}
+          {JESTER.drips.map(([top, bottom], index) => {
+            const from = project(top);
+            const to = project(bottom);
+            return (
+              <line
+                key={index}
+                data-jester-drip="true"
+                x1={from[0]}
+                y1={from[1]}
+                x2={to[0]}
+                y2={to[1]}
+                stroke={jester.lime}
+                strokeWidth="1"
+                opacity={appearance.fault}
+              />
+            );
+          })}
+        </>
+      )}
+      <g data-core-heart="true" transform={heartTransform}>
         {CORE.fragments.map((shard, index) => (
           <polygon
             key={index}
@@ -496,6 +763,41 @@ function StaticCore({
             </g>
           );
         })}
+      {jester !== undefined && appearance.face > 0 && (
+        <>
+          <polyline
+            data-jester-grin="true"
+            points={JESTER.grin.map((point) => project(point).join(",")).join(" ")}
+            fill="none"
+            stroke={jester.lime}
+            strokeWidth="1.8"
+            opacity={appearance.face}
+          />
+          {JESTER.grin.map((point, index) => {
+            const [x, y] = project(point);
+            return (
+              <g key={index} opacity={appearance.face}>
+                <circle cx={x} cy={y} r="3.5" fill={jester.lime} opacity="0.2" />
+                <circle cx={x} cy={y} r="1.3" fill={jester.lime} />
+              </g>
+            );
+          })}
+          <circle
+            cx={redEye[0]}
+            cy={redEye[1]}
+            r="14"
+            fill={jester.red}
+            opacity={appearance.face * 0.2}
+          />
+          <circle
+            cx={redEye[0]}
+            cy={redEye[1]}
+            r="5.8"
+            fill={jester.red}
+            opacity={appearance.face}
+          />
+        </>
+      )}
       <path d="M160 343h40 M180 339v8" stroke={profile.violet} strokeWidth="1.2" />
     </svg>
   );
@@ -505,7 +807,7 @@ export function IntelligenceRenderer({
   identityId,
   protocolIds = [],
   state = "idle",
-  profile = VESPER_PROFILE,
+  profile = profileFor(identityId),
 }: IntelligenceRendererProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<CoreScene>();
@@ -536,6 +838,7 @@ export function IntelligenceRenderer({
       aria-label={`${identityId} intelligence, ${LABEL[state]}${protocolIds.includes("noir") ? ", NOIR active" : ""}`}
       className="noctis-intelligence"
       data-core-state={state}
+      data-core-profile={profile.name}
       data-core-renderer={webgl ? "webgl" : "static"}
       data-core-frames="0"
       data-core-running="false"

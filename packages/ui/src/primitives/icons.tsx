@@ -106,3 +106,30 @@ export function NoctisMark({ size = 28 }: { size?: number }): JSX.Element {
     </svg>
   );
 }
+
+/**
+ * Jester's mark: a three-point cap with bells, redrawn from Codex's glyph
+ * sheet (`docs/design/assets/jester/glyphs.png`, the owner's pick), in the
+ * nav icons' stroke so it sits beside them.
+ */
+export function JesterGlyph({ size = 16 }: { size?: number }): JSX.Element {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      <path d="M6.2 18.5C5.9 15.4 5.2 12.6 3.9 10.9c2.3.3 3.8 1.3 4.6 2.6C9.4 10.4 10.6 8 12 6.1c1.4 1.9 2.6 4.3 3.5 7.4.8-1.3 2.3-2.3 4.6-2.6-1.3 1.7-2 4.5-2.3 7.6-3.9-1-7.7-1-11.6 0Z" />
+      <circle cx="3.3" cy="9.9" r="1.2" />
+      <circle cx="12" cy="4.4" r="1.2" />
+      <circle cx="20.7" cy="9.9" r="1.2" />
+    </svg>
+  );
+}

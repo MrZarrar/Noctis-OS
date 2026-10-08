@@ -11,6 +11,17 @@ export const IDENTITY_PROFILES: readonly IdentityProfile[] = [
   { id: "jester", displayName: "Jester", activationCommand: "JESTER" },
 ];
 
+/**
+ * The identity a message activates instead of being sent: exactly `JESTER` or
+ * `VESPER`, alone in the box. Anything else, a lowercase name included, is a
+ * message, so talking about Jester never switches to it.
+ */
+export function activationFor(text: string): IdentityProfile["id"] | undefined {
+  const trimmed = text.trim();
+
+  return IDENTITY_PROFILES.find((profile) => profile.activationCommand === trimmed)?.id;
+}
+
 export function promptPlaceholder(identityId: IdentityProfile["id"]): string {
   const profile = IDENTITY_PROFILES.find((candidate) => candidate.id === identityId);
 

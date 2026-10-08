@@ -104,6 +104,14 @@ export function rootLabel(root: RuntimeRootOption): string {
   return `${folderName(root.path)} on ${root.hostId}${root.connected ? "" : " (offline)"}${root.mode === "read" ? " — read only" : ""}`;
 }
 
+/** What the identity may run on: Jester is Hermes (ADR-0030), and the core refuses anything else. */
+export function offeredModels(
+  identityId: ConversationalIdentityId,
+  models: readonly ModelRef[],
+): readonly ModelRef[] {
+  return identityId === "jester" ? models.filter((model) => model.providerId === "hermes") : models;
+}
+
 export function modelKey(model: ModelRef): string {
   return `${model.providerId}:${model.model}`;
 }
