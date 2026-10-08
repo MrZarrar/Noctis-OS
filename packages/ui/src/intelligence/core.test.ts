@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCoreGeometry, coreAppearance, shouldAnimateCore, VESPER_PROFILE } from "./core.js";
+import {
+  buildCoreGeometry,
+  buildJesterMarks,
+  coreAppearance,
+  JESTER_PROFILE,
+  profileFor,
+  shouldAnimateCore,
+  VESPER_PROFILE,
+} from "./core.js";
 
 describe("Presence core geometry", () => {
   it("uses local irregular connections and leaves space between centre fragments", () => {
@@ -81,5 +89,90 @@ describe("Presence core scheduling", () => {
     expect(coreAppearance("speaking", VESPER_PROFILE).light).toBeGreaterThan(
       coreAppearance("idle", VESPER_PROFILE).light,
     );
+  });
+});
+
+describe("Jester's core profile (the owner's pick: the hidden grin)", () => {
+  it("is the profile for Jester, and Vesper's stays Vesper's", () => {
+    expect(profileFor("jester")).toBe(JESTER_PROFILE);
+    expect(profileFor("vesper")).toBe(VESPER_PROFILE);
+    expect(JESTER_PROFILE.jester).toEqual({ lime: "#b6ff3b", red: "#ff3b5c" });
+    expect(VESPER_PROFILE.jester).toBeUndefined();
+  });
+
+  it("hides the face at rest and while listening, shows it thinking and speaking, and drops it for approval", () => {
+    const face = (state: Parameters<typeof coreAppearance>[0]): number =>
+      coreAppearance(state, JESTER_PROFILE).face;
+
+    expect(face("idle")).toBe(0);
+    expect(face("listening")).toBe(0);
+    expect(face("thinking")).toBeGreaterThan(0.5);
+    expect(face("speaking")).toBe(1);
+    expect(face("waiting_for_approval")).toBe(0);
+    expect(coreAppearance("waiting_for_approval", JESTER_PROFILE).coreColor).toBe(
+      JESTER_PROFILE.approval,
+    );
+  });
+
+  it("runs the lime faults brighter as Jester gets busier, and never on Vesper", () => {
+    const fault = (state: Parameters<typeof coreAppearance>[0]): number =>
+      coreAppearance(state, JESTER_PROFILE).fault;
+
+    expect(fault("idle")).toBeGreaterThan(0);
+    expect(fault("listening")).toBeGreaterThan(fault("idle"));
+    expect(fault("thinking")).toBeGreaterThan(fault("listening"));
+    expect(fault("speaking")).toBeGreaterThan(fault("thinking"));
+    expect(fault("waiting_for_approval")).toBeLessThan(fault("idle"));
+    for (const state of ["idle", "speaking", "waiting_for_approval"] as const) {
+      expect(coreAppearance(state, VESPER_PROFILE)).toMatchObject({ face: 0, fault: 0 });
+    }
+  });
+
+  it("cracks the cage along connected front-facing fault lines that cross it", () => {
+    const core = buildCoreGeometry();
+    const marks = buildJesterMarks(core);
+    const edges = new Set(core.edges.map(([a, b]) => `${a}:${b}`));
+
+    expect(marks).toEqual(buildJesterMarks(core));
+    expect(marks.faults.length).toBe(2);
+    for (const fault of marks.faults) {
+      expect(fault.length).toBeGreaterThanOrEqual(6);
+      fault.slice(1).forEach((point, index) => {
+        const previous = fault[index]!;
+        expect(edges.has(`${Math.min(previous, point)}:${Math.max(previous, point)}`)).toBe(true);
+      });
+      const ys = fault.map((index) => core.points[index]![1]);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(1.5);
+      expect(new Set(fault).size).toBe(fault.length);
+    }
+  });
+
+  it("places a grin below the centre that curls up at the ends, with the red eye left and the violet eye right", () => {
+    const marks = buildJesterMarks(buildCoreGeometry());
+    const grin = marks.grin;
+    const middle = grin[Math.floor(grin.length / 2)]!;
+
+    expect(grin.length).toBeGreaterThanOrEqual(9);
+    expect(middle[1]).toBeLessThan(-0.3);
+    expect(grin[0]![1]).toBeGreaterThan(middle[1] + 0.2);
+    expect(grin.at(-1)![1]).toBeGreaterThan(middle[1] + 0.2);
+    expect(grin.every(([, , z]) => z > 0)).toBe(true);
+    expect(marks.redEye[0]).toBeLessThan(0);
+    expect(marks.violetEye[0]).toBeGreaterThan(0);
+    expect(marks.redEye[1]).toBeGreaterThan(0.2);
+    expect(marks.violetEye[1]).toBe(marks.redEye[1]);
+  });
+
+  it("hangs lime drips straight down from the shards and the faults", () => {
+    const marks = buildJesterMarks(buildCoreGeometry());
+
+    expect(marks.drips.length).toBeGreaterThanOrEqual(8);
+    expect(marks.drips.length).toBeLessThanOrEqual(24);
+    for (const [top, bottom] of marks.drips) {
+      expect(bottom[0]).toBe(top[0]);
+      expect(bottom[2]).toBe(top[2]);
+      expect(top[1] - bottom[1]).toBeGreaterThan(0.1);
+      expect(top[1] - bottom[1]).toBeLessThan(0.5);
+    }
   });
 });
