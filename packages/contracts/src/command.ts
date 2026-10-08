@@ -139,6 +139,15 @@ export const AdoptRuntimeSessionCommandSchema = z
   })
   .strict();
 
+/** A new conversation beside the identity's free one. The agent and PC are chosen per message, as in free chat. */
+export const CreateConversationThreadCommandSchema = z
+  .object({
+    ...CommandBase,
+    identityId: ConversationalIdentityIdSchema,
+    title: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+
 export const SendConversationMessageCommandSchema = z
   .object({
     ...CommandBase,
@@ -184,6 +193,7 @@ export const SetIdentityDefaultModelCommandSchema = z
 
 export type SendConversationMessageCommand = z.infer<typeof SendConversationMessageCommandSchema>;
 export type AdoptRuntimeSessionCommand = z.infer<typeof AdoptRuntimeSessionCommandSchema>;
+export type CreateConversationThreadCommand = z.infer<typeof CreateConversationThreadCommandSchema>;
 export type CancelConversationTurnCommand = z.infer<typeof CancelConversationTurnCommandSchema>;
 export type DeclineAuthorityCommand = z.infer<typeof DeclineAuthorityCommandSchema>;
 export type SetIdentityDefaultModelCommand = z.infer<typeof SetIdentityDefaultModelCommandSchema>;

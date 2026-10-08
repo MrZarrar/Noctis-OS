@@ -31,6 +31,7 @@ export const API_SEGMENTS = [
   "artifacts",
   "attachments",
   "commands",
+  "conversations",
   "diagnostics",
   "events",
   "files",

@@ -1,6 +1,7 @@
 import type {
   AdoptRuntimeSessionCommand,
   CancelConversationTurnCommand,
+  CreateConversationThreadCommand,
   ConversationThread,
   ConversationalIdentityId,
   EventName,
@@ -323,6 +324,10 @@ export interface ConversationService {
   adoptSession(
     context: CommandContext,
     command: AdoptRuntimeSessionCommand,
+  ): Result<ConversationThread>;
+  createThread(
+    context: CommandContext,
+    command: CreateConversationThreadCommand,
   ): Result<ConversationThread>;
   cancelTurn(context: CommandContext, command: CancelConversationTurnCommand): Result<Turn>;
   onStreamItem(nodeId: string, jobId: string, sequence: number, item: RuntimeItem): void;
@@ -780,6 +785,32 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     dispatchOpened(outcome);
 
     return outcome;
+  }
+
+  /** A new conversation beside the identity's free one. */
+  function createThread(
+    context: CommandContext,
+    command: CreateConversationThreadCommand,
+  ): Result<ConversationThread> {
+    const threadId = kernel.ids.nextId();
+
+    return runCommand<ConversationThread>(
+      kernel,
+      { scope: "conversation.create_thread", key: command.idempotencyKey, resultId: threadId },
+      (tx) =>
+        ok({
+          value: createNamedThread(
+            tx,
+            kernel,
+            {
+              identityId: command.identityId,
+              ...(command.title === undefined ? {} : { title: command.title }),
+            },
+            nowIso(),
+          ),
+          events: [],
+        }),
+    );
   }
 
   /**
@@ -1418,6 +1449,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
   return {
     sendMessage,
     adoptSession,
+    createThread,
     cancelTurn,
     onStreamItem,
     onDelta,

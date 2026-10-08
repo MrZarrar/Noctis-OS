@@ -1,9 +1,10 @@
 import type {
   ConversationalIdentityId,
+  ConversationSummary,
   ConversationThread,
   RuntimeProviderId,
 } from "@noctis/contracts";
-import { ConversationThreadSchema } from "@noctis/contracts";
+import { ConversationSummarySchema, ConversationThreadSchema } from "@noctis/contracts";
 
 import type { NoctisDatabase } from "../db/connection.js";
 import type { ThreadRow } from "../identities/service.js";
@@ -54,6 +55,40 @@ export function listThreads(db: NoctisDatabase, identityId: string): Conversatio
     .all(identityId) as ThreadRow[];
 
   return rows.map(toThread);
+}
+
+/** How many conversations the list shows. ponytail: no paging until someone has more. */
+const MAX_CONVERSATIONS = 100;
+
+/**
+ * An identity's conversations for the thread list: its free thread and every
+ * named one, newest activity first. Objective and delegated threads are
+ * reached from where they belong, not listed here.
+ */
+export function listConversations(db: NoctisDatabase, identityId: string): ConversationSummary[] {
+  const rows = db
+    .prepare(
+      `SELECT ${THREAD_COLUMNS},
+              (SELECT MAX(m.created_at) FROM identity_messages m WHERE m.thread_id = t.id) AS last_at,
+              (SELECT c.body FROM identity_messages m
+                 JOIN identity_message_content c ON c.message_id = m.id
+                WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_body
+         FROM identity_threads t
+        WHERE identity_id = ? AND objective_id IS NULL AND parent_thread_id IS NULL
+        ORDER BY COALESCE(last_at, created_at) DESC, id DESC
+        LIMIT ?`,
+    )
+    .all(identityId, MAX_CONVERSATIONS) as Array<
+    ThreadRow & { last_at: string | null; last_body: string | null }
+  >;
+
+  return rows.map((row) =>
+    ConversationSummarySchema.parse({
+      ...toThread(row),
+      lastActiveAt: row.last_at ?? row.created_at,
+      ...(row.last_body === null ? {} : { preview: row.last_body.slice(0, 200) }),
+    }),
+  );
 }
 
 /** The threads agents on `parentThreadId` delegated to, oldest first. */

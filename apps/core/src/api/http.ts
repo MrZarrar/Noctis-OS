@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   ActivateIdentityCommandSchema,
   AdoptRuntimeSessionCommandSchema,
+  CreateConversationThreadCommandSchema,
   AttentionStateSchema,
   CancelConversationTurnCommandSchema,
   CancelNodeJobCommandSchema,
@@ -74,7 +75,12 @@ import {
   listRecentTurns,
   listTurns,
 } from "../conversation/service.js";
-import { findThread, getThread, listChildThreads } from "../conversation/threads.js";
+import {
+  findThread,
+  getThread,
+  listChildThreads,
+  listConversations,
+} from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
 import type { FileGateway, FileLocation } from "../files/gateway.js";
@@ -556,6 +562,11 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     (deps, context, command) => deps.conversation.sendMessage(context, command),
     (db, id) => getTurn(db, id),
   ),
+  "conversation.create_thread": defineDepsCommand(
+    CreateConversationThreadCommandSchema,
+    (deps, context, command) => deps.conversation.createThread(context, command),
+    (db, id) => getThread(db, id),
+  ),
   "conversation.adopt_session": defineDepsCommand(
     AdoptRuntimeSessionCommandSchema,
     (deps, context, command) => deps.conversation.adoptSession(context, command),
@@ -885,6 +896,17 @@ function handleRead(
     return thread === undefined
       ? { status: 404, body: errorBody("not_found", "thread not found") }
       : { status: 200, body: thread };
+  }
+
+  if (segments.length === 1 && segments[0] === "conversations") {
+    const identityId = ConversationalIdentityIdSchema.safeParse(url.searchParams.get("identityId"));
+
+    return identityId.success
+      ? {
+          status: 200,
+          body: { conversations: listConversations(deps.kernel.db, identityId.data) },
+        }
+      : { status: 400, body: errorBody("invalid_request", "identityId is required") };
   }
 
   if (segments.length === 1 && segments[0] === "models") {

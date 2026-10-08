@@ -1425,3 +1425,52 @@ describe("a session started outside Noctis", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 });
+
+describe("many conversations", () => {
+  it("THE GATE: the owner opens new conversations beside free chat, and lists them by last activity", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    await connectFake(core, directory);
+    await setDefault(core);
+
+    const storyboard = await command(core, "conversation.create_thread", {
+      idempotencyKey: "new-storyboard",
+      identityId: "vesper",
+      title: "Storyboard pass",
+    });
+    expect(storyboard.status).toBe(200);
+    expect(storyboard.body).toMatchObject({ kind: "named", title: "Storyboard pass" });
+
+    const untitled = await command(core, "conversation.create_thread", {
+      idempotencyKey: "new-untitled",
+      identityId: "vesper",
+    });
+
+    expect((await send(core, "free-first")).status).toBe(200);
+    await send(core, "storyboard-first", { threadId: storyboard.body.id });
+
+    const listed = await read(core, "/conversations?identityId=vesper");
+    expect(listed.status).toBe(200);
+
+    const conversations = listed.body.conversations as Body[];
+    // Newest activity first; a conversation nobody has written in yet sorts by when it was opened.
+    expect(conversations.map((conversation) => conversation.id)).toEqual([
+      storyboard.body.id,
+      expect.any(String),
+      untitled.body.id,
+    ]);
+    expect(conversations[0]).toMatchObject({
+      title: "Storyboard pass",
+      preview: "prompt storyboard-first",
+    });
+    expect(conversations[1]).toMatchObject({ kind: "free", preview: "prompt free-first" });
+    expect(conversations[2]?.preview).toBe(undefined);
+
+    // Jester's conversations are Jester's.
+    expect((await read(core, "/conversations?identityId=jester")).body).toEqual({
+      conversations: [],
+    });
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+});

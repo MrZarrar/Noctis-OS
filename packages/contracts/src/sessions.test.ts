@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { AdoptRuntimeSessionCommandSchema } from "./command.js";
-import { ConversationThreadSchema } from "./identity.js";
+import {
+  AdoptRuntimeSessionCommandSchema,
+  CreateConversationThreadCommandSchema,
+} from "./command.js";
+import { ConversationSummarySchema, ConversationThreadSchema } from "./identity.js";
 import { CAPABILITY_CONTRACTS, CAPABILITY_OPERATION_CLASS, grantCovers } from "./node.js";
 import { RuntimeTurnPayloadSchema } from "./runtime.js";
 
@@ -66,6 +69,31 @@ describe("sessions started outside Noctis (v1, after S4)", () => {
         providerId: "claude",
       }).title,
     ).toBe("Video script refresh");
+  });
+
+  it("opens a new conversation with an optional title", () => {
+    expect(
+      CreateConversationThreadCommandSchema.safeParse({ idempotencyKey: "k", identityId: "vesper" })
+        .success,
+    ).toBe(true);
+    expect(
+      CreateConversationThreadCommandSchema.safeParse({
+        idempotencyKey: "k",
+        identityId: "vesper",
+        title: "Storyboard pass",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("summarises a conversation for the list: when it last moved and what was said last", () => {
+    expect(
+      ConversationSummarySchema.safeParse({
+        ...THREAD,
+        kind: "named",
+        lastActiveAt: "2026-10-08T15:21:21.567Z",
+        preview: "Here is the revised cold open",
+      }).success,
+    ).toBe(true);
   });
 
   it("asks a turn to fork the session it resumes, so the original is never written to", () => {
