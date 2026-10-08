@@ -14,8 +14,11 @@ import { SchemaVersionSchema, UuidSchema } from "./primitives.js";
 /* The runtime vocabulary. Imports nothing from node.ts; node.ts imports this. */
 /* -------------------------------------------------------------------------- */
 
-/** The only runtimes a node may spawn. No metered API adapter is ever registered. */
-export const RUNTIME_PROVIDERS = ["codex", "claude", "hermes"] as const;
+/**
+ * The only runtimes a node may spawn. No metered API adapter is ever registered.
+ * `local` is a model served on the node itself, over loopback (v1 S3).
+ */
+export const RUNTIME_PROVIDERS = ["codex", "claude", "hermes", "local"] as const;
 
 export const RuntimeProviderIdSchema = z.enum(RUNTIME_PROVIDERS);
 

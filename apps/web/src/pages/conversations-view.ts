@@ -49,6 +49,7 @@ const AGENT_NAMES: Readonly<Record<string, string>> = {
   claude: "Claude",
   codex: "Codex",
   hermes: "Hermes",
+  local: "Local model",
 };
 
 export function agentName(providerId: string): string {

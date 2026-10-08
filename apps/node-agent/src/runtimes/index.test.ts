@@ -28,6 +28,17 @@ describe("selectRuntimes", () => {
     expect(runtimes.hermes).toBe(undefined);
   });
 
+  it("wires the local model runtime, at the server the operator names or LM Studio's", async () => {
+    expect(selectRuntimes({ PATH: "" }).local?.providerId).toBe("local");
+
+    // Nothing listens on port 9 (discard): the probe says so instead of failing the hello.
+    const env = { PATH: "", NOCTIS_LOCAL_MODEL_URL: "http://127.0.0.1:9/v1" };
+    const probe = await selectRuntimes(env).local?.probe();
+
+    expect(probe).toMatchObject({ providerId: "local", available: false });
+    expect(probe?.reason).toContain("127.0.0.1:9");
+  });
+
   it("wires claude whatever the machine has: the Agent SDK carries its own CLI", () => {
     const runtimes = selectRuntimes({ PATH: "" });
 

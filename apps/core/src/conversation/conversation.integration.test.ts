@@ -151,8 +151,15 @@ interface FakeNode {
   bearer: () => string;
 }
 
-/** Pairs, grants `runtime.turn` on `directory`, connects, and says hello with Codex. */
-async function connectFake(core: TestCore, directory: string): Promise<FakeNode> {
+/** Pairs, grants `runtime.turn` on `directory`, connects, and says hello with Codex (by default). */
+async function connectFake(
+  core: TestCore,
+  directory: string,
+  agents: { providers: string[]; probes: unknown[] } = {
+    providers: ["codex"],
+    probes: [CODEX_PROBE],
+  },
+): Promise<FakeNode> {
   const issued = await command(core, "node.issue_pairing_code", {
     idempotencyKey: `code-${directory}`,
     hostId: "workstation",
@@ -175,7 +182,7 @@ async function connectFake(core: TestCore, directory: string): Promise<FakeNode>
     nodeId: paired.nodeId,
     capability: "runtime.turn",
     constraints: {
-      providers: ["codex"],
+      providers: agents.providers,
       roots: [{ grantId: "d", path: directory, mode: "write" }],
     },
   });
@@ -204,7 +211,7 @@ async function connectFake(core: TestCore, directory: string): Promise<FakeNode>
         envelopeVersion: NODE_ENVELOPE_VERSION,
         agentVersion: "0.0.0-test",
         capabilities: ["runtime.turn"],
-        providers: [CODEX_PROBE],
+        providers: agents.probes,
       }),
     );
 
@@ -1121,6 +1128,56 @@ describe("delegation", () => {
       threadId: childThreadId,
       sessionRef: "child-session",
       prompt: "make the sky darker",
+    });
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("THE GATE (S3): a thread runs on the PC's local model, and Claude's turn delegates to it", async () => {
+    const LOCAL_MODEL = { providerId: "local", model: "qwen3.5-9b" };
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, {
+      providers: ["codex", "local"],
+      probes: [
+        CODEX_PROBE,
+        { providerId: "local", available: true, authMode: "local", models: [LOCAL_MODEL] },
+      ],
+    });
+
+    // A thread on the local model: costed as local, never as a subscription or a meter.
+    const direct = await send(core, "local-direct", { model: LOCAL_MODEL });
+    expect(direct.status).toBe(200);
+    await waitFor(() => node.jobs().length === 1, "the local turn");
+    expect(lastTurnJob(node).payload.model).toEqual(LOCAL_MODEL);
+    expect(
+      core.core.kernel.db
+        .prepare("SELECT cost_class FROM provider_decisions WHERE turn_id = ?")
+        .get(direct.body.id as string),
+    ).toEqual({ cost_class: "local" });
+
+    // Another agent's turn hands work to it, and gets the reply back.
+    const objectiveId = await activeObjective(core, "local");
+    await setDefault(core);
+    await send(core, "parent-for-local", { objectiveId });
+    await waitFor(() => node.jobs().length === 2, "the parent turn");
+    const parentJob = lastTurnJob(node).assignment.jobId;
+
+    node.frame({
+      kind: "delegate",
+      jobId: parentJob,
+      delegation: { delegationId: DELEGATION_A, runtime: "local", prompt: "tighten this line" },
+    });
+    await waitFor(() => node.jobs().length === 3, "the local child turn");
+
+    const child = lastTurnJob(node);
+    expect(child.payload).toMatchObject({ model: LOCAL_MODEL, prompt: "tighten this line" });
+
+    finishChild(node, child.assignment.jobId, "tighter", "local-session");
+    await waitFor(() => delegatedResults(node).length === 1, "the delegation result");
+    expect(delegatedResults(node)[0]?.result).toMatchObject({
+      outcome: "completed",
+      reply: "tighter",
     });
 
     rmSync(directory, { recursive: true, force: true });

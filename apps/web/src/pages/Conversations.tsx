@@ -9,7 +9,7 @@ import { folderName } from "../conversation/PromptForm.js";
 import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { SectionHeading, buttonStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
-import { ago, conversationLabel, pinnedTo } from "./conversations-view.js";
+import { agentName, ago, conversationLabel, pinnedTo } from "./conversations-view.js";
 
 /**
  * Every conversation an identity has, and the two ways to start another: a
@@ -58,8 +58,6 @@ const actionStyle = {
   padding: `0 ${String(spacing.sm)}px`,
   fontSize: typography.scale.xs,
 } as const;
-
-const AGENTS: Readonly<Record<string, string>> = { claude: "Claude", codex: "Codex" };
 
 function placeLabel(place: RuntimeRootOption): string {
   return `${folderName(place.path)} on ${place.hostId}`;
@@ -464,8 +462,7 @@ export function Conversations({
                       {session.title}
                     </span>
                     <span style={detailStyle}>
-                      {AGENTS[session.providerId] ?? session.providerId} ·{" "}
-                      {ago(session.lastActiveAt, now)}
+                      {agentName(session.providerId)} · {ago(session.lastActiveAt, now)}
                       {session.source === undefined ? "" : ` · ${session.source}`}
                     </span>
                   </button>

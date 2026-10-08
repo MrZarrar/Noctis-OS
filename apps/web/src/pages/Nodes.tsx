@@ -9,6 +9,7 @@ import { mountRemoteDesktop } from "../remote/component.js";
 import type { RemoteHandle, RemoteState, RemoteUserInteraction } from "../remote/session.js";
 import { connectRemote, describeFailure } from "../remote/session.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { agentName } from "./conversations-view.js";
 
 const HostsSchema = z.object({ hosts: z.array(RemoteDesktopTargetSchema) });
 const NodesSchema = z.object({
@@ -373,7 +374,7 @@ function NodeCard({ node }: { node: NodeView }): JSX.Element {
         ) : (
           agents.map((agent) => (
             <span key={agent.providerId} style={chipStyle}>
-              {AGENT_NAMES[agent.providerId] ?? agent.providerId}
+              {agentName(agent.providerId)}
             </span>
           ))
         )}
@@ -381,13 +382,6 @@ function NodeCard({ node }: { node: NodeView }): JSX.Element {
     </li>
   );
 }
-
-const AGENT_NAMES: Readonly<Record<string, string>> = {
-  claude: "Claude",
-  codex: "Codex",
-  hermes: "Hermes",
-  local: "Local model",
-};
 
 const labelStyle = {
   display: "grid",
