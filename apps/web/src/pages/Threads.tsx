@@ -14,8 +14,14 @@ import type { CSSProperties } from "react";
 import { useEffect, useRef } from "react";
 
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
-import type { ConversationState, Turn } from "../conversation/useConversation.js";
+import type {
+  ConversationState,
+  RuntimeRootOption,
+  Turn,
+} from "../conversation/useConversation.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
+import type { FileTarget } from "./files-view.js";
+import { locateInRoots } from "./files-view.js";
 
 export interface ThreadsProps {
   identityId: ConversationalIdentityId;
@@ -31,6 +37,41 @@ export interface ThreadsProps {
   onUseFreeThread?: (free: boolean) => void;
   /** Opens a thread an agent delegated to, or (undefined) goes back to the identity's own. */
   onOpenThread?: (threadId: string | undefined) => void;
+  /** Opens a file a turn wrote in Files. Absent, the files are listed but not offered. */
+  onOpenFile?: (target: FileTarget<RuntimeRootOption>) => void;
+}
+
+/**
+ * The files a turn wrote that Files can open: inside a folder its PC shares,
+ * once each, in the order they were written.
+ */
+function writtenFiles(
+  turn: Turn,
+  roots: readonly RuntimeRootOption[],
+): Array<FileTarget<RuntimeRootOption>> {
+  const nodeId = turn.nodeId;
+
+  if (nodeId === undefined) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+
+  return turn.items
+    .flatMap((item) =>
+      item.kind === "file_change" && item.status === "completed" ? item.paths : [],
+    )
+    .flatMap((path) => {
+      const target = locateInRoots(path, nodeId, roots);
+      const key = target === undefined ? "" : `${target.root.grantId}:${target.relativePath}`;
+
+      if (target === undefined || seen.has(key)) {
+        return [];
+      }
+
+      seen.add(key);
+      return [target];
+    });
 }
 
 const listStyle = { listStyle: "none", margin: 0, padding: 0, display: "grid" } as const;
@@ -146,10 +187,14 @@ function TurnRow({
   turn,
   onCancel,
   outputUrl,
+  written,
+  onOpenFile,
 }: {
   turn: Turn;
   onCancel: () => void;
   outputUrl: ((attachmentId: string) => string) | undefined;
+  written: ReadonlyArray<FileTarget<RuntimeRootOption>>;
+  onOpenFile: ((target: FileTarget<RuntimeRootOption>) => void) | undefined;
 }): JSX.Element {
   const running = turn.status === "queued" || turn.status === "running";
   const outputs = turn.items.filter((item) => item.kind === "output");
@@ -205,6 +250,30 @@ function TurnRow({
           {outputs.map((item) => (
             <li key={item.itemId} data-item-kind={item.kind} data-item-status={item.status}>
               <ItemRow item={item} outputUrl={outputUrl} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {written.length > 0 && onOpenFile !== undefined && (
+        <ul
+          aria-label="Files written"
+          style={{ ...listStyle, gap: spacing.xs, minWidth: 0, gridAutoFlow: "row" }}
+        >
+          {written.map((target) => (
+            <li key={`${target.root.grantId}:${target.relativePath}`}>
+              <button
+                type="button"
+                title={target.relativePath}
+                onClick={() => onOpenFile(target)}
+                style={{
+                  ...buttonStyle,
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                Open {target.relativePath.split("/").at(-1)}
+              </button>
             </li>
           ))}
         </ul>
@@ -274,6 +343,7 @@ export function Threads({
   freeThread,
   onUseFreeThread,
   onOpenThread,
+  onOpenFile,
 }: ThreadsProps): JSX.Element {
   const {
     thread,
@@ -417,6 +487,8 @@ export function Threads({
                 key={entry.turn.id}
                 turn={entry.turn}
                 outputUrl={outputUrl}
+                written={writtenFiles(entry.turn, conversation.roots)}
+                onOpenFile={onOpenFile}
                 onCancel={() => {
                   if (entry.turn.jobId !== undefined) {
                     void conversation.cancel(entry.turn.jobId);

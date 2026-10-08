@@ -1,6 +1,39 @@
 import { describe, expect, it } from "vitest";
 
-import { childPath, filesQuery, parentPath, viewerKind } from "./files-view.js";
+import { childPath, filesQuery, locateInRoots, parentPath, viewerKind } from "./files-view.js";
+
+describe("locateInRoots", () => {
+  const roots = [
+    { nodeId: "home", grantId: "channel", path: "C:\\Users\\mmush\\Downloads\\channel" },
+    { nodeId: "home", grantId: "docs", path: "C:\\Users\\mmush\\Documents" },
+    { nodeId: "work", grantId: "channel", path: "C:\\Users\\mmush\\Downloads\\channel" },
+  ];
+
+  it("finds the shared folder a file an agent wrote is in, on the PC that wrote it", () => {
+    expect(
+      locateInRoots("C:\\Users\\mmush\\Downloads\\channel\\scripts\\ep1.md", "home", roots),
+    ).toEqual({ root: roots[0], relativePath: "scripts/ep1.md" });
+    expect(locateInRoots("C:\\Users\\mmush\\Downloads\\channel\\ep1.md", "work", roots)?.root).toBe(
+      roots[2],
+    );
+  });
+
+  it("matches Windows paths however the runtime spelled them", () => {
+    expect(locateInRoots("c:/users/MMUSH/downloads/channel/frame.png", "home", roots)).toEqual({
+      root: roots[0],
+      relativePath: "frame.png",
+    });
+  });
+
+  it("finds nothing outside a shared folder, or on another PC", () => {
+    expect(locateInRoots("C:\\Users\\mmush\\Downloads\\channel-old\\x.md", "home", roots)).toBe(
+      undefined,
+    );
+    expect(locateInRoots("C:\\Users\\mmush\\Downloads\\channel", "home", roots)).toBe(undefined);
+    expect(locateInRoots("scripts/ep1.md", "home", roots)).toBe(undefined);
+    expect(locateInRoots("C:\\Users\\mmush\\Documents\\a.md", "work", roots)).toBe(undefined);
+  });
+});
 
 describe("viewerKind", () => {
   it("shows what a browser can draw, and offers the rest as a download", () => {

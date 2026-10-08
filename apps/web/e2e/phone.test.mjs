@@ -400,6 +400,35 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   );
 
   it(
+    "opens a file an agent wrote straight from the thread it wrote it in",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type("WRITE: the opening scene");
+      await page.keyboard.press("Enter");
+
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Open written.md"),
+        "the turn's written file was never offered from the thread",
+        60_000,
+      );
+      await tabTo(page, "Open written.md");
+      await page.keyboard.press("Enter");
+
+      await waitFor(
+        readFiles,
+        (state) => state.viewer.includes("# Written by the fake"),
+        "the written file did not open in the viewer",
+      );
+    },
+  );
+
+  it(
     "keeps both answers to a consequence on screen at a phone's width",
     { timeout: 120_000 },
     async () => {

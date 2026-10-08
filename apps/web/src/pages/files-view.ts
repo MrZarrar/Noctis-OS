@@ -51,6 +51,42 @@ export function parentPath(path: string): string {
   return slash === -1 ? "" : path.slice(0, slash);
 }
 
+/** A file to open in Files: which shared folder, and where in it. */
+export interface FileTarget<Root = { nodeId: string; grantId: string; path: string }> {
+  root: Root;
+  relativePath: string;
+}
+
+/**
+ * The shared folder a path an agent reported is in, on the PC that reported
+ * it, and the path inside it — or undefined, so a file outside every shared
+ * folder is never offered as something Files can open. Windows paths compare
+ * without case and with either slash, as Windows itself does.
+ */
+export function locateInRoots<Root extends { nodeId: string; grantId: string; path: string }>(
+  path: string,
+  nodeId: string,
+  roots: readonly Root[],
+): FileTarget<Root> | undefined {
+  const slashed = path.replaceAll("\\", "/");
+
+  for (const root of roots) {
+    if (root.nodeId !== nodeId) {
+      continue;
+    }
+
+    const windows = /^[A-Za-z]:\//.test(root.path.replaceAll("\\", "/"));
+    const prefix = `${root.path.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
+    const fold = (value: string): string => (windows ? value.toLowerCase() : value);
+
+    if (slashed.length > prefix.length && fold(slashed).startsWith(fold(prefix))) {
+      return { root, relativePath: slashed.slice(prefix.length) };
+    }
+  }
+
+  return undefined;
+}
+
 export function filesQuery(place: { nodeId: string; grantId: string }, path: string): string {
   return new URLSearchParams({ node: place.nodeId, root: place.grantId, path }).toString();
 }

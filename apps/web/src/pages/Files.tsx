@@ -7,6 +7,7 @@ import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import type { FileTarget } from "./files-view.js";
 import { childPath, filesQuery, parentPath, viewerKind } from "./files-view.js";
 
 /**
@@ -74,16 +75,46 @@ const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "no
 export function Files({
   roots,
   transport,
+  target,
+  onTargetOpened,
 }: {
   roots: readonly RuntimeRootOption[];
   /** Absent until the page has a session; nothing opens without one. */
   transport: CoreTransport | undefined;
+  /** A file to open on arrival, offered by a thread that wrote it. */
+  target?: FileTarget<RuntimeRootOption> | undefined;
+  /** Called once the target is taken, so coming back to Files later starts fresh. */
+  onTargetOpened?: () => void;
 }): JSX.Element {
   const isMobile = useIsMobile();
-  const [place, setPlace] = useState<RuntimeRootOption>();
-  const [folder, setFolder] = useState("");
+  // The page mounts each time it is opened, so a target is simply where it starts.
+  const [place, setPlace] = useState<RuntimeRootOption | undefined>(target?.root);
+  const [folder, setFolder] = useState(target === undefined ? "" : parentPath(target.relativePath));
+  const [pending, setPending] = useState(target?.relativePath.split("/").at(-1));
   const [listing, setListing] = useState<Listing>({ state: "loading" });
   const [opened, setOpened] = useState<Entry & { path: string }>();
+
+  useEffect(() => {
+    if (target !== undefined) {
+      onTargetOpened?.();
+    }
+    // Once, on arrival: the target is the starting state above.
+  }, []);
+
+  // The file a thread asked for, once its folder has been listed.
+  useEffect(() => {
+    if (pending === undefined || listing.state !== "ready") {
+      return;
+    }
+
+    const entry = listing.entries.find((item) => item.kind === "file" && item.name === pending);
+
+    if (entry !== undefined) {
+      setOpened({ ...entry, path: childPath(folder, entry.name) });
+    }
+
+    setPending(undefined);
+  }, [pending, listing, folder]);
 
   useEffect(() => {
     if (place === undefined || transport === undefined) {

@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
@@ -40,6 +42,7 @@ class Cancelled extends Error {}
  *   - `PROPOSE:`  a completed proposal item
  *   - `SLOW:`     200 ms between steps, honouring cancellation
  *   - `IMAGE:`    hands a tiny PNG to the core and records it as an output
+ *   - `WRITE:`    writes `notes/written.md` in its folder and reports the change
  *   - `DELEGATE:` asks codex for an `IMAGE:`, then asks again on the same
  *                 child thread, and reports both results as `delegated:<json>`
  */
@@ -144,6 +147,16 @@ export function createFakeRuntime(): Runtime {
             mediaType: "image/png",
             attachmentId,
           });
+        }
+
+        if (payload.prompt.includes("WRITE:")) {
+          await step();
+
+          const written = join(roots.cwd, "notes", "written.md");
+
+          await mkdir(dirname(written), { recursive: true });
+          await writeFile(written, `# Written by the fake\n\n${payload.prompt}\n`);
+          item({ itemId: "f1", kind: "file_change", status: "completed", paths: [written] });
         }
 
         if (payload.prompt.includes("DELEGATE:")) {

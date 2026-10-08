@@ -16,7 +16,7 @@ import {
 import type { RailItem } from "@noctis/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { SendOptions } from "./conversation/useConversation.js";
+import type { RuntimeRootOption, SendOptions } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
@@ -25,6 +25,7 @@ import { Approvals } from "./pages/Approvals.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Command } from "./pages/Command.js";
 import { Files } from "./pages/Files.js";
+import type { FileTarget } from "./pages/files-view.js";
 import { Login } from "./pages/Login.js";
 import { Missions } from "./pages/Missions.js";
 import { Nodes } from "./pages/Nodes.js";
@@ -139,6 +140,8 @@ function Workbench({
 }): JSX.Element {
   const [active, setActive] = useState<RailItem>("Presence");
   const [handoff, setHandoff] = useState<VaultHandoff>();
+  /** A file a thread offered, for Files to open when it next mounts. */
+  const [fileTarget, setFileTarget] = useState<FileTarget<RuntimeRootOption>>();
   const isMobile = useIsMobile();
   // No `open` state beside it: a `<dialog>` already knows whether it is open,
   // and `showModal` gives the focus trap and Escape-to-close that a hand-rolled
@@ -305,10 +308,21 @@ function Workbench({
               ? {}
               : { freeThread, onUseFreeThread: setFreeThread })}
             onOpenThread={setOpenThreadId}
+            onOpenFile={(target) => {
+              setFileTarget(target);
+              setActive("Files");
+            }}
           />
         )}
 
-        {active === "Files" && <Files roots={conversation.roots} transport={transport} />}
+        {active === "Files" && (
+          <Files
+            roots={conversation.roots}
+            transport={transport}
+            target={fileTarget}
+            onTargetOpened={() => setFileTarget(undefined)}
+          />
+        )}
 
         {active === "Approvals" && <Approvals transport={transport} />}
 
