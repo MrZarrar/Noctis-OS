@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { RuntimeRootOption, SendOptions } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
+import { useWaitingCount } from "./notify/useWaitingCount.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
 import { useIsMobile } from "./layout/useIsMobile.js";
 import { Approvals } from "./pages/Approvals.js";
@@ -168,6 +169,8 @@ function Workbench({
   /** A delegated thread the owner opened; undefined is the identity's own thread. */
   const [openThreadId, setOpenThreadId] = useState<string | undefined>(undefined);
   const conversation = useConversation(transport, identityId, objectiveId, openThreadId);
+  /** What waits on the owner, on the Approvals tab wherever they are. */
+  const counts = { Approvals: useWaitingCount(transport) };
 
   const openInVault = (entityId: string): void => {
     setHandoff({ entityId, returnTo: active });
@@ -221,7 +224,7 @@ function Workbench({
         fontFamily: typography.family,
       }}
     >
-      {!isMobile && <Rail active={active} onSelect={select} allPages={ALL_PAGES} />}
+      {!isMobile && <Rail active={active} onSelect={select} allPages={ALL_PAGES} counts={counts} />}
 
       {isMobile && (
         <header
@@ -390,6 +393,7 @@ function Workbench({
           <TabBar
             active={active}
             onSelect={select}
+            counts={counts}
             {...(ALL_PAGES
               ? {
                   onMore: () => {

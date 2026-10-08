@@ -10,12 +10,15 @@ import {
 import { NavIcon, NoctisMark } from "./icons.js";
 import type { RailItem } from "./rail-items.js";
 import { railItems } from "./rail-items.js";
+import { counted } from "./TabBar.js";
 
 export interface RailProps {
   active: RailItem;
   onSelect: (item: RailItem) => void;
   /** Offers the pages kept behind the all-pages flag as well. */
   allPages?: boolean;
+  /** How many things wait behind a destination: Approvals' count. */
+  counts?: Partial<Record<RailItem, number>>;
 }
 
 /**
@@ -24,15 +27,17 @@ export interface RailProps {
  * visible focus ring, which is the "keyboard navigation, visible focus"
  * requirement in Section 5.2 without any hand-rolled key handling.
  */
-export function Rail({ active, onSelect, allPages = false }: RailProps): JSX.Element {
+export function Rail({ active, onSelect, allPages = false, counts }: RailProps): JSX.Element {
   const item = (name: RailItem): JSX.Element => {
     const isActive = name === active;
+    const { props, badge } = counted(name, counts?.[name]);
 
     return (
       <button
         key={name}
         type="button"
         aria-current={isActive ? "page" : undefined}
+        {...props}
         onClick={() => {
           onSelect(name);
         }}
@@ -59,6 +64,7 @@ export function Rail({ active, onSelect, allPages = false }: RailProps): JSX.Ele
       >
         <NavIcon item={name} />
         {name}
+        {badge}
       </button>
     );
   };

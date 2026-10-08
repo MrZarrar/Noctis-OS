@@ -27,6 +27,20 @@ import { conversationLabel, pinnedTo } from "./conversations-view.js";
 import type { FileTarget } from "./files-view.js";
 import { locateInRoots } from "./files-view.js";
 
+/** How near the end still counts as being at it: a thumb rarely lands on the last pixel. */
+const FOLLOW_SLACK_PX = 80;
+
+/** The box a page scrolls in: the nearest ancestor that scrolls. */
+function scrollerOf(element: HTMLElement | null): HTMLElement | undefined {
+  for (let box = element?.parentElement; box != null; box = box.parentElement) {
+    if (/auto|scroll/.test(getComputedStyle(box).overflowY)) {
+      return box;
+    }
+  }
+
+  return undefined;
+}
+
 export interface ThreadsProps {
   identityId: ConversationalIdentityId;
   conversation: ConversationState;
@@ -369,12 +383,36 @@ export function Threads({
   const end = useRef<HTMLDivElement>(null);
   const streamedLength = [...streaming.values()].reduce((total, text) => total + text.length, 0);
 
-  // Follow the conversation as it grows. On a phone the newest entry is
-  // otherwise under the composer, and the reply arrives where nobody is
-  // looking. ponytail: always follows, even when the owner has scrolled up
-  // to read; hold position while scrolled up if that gets in the way.
+  /**
+   * The page follows the conversation as it grows: on a phone the newest entry
+   * is otherwise under the composer, and the reply arrives where nobody is
+   * looking. An owner who has scrolled up to read is left where they are. The
+   * test is whether they were at the end of the conversation as it stood at
+   * the last update, so what arrived since does not count against them.
+   * Sending, or opening another thread, follows again.
+   */
+  const follow = useRef(true);
+  const heightBefore = useRef<number>();
+
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
+    follow.current = true;
+  }, [thread?.id]);
+
+  useEffect(() => {
+    const box = scrollerOf(end.current);
+
+    if (box === undefined) {
+      return;
+    }
+
+    const before = heightBefore.current ?? box.scrollHeight;
+
+    if (follow.current || before - box.scrollTop - box.clientHeight < FOLLOW_SLACK_PX) {
+      end.current?.scrollIntoView({ block: "end" });
+    }
+
+    follow.current = false;
+    heightBefore.current = box.scrollHeight;
   }, [messages.length, turns.length, pendingApprovals.length, streamedLength]);
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
@@ -655,6 +693,7 @@ export function Threads({
               roots={conversation.roots}
               {...(pinned === undefined ? {} : { lockedTo: pinned })}
               onSend={(text, options) => {
+                follow.current = true;
                 void conversation.send(text, options);
               }}
             />

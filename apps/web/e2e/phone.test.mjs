@@ -619,6 +619,88 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   );
 
   it(
+    "holds its place while the owner reads back, and follows again once they send",
+    { timeout: 120_000 },
+    async () => {
+      /** The thread's scrolling box: how far from its end the owner is, and moving it. */
+      const scroller = (action) =>
+        page.evaluate((what) => {
+          let box = document.querySelector('ul[aria-label="Conversation"]');
+
+          while (box !== null && getComputedStyle(box).overflowY !== "auto") {
+            box = box.parentElement;
+          }
+
+          if (box === null) {
+            return -1;
+          }
+
+          if (what === "top") {
+            box.scrollTop = 0;
+          }
+
+          return box.scrollHeight - box.scrollTop - box.clientHeight;
+        }, action);
+
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+      await tabTo(page, "Conversations");
+      await page.keyboard.press("Enter");
+      await tabTo(page, "New conversation");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => !state.body.includes("Show archived"),
+        "the new conversation never opened",
+      );
+
+      // Long enough to fill the screen twice over, and slow enough to scroll during.
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type(`SLOW: ${"a long line to read back through ".repeat(80)}`);
+      await page.keyboard.press("Enter");
+      // The fake answers 600 ms into its turn: scroll up as soon as the prompt shows.
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.startsWith("You") && m.includes("SLOW")),
+        "the prompt never showed",
+        30_000,
+      );
+
+      const away = await scroller("top");
+      assert.ok(away > 400, `the thread is too short to scroll back through (${String(away)}px)`);
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.includes("Hello SLOW")),
+        "the reply never finished",
+        30_000,
+      );
+      const held = await scroller("read");
+      assert.ok(
+        held > 400,
+        `the reply pulled the owner back down (${String(held)}px from the end)`,
+      );
+
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type("SLOW: and now");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.includes("Hello SLOW: and now")),
+        "the second reply never finished",
+        30_000,
+      );
+      // The page may still be on its way down when the reply lands.
+      await waitFor(
+        () => scroller("read"),
+        (distance) => distance >= 0 && distance < 80,
+        "sending did not follow the thread again",
+        5_000,
+      );
+    },
+  );
+
+  it(
     "keeps both answers to a consequence on screen at a phone's width",
     { timeout: 120_000 },
     async () => {
@@ -658,6 +740,19 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         "Confirm",
         "Decline",
       ]);
+
+      // The tab says how many are waiting, and is still called Approvals.
+      await waitFor(
+        () =>
+          page.evaluate(
+            () =>
+              document
+                .querySelector('nav[aria-label="Primary"] button[aria-label="Approvals"]')
+                ?.getAttribute("title") ?? "",
+          ),
+        (title) => /^[1-9]\d* waiting$/.test(title),
+        "the Approvals tab does not say how many are waiting",
+      );
 
       // The same ask waits on the Approvals page, which is where a push
       // notification sends the owner.

@@ -2,9 +2,11 @@ import type { CSSProperties } from "react";
 
 import {
   corner,
+  depth,
   elevation,
   identityAccent,
   material,
+  semantic,
   spacing,
   typography,
 } from "../tokens/index.js";
@@ -53,6 +55,48 @@ export interface TabBarProps {
   onSelect: (item: RailItem) => void;
   /** Present only when the all-pages flag is set; opens the sheet of hidden pages. */
   onMore?: () => void;
+  /** How many things wait behind a destination: Approvals' count. */
+  counts?: Partial<Record<RailItem, number>>;
+}
+
+/**
+ * What a destination with something waiting adds to its button: a count over
+ * the icon, and the same count as the button's description. The name stays
+ * the destination's own, so "Approvals" is still what a screen reader and the
+ * Tab key find.
+ */
+export function counted(
+  name: RailItem,
+  count: number | undefined,
+): { props: { "aria-label"?: string; title?: string }; badge: JSX.Element | null } {
+  if (count === undefined || count <= 0) {
+    return { props: {}, badge: null };
+  }
+
+  return {
+    props: { "aria-label": name, title: `${String(count)} waiting` },
+    badge: (
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          top: 4,
+          left: "calc(50% + 6px)",
+          minWidth: 16,
+          height: 16,
+          padding: "0 4px",
+          boxSizing: "border-box",
+          borderRadius: 8,
+          background: semantic.approval,
+          color: depth.floor,
+          font: `700 10px/16px ${typography.family}`,
+          textAlign: "center",
+        }}
+      >
+        {count > 99 ? "99+" : String(count)}
+      </span>
+    ),
+  };
 }
 
 const buttonStyle = {
@@ -92,7 +136,7 @@ function tabStyle(isActive: boolean): CSSProperties {
   };
 }
 
-export function TabBar({ active, onSelect, onMore }: TabBarProps): JSX.Element {
+export function TabBar({ active, onSelect, onMore, counts }: TabBarProps): JSX.Element {
   // A hidden page has no tab of its own, so More stands in for it: the bar
   // must always show where the owner is.
   const moreActive = (HIDDEN_ITEMS as readonly RailItem[]).includes(active);
@@ -121,19 +165,22 @@ export function TabBar({ active, onSelect, onMore }: TabBarProps): JSX.Element {
     >
       {NAV_ITEMS.map((item) => {
         const isActive = item === active;
+        const { props, badge } = counted(item, counts?.[item]);
 
         return (
           <button
             key={item}
             type="button"
             aria-current={isActive ? "page" : undefined}
+            {...props}
             onClick={() => {
               onSelect(item);
             }}
-            style={tabStyle(isActive)}
+            style={{ ...tabStyle(isActive), position: "relative" }}
           >
             <NavIcon item={item} />
             {item}
+            {badge}
           </button>
         );
       })}
