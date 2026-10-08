@@ -41,6 +41,7 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   "file.list": 200,
   /** A heartbeat every ten seconds while bytes flow: hours of film. */
   "file.read": 2_000,
+  "session.list": 200,
 };
 
 /** In-flight jobs the core will track frames for on one connection. */

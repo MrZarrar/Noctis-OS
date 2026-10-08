@@ -1,14 +1,31 @@
 import type {
   CanUseTool,
   HookJSONOutput,
+  ListSessionsOptions,
   Options,
   PermissionResult,
   SDKMessage,
+  SDKSessionInfo,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { createSdkMcpServer, query as sdkQuery, tool } from "@anthropic-ai/claude-agent-sdk";
-import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
-import { RuntimeDelegationSchema, RuntimeProposalSchema } from "@noctis/contracts";
+import {
+  createSdkMcpServer,
+  listSessions as sdkListSessions,
+  query as sdkQuery,
+  tool,
+} from "@anthropic-ai/claude-agent-sdk";
+import type {
+  ExternalSession,
+  RuntimeAsk,
+  RuntimeItem,
+  RuntimeProbe,
+  RuntimeTurnEvidence,
+} from "@noctis/contracts";
+import {
+  MAX_LISTED_SESSIONS,
+  RuntimeDelegationSchema,
+  RuntimeProposalSchema,
+} from "@noctis/contracts";
 import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
@@ -47,9 +64,15 @@ export type ClaudeQuery = (params: {
   options?: Options;
 }) => AsyncIterable<SDKMessage>;
 
+export type ClaudeListSessions = (
+  options: ListSessionsOptions,
+) => Promise<Array<Pick<SDKSessionInfo, "sessionId" | "summary" | "lastModified" | "customTitle">>>;
+
 export interface ClaudeRuntimeOptions {
   /** The SDK's `query`; tests hand in a scripted generator. */
   query?: ClaudeQuery;
+  /** The SDK's `listSessions`; tests hand in a fixed list. */
+  listSessions?: ClaudeListSessions;
   env?: NodeJS.ProcessEnv;
   /** How long a thread's CLI waits for its next message before it is closed. */
   idleMs?: number;
@@ -497,6 +520,11 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           ? Promise.resolve({ behavior: "deny", message: NO_TURN })
           : proc.current.canUseTool(toolName, toolInput, ctx),
       ...(payload.sessionRef === undefined ? {} : { resume: payload.sessionRef }),
+      // A session started outside Noctis may still be open in VS Code: carry
+      // its context into a copy rather than append to the file it is writing.
+      ...(payload.sessionRef !== undefined && payload.forkSession === true
+        ? { forkSession: true }
+        : {}),
     };
 
     const messages = query({ prompt: inbox, options: sdkOptions });
@@ -802,6 +830,25 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
   return {
     providerId: "claude",
     probe: (): Promise<RuntimeProbe> => probeClaudeInstalled(options.env ?? process.env),
+    /**
+     * The folder's sessions from Claude Code's own store, through the SDK. The
+     * programmatic ones are left out: Noctis's turns run through the SDK, and
+     * those are threads already.
+     */
+    async listSessions(cwd: string): Promise<ExternalSession[]> {
+      const found = await (options.listSessions ?? sdkListSessions)({
+        dir: cwd,
+        limit: MAX_LISTED_SESSIONS,
+        includeProgrammatic: false,
+      });
+
+      return found.map((session) => ({
+        providerId: "claude" as const,
+        sessionRef: clip(session.sessionId, 200),
+        title: clip(session.customTitle ?? session.summary, 200),
+        lastActiveAt: new Date(session.lastModified).toISOString(),
+      }));
+    },
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
 

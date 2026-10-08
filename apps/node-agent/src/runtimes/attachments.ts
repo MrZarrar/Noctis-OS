@@ -53,8 +53,10 @@ export interface StagedAttachments {
 export async function stageAttachments(
   attachments: readonly AttachmentRef[],
   fetchBytes: (id: string) => Promise<Uint8Array>,
+  /** Where the staging directory is made. A test passes its own, so nothing else can touch it. */
+  base = tmpdir(),
 ): Promise<StagedAttachments> {
-  const directory = await mkdtemp(join(tmpdir(), "noctis-attachments-"));
+  const directory = await mkdtemp(join(base, "noctis-attachments-"));
   const files: StagedAttachment[] = [];
 
   const discard = async (): Promise<void> => {

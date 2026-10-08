@@ -1,4 +1,5 @@
 import type {
+  ExternalSession,
   RuntimeAnswer,
   RuntimeAsk,
   RuntimeDelegation,
@@ -67,6 +68,11 @@ export interface Runtime {
   providerId: RuntimeProviderId;
   probe(): Promise<RuntimeProbe>;
   turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence>;
+  /**
+   * The sessions this agent keeps on disk for `cwd`, newest first, started
+   * anywhere but Noctis: what the owner can pick up and continue.
+   */
+  listSessions?(cwd: string, env: NodeJS.ProcessEnv): Promise<ExternalSession[]>;
   /** Ends every process the runtime is keeping open between turns. */
   close?(): void;
 }

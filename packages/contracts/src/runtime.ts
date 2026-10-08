@@ -91,6 +91,12 @@ export const RuntimeTurnPayloadSchema = z
     prompt: z.string().min(1).max(20_000),
     primaryRootGrantId: ShortId,
     sessionRef: z.string().trim().min(1).max(512).optional(),
+    /**
+     * Continue from `sessionRef` in a copy rather than in it: set on the first
+     * turn of a session started outside Noctis, which may still be open in
+     * VS Code or a terminal, so Noctis never writes into it.
+     */
+    forkSession: z.boolean().optional(),
     objectiveId: UuidSchema.optional(),
     objectiveActive: z.boolean(),
     /**

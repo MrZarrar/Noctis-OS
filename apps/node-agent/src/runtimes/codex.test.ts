@@ -105,6 +105,8 @@ interface Scenario {
   /** Runs once `turn/start` has been answered. */
   turn(server: JsonRpcClient, spawned: Spawned): Promise<void>;
   resume?: "ok" | "fail";
+  /** What `thread/list` answers. */
+  threads?: unknown[];
 }
 
 function turnCompleted(spawned: Spawned, status: string): unknown {
@@ -153,6 +155,12 @@ function fakeAppServer(scenario: Scenario): { spawn: CodexSpawn; spawned: Spawne
           record.threadId = (params as { threadId: string }).threadId;
 
           return Promise.resolve({ thread: { id: record.threadId } });
+        case "thread/fork":
+          record.threadId = "thread-fork";
+
+          return Promise.resolve({ thread: { id: record.threadId } });
+        case "thread/list":
+          return Promise.resolve({ data: scenario.threads ?? [], nextCursor: null });
         case "turn/start":
           setTimeout(() => void scenario.turn(server, record), 0);
 
@@ -585,6 +593,55 @@ describe("the Codex App Server runtime", () => {
     ]);
     expect(spawned[0]?.requests.has("thread/start")).toBe(false);
     expect(evidence.sessionRef).toBe("thread-9");
+  });
+
+  it("forks a thread started outside Noctis instead of writing into it", async () => {
+    const { runtime: codex, spawned } = runtime({ ...HAPPY, resume: "ok" });
+
+    const evidence = await codex.turn(
+      input({ sessionRef: "thread-9", forkSession: true }),
+      recorder().sink,
+    );
+
+    expect(spawned[0]?.requests.get("thread/fork")).toEqual([
+      expect.objectContaining({ threadId: "thread-9", approvalPolicy: "on-request" }),
+    ]);
+    expect(spawned[0]?.requests.has("thread/resume")).toBe(false);
+    expect(evidence.sessionRef).toBe("thread-fork");
+  });
+
+  it("lists a folder's threads from an app-server it starts and stops for the purpose", async () => {
+    const { runtime: codex, spawned } = runtime({
+      ...HAPPY,
+      threads: [
+        {
+          id: "thread-vscode",
+          name: null,
+          preview: "Draft the cold open",
+          updatedAt: 1_791_480_000,
+          source: "vscode",
+          cwd: "c:\\work",
+        },
+      ],
+    });
+
+    const sessions = await codex.listSessions?.("C:\\work", { PATH: "C:\\bin" });
+
+    expect(sessions).toEqual([
+      {
+        providerId: "codex",
+        sessionRef: "thread-vscode",
+        title: "Draft the cold open",
+        lastActiveAt: new Date(1_791_480_000 * 1000).toISOString(),
+        source: "vscode",
+      },
+    ]);
+    // VS Code records the drive in lower case; the filter is an exact match.
+    expect(spawned[0]?.requests.get("thread/list")).toEqual([
+      expect.objectContaining({ cwd: ["C:\\work", "c:\\work"] }),
+    ]);
+    expect(spawned[0]?.args).not.toContain("mcp_servers.noctis.command");
+    expect(spawned[0]?.child.killed).toBe(true);
   });
 
   it("falls back to a fresh thread when the resume fails, and says so", async () => {

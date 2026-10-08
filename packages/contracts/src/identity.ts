@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ConversationalIdentityIdSchema, ProtocolIdSchema } from "./enums.js";
 import { RevisionSchema, UtcTimestampSchema, UuidSchema } from "./primitives.js";
+import { RuntimeProviderIdSchema } from "./runtime.js";
 
 export const IdentityProfileSchema = z
   .object({
@@ -20,6 +21,17 @@ export const ConversationThreadSchema = z
     /** Set on a thread another agent started with `noctis_delegate`, and on nothing else. */
     parentThreadId: UuidSchema.optional(),
     parentTurnId: UuidSchema.optional(),
+    /**
+     * `free` is the identity's one free-chat thread (and an Objective's, and a
+     * delegated child). `named` is one the owner opened: a new conversation, or
+     * a session started outside Noctis and continued here.
+     */
+    kind: z.enum(["free", "named"]).default("free"),
+    title: z.string().max(200).optional(),
+    /** Where a named thread runs. Absent means chosen per message, as before. */
+    nodeId: UuidSchema.optional(),
+    rootGrantId: z.string().trim().min(1).max(128).optional(),
+    providerId: RuntimeProviderIdSchema.optional(),
     activeObjectiveId: UuidSchema.optional(),
     revision: RevisionSchema,
     createdAt: UtcTimestampSchema,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -55,17 +55,25 @@ describe("stageAttachments", () => {
   });
 
   it("leaves no directory behind when one file of several fails", async () => {
-    const before = readdirSync(tmpdir()).filter((name) => name.startsWith(PREFIX)).length;
+    // A base of its own: counting the shared temp directory raced every other
+    // suite staging attachments in parallel, and failed whenever one did.
+    const base = mkdtempSync(join(tmpdir(), "noctis-attachments-test-"));
 
-    // The first file lands, the second does not match its checksum. Without the
-    // rollback the turn would fail *and* leave the first file on disk forever.
-    await expect(
-      stageAttachments([ref("a.png", BYTES), ref("b.png", new Uint8Array([7]))], () =>
-        Promise.resolve(BYTES),
-      ),
-    ).rejects.toBeInstanceOf(AdapterRefused);
+    try {
+      // The first file lands, the second does not match its checksum. Without the
+      // rollback the turn would fail *and* leave the first file on disk forever.
+      await expect(
+        stageAttachments(
+          [ref("a.png", BYTES), ref("b.png", new Uint8Array([7]))],
+          () => Promise.resolve(BYTES),
+          base,
+        ),
+      ).rejects.toBeInstanceOf(AdapterRefused);
 
-    expect(readdirSync(tmpdir()).filter((name) => name.startsWith(PREFIX))).toHaveLength(before);
+      expect(readdirSync(base).filter((name) => name.startsWith(PREFIX))).toEqual([]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

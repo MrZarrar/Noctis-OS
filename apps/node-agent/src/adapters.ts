@@ -21,7 +21,9 @@ import {
   FileSearchConstraintsSchema,
   FileSearchPayloadSchema,
   MAX_FILE_LIST_ENTRIES,
+  MAX_LISTED_SESSIONS,
   RuntimeGrantConstraintsSchema,
+  SessionListPayloadSchema,
   RuntimeTurnEvidenceSchema,
   RuntimeTurnPayloadSchema,
   VerificationNoopPayloadSchema,
@@ -332,19 +334,39 @@ const runtimeTurn: Adapter = async (payload, context) => {
  * climbs; this still resolves every link and insists the result lands inside
  * the real root, because a junction inside a shared folder points anywhere.
  */
+/** A shared folder as granted, with every agent it is shared with. */
+function sharedFolder(
+  grants: readonly CapabilityGrant[],
+  rootGrantId: string,
+): { path: string; providers: RuntimeProviderId[] } | undefined {
+  let path: string | undefined;
+  const providers = new Set<RuntimeProviderId>();
+
+  for (const grant of grants) {
+    const parsed =
+      grant.capability === "runtime.turn" && grant.revokedAt === undefined
+        ? RuntimeGrantConstraintsSchema.safeParse(grant.constraints)
+        : undefined;
+    const root =
+      parsed?.success === true
+        ? parsed.data.roots.find((r) => r.grantId === rootGrantId)
+        : undefined;
+
+    if (parsed?.success === true && root !== undefined) {
+      path ??= root.path;
+      parsed.data.providers.forEach((provider) => providers.add(provider));
+    }
+  }
+
+  return path === undefined ? undefined : { path, providers: [...providers] };
+}
+
 async function resolveInSharedFolder(
   grants: readonly CapabilityGrant[],
   rootGrantId: string,
   relativePath: string,
 ): Promise<string> {
-  const root = grants
-    .filter((grant) => grant.capability === "runtime.turn" && grant.revokedAt === undefined)
-    .flatMap((grant) => {
-      const parsed = RuntimeGrantConstraintsSchema.safeParse(grant.constraints);
-
-      return parsed.success ? parsed.data.roots : [];
-    })
-    .find((candidate) => candidate.grantId === rootGrantId);
+  const root = sharedFolder(grants, rootGrantId);
 
   if (root === undefined) {
     throw new AdapterRefused(`no shared folder ${rootGrantId}`);
@@ -463,6 +485,32 @@ const fileRead: Adapter = async (payload, context) => {
 };
 
 /**
+ * The sessions each agent the folder is shared with keeps for it, started in
+ * VS Code, a terminal or anywhere else, newest first. Asked about the real
+ * path, because that is what the agents' own stores are keyed by. One agent
+ * whose store cannot be read leaves the other's list standing.
+ */
+const sessionList: Adapter = async (payload, context) => {
+  const request = SessionListPayloadSchema.parse(payload);
+  const folder = sharedFolder(context.grants, request.rootGrantId);
+  const real = await resolveInSharedFolder(context.grants, request.rootGrantId, "");
+  const listed = await Promise.allSettled(
+    (folder?.providers ?? []).map(
+      (provider) =>
+        context.runtimes[provider]?.listSessions?.(real, childEnvironment(context.env)) ??
+        Promise.resolve([]),
+    ),
+  );
+
+  return {
+    sessions: listed
+      .flatMap((outcome) => (outcome.status === "fulfilled" ? outcome.value : []))
+      .sort((left, right) => right.lastActiveAt.localeCompare(left.lastActiveAt))
+      .slice(0, MAX_LISTED_SESSIONS),
+  };
+};
+
+/**
  * Every capability this agent can execute. A job naming anything else is refused
  * before it runs, so the set of things a node can do is this object, not whatever
  * the core happens to send.
@@ -474,4 +522,5 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "runtime.turn": runtimeTurn,
   "file.list": fileList,
   "file.read": fileRead,
+  "session.list": sessionList,
 };

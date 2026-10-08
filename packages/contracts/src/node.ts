@@ -16,6 +16,7 @@ import {
   RuntimeDeltaSchema,
   RuntimeItemSchema,
   RuntimeProbeSchema,
+  RuntimeProviderIdSchema,
   RuntimeTurnEvidenceSchema,
   RuntimeTurnPayloadSchema,
 } from "./runtime.js";
@@ -98,6 +99,8 @@ export const NODE_CAPABILITIES = [
   /** v1 S4: the owner browsing and opening files in a granted root. */
   "file.list",
   "file.read",
+  /** The agent sessions a shared folder has, started anywhere: VS Code, a terminal, Noctis. */
+  "session.list",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -123,6 +126,7 @@ export const CAPABILITY_OPERATION_CLASS = {
   "runtime.turn": "read_inspect",
   "file.list": "read_inspect",
   "file.read": "read_inspect",
+  "session.list": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
 /**
@@ -133,7 +137,7 @@ export const CAPABILITY_OPERATION_CLASS = {
  * is one list of shared folders per PC rather than two that drift apart.
  */
 const GRANT_ALSO_COVERS: Partial<Record<NodeCapability, readonly NodeCapability[]>> = {
-  "runtime.turn": ["file.list", "file.read"],
+  "runtime.turn": ["file.list", "file.read", "session.list"],
 };
 
 /** Whether a grant of `granted` lets a node run a job of `capability`. */
@@ -256,6 +260,31 @@ export const FileReadEvidenceSchema = z
   .object({ sizeBytes: z.int().nonnegative(), sentBytes: z.int().nonnegative() })
   .strict();
 
+export const SessionListPayloadSchema = z
+  .object({ rootGrantId: z.string().trim().min(1).max(128) })
+  .strict();
+
+/** The newest this many, across every agent the node runs. */
+export const MAX_LISTED_SESSIONS = 40;
+
+/** One session an agent keeps on disk for a folder, enough to recognise and resume it. */
+export const ExternalSessionSchema = z
+  .object({
+    providerId: RuntimeProviderIdSchema,
+    /** Claude's session id or Codex's thread id: what `resume` takes. */
+    sessionRef: z.string().trim().min(1).max(200),
+    /** The agent's own title, else the first prompt. */
+    title: z.string().max(200),
+    lastActiveAt: UtcTimestampSchema,
+    /** Where it was started, when the agent records it ("vscode", "cli"). */
+    source: z.string().max(64).optional(),
+  })
+  .strict();
+
+export const SessionListEvidenceSchema = z
+  .object({ sessions: z.array(ExternalSessionSchema).max(MAX_LISTED_SESSIONS) })
+  .strict();
+
 export const VerificationNoopPayloadSchema = z
   .object({ note: z.string().trim().max(200).optional() })
   .strict();
@@ -283,6 +312,7 @@ export const CAPABILITY_CONTRACTS = {
   "runtime.turn": { payload: RuntimeTurnPayloadSchema, evidence: RuntimeTurnEvidenceSchema },
   "file.list": { payload: FileListPayloadSchema, evidence: FileListEvidenceSchema },
   "file.read": { payload: FileReadPayloadSchema, evidence: FileReadEvidenceSchema },
+  "session.list": { payload: SessionListPayloadSchema, evidence: SessionListEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**
@@ -468,3 +498,4 @@ export type FileSearchConstraints = z.infer<typeof FileSearchConstraintsSchema>;
 export type FileSearchPayload = z.infer<typeof FileSearchPayloadSchema>;
 export type FileListEvidence = z.infer<typeof FileListEvidenceSchema>;
 export type FileReadPayload = z.infer<typeof FileReadPayloadSchema>;
+export type ExternalSession = z.infer<typeof ExternalSessionSchema>;

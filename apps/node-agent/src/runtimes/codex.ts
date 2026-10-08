@@ -5,12 +5,14 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import type {
+  ExternalSession,
   RuntimeAsk,
   RuntimeItem,
   RuntimeItemStatus,
   RuntimeProbe,
   RuntimeTurnEvidence,
 } from "@noctis/contracts";
+import { MAX_LISTED_SESSIONS } from "@noctis/contracts";
 import { classifyAsk } from "@noctis/domain";
 import { z } from "zod";
 
@@ -131,6 +133,36 @@ const TokenUsageSchema = z
   })
   .loose();
 const ThreadResponseSchema = z.object({ thread: z.object({ id: z.string() }).loose() }).loose();
+const ThreadListResponseSchema = z
+  .object({
+    data: z.array(
+      z
+        .object({
+          id: z.string(),
+          name: z.string().nullish(),
+          preview: z.string().nullish(),
+          /** Seconds. */
+          updatedAt: z.number(),
+          source: z.unknown().optional(),
+        })
+        .loose(),
+    ),
+  })
+  .loose();
+
+/** How long a listing may take before the folder is reported as having no Codex threads. */
+const LIST_TIMEOUT_MS = 15_000;
+
+/**
+ * The spellings of a Windows path a Codex client may have recorded. The
+ * `thread/list` filter is an exact match, and VS Code writes the drive letter
+ * in lower case where Noctis's `realpath` writes it in upper.
+ */
+function cwdSpellings(cwd: string): string[] {
+  return /^[A-Za-z]:/.test(cwd)
+    ? [...new Set([cwd[0]?.toUpperCase() + cwd.slice(1), cwd[0]?.toLowerCase() + cwd.slice(1)])]
+    : [cwd];
+}
 const TurnResponseSchema = z.object({ turn: z.object({ id: z.string() }).loose() }).loose();
 const CommandApprovalSchema = z
   .object({
@@ -773,9 +805,13 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           };
 
           if (payload.sessionRef !== undefined) {
+            // A thread started outside Noctis is continued in a fork, so a
+            // VS Code window that still has it open is never written under.
+            const method = payload.forkSession === true ? "thread/fork" : "thread/resume";
+
             try {
               proc.threadId = ThreadResponseSchema.parse(
-                await rpc.request("thread/resume", { threadId: payload.sessionRef, ...thread }),
+                await rpc.request(method, { threadId: payload.sessionRef, ...thread }),
               ).thread.id;
             } catch {
               emit({
@@ -822,9 +858,70 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     });
   }
 
+  /**
+   * The folder's Codex threads, from an app-server started for this and
+   * stopped after it: no model, no sandbox, no Noctis MCP server, because it
+   * runs no turn. Codex's default source filter already leaves out the
+   * threads Noctis made through its own app-server.
+   */
+  async function listSessions(cwd: string, env: NodeJS.ProcessEnv): Promise<ExternalSession[]> {
+    const command = options.command ?? resolveCodexCommand({ env });
+
+    if (command === undefined) {
+      return [];
+    }
+
+    const child = spawn(command, ["app-server", "--listen", "stdio://"], {
+      cwd,
+      env: childEnvironment(env),
+    });
+    const rpc = createJsonRpcClient({ input: child.stdout, output: child.stdin });
+    let timer: NodeJS.Timeout | undefined;
+
+    try {
+      const listed = await Promise.race([
+        (async () => {
+          await rpc.request("initialize", {
+            clientInfo: { name: "noctis-node-agent", title: null, version: AGENT_VERSION },
+            capabilities: null,
+          });
+
+          return ThreadListResponseSchema.parse(
+            await rpc.request("thread/list", {
+              cwd: cwdSpellings(cwd),
+              limit: MAX_LISTED_SESSIONS,
+            }),
+          );
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("codex thread/list timed out")),
+            LIST_TIMEOUT_MS,
+          );
+        }),
+      ]);
+
+      return listed.data.map((thread) => ({
+        providerId: "codex" as const,
+        sessionRef: clip(thread.id, 200),
+        title: clip(thread.name ?? thread.preview ?? "Untitled Codex thread", 200),
+        lastActiveAt: new Date(thread.updatedAt * 1000).toISOString(),
+        ...(typeof thread.source === "string" ? { source: clip(thread.source, 64) } : {}),
+      }));
+    } finally {
+      clearTimeout(timer);
+      rpc.close();
+
+      if (child.exitCode === null) {
+        child.kill();
+      }
+    }
+  }
+
   return {
     providerId: "codex",
     probe: (): Promise<RuntimeProbe> => probeCodexInstalled(options.env ?? process.env),
+    listSessions,
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
       const command = options.command ?? resolveCodexCommand({ env: input.env });

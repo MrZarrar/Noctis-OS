@@ -318,6 +318,59 @@ describe("the Claude Agent SDK runtime", () => {
     expect(calls[0]?.options?.resume).toBe(SESSION);
   });
 
+  it("forks a session started outside Noctis instead of writing into it", async () => {
+    const { query, calls } = scripted(list(init(), result()));
+
+    await createClaudeRuntime({ query }).turn(
+      input({ sessionRef: SESSION, forkSession: true }),
+      recorder().sink,
+    );
+
+    expect(calls[0]?.options).toMatchObject({ resume: SESSION, forkSession: true });
+  });
+
+  it("lists the folder's own sessions, not the ones programs started", async () => {
+    const asked: unknown[] = [];
+    const runtime = createClaudeRuntime({
+      listSessions: (options) => {
+        asked.push(options);
+
+        return Promise.resolve([
+          {
+            sessionId: "2d234a2a-965d-4952-9497-73754e13c865",
+            summary: "Video script refresh",
+            lastModified: Date.parse("2026-10-08T15:21:21.567Z"),
+          },
+          {
+            sessionId: "9f9a28b6-53d6-4554-b76b-5ffb3631062c",
+            summary: "auto summary",
+            customTitle: "Resolve MCP",
+            lastModified: Date.parse("2026-10-08T10:40:26.119Z"),
+          },
+        ]);
+      },
+    });
+
+    expect(await runtime.listSessions?.("C:\\work", {})).toEqual([
+      {
+        providerId: "claude",
+        sessionRef: "2d234a2a-965d-4952-9497-73754e13c865",
+        title: "Video script refresh",
+        lastActiveAt: "2026-10-08T15:21:21.567Z",
+      },
+      {
+        providerId: "claude",
+        sessionRef: "9f9a28b6-53d6-4554-b76b-5ffb3631062c",
+        title: "Resolve MCP",
+        lastActiveAt: "2026-10-08T10:40:26.119Z",
+      },
+    ]);
+    // Noctis's own turns run through the SDK too; those are threads already.
+    expect(asked).toEqual([
+      expect.objectContaining({ dir: "C:\\work", includeProgrammatic: false }),
+    ]);
+  });
+
   it("refuses an environment that still carries a billing key", async () => {
     const { query, calls } = scripted(list(init(), result()));
 

@@ -26,7 +26,7 @@ import {
   UtcTimestampSchema,
   UuidSchema,
 } from "./primitives.js";
-import { ModelRefSchema } from "./runtime.js";
+import { ModelRefSchema, RuntimeProviderIdSchema } from "./runtime.js";
 import { UnavailableSemanticsSchema } from "./source.js";
 import { SurfaceDisplaySchema, SurfaceRegionSchema, SurfaceSizeSchema } from "./surface.js";
 
@@ -122,6 +122,23 @@ export const RequestAuthorityCommandSchema = z
 /* Phase 10: conversational turns on spawned runtimes.                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Continue a session an agent keeps on a PC — started in VS Code, a terminal or
+ * anywhere else — as a Noctis thread. The thread runs there and nowhere else:
+ * that PC, that shared folder, that agent.
+ */
+export const AdoptRuntimeSessionCommandSchema = z
+  .object({
+    ...CommandBase,
+    identityId: ConversationalIdentityIdSchema,
+    nodeId: UuidSchema,
+    rootGrantId: z.string().trim().min(1).max(128),
+    providerId: RuntimeProviderIdSchema,
+    sessionRef: z.string().trim().min(1).max(200),
+    title: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
 export const SendConversationMessageCommandSchema = z
   .object({
     ...CommandBase,
@@ -166,6 +183,7 @@ export const SetIdentityDefaultModelCommandSchema = z
   .strict();
 
 export type SendConversationMessageCommand = z.infer<typeof SendConversationMessageCommandSchema>;
+export type AdoptRuntimeSessionCommand = z.infer<typeof AdoptRuntimeSessionCommandSchema>;
 export type CancelConversationTurnCommand = z.infer<typeof CancelConversationTurnCommandSchema>;
 export type DeclineAuthorityCommand = z.infer<typeof DeclineAuthorityCommandSchema>;
 export type SetIdentityDefaultModelCommand = z.infer<typeof SetIdentityDefaultModelCommandSchema>;

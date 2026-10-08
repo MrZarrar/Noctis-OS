@@ -1,14 +1,19 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 
 import type { CapabilityGrant } from "@noctis/contracts";
-import { FileListEvidenceSchema, FileReadEvidenceSchema } from "@noctis/contracts";
+import {
+  FileListEvidenceSchema,
+  FileReadEvidenceSchema,
+  SessionListEvidenceSchema,
+} from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AdapterContext, StreamedFile } from "./adapters.js";
 import { ADAPTERS, AdapterRefused } from "./adapters.js";
+import type { Runtime } from "./runtimes/Runtime.js";
 
 let scratch: string | undefined;
 
@@ -145,6 +150,100 @@ describe("file.list", () => {
     await expect(
       ADAPTERS["file.list"]({ rootGrantId: "tu", relativePath: "../outside" }, context(root)),
     ).rejects.toThrow();
+  });
+});
+
+describe("session.list", () => {
+  function agentsGrant(root: string): CapabilityGrant {
+    return runtimeGrant(root, {
+      constraints: {
+        providers: ["claude", "codex"],
+        roots: [{ grantId: "tu", path: root, mode: "write", localOnly: false }],
+      },
+    });
+  }
+
+  function listing(providerId: "claude" | "codex", at: string, fails = false): Runtime {
+    return {
+      providerId,
+      probe: () => Promise.reject(new Error("not probed here")),
+      turn: () => Promise.reject(new Error("no turn here")),
+      listSessions: (cwd) =>
+        fails
+          ? Promise.reject(new Error(`${providerId} store unreadable`))
+          : Promise.resolve([
+              {
+                providerId,
+                sessionRef: `${providerId}-1`,
+                title: `${providerId} in ${cwd}`,
+                lastActiveAt: at,
+              },
+            ]),
+    };
+  }
+
+  it("lists every agent's sessions for the shared folder, newest first", async () => {
+    const root = channel();
+    const evidence = SessionListEvidenceSchema.parse(
+      await ADAPTERS["session.list"](
+        { rootGrantId: "tu" },
+        context(root, {
+          grants: [agentsGrant(root)],
+          runtimes: {
+            claude: listing("claude", "2026-10-08T10:00:00.000Z"),
+            codex: listing("codex", "2026-10-08T12:00:00.000Z"),
+          },
+        }),
+      ),
+    );
+
+    expect(evidence.sessions.map((session) => session.sessionRef)).toEqual(["codex-1", "claude-1"]);
+    // Asked about the real folder, the one the agents' own stores are keyed by.
+    expect(evidence.sessions[0]?.title).toBe(`codex in ${realpathSync(root)}`);
+  });
+
+  it("still lists one agent's sessions when the other's store cannot be read", async () => {
+    const root = channel();
+    const evidence = SessionListEvidenceSchema.parse(
+      await ADAPTERS["session.list"](
+        { rootGrantId: "tu" },
+        context(root, {
+          grants: [agentsGrant(root)],
+          runtimes: {
+            claude: listing("claude", "2026-10-08T10:00:00.000Z"),
+            codex: listing("codex", "2026-10-08T12:00:00.000Z", true),
+          },
+        }),
+      ),
+    );
+
+    expect(evidence.sessions.map((session) => session.sessionRef)).toEqual(["claude-1"]);
+  });
+
+  it("asks only the agents the folder is shared with", async () => {
+    const root = channel();
+    const evidence = SessionListEvidenceSchema.parse(
+      await ADAPTERS["session.list"](
+        { rootGrantId: "tu" },
+        context(root, {
+          // runtimeGrant shares the folder with Claude alone.
+          runtimes: {
+            claude: listing("claude", "2026-10-08T10:00:00.000Z"),
+            codex: listing("codex", "2026-10-08T12:00:00.000Z"),
+          },
+        }),
+      ),
+    );
+
+    expect(evidence.sessions.map((session) => session.providerId)).toEqual(["claude"]);
+  });
+
+  it("refuses a folder nobody shared", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["session.list"]({ rootGrantId: "other" }, context(root)),
+    ).rejects.toBeInstanceOf(AdapterRefused);
   });
 });
 
