@@ -84,24 +84,31 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
       return [];
     }
 
+    let text: string;
+
     try {
-      return TranscriptSchema.parse(JSON.parse(await readFile(transcriptPath(sessionRef), "utf8")));
+      text = await readFile(transcriptPath(sessionRef), "utf8");
     } catch (error) {
-      if (error instanceof AdapterRefused) {
-        throw error;
+      // A thread whose transcript is gone starts again, as a failed resume does elsewhere.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
       }
 
-      // A thread whose transcript is gone starts again, as a failed resume does elsewhere.
-      return [];
+      throw error;
     }
+
+    // One that is there but unreadable fails the turn: the next save would overwrite it.
+    return TranscriptSchema.parse(JSON.parse(text));
   }
 
   async function save(sessionRef: string, messages: Message[]): Promise<void> {
     const path = transcriptPath(sessionRef);
 
     await mkdir(options.sessionsDir, { recursive: true });
-    await writeFile(`${path}.tmp`, JSON.stringify(messages));
-    await rename(`${path}.tmp`, path);
+    const temporary = `${path}.${randomUUID()}.tmp`;
+
+    await writeFile(temporary, JSON.stringify(messages));
+    await rename(temporary, path);
   }
 
   async function probe(): Promise<RuntimeProbe> {
@@ -120,6 +127,8 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
     try {
       const response = await fetch(`${base}/models`, {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        // Loopback is checked on this URL only; a redirect would lead elsewhere.
+        redirect: "error",
       });
       const models = ModelsSchema.parse(await response.json()).data.slice(0, 64);
 
@@ -138,7 +147,28 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
     }
   }
 
-  async function turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
+  /** A conversation's turns one at a time, so two never read the same history and both save. */
+  const queues = new Map<string, Promise<unknown>>();
+
+  function turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
+    const key = input.payload.sessionRef ?? input.payload.threadId;
+    const next = (queues.get(key) ?? Promise.resolve()).then(
+      () => runTurn(input, sink),
+      () => runTurn(input, sink),
+    );
+    const forget = (): void => {
+      if (queues.get(key) === next) {
+        queues.delete(key);
+      }
+    };
+
+    queues.set(key, next);
+    next.then(forget, forget);
+
+    return next;
+  }
+
+  async function runTurn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
     const { payload, signal } = input;
 
     if (!loopback) {
@@ -180,6 +210,7 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
           stream_options: { include_usage: true },
         }),
         signal,
+        redirect: "error",
       });
 
       if (!response.ok || response.body === null) {
@@ -188,6 +219,7 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
 
       const decoder = new TextDecoder();
       let pending = "";
+      let done = false;
 
       for await (const bytes of response.body as AsyncIterable<Uint8Array>) {
         pending += decoder.decode(bytes, { stream: true });
@@ -199,7 +231,12 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
         for (const line of lines) {
           const data = line.startsWith("data:") ? line.slice(5).trim() : "";
 
-          if (data === "" || data === "[DONE]") {
+          if (data === "[DONE]") {
+            done = true;
+            break;
+          }
+
+          if (data === "") {
             continue;
           }
 
@@ -221,6 +258,14 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
             }
           }
         }
+
+        if (done) {
+          break;
+        }
+      }
+
+      if (!done) {
+        throw new Error("the local model server ended before it finished the reply");
       }
     } catch (error) {
       if (signal.aborted) {

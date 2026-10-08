@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -26,7 +26,7 @@ let server: Server;
 let base: string;
 let asked: Asked[];
 /** What the next completion streams, one SSE chunk each; `hang` never finishes. */
-let reply: string[] | "hang";
+let reply: string[] | "hang" | "redirect" | "cut";
 let scratch: string;
 
 beforeEach(async () => {
@@ -44,6 +44,19 @@ beforeEach(async () => {
 
     void text(req).then((body) => {
       asked.push(JSON.parse(body) as Asked);
+
+      if (reply === "redirect") {
+        res.writeHead(307, { location: "http://192.0.2.1/v1/chat/completions" });
+        res.end();
+        return;
+      }
+
+      if (reply === "cut") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: "Hal" } }] })}\n\n`);
+        return;
+      }
+
       res.writeHead(200, { "content-type": "text/event-stream" });
 
       if (reply === "hang") {
@@ -177,6 +190,51 @@ describe("the local model runtime", () => {
       { role: "assistant", content: "Hello" },
       { role: "user", content: "and again" },
     ]);
+  });
+
+  it("does not follow a redirect off the machine", async () => {
+    reply = "redirect";
+
+    await expect(
+      createLocalRuntime({ baseUrl: base, sessionsDir: scratch }).turn(input(), recorder().sink),
+    ).rejects.toThrow();
+  });
+
+  it("fails a reply the server cut short instead of keeping half of it", async () => {
+    reply = "cut";
+
+    await expect(
+      createLocalRuntime({ baseUrl: base, sessionsDir: scratch }).turn(input(), recorder().sink),
+    ).rejects.toThrow(/ended before/);
+  });
+
+  it("refuses to overwrite a transcript it cannot read", async () => {
+    const sessionRef = "0199a000-0000-7000-8000-00000000abcd";
+
+    writeFileSync(join(scratch, `${sessionRef}.json`), "{ not json");
+
+    await expect(
+      createLocalRuntime({ baseUrl: base, sessionsDir: scratch }).turn(
+        input({ sessionRef }),
+        recorder().sink,
+      ),
+    ).rejects.toThrow();
+    expect(readFileSync(join(scratch, `${sessionRef}.json`), "utf8")).toBe("{ not json");
+  });
+
+  it("runs one turn at a time per conversation, so neither exchange is lost", async () => {
+    const runtime = createLocalRuntime({ baseUrl: base, sessionsDir: scratch });
+    const first = RuntimeTurnEvidenceSchema.parse(await runtime.turn(input(), recorder().sink));
+    const sessionRef = first.sessionRef ?? "";
+
+    await Promise.all([
+      runtime.turn(input({ prompt: "two", sessionRef }), recorder().sink),
+      runtime.turn(input({ prompt: "three", sessionRef }), recorder().sink),
+    ]);
+
+    const kept = JSON.parse(readFileSync(join(scratch, `${sessionRef}.json`), "utf8")) as unknown[];
+
+    expect(kept).toHaveLength(6);
   });
 
   it("stops the request when the turn is cancelled", async () => {

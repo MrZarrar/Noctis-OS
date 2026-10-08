@@ -35,13 +35,18 @@ export function useWaitingCount(transport: CoreTransport | undefined): number {
 
     let live = true;
     let close: (() => void) | undefined;
+    /** Only the newest read may set the count: an older answer arriving late is stale. */
+    let latest = 0;
 
     const recount = async (): Promise<void> => {
+      latest += 1;
+
+      const mine = latest;
       const parsed = ApprovalsSchema.safeParse(
         (await transport.request("GET", "/approvals").catch(() => undefined))?.body,
       );
 
-      if (live && parsed.success) {
+      if (live && mine === latest && parsed.success) {
         setCount(parsed.data.approvals.filter(isWaiting).length);
       }
     };
