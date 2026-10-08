@@ -34,6 +34,8 @@ export const ConversationThreadSchema = z
     providerId: RuntimeProviderIdSchema.optional(),
     /** The session a pinned thread continues, as adopted: where its history before Noctis is read. */
     adoptedSessionRef: z.string().trim().min(1).max(200).optional(),
+    /** Off the conversation list until restored. Only a named thread is ever archived. */
+    archivedAt: UtcTimestampSchema.optional(),
     activeObjectiveId: UuidSchema.optional(),
     revision: RevisionSchema,
     createdAt: UtcTimestampSchema,

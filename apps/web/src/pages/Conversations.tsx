@@ -51,6 +51,14 @@ const detailStyle = {
 
 const listStyle = { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 } as const;
 
+/** Beside a row: small, but never under the touch floor. */
+const actionStyle = {
+  ...buttonStyle,
+  minHeight: 44,
+  padding: `0 ${String(spacing.sm)}px`,
+  fontSize: typography.scale.xs,
+} as const;
+
 const AGENTS: Readonly<Record<string, string>> = { claude: "Claude", codex: "Codex" };
 
 function placeLabel(place: RuntimeRootOption): string {
@@ -82,13 +90,18 @@ export function Conversations({
   const [sessions, setSessions] = useState<Session[]>();
   const [problem, setProblem] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [archived, setArchived] = useState(false);
+  /** Bumped after a rename or an archive, so the list reads again. */
+  const [changes, setChanges] = useState(0);
+  const [renaming, setRenaming] = useState<{ id: string; title: string }>();
   const now = Date.now();
 
   useEffect(() => {
     let live = true;
 
+    setConversations(undefined);
     void transport
-      .request("GET", `/conversations?identityId=${identityId}`)
+      .request("GET", `/conversations?identityId=${identityId}${archived ? "&archived=1" : ""}`)
       .then((response) => {
         const parsed = ListSchema.safeParse(response.body);
 
@@ -109,7 +122,7 @@ export function Conversations({
     return () => {
       live = false;
     };
-  }, [transport, identityId]);
+  }, [transport, identityId, archived, changes]);
 
   useEffect(() => {
     if (step.kind !== "sessions") {
@@ -146,31 +159,49 @@ export function Conversations({
     };
   }, [transport, step]);
 
-  /** A command that answers with a thread, which then opens. */
-  async function openCreated(name: string, body: Record<string, unknown>): Promise<void> {
+  /** A command on the owner's behalf. Resolves to the thread it answered with, if it worked. */
+  async function run(name: string, body: Record<string, unknown>): Promise<string | undefined> {
     setBusy(true);
     setProblem(undefined);
 
     try {
       const response = await transport.request("POST", `/commands/${name}`, {
         idempotencyKey: newKey(),
-        identityId,
         ...body,
       });
       const created = CreatedSchema.safeParse(response.body);
 
       if (response.status === 200 && created.success) {
-        onOpen(created.data.id);
-        onClose();
-      } else {
-        const message = (response.body as { error?: { message?: unknown } } | null)?.error?.message;
-
-        setProblem(
-          typeof message === "string" ? message : `The core answered ${String(response.status)}.`,
-        );
+        return created.data.id;
       }
+
+      const message = (response.body as { error?: { message?: unknown } } | null)?.error?.message;
+
+      setProblem(
+        typeof message === "string" ? message : `The core answered ${String(response.status)}.`,
+      );
+
+      return undefined;
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** A command that answers with a new thread, which then opens. */
+  async function openCreated(name: string, body: Record<string, unknown>): Promise<void> {
+    const id = await run(name, { identityId, ...body });
+
+    if (id !== undefined) {
+      onOpen(id);
+      onClose();
+    }
+  }
+
+  /** A change to one conversation, then the list again. */
+  async function change(name: string, body: Record<string, unknown>): Promise<void> {
+    if ((await run(name, body)) !== undefined) {
+      setRenaming(undefined);
+      setChanges((count) => count + 1);
     }
   }
 
@@ -214,6 +245,17 @@ export function Conversations({
             >
               Continue a session
             </button>
+            <button
+              type="button"
+              aria-pressed={archived}
+              onClick={() => {
+                setRenaming(undefined);
+                setArchived(!archived);
+              }}
+              style={buttonStyle}
+            >
+              {archived ? "Show current" : "Show archived"}
+            </button>
           </>
         )}
       </div>
@@ -226,12 +268,14 @@ export function Conversations({
 
       {step.kind === "list" && (
         <>
-          <SectionHeading>Conversations</SectionHeading>
+          <SectionHeading>{archived ? "Archived" : "Conversations"}</SectionHeading>
           {conversations === undefined ? (
             <p style={{ margin: 0, color: typography.color.muted }}>Loading…</p>
           ) : conversations.length === 0 ? (
             <p style={{ margin: 0, color: typography.color.muted }}>
-              Nothing yet. Start a new conversation, or continue a session from one of your PCs.
+              {archived
+                ? "Nothing archived."
+                : "Nothing yet. Start a new conversation, or continue a session from one of your PCs."}
             </p>
           ) : (
             <ul style={listStyle}>
@@ -242,8 +286,53 @@ export function Conversations({
                   conversation.id === currentThreadId ||
                   (conversation.kind === "free" && currentThreadId === undefined);
 
+                if (renaming?.id === conversation.id) {
+                  return (
+                    <li key={conversation.id}>
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void change("conversation.rename_thread", {
+                            threadId: conversation.id,
+                            title: renaming.title,
+                          });
+                        }}
+                        style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
+                      >
+                        <input
+                          aria-label="Conversation name"
+                          value={renaming.title}
+                          maxLength={200}
+                          autoFocus
+                          onChange={(event) =>
+                            setRenaming({ id: conversation.id, title: event.target.value })
+                          }
+                          style={{ ...rowStyle, flex: "1 1 12rem", cursor: "text" }}
+                        />
+                        <button
+                          type="submit"
+                          disabled={busy || renaming.title.trim() === ""}
+                          style={buttonStyle}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRenaming(undefined)}
+                          style={buttonStyle}
+                        >
+                          Cancel
+                        </button>
+                      </form>
+                    </li>
+                  );
+                }
+
                 return (
-                  <li key={conversation.id}>
+                  <li
+                    key={conversation.id}
+                    style={{ display: "flex", gap: spacing.xs, alignItems: "stretch" }}
+                  >
                     <button
                       type="button"
                       aria-label={label}
@@ -254,6 +343,7 @@ export function Conversations({
                       }}
                       style={{
                         ...rowStyle,
+                        minWidth: 0,
                         outline: open ? `2px solid ${identityAccent.vesper.primary}` : "none",
                       }}
                     >
@@ -274,6 +364,34 @@ export function Conversations({
                           : ` · ${conversation.preview}`}
                       </span>
                     </button>
+                    {/* Free chat is where a message with no thread goes: it keeps its name and place. */}
+                    {conversation.kind === "named" && (
+                      <>
+                        <button
+                          type="button"
+                          aria-label={`Rename ${label}`}
+                          disabled={busy}
+                          onClick={() => setRenaming({ id: conversation.id, title: label })}
+                          style={actionStyle}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`${archived ? "Restore" : "Archive"} ${label}`}
+                          disabled={busy}
+                          onClick={() =>
+                            void change("conversation.archive_thread", {
+                              threadId: conversation.id,
+                              archived: !archived,
+                            })
+                          }
+                          style={actionStyle}
+                        >
+                          {archived ? "Restore" : "Archive"}
+                        </button>
+                      </>
+                    )}
                   </li>
                 );
               })}

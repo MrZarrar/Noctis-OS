@@ -1520,4 +1520,59 @@ describe("many conversations", () => {
 
     rmSync(directory, { recursive: true, force: true });
   });
+
+  it("renames a conversation, archives it off the list, and restores it", async () => {
+    const core = await startTestCore();
+    const created = await command(core, "conversation.create_thread", {
+      idempotencyKey: "to-rename",
+      identityId: "vesper",
+    });
+    const threadId = created.body.id as string;
+    const ids = async (query = "") =>
+      (
+        (await read(core, `/conversations?identityId=vesper${query}`)).body.conversations as Body[]
+      ).map((conversation) => conversation.id);
+
+    const renamed = await command(core, "conversation.rename_thread", {
+      idempotencyKey: "rename",
+      threadId,
+      title: "Hook tests",
+    });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body).toMatchObject({ id: threadId, title: "Hook tests" });
+
+    const archived = await command(core, "conversation.archive_thread", {
+      idempotencyKey: "archive",
+      threadId,
+      archived: true,
+    });
+    expect(archived.status).toBe(200);
+    expect(archived.body.archivedAt).toEqual(expect.any(String));
+    expect(await ids()).not.toContain(threadId);
+    expect(await ids("&archived=1")).toEqual([threadId]);
+
+    const restored = await command(core, "conversation.archive_thread", {
+      idempotencyKey: "restore",
+      threadId,
+      archived: false,
+    });
+    expect(restored.body.archivedAt).toBe(undefined);
+    expect(await ids()).toContain(threadId);
+    expect(await ids("&archived=1")).toEqual([]);
+
+    // Free chat is where a message with no thread goes: it keeps its name and its place.
+    await setDefault(core);
+    const free = await send(core, "free-chat");
+    for (const [name, extra] of [
+      ["conversation.rename_thread", { title: "Mine" }],
+      ["conversation.archive_thread", { archived: true }],
+    ] as const) {
+      const refused = await command(core, name, {
+        idempotencyKey: `free-${name}`,
+        threadId: free.body.threadId,
+        ...extra,
+      });
+      expect(refused.status).toBe(404);
+    }
+  });
 });

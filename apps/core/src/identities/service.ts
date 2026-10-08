@@ -26,6 +26,7 @@ export type ThreadRow = {
   root_grant_id: string | null;
   provider_id: string | null;
   adopted_session_ref: string | null;
+  archived_at: string | null;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -33,7 +34,8 @@ export type ThreadRow = {
 
 export const THREAD_COLUMNS = `id, identity_id, objective_id, parent_thread_id, parent_turn_id,
                                active_objective_id, kind, title, node_id, root_grant_id,
-                               provider_id, adopted_session_ref, revision, created_at, updated_at`;
+                               provider_id, adopted_session_ref, archived_at, revision,
+                               created_at, updated_at`;
 
 export function toThread(row: ThreadRow): ConversationThread {
   return ConversationThreadSchema.parse({
@@ -49,6 +51,7 @@ export function toThread(row: ThreadRow): ConversationThread {
     ...(row.root_grant_id === null ? {} : { rootGrantId: row.root_grant_id }),
     ...(row.provider_id === null ? {} : { providerId: row.provider_id }),
     ...(row.adopted_session_ref === null ? {} : { adoptedSessionRef: row.adopted_session_ref }),
+    ...(row.archived_at === null ? {} : { archivedAt: row.archived_at }),
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

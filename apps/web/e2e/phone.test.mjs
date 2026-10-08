@@ -510,6 +510,12 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       await page.keyboard.press("Enter");
       await tabTo(page, "New conversation");
       await page.keyboard.press("Enter");
+      // Tabbing while the list is still up runs out of tabs before the composer.
+      await waitFor(
+        readPage,
+        (state) => !state.body.includes("Show archived"),
+        "the new conversation never opened",
+      );
 
       await tabTo(page, "Message Vesper");
       await page.keyboard.type("a fresh topic");
@@ -530,6 +536,85 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         "the list does not show the new conversation beside free chat",
       );
       assert.ok(listed.body.indexOf("a fresh topic") < listed.body.indexOf("Free chat"));
+    },
+  );
+
+  it(
+    "renames a conversation, archives it off the list, and restores it, from the phone",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+
+      await tabTo(page, "Conversations");
+      await page.keyboard.press("Enter");
+      await tabTo(page, "New conversation");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => !state.body.includes("Show archived"),
+        "the new conversation never opened",
+      );
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type("untidy name");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.includes("Hello untidy name")),
+        "the conversation never answered",
+        60_000,
+      );
+
+      await tabTo(page, "Conversations");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Hello untidy name"),
+        "the list never showed the conversation",
+      );
+      // Untitled, it is named by its newest line: the reply.
+      await tabTo(page, "Rename Hello untidy name");
+      await page.keyboard.press("Enter");
+      // The name field takes the focus as it opens: no tabbing to reach it.
+      await waitFor(
+        () => page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? ""),
+        (focused) => focused === "Conversation name",
+        "Rename did not put the focus in the name field",
+      );
+      await page.keyboard.press("Control+A");
+      await page.keyboard.type("Hook ideas");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Hook ideas"),
+        "the conversation was not renamed",
+      );
+
+      await tabTo(page, "Archive Hook ideas");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Free chat") && !state.body.includes("Hook ideas"),
+        "the archived conversation is still on the list",
+      );
+
+      await tabTo(page, "Show archived");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Hook ideas") && !state.body.includes("Free chat"),
+        "the archive does not hold the conversation",
+      );
+      await tabTo(page, "Restore Hook ideas");
+      await page.keyboard.press("Enter");
+      await tabTo(page, "Show current");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.body.includes("Hook ideas") && state.body.includes("Free chat"),
+        "the restored conversation is not back on the list",
+      );
     },
   );
 

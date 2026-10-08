@@ -1,10 +1,14 @@
 import type {
+  ArchiveConversationThreadCommand,
   ConversationalIdentityId,
   ConversationSummary,
   ConversationThread,
+  RenameConversationThreadCommand,
   RuntimeProviderId,
 } from "@noctis/contracts";
 import { ConversationSummarySchema, ConversationThreadSchema } from "@noctis/contracts";
+import type { Result } from "@noctis/domain";
+import { conflict, ok } from "@noctis/domain";
 
 import type { NoctisDatabase } from "../db/connection.js";
 import type { ThreadRow } from "../identities/service.js";
@@ -14,7 +18,8 @@ import {
   THREAD_COLUMNS,
   toThread,
 } from "../identities/service.js";
-import type { Kernel } from "../kernel.js";
+import type { CommandContext, Kernel } from "../kernel.js";
+import { runCommand } from "../kernel.js";
 
 /**
  * 0.12: one runtime thread per Objective plus one free-chat thread per identity.
@@ -65,7 +70,11 @@ const MAX_CONVERSATIONS = 100;
  * named one, newest activity first. Objective and delegated threads are
  * reached from where they belong, not listed here.
  */
-export function listConversations(db: NoctisDatabase, identityId: string): ConversationSummary[] {
+export function listConversations(
+  db: NoctisDatabase,
+  identityId: string,
+  archived = false,
+): ConversationSummary[] {
   const rows = db
     .prepare(
       `SELECT ${THREAD_COLUMNS},
@@ -75,10 +84,11 @@ export function listConversations(db: NoctisDatabase, identityId: string): Conve
                 WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_body
          FROM identity_threads t
         WHERE identity_id = ? AND objective_id IS NULL AND parent_thread_id IS NULL
+          AND (archived_at IS NOT NULL) = ?
         ORDER BY COALESCE(last_at, created_at) DESC, id DESC
         LIMIT ?`,
     )
-    .all(identityId, MAX_CONVERSATIONS) as Array<
+    .all(identityId, archived ? 1 : 0, MAX_CONVERSATIONS) as Array<
     ThreadRow & { last_at: string | null; last_body: string | null }
   >;
 
@@ -88,6 +98,65 @@ export function listConversations(db: NoctisDatabase, identityId: string): Conve
       lastActiveAt: row.last_at ?? row.created_at,
       ...(row.last_body === null ? {} : { preview: row.last_body.slice(0, 200) }),
     }),
+  );
+}
+
+/**
+ * One change to a conversation the owner opened. Free chat is refused as not
+ * found: it is where a message with no thread goes, so it keeps its name and
+ * is never moved off the list.
+ */
+function updateNamedThread(
+  kernel: Kernel,
+  scope: string,
+  key: string,
+  threadId: string,
+  set: { title: string } | { archivedAt: string | null },
+): Result<ConversationThread> {
+  return runCommand<ConversationThread>(kernel, { scope, key, resultId: threadId }, (tx) => {
+    const thread = getThread(tx, threadId);
+
+    if (thread?.kind !== "named") {
+      return conflict({ kind: "not_found", entity: "conversation", id: threadId });
+    }
+
+    const now = new Date(kernel.clock.now()).toISOString();
+
+    tx.prepare(
+      `UPDATE identity_threads
+          SET ${"title" in set ? "title" : "archived_at"} = ?, revision = revision + 1, updated_at = ?
+        WHERE id = ?`,
+    ).run("title" in set ? set.title : set.archivedAt, now, threadId);
+
+    return ok({ value: getThread(tx, threadId) ?? thread, events: [] });
+  });
+}
+
+export function renameThread(
+  kernel: Kernel,
+  _context: CommandContext,
+  command: RenameConversationThreadCommand,
+): Result<ConversationThread> {
+  return updateNamedThread(
+    kernel,
+    "conversation.rename_thread",
+    command.idempotencyKey,
+    command.threadId,
+    { title: command.title },
+  );
+}
+
+export function archiveThread(
+  kernel: Kernel,
+  _context: CommandContext,
+  command: ArchiveConversationThreadCommand,
+): Result<ConversationThread> {
+  return updateNamedThread(
+    kernel,
+    "conversation.archive_thread",
+    command.idempotencyKey,
+    command.threadId,
+    { archivedAt: command.archived ? new Date(kernel.clock.now()).toISOString() : null },
   );
 }
 

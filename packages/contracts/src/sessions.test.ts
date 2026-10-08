@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdoptRuntimeSessionCommandSchema,
+  ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
+  RenameConversationThreadCommandSchema,
 } from "./command.js";
 import { ConversationSummarySchema, ConversationThreadSchema } from "./identity.js";
 import {
@@ -88,6 +90,33 @@ describe("sessions started outside Noctis (v1, after S4)", () => {
         title: "Storyboard pass",
       }).success,
     ).toBe(true);
+  });
+
+  it("renames a conversation and archives or restores it", () => {
+    const threadId = "0199a000-0000-7000-8000-000000000001";
+
+    expect(
+      RenameConversationThreadCommandSchema.safeParse({
+        idempotencyKey: "k",
+        threadId,
+        title: "Storyboard pass",
+      }).success,
+    ).toBe(true);
+    expect(
+      RenameConversationThreadCommandSchema.safeParse({ idempotencyKey: "k", threadId, title: " " })
+        .success,
+    ).toBe(false);
+    expect(
+      ArchiveConversationThreadCommandSchema.safeParse({
+        idempotencyKey: "k",
+        threadId,
+        archived: false,
+      }).success,
+    ).toBe(true);
+    expect(
+      ConversationThreadSchema.parse({ ...THREAD, archivedAt: "2026-10-08T15:21:21.567Z" })
+        .archivedAt,
+    ).toBe("2026-10-08T15:21:21.567Z");
   });
 
   it("summarises a conversation for the list: when it last moved and what was said last", () => {

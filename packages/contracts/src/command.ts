@@ -148,6 +148,24 @@ export const CreateConversationThreadCommandSchema = z
   })
   .strict();
 
+/** Names a conversation the owner opened. Free chat keeps its name. */
+export const RenameConversationThreadCommandSchema = z
+  .object({
+    ...CommandBase,
+    threadId: UuidSchema,
+    title: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
+/** Moves a conversation off the list (`archived: true`) or back onto it. Nothing is deleted. */
+export const ArchiveConversationThreadCommandSchema = z
+  .object({
+    ...CommandBase,
+    threadId: UuidSchema,
+    archived: z.boolean(),
+  })
+  .strict();
+
 export const SendConversationMessageCommandSchema = z
   .object({
     ...CommandBase,
@@ -194,6 +212,10 @@ export const SetIdentityDefaultModelCommandSchema = z
 export type SendConversationMessageCommand = z.infer<typeof SendConversationMessageCommandSchema>;
 export type AdoptRuntimeSessionCommand = z.infer<typeof AdoptRuntimeSessionCommandSchema>;
 export type CreateConversationThreadCommand = z.infer<typeof CreateConversationThreadCommandSchema>;
+export type RenameConversationThreadCommand = z.infer<typeof RenameConversationThreadCommandSchema>;
+export type ArchiveConversationThreadCommand = z.infer<
+  typeof ArchiveConversationThreadCommandSchema
+>;
 export type CancelConversationTurnCommand = z.infer<typeof CancelConversationTurnCommandSchema>;
 export type DeclineAuthorityCommand = z.infer<typeof DeclineAuthorityCommandSchema>;
 export type SetIdentityDefaultModelCommand = z.infer<typeof SetIdentityDefaultModelCommandSchema>;

@@ -3,7 +3,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   ActivateIdentityCommandSchema,
   AdoptRuntimeSessionCommandSchema,
+  ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
+  RenameConversationThreadCommandSchema,
   AttentionStateSchema,
   CancelConversationTurnCommandSchema,
   CancelNodeJobCommandSchema,
@@ -76,10 +78,12 @@ import {
   listTurns,
 } from "../conversation/service.js";
 import {
+  archiveThread,
   findThread,
   getThread,
   listChildThreads,
   listConversations,
+  renameThread,
 } from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
@@ -567,6 +571,16 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     (deps, context, command) => deps.conversation.createThread(context, command),
     (db, id) => getThread(db, id),
   ),
+  "conversation.rename_thread": defineCommand(
+    RenameConversationThreadCommandSchema,
+    renameThread,
+    (db, id) => getThread(db, id),
+  ),
+  "conversation.archive_thread": defineCommand(
+    ArchiveConversationThreadCommandSchema,
+    archiveThread,
+    (db, id) => getThread(db, id),
+  ),
   "conversation.adopt_session": defineDepsCommand(
     AdoptRuntimeSessionCommandSchema,
     (deps, context, command) => deps.conversation.adoptSession(context, command),
@@ -904,7 +918,13 @@ function handleRead(
     return identityId.success
       ? {
           status: 200,
-          body: { conversations: listConversations(deps.kernel.db, identityId.data) },
+          body: {
+            conversations: listConversations(
+              deps.kernel.db,
+              identityId.data,
+              url.searchParams.get("archived") === "1",
+            ),
+          },
         }
       : { status: 400, body: errorBody("invalid_request", "identityId is required") };
   }
