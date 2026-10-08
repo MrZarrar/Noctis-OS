@@ -1,5 +1,8 @@
-01a116ae-1a1a-7273-950e-99e1ed19e08a
+01a116ae-1a1a-7273-950e-99e1ed19e08a  (work PC, mushafzarrar: S5 and S6 assets)
+01a11d61-9ea3-7763-b617-ac4a88dd1726  (home PC, zarrarpc: Jester, 2026-10-08)
 
-Codex session for every Noctis design asset. Continue it with
-`codex exec resume <id> "<follow-up>"`, passing approved assets back with -i.
-Brief: docs/design/codex-brief.md
+Codex sessions for the Noctis design assets, one per PC (a session lives on the PC that ran it).
+Continue the one on the PC you are on with `codex exec resume <id> -`, the follow-up on stdin,
+passing approved assets back with -i. On Windows Codex cannot read repo files (its sandbox fails),
+so pipe the brief's text in rather than pointing at it.
+Briefs: docs/design/codex-brief.md, docs/design/jester-brief.md
