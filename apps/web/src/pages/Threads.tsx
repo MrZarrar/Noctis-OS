@@ -2,6 +2,7 @@ import type { ConversationalIdentityId, RuntimeItem } from "@noctis/contracts";
 import {
   ApprovalSurface,
   IDENTITY_PROFILES,
+  IntelligenceRenderer,
   corner,
   depth,
   identityAccent,
@@ -14,6 +15,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
+import { intelligenceState } from "../conversation/intelligence-state.js";
 import type {
   ConversationState,
   RuntimeRootOption,
@@ -441,6 +443,16 @@ export function Threads({
       subtitle={subtitle}
       actions={
         <>
+          {/* The core, small: the turn's state is visible here too (owner, 2026-10-09). */}
+          <div
+            data-threads-core="true"
+            style={{ width: 56, height: 56, flexShrink: 0, alignSelf: "center" }}
+          >
+            <IntelligenceRenderer
+              identityId={identityId}
+              state={intelligenceState(conversation, false)}
+            />
+          </div>
           {transport !== undefined && onOpenThread !== undefined && !listing && (
             <button type="button" onClick={() => setListing(true)} style={buttonStyle}>
               Conversations

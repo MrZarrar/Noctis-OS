@@ -348,7 +348,16 @@ it(
       await page.evaluate(() => globalThis.s6Fixture.set("idle"));
       await page.getByRole("textbox", { name: "Message Vesper" }).fill("Start from Presence");
       await page.getByRole("button", { name: "Send", exact: true }).click();
+      // Presence stays, so the core is seen working: the exchange shows under it.
+      await page.getByText("Start from Presence", { exact: true }).waitFor();
+      assert.equal(await page.locator("h1").textContent(), "Presence");
+      await page.waitForFunction(
+        () => document.querySelector(".noctis-intelligence")?.dataset.coreState === "thinking",
+      );
+      await page.getByRole("button", { name: "Open in Threads →" }).click();
       await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+      // And Threads carries a small core of its own.
+      await page.locator('[data-threads-core="true"] .noctis-intelligence').waitFor();
       assert.equal(errors.length, 0, errors.join("\n"));
       await context.close();
       if (EVIDENCE && video) await video.saveAs(join(EVIDENCE, `${name}-all-states.webm`));

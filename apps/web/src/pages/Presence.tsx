@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { PromptForm } from "../conversation/PromptForm.js";
 import { intelligenceState } from "../conversation/intelligence-state.js";
+import { lastExchange } from "../conversation/last-exchange.js";
 import type { ConversationState, SendOptions } from "../conversation/useConversation.js";
 import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
@@ -20,9 +21,13 @@ export interface PresenceProps {
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
   conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots"> &
-    Partial<Pick<ConversationState, "turns" | "streaming" | "pendingApprovals" | "error">>;
+    Partial<
+      Pick<ConversationState, "messages" | "turns" | "streaming" | "pendingApprovals" | "error">
+    >;
   onSend: (text: string, options: SendOptions) => void;
   onReview?: () => void;
+  /** The whole thread, in Threads; Presence shows only the exchange in progress. */
+  onOpenThread?: () => void;
   onSwitchIdentity?: (identityId: ConversationalIdentityId) => void;
 }
 
@@ -40,9 +45,13 @@ export function Presence({
   conversation,
   onSend,
   onReview,
+  onOpenThread,
   onSwitchIdentity,
 }: PresenceProps): JSX.Element {
   const [listening, setListening] = useState(false);
+  // Only what was said from here, this visit: an exchange from yesterday is
+  // history, which Threads keeps, not something to greet the owner with.
+  const [sent, setSent] = useState(false);
   const mobile = useIsMobile();
   const identityId = identity.activeIdentityId ?? "vesper";
   const state = intelligenceState(
@@ -57,6 +66,13 @@ export function Presence({
   const greeting = hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening.";
   const error = conversation.error ?? identity.error;
   const accent = identityAccent[identityId].primary;
+  const exchange = sent
+    ? lastExchange({
+        messages: conversation.messages ?? [],
+        turns: conversation.turns ?? [],
+        streaming: conversation.streaming ?? new Map(),
+      })
+    : undefined;
 
   return (
     <section
@@ -150,19 +166,67 @@ export function Presence({
         >
           {STATE_WORDS[state]}
         </p>
-        <p
-          style={{
-            margin: "0 0 16px",
-            fontSize: mobile ? 20 : 23,
-            fontWeight: 400,
-            textAlign: "center",
-          }}
-        >
-          <span aria-hidden="true" style={{ color: accent, marginRight: 12 }}>
-            ✦
-          </span>
-          {greeting}
-        </p>
+        {exchange === undefined ? (
+          <p
+            style={{
+              margin: "0 0 16px",
+              fontSize: mobile ? 20 : 23,
+              fontWeight: 400,
+              textAlign: "center",
+            }}
+          >
+            <span aria-hidden="true" style={{ color: accent, marginRight: 12 }}>
+              ✦
+            </span>
+            {greeting}
+          </p>
+        ) : (
+          <div style={{ margin: "0 0 16px" }}>
+            <div
+              aria-live="polite"
+              style={{
+                display: "grid",
+                gap: 10,
+                maxHeight: mobile ? "26vh" : "30vh",
+                overflowY: "auto",
+                fontSize: mobile ? 15 : 16,
+                lineHeight: 1.5,
+              }}
+            >
+              <p style={{ margin: 0, display: "flex", gap: 12 }}>
+                <span aria-hidden="true" style={{ color: identityAccent.vesper.primary }}>
+                  ✦
+                </span>
+                <span>{exchange.you}</span>
+              </p>
+              {exchange.reply !== "" && (
+                <p style={{ margin: 0, display: "flex", gap: 12, whiteSpace: "pre-wrap" }}>
+                  <span aria-hidden="true" style={{ color: accent }}>
+                    ✦
+                  </span>
+                  <span>{exchange.reply}</span>
+                </p>
+              )}
+            </div>
+            {onOpenThread !== undefined && (
+              <button
+                type="button"
+                onClick={onOpenThread}
+                style={{
+                  marginTop: 8,
+                  minHeight: 44,
+                  background: "transparent",
+                  border: "none",
+                  color: typography.color.muted,
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                Open in Threads →
+              </button>
+            )}
+          </div>
+        )}
         {state === "waiting_for_approval" && onReview !== undefined && (
           <button
             type="button"
@@ -179,7 +243,10 @@ export function Presence({
           disabled={transport === undefined}
           canAttach={conversation.canAttach}
           roots={conversation.roots}
-          onSend={onSend}
+          onSend={(text, options) => {
+            setSent(true);
+            onSend(text, options);
+          }}
           onListeningChange={setListening}
           {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
         />

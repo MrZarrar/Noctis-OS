@@ -287,8 +287,12 @@ function Workbench({
             identity={identity}
             transport={transport}
             conversation={conversation}
-            onSend={sendAndShow}
+            // Stays on Presence, where the core shows the turn (owner, 2026-10-09).
+            onSend={(text, options) => {
+              void conversation.send(text, options);
+            }}
             onReview={() => setActive("Threads")}
+            onOpenThread={() => setActive("Threads")}
             onSwitchIdentity={switchIdentity}
           />
         )}
