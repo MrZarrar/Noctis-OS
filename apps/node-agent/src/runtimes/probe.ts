@@ -149,7 +149,8 @@ async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
   }
 
   // A claude.ai login is a subscription; claude.ts drives it through the Agent SDK.
-  // ponytail: the two aliases the SDK accepts; exact ids come from Settings later.
+  // ponytail: a fixed list; exact ids come from Settings later. Haiku is named in
+  // full because the CLI's `haiku` alias still points at the older model.
   return {
     providerId: "claude",
     available: true,
@@ -157,6 +158,7 @@ async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
     models: [
       { providerId: "claude", model: "sonnet", label: "Claude Sonnet" },
       { providerId: "claude", model: "opus", label: "Claude Opus" },
+      { providerId: "claude", model: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
     ],
   };
 }

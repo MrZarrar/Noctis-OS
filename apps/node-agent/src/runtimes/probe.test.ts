@@ -176,6 +176,7 @@ describe("probeProviders", () => {
       models: [
         { providerId: "claude", model: "sonnet", label: "Claude Sonnet" },
         { providerId: "claude", model: "opus", label: "Claude Opus" },
+        { providerId: "claude", model: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
       ],
     });
   });
