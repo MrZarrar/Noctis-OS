@@ -2,7 +2,6 @@ import type { ConversationalIdentityId, RuntimeItem } from "@noctis/contracts";
 import {
   ApprovalSurface,
   IDENTITY_PROFILES,
-  IntelligenceRenderer,
   corner,
   depth,
   identityAccent,
@@ -15,7 +14,6 @@ import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
-import { intelligenceState } from "../conversation/intelligence-state.js";
 import type {
   ConversationState,
   RuntimeRootOption,
@@ -715,22 +713,9 @@ export function Threads({
               // scrolls, so its state is always in view (owner, 2026-10-09).
               aside={
                 <div
-                  data-threads-core="true"
-                  style={{
-                    width: 76,
-                    height: 76,
-                    flexShrink: 0,
-                    marginBottom: -6,
-                    // Round, fading out: the canvas is a square on the composer's glass.
-                    maskImage: "radial-gradient(circle, #000 55%, transparent 71%)",
-                    WebkitMaskImage: "radial-gradient(circle, #000 55%, transparent 71%)",
-                  }}
-                >
-                  <IntelligenceRenderer
-                    identityId={identityId}
-                    state={intelligenceState(conversation, false)}
-                  />
-                </div>
+                  data-core-slot="composer"
+                  style={{ width: 76, height: 76, flexShrink: 0, marginBottom: -6 }}
+                />
               }
               onSend={(text, options) => {
                 follow.current = true;

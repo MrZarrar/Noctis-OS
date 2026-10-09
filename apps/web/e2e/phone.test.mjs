@@ -148,7 +148,14 @@ function readControls() {
           element.textContent?.trim() ??
           element.tagName;
 
-        return { name, left: box.left, right: box.right, height: box.height };
+        return {
+          name,
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          bottom: box.bottom,
+          height: box.height,
+        };
       }),
   );
 }
@@ -353,6 +360,20 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
           assert.ok(
             control.height >= MIN_TARGET,
             `${name}: "${control.name}" is ${String(Math.round(control.height))}px tall, under the ${String(MIN_TARGET)}px touch floor`,
+          );
+        }
+
+        // The core waiting in the corner is a control too, and must not sit on another one.
+        const controls = await readControls();
+        const companion = controls.find((control) => control.name === "Open Threads");
+        for (const control of companion === undefined ? [] : controls) {
+          if (control === companion) continue;
+          assert.ok(
+            control.right <= companion.left ||
+              control.left >= companion.right ||
+              control.bottom <= companion.top ||
+              control.top >= companion.bottom,
+            `${name}: the corner core covers "${control.name}"`,
           );
         }
       }

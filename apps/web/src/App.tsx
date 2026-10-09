@@ -17,6 +17,7 @@ import {
 import type { RailItem } from "@noctis/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { CompanionCore } from "./companion/CompanionCore.js";
 import { guardStrayFileDrops } from "./conversation/file-drops.js";
 import type { RuntimeRootOption, SendOptions } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
@@ -452,6 +453,17 @@ function Workbench({
           </section>
         )}
       </main>
+
+      <CompanionCore
+        page={active}
+        identityId={identityId}
+        protocolIds={identity.protocolIds}
+        conversation={conversation}
+        mobile={isMobile}
+        onOpenThreads={() => {
+          select("Threads");
+        }}
+      />
 
       {/* After the pages in source order, never before them: a bottom bar that
           comes first is the first thing a screen reader announces on every

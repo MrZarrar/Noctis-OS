@@ -257,8 +257,21 @@ it(
       // In Threads the core sits in the composer, which never scrolls away.
       await page.getByRole("button", { name: "Open in Threads →" }).click();
       await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
-      const small = page.locator('form [data-threads-core="true"] .noctis-intelligence');
+      await page.locator('form [data-core-slot="composer"]').waitFor();
+      const small = page.locator('[data-core-dock="composer"] .noctis-intelligence');
       await small.waitFor();
+      // The one core flies down from Presence; measure it once it has landed.
+      await page.waitForFunction(() => {
+        const slot = document.querySelector('[data-core-slot="composer"]')?.getBoundingClientRect();
+        const core = document.querySelector(".noctis-intelligence")?.getBoundingClientRect();
+        return (
+          slot !== undefined &&
+          core !== undefined &&
+          Math.abs(slot.x - core.x) < 1 &&
+          Math.abs(slot.y - core.y) < 1 &&
+          Math.abs(slot.width - core.width) < 1
+        );
+      });
       assert.equal(await small.isVisible(), true);
       const bounds = await small.boundingBox();
       assert.ok(

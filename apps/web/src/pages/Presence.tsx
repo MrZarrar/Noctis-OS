@@ -1,11 +1,5 @@
 ﻿import type { ConversationalIdentityId } from "@noctis/contracts";
-import {
-  IntelligenceRenderer,
-  JesterGlyph,
-  identityAccent,
-  semantic,
-  typography,
-} from "@noctis/ui";
+import { JesterGlyph, identityAccent, semantic, typography } from "@noctis/ui";
 import { useEffect, useState } from "react";
 
 import { PromptForm } from "../conversation/PromptForm.js";
@@ -179,7 +173,9 @@ export function Presence({
           </span>
         </time>
       </div>
+      {/* The app's one core flies into this box; it is drawn above the page. */}
       <div
+        data-core-slot="hero"
         style={{
           flex: "1 1 320px",
           width: "100%",
@@ -189,11 +185,6 @@ export function Presence({
           position: "relative",
         }}
       >
-        <IntelligenceRenderer
-          identityId={identityId}
-          protocolIds={identity.protocolIds}
-          state={state}
-        />
         <div
           aria-hidden="true"
           style={{
