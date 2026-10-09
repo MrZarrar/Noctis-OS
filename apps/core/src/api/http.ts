@@ -93,7 +93,7 @@ import type { FileGateway, FileLocation } from "../files/gateway.js";
 import { FileUnavailable, fileMediaType, parseRange } from "../files/gateway.js";
 import type { LiveBroker } from "../events/live.js";
 import type { ScreenGateway } from "../screen/gateway.js";
-import { ScreenUnavailable } from "../screen/gateway.js";
+import { SCREEN_RECHECK_MS, ScreenUnavailable, screenGranted } from "../screen/gateway.js";
 import {
   activateIdentity,
   getActiveIdentity,
@@ -1348,6 +1348,7 @@ async function handleScreen(
   url: URL,
   res: ServerResponse,
   correlationId: string,
+  stillAuthorized: () => boolean,
 ): Promise<void> {
   const nodeId = url.searchParams.get("node") ?? "";
   // ponytail: 15 fps at 1280 by default, about 1-2 MB/s of MJPEG.
@@ -1411,8 +1412,21 @@ async function handleScreen(
     "x-content-type-options": "nosniff",
     "x-correlation-id": correlationId,
   });
+  // A mirror outlives the check that opened it: the grant can lapse and the
+  // session can be logged out while frames are still flowing.
+  const recheck = setInterval(() => {
+    if (screenGranted(deps.kernel, nodeId) && stillAuthorized()) return;
+
+    stream.stop();
+    stream.body.destroy();
+  }, SCREEN_RECHECK_MS);
+
+  recheck.unref();
   res.once("close", () => stream.body.destroy());
-  stream.body.once("close", () => res.end());
+  stream.body.once("close", () => {
+    clearInterval(recheck);
+    res.end();
+  });
   stream.body.once("error", () => res.end());
   stream.body.pipe(res);
 }
@@ -2107,7 +2121,11 @@ export async function handleRequest(
     }
 
     if (req.method === "GET" && url.pathname === "/screen/live") {
-      await handleScreen(deps, url, res, correlationId);
+      await handleScreen(deps, url, res, correlationId, () =>
+        authorized?.kind === "session"
+          ? verifySession(sessionDeps(deps), headerValue(req.headers.cookie)) !== undefined
+          : true,
+      );
       return;
     }
 

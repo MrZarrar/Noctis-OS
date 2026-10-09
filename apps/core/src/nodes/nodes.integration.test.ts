@@ -1386,6 +1386,47 @@ describe("runtime frames", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("lets a mirror heartbeat for hours without costing the node its other job", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const { paired, node, id } = await leaseTurn(core, directory);
+
+    await grant(core, paired.nodeId, "screen.view");
+
+    const mirror = jobId(
+      await enqueue(core, "screen.view", {
+        idempotencyKey: "mirror-1",
+        payload: { fps: 15, width: 1280 },
+      }),
+    );
+
+    await waitFor(() => node.jobs().length === 2, "the mirror job frame");
+
+    const deltas: unknown[] = [];
+
+    core.core.runtimeFrames.subscribe({ onDelta: (_node, _job, delta) => deltas.push(delta) });
+
+    // Forty minutes of heartbeats at a steady rate: more frames over its life than
+    // any lifetime count would allow, and a handful in any one minute. The delta
+    // after each batch is how the test knows the batch has been read.
+    for (let tenSeconds = 0; tenSeconds < 240; tenSeconds += 1) {
+      for (let sent = 0; sent < 9; sent += 1) {
+        node.progress(mirror, 0);
+      }
+
+      core.advance(10_000);
+      node.frame({ kind: "delta", jobId: id, delta: { itemId: "item-1", text: "x" } });
+      await waitFor(
+        () => deltas.length === tenSeconds + 1,
+        `batch ${String(tenSeconds)} to be read`,
+      );
+    }
+
+    expect(node.closed()).toBeUndefined();
+
+    rmSync(directory, { recursive: true, force: true });
+  }, 30_000);
+
   it("a frame for a job the node does not hold closes the socket", async () => {
     const core = await startTestCore();
     const paired = await pairFake(core);

@@ -33,15 +33,23 @@ export class ScreenUnavailable extends Error {
 /** How long a PC gets to start sending frames: a helper started on demand included. */
 export const SCREEN_ANSWER_MS = 20_000;
 
-export interface ScreenStream {
+/** How often an open mirror is checked against its grant and the viewer's session. */
+export const SCREEN_RECHECK_MS = 5_000;
+
+export interface ScreenUpload {
   /** ffmpeg's `multipart/x-mixed-replace` with its boundary, passed through as it came. */
   contentType: string;
   body: Readable;
 }
 
+export interface ScreenStream extends ScreenUpload {
+  /** Cancels the job and tells the node, for a mirror whose authority has lapsed. */
+  stop(): void;
+}
+
 interface Waiting {
   nodeId: string;
-  resolve(stream: ScreenStream): void;
+  resolve(stream: ScreenUpload): void;
   reject(reason: ScreenUnavailable): void;
 }
 
@@ -55,7 +63,7 @@ export interface ScreenGateway {
    * A node's stream for a `screen.view` job it holds. Resolves when the stream
    * ends or the browser goes; false when nobody is waiting for it.
    */
-  accept(nodeId: string, jobId: string, stream: ScreenStream): Promise<boolean>;
+  accept(nodeId: string, jobId: string, stream: ScreenUpload): Promise<boolean>;
   close(): void;
 }
 
@@ -162,11 +170,7 @@ export function createScreenGateway(deps: {
       }
 
       return new Promise<ScreenStream>((resolve, reject) => {
-        const cancel = (reason: ScreenUnavailable) => {
-          const entry = settle(jobId);
-
-          if (entry === undefined) return;
-
+        const stop = () => {
           const outcome = cancelJob(kernel, context, {
             jobId,
             idempotencyKey: `screen:${jobId}:cancel`,
@@ -175,7 +179,13 @@ export function createScreenGateway(deps: {
           if (outcome.ok && outcome.value.job.nodeId !== undefined) {
             dispatcher.sendCancel(outcome.value.job.nodeId, jobId);
           }
+        };
+        const cancel = (reason: ScreenUnavailable) => {
+          const entry = settle(jobId);
 
+          if (entry === undefined) return;
+
+          stop();
           entry.reject(reason);
         };
         const abort = () => cancel(new ScreenUnavailable(503, "unavailable", "The viewer left"));
@@ -193,7 +203,7 @@ export function createScreenGateway(deps: {
           resolve: (stream) => {
             clearTimeout(timer);
             signal?.removeEventListener("abort", abort);
-            resolve(stream);
+            resolve({ ...stream, stop });
           },
           reject: (reason) => {
             clearTimeout(timer);
@@ -209,6 +219,7 @@ export function createScreenGateway(deps: {
       const job = getJob(kernel.db, jobId)?.job;
 
       if (
+        !screenGranted(kernel, nodeId) ||
         waiting.get(jobId)?.nodeId !== nodeId ||
         job?.nodeId !== nodeId ||
         (job.status !== "leased" && job.status !== "running") ||

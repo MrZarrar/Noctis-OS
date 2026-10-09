@@ -1,4 +1,5 @@
 import type { ConversationalIdentityId } from "@noctis/contracts";
+import { ModelRefSchema } from "@noctis/contracts";
 
 export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 
@@ -25,10 +26,15 @@ export function identityCard(input: {
   }
 
   const runtimeName = RUNTIME_NAMES[input.runtime];
+  const model = ModelRefSchema.shape.model.safeParse(input.model);
+
+  if (!model.success) {
+    return undefined;
+  }
 
   return `You are Vesper, the primary identity of Noctis: the owner's own control plane for their agents, reached from their
-phone and desktop. Right now you are running as ${runtimeName} on ${input.model}, on one of the owner's PCs. Noctis keeps
+phone and desktop. Right now you are running as ${runtimeName} on ${model.data}, on one of the owner's PCs. Noctis keeps
 this conversation, shows the owner what you produce, and asks them before anything consequential; an approval is how
 anything that leaves this PC happens, and a refusal is final. Be calm, precise and brief, and lead with the answer.
-If you are asked who or what you are, say you are Vesper, running on ${input.model} through Noctis.`;
+If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.`;
 }

@@ -1,8 +1,103 @@
 import { describe, expect, it } from "vitest";
 
-import { mirrorAllowed, mirrorPath, mirrorRefusal } from "./mirror-view.js";
+import type { CoreResponse } from "../transport/CoreTransport.js";
+import type { MirrorState } from "./mirror-view.js";
+import {
+  createMirrorDiagnostics,
+  mirrorAllowed,
+  mirrorPath,
+  mirrorRefusal,
+} from "./mirror-view.js";
 
 const NOW = Date.parse("2026-10-09T12:00:00.000Z");
+
+function pendingProbe() {
+  let resolve!: (response: CoreResponse) => void;
+  let reject!: (error: Error) => void;
+  let signal!: AbortSignal;
+  const response = new Promise<CoreResponse>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+
+  return {
+    request: (abort: AbortSignal) => {
+      signal = abort;
+      return response;
+    },
+    resolve,
+    reject,
+    signal: () => signal,
+  };
+}
+
+describe("mirror diagnostics", () => {
+  it("aborts on Stop and ignores a pending locked response, leaving the mirror idle", async () => {
+    const diagnostics = createMirrorDiagnostics();
+    const probe = pendingProbe();
+    let state: MirrorState = { phase: "idle" };
+    const pending = diagnostics.check(probe.request).then((next) => {
+      if (next !== undefined) state = next;
+    });
+
+    diagnostics.cancel();
+    probe.resolve({ status: 423, body: {} });
+    await pending;
+
+    expect(state).toEqual({ phase: "idle" });
+    expect(probe.signal().aborted).toBe(true);
+  });
+
+  it("ignores an old PC's response after the new mirror has started", async () => {
+    const diagnostics = createMirrorDiagnostics();
+    const oldPc = pendingProbe();
+    const pending = diagnostics.check(oldPc.request);
+
+    diagnostics.cancel();
+    const newPc = diagnostics.check(() => Promise.resolve({ status: 423, body: {} }));
+    expect(await newPc).toEqual({ phase: "locked" });
+    oldPc.resolve({ status: 403, body: {} });
+
+    expect(await pending).toBeUndefined();
+    expect(oldPc.signal().aborted).toBe(true);
+  });
+
+  it("aborts and supersedes an earlier diagnostic request", async () => {
+    const diagnostics = createMirrorDiagnostics();
+    const first = pendingProbe();
+    const pending = diagnostics.check(first.request);
+    const latest = diagnostics.check(() => Promise.resolve({ status: 503, body: {} }));
+
+    first.resolve({ status: 423, body: {} });
+    expect(await pending).toBeUndefined();
+    expect(first.signal().aborted).toBe(true);
+    expect(await latest).toMatchObject({ phase: "unavailable" });
+  });
+
+  it("ignores a late rejection after cancellation", async () => {
+    const diagnostics = createMirrorDiagnostics();
+    const probe = pendingProbe();
+    const pending = diagnostics.check(probe.request);
+
+    diagnostics.cancel();
+    probe.reject(new Error("offline"));
+
+    expect(await pending).toBeUndefined();
+  });
+
+  it("reports a current network failure and a stopped stream", async () => {
+    const diagnostics = createMirrorDiagnostics();
+
+    expect(await diagnostics.check(() => Promise.reject(new Error("offline")))).toEqual({
+      phase: "unavailable",
+      message: "Noctis could not reach the core.",
+    });
+    expect(await diagnostics.check(() => Promise.resolve({ status: 200, body: {} }))).toEqual({
+      phase: "unavailable",
+      message: "The stream stopped. Watch again to restart it.",
+    });
+  });
+});
 
 describe("mirrorPath", () => {
   it("asks the core for one PC at a rate and a size, or only whether it would start", () => {

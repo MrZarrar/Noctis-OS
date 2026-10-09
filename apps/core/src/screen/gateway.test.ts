@@ -6,6 +6,7 @@ import type { NodeServerFrame } from "@noctis/contracts";
 import { NodeJobAssignmentSchema } from "@noctis/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { LOGIN_PATH, LOGOUT_PATH } from "../api/http.js";
 import type { CommandContext } from "../kernel.js";
 import { createLogger } from "../logging.js";
 import { cancelJob, getJob, LEASE_MS } from "../nodes/jobs.js";
@@ -13,7 +14,7 @@ import { grantCapability, issuePairingCode, pairNode } from "../nodes/registry.j
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
 import type { ScreenGateway } from "./gateway.js";
-import { createScreenGateway, SCREEN_ANSWER_MS } from "./gateway.js";
+import { createScreenGateway, SCREEN_ANSWER_MS, SCREEN_RECHECK_MS } from "./gateway.js";
 
 vi.mock("node:http", { spy: true });
 
@@ -34,7 +35,7 @@ afterEach(async () => {
   for (const core of cores.splice(0)) await core.close();
 });
 
-async function waitingMirror(signal?: AbortSignal) {
+async function waitingMirror(signal?: AbortSignal, grantTtlMs?: number) {
   let now = Date.parse("2026-10-09T12:00:00Z");
   const core = await startCore({
     config: {
@@ -75,6 +76,7 @@ async function waitingMirror(signal?: AbortSignal) {
       nodeId,
       capability: "screen.view",
       constraints: {},
+      ...(grantTtlMs === undefined ? {} : { expiresAt: new Date(now + grantTtlMs).toISOString() }),
       idempotencyKey: "grant",
     }).ok,
   ).toBe(true);
@@ -108,6 +110,9 @@ async function waitingMirror(signal?: AbortSignal) {
     advance: () => {
       now += LEASE_MS;
     },
+    tick: (ms: number) => {
+      now += ms;
+    },
   };
 }
 
@@ -132,6 +137,17 @@ describe("screen upload leases", () => {
   it("refuses a lease at its expiry without waiting for a dispatch sweep", async () => {
     const test = await waitingMirror();
     test.advance();
+    const accepted = test.gateway.accept(test.nodeId, test.jobId, {
+      contentType: "multipart/x-mixed-replace;boundary=ffmpeg",
+      body: test.body,
+    });
+    test.body.destroy();
+    expect(await accepted).toBe(false);
+  });
+
+  it("refuses an upload once the screen grant has expired, though the lease holds", async () => {
+    const test = await waitingMirror(undefined, 5_000);
+    test.tick(6_000);
     const accepted = test.gateway.accept(test.nodeId, test.jobId, {
       contentType: "multipart/x-mixed-replace;boundary=ffmpeg",
       body: test.body,
@@ -338,5 +354,105 @@ describe("leaving before the first frame", () => {
       expect(getJob(test.core.kernel.db, jobId)?.job.status).toBe("cancelled"),
     );
     expect(test.frames).toContainEqual(expect.objectContaining({ kind: "cancel", jobId }));
+  });
+});
+
+describe("a mirror that is already open", () => {
+  async function streaming(
+    test: Awaited<ReturnType<typeof waitingMirror>>,
+    headers: Record<string, string>,
+  ) {
+    // Before the viewer connects: the recheck timer is made when the mirror opens.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const viewer = new AbortController();
+    const response = fetch(
+      `http://127.0.0.1:${String(test.core.port)}/screen/live?node=${test.nodeId}`,
+      { headers, signal: viewer.signal },
+    );
+    await vi.waitFor(() =>
+      expect(test.frames.filter((frame) => frame.kind === "job")).toHaveLength(2),
+    );
+    const frame = test.frames.filter((frame) => frame.kind === "job")[1];
+    if (frame?.kind !== "job") throw new Error("no viewer job");
+    const jobId = NodeJobAssignmentSchema.parse(JSON.parse(frame.assignment)).jobId;
+    const upload = httpRequest(`http://127.0.0.1:${String(test.core.port)}/node/files`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${test.nodeId}.${test.credential}`,
+        "x-noctis-job": jobId,
+        "content-type": "multipart/x-mixed-replace;boundary=ffmpeg",
+      },
+    });
+    upload.on("error", () => undefined);
+    upload.write("--ffmpeg\r\nframe-1\r\n");
+    const reader = (await response).body?.getReader();
+    expect((await reader?.read())?.done).toBe(false);
+
+    return {
+      jobId,
+      upload,
+      ended: async () => {
+        let done = false;
+        void reader?.read().then(
+          () => (done = true),
+          () => (done = true),
+        );
+        await vi.waitFor(() => expect(done).toBe(true));
+      },
+      finish: async () => {
+        upload.destroy();
+        viewer.abort();
+        await response.catch(() => undefined);
+      },
+    };
+  }
+
+  it("ends and cancels when the screen grant expires mid-stream", async () => {
+    const test = await waitingMirror(undefined, 60_000);
+    const mirror = await streaming(test, {
+      authorization: "Bearer 0123456789abcdef0123456789abcdef",
+    });
+    try {
+      test.tick(61_000);
+      await vi.advanceTimersByTimeAsync(SCREEN_RECHECK_MS);
+      await mirror.ended();
+      expect(getJob(test.core.kernel.db, mirror.jobId)?.job.status).toBe("cancelled");
+      expect(test.frames).toContainEqual(
+        expect.objectContaining({ kind: "cancel", jobId: mirror.jobId }),
+      );
+      await vi.waitFor(() => expect(mirror.upload.destroyed).toBe(true));
+    } finally {
+      await mirror.finish();
+    }
+  });
+
+  it("ends and cancels when the browser session is logged out mid-stream", async () => {
+    const test = await waitingMirror();
+    const base = `http://127.0.0.1:${String(test.core.port)}`;
+    const login = await fetch(`${base}${LOGIN_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "0123456789abcdef0123456789abcdef" }),
+    });
+    const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const { csrf } = (await login.json()) as { csrf: string };
+    const mirror = await streaming(test, { cookie });
+    try {
+      await vi.advanceTimersByTimeAsync(SCREEN_RECHECK_MS);
+      expect(getJob(test.core.kernel.db, mirror.jobId)?.job.status).not.toBe("cancelled");
+      await fetch(`${base}${LOGOUT_PATH}`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json", "x-noctis-csrf": csrf },
+        body: "{}",
+      });
+      await vi.advanceTimersByTimeAsync(SCREEN_RECHECK_MS);
+      await mirror.ended();
+      expect(getJob(test.core.kernel.db, mirror.jobId)?.job.status).toBe("cancelled");
+      expect(test.frames).toContainEqual(
+        expect.objectContaining({ kind: "cancel", jobId: mirror.jobId }),
+      );
+    } finally {
+      await mirror.finish();
+    }
   });
 });

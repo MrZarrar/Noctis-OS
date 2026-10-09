@@ -154,6 +154,12 @@ export function createScreenView(
     context.signal.addEventListener("abort", stop);
 
     try {
+      // A cancel that landed while the helper was coming up has already fired
+      // its event, so the listener above would never hear it.
+      if (context.signal.aborted) {
+        return { frames: 0, endedBy: "client" } satisfies ScreenViewEvidence;
+      }
+
       let response: Response;
 
       try {

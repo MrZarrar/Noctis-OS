@@ -196,3 +196,58 @@ describe("screen.view on the node", () => {
     expect(evidence).toEqual({ frames: 0, endedBy: "locked" });
   });
 });
+
+describe("stopping a mirror that has not produced a frame", () => {
+  it("never starts capture when the job is cancelled while the helper is still coming up", async () => {
+    const at = scratch();
+    const controller = new AbortController();
+
+    writeFileSync(`${at.log}.stalled`, "");
+
+    const evidence = await createScreenView({
+      infoPath: at.infoPath,
+      interactive: () => Promise.resolve(true),
+      startHelper: () => {
+        void fakeHelper(at).then(() => controller.abort());
+      },
+    })(PAYLOAD, context({ signal: controller.signal }));
+
+    expect(evidence).toEqual({ frames: 0, endedBy: "client" });
+    // Capture may not have been asked for at all; if it was, it has to be gone.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    try {
+      const { pid } = JSON.parse(readFileSync(at.log, "utf8")) as { pid: number };
+
+      await waitFor(() => !alive(pid), "ffmpeg to stop after the cancel");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  });
+
+  it("stops capture that is cancelled while it is still waiting for its first frame", async () => {
+    const at = scratch();
+    const controller = new AbortController();
+
+    await fakeHelper(at);
+    writeFileSync(`${at.log}.stalled`, "");
+
+    const running = createScreenView({
+      infoPath: at.infoPath,
+      interactive: () => Promise.resolve(false),
+    })(PAYLOAD, context({ signal: controller.signal }));
+    let pid = 0;
+
+    await waitFor(() => {
+      try {
+        pid = (JSON.parse(readFileSync(at.log, "utf8")) as { pid: number }).pid;
+        return true;
+      } catch {
+        return false;
+      }
+    }, "ffmpeg to start");
+    controller.abort();
+    await running.catch(() => undefined);
+    await waitFor(() => !alive(pid), "ffmpeg to stop after the cancel");
+  });
+});

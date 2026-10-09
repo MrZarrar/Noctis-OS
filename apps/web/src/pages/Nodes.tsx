@@ -11,9 +11,10 @@ import { mountRemoteDesktop } from "../remote/component.js";
 import type { RemoteHandle, RemoteState, RemoteUserInteraction } from "../remote/session.js";
 import { connectRemote, describeFailure } from "../remote/session.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { parseCoreBody } from "../transport/CoreTransport.js";
 import { agentName } from "./conversations-view.js";
 import type { MirrorFps, MirrorState, MirrorWidth } from "./mirror-view.js";
-import { mirrorAllowed, mirrorPath, mirrorRefusal } from "./mirror-view.js";
+import { createMirrorDiagnostics, mirrorAllowed, mirrorPath } from "./mirror-view.js";
 
 const HostsSchema = z.object({ hosts: z.array(RemoteDesktopTargetSchema) });
 const NodesSchema = z.object({
@@ -397,6 +398,7 @@ function Mirror({
   const [fps, setFps] = useState<MirrorFps>(15);
   const [width, setWidth] = useState<MirrorWidth>(1280);
   const [state, setState] = useState<MirrorState>({ phase: "idle" });
+  const [diagnostics] = useState(createMirrorDiagnostics);
   const frame = useRef<HTMLDivElement>(null);
 
   const node =
@@ -407,6 +409,8 @@ function Mirror({
   const watching = state.phase === "connecting" || state.phase === "live";
   const url = transport?.contentUrl?.(mirrorPath(nodeId, fps, width));
   const image = useRef<HTMLImageElement>(null);
+
+  useEffect(() => diagnostics.cancel, [diagnostics, transport, nodeId, fps, width, watching]);
 
   // Chrome keeps a multipart image loading after its element is gone, and a
   // stream held open is a PC still capturing. Emptying the source ends it.
@@ -473,28 +477,29 @@ function Mirror({
   // An image's error carries no status, so the same question is asked again
   // as a probe, which hangs up as soon as frames would flow.
   const failed = useCallback(async (): Promise<void> => {
-    if (transport === undefined) {
+    const probeUrl = transport?.contentUrl?.(mirrorPath(nodeId, fps, width, true));
+
+    if (!watching || probeUrl === undefined) {
       return;
     }
 
-    try {
-      const response = await transport.request("GET", mirrorPath(nodeId, fps, width, true));
-      const next: MirrorState =
-        response.status === 200
-          ? { phase: "unavailable", message: "The stream stopped. Watch again to restart it." }
-          : mirrorRefusal(response.status, response.body);
+    const next = await diagnostics.check(async (signal) => {
+      const response = await fetch(probeUrl, { credentials: "include", signal });
 
-      if (next.phase === "not_granted") {
-        setAllowed({ nodeId, value: false });
-      }
+      return { status: response.status, body: parseCoreBody(await response.text()) };
+    });
 
-      setState(next);
-    } catch {
-      setState({ phase: "unavailable", message: "Noctis could not reach the core." });
+    if (next === undefined) return;
+
+    if (next.phase === "not_granted") {
+      setAllowed({ nodeId, value: false });
     }
-  }, [transport, nodeId, fps, width]);
+
+    setState(next);
+  }, [diagnostics, transport, nodeId, fps, width, watching]);
 
   const restart = (): void => {
+    diagnostics.cancel();
     if (watching) {
       setState({ phase: "connecting" });
     }
@@ -530,6 +535,7 @@ function Mirror({
               label="PC"
               value={nodeId}
               onChange={(value) => {
+                diagnostics.cancel();
                 setChosen(value);
                 setState({ phase: "idle" });
               }}
@@ -603,6 +609,7 @@ function Mirror({
               <button
                 type="button"
                 onClick={() => {
+                  diagnostics.cancel();
                   setState({ phase: "idle" });
                 }}
                 style={buttonStyle}

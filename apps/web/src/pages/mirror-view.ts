@@ -1,5 +1,7 @@
 /** The screen mirror's plain logic, kept out of the page so it can be tested without one. */
 
+import type { CoreResponse } from "../transport/CoreTransport.js";
+
 export type MirrorFps = 15 | 30;
 export type MirrorWidth = 960 | 1280 | 1920;
 
@@ -10,6 +12,45 @@ export type MirrorState =
   | { phase: "locked" }
   | { phase: "not_granted" }
   | { phase: "unavailable"; message: string };
+
+export function createMirrorDiagnostics(): {
+  cancel: () => void;
+  check: (
+    request: (signal: AbortSignal) => Promise<CoreResponse>,
+  ) => Promise<MirrorState | undefined>;
+} {
+  let generation = 0;
+  let controller: AbortController | undefined;
+
+  const cancel = (): void => {
+    generation += 1;
+    controller?.abort();
+    controller = undefined;
+  };
+
+  return {
+    cancel,
+    async check(request) {
+      cancel();
+      const current = generation;
+      controller = new AbortController();
+
+      try {
+        const response = await request(controller.signal);
+
+        if (current !== generation) return undefined;
+
+        return response.status === 200
+          ? { phase: "unavailable", message: "The stream stopped. Watch again to restart it." }
+          : mirrorRefusal(response.status, response.body);
+      } catch {
+        return current === generation
+          ? { phase: "unavailable", message: "Noctis could not reach the core." }
+          : undefined;
+      }
+    },
+  };
+}
 
 export function mirrorPath(
   nodeId: string,

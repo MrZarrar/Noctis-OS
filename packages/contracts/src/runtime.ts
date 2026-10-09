@@ -48,7 +48,8 @@ const ShortId = z.string().trim().min(1).max(128);
 export const ModelRefSchema = z
   .object({
     providerId: RuntimeProviderIdSchema,
-    model: ShortId,
+    // Unlike $, this end check also rejects a final newline.
+    model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}(?![\s\S])/),
     label: ShortId.optional(),
   })
   .strict();

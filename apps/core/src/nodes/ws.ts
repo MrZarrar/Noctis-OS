@@ -39,12 +39,22 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   "verification.noop": 200,
   "runtime.turn": 100_000,
   "file.list": 200,
-  /** A heartbeat every ten seconds while bytes flow: hours of film. */
-  "file.read": 2_000,
+  /** A heartbeat every ten seconds while bytes flow, counted per window: hours of film. */
+  "file.read": 60,
   "session.list": 200,
   "session.history": 200,
-  /** A heartbeat every ten seconds for as long as someone watches. */
-  "screen.view": 2_000,
+  /** A heartbeat every ten seconds for as long as someone watches, counted per window. */
+  "screen.view": 60,
+};
+
+/**
+ * Jobs that can legitimately run for hours get their budget per window rather
+ * than for life, or a long enough mirror would spend it and take the whole
+ * node connection down with it.
+ */
+const FRAME_WINDOW_MS: Partial<Record<NodeCapability, number>> = {
+  "file.read": 60_000,
+  "screen.view": 60_000,
 };
 
 /** In-flight jobs the core will track frames for on one connection. */
@@ -54,6 +64,8 @@ const MAX_TRACKED_JOBS = 256;
 interface HeldJob {
   capability: NodeCapability;
   frames: number;
+  /** When the current budget window began, for the capabilities that count per window. */
+  windowStart: number;
   /** Whether `startJob` has run, so a thousand frames cost one status change. */
   started: boolean;
 }
@@ -204,8 +216,21 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
           return undefined;
         }
 
-        entry = { capability: record.job.capability as NodeCapability, frames: 0, started: false };
+        entry = {
+          capability: record.job.capability as NodeCapability,
+          frames: 0,
+          windowStart: deps.kernel.clock.now(),
+          started: false,
+        };
         held.set(jobId, entry);
+      }
+
+      const windowMs = FRAME_WINDOW_MS[entry.capability];
+      const now = deps.kernel.clock.now();
+
+      if (windowMs !== undefined && now - entry.windowStart >= windowMs) {
+        entry.windowStart = now;
+        entry.frames = 0;
       }
 
       if (entry.frames >= FRAME_BUDGET[entry.capability]) {
