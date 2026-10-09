@@ -4,6 +4,23 @@
 
 > **Read first: six owner decisions (D1 to D6) are listed in the next section.** Slice 1 (P1 to P7) waits on D1 and D2. D3 to D6 shape later tasks and have defaults the plan is written to; a different answer changes only the task named beside it.
 
+## Discussion update: 9 October 2026
+
+This remains a draft implementation plan. The owner asked to use the Vinted and trainers mockups as the concrete
+references for the adaptive workspace. The continuing discussion is recorded in
+[`2026-10-09-owner-decisions.md`](../../architecture/2026-10-09-owner-decisions.md#adaptive-panel-discussion-continued).
+
+Two behaviours are agreed:
+
+- Keep existing results visible with an "Updating..." indicator, then replace a revised result set together when it is
+  ready. Do not change candidates as partial results arrive.
+- Preserve the active view during background updates. An inspected shoe, listing draft or photo stays open until the
+  owner navigates away. Revised recommendations can show "Updated recommendations ready" without replacing that view.
+
+The remaining panel design is still under discussion, including interactive drafts, comparisons, supporting evidence,
+failure/retry behaviour and phone layouts. D1 to D6 have not been accepted as a group. The task steps below have not yet
+been revised to implement these newly agreed behaviours, and no implementation is authorised by this update.
+
 **Goal:** Bring the mockups' feel into v1. Work an agent produces appears as **panels** beside the conversation, laid out by the deterministic compositor, with Vesper's core docked beside the work, on desktop and on the phone. Today v1 has only fixed pages, and the compositor is reachable only from the hidden Command page.
 
 **Architecture:** No new layout engine. The pieces exist and are wired together in a new place:

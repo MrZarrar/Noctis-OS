@@ -1,6 +1,6 @@
 # Owner decisions and discussion: 9 October 2026
 
-This records what the owner and Claude discussed on 9 October 2026 and what was decided, so none of it is lost between
+This records the owner's discussions on 9 October 2026 and what was decided, so none of it is lost between
 sessions. It is the companion to `docs/superpowers/plans/2026-10-09-owner-list.md`, which has the plan.
 `docs/acceptance/IMPLEMENTATION-STATUS.md` has the evidence for what was built.
 
@@ -8,7 +8,7 @@ Each item is marked **Decided**, **Built**, **Open** (still being discussed) or 
 
 ## 1. What was built today
 
-All of it is on `origin/main` and none of it is deployed yet:
+At the time of the initial write-up, all of this was on `origin/main` and none of it was deployed yet:
 
 | Commit    | What it did                                                                |
 | --------- | -------------------------------------------------------------------------- |
@@ -27,8 +27,29 @@ All of it is on `origin/main` and none of it is deployed yet:
 
 The status log has the detail.
 
-**Not live until the deploy.** The deploy is: run `scripts/deploy/work-pc.ps1` (core first), restart the nodes, reindex the
+**Initial deployment instructions.** Run `scripts/deploy/work-pc.ps1` (core first), restart the nodes, reindex the
 Vault, and allow mirroring on each PC under Nodes → Mirror.
+
+### Latest owner report and outstanding work
+
+The handoff reports that the work-PC core was deployed and the node restarted. The owner confirmed that mirroring
+works, Vault reindexing removed the junk, and Haiku 5.5 appears in the model picker. These are handoff/owner reports;
+the live services have not been checked again during this discussion.
+
+- **Mirror, requested:** add a monitor switch and make the view large enough to use clearly on a phone. The current
+  UI has a browser Fullscreen button only when `document.fullscreenEnabled` is true, but no monitor picker. A view
+  that fills the app when browser fullscreen is unavailable remains proposed, not implemented.
+- **Vault, unresolved:** the owner still finds it cluttered and visually worse than the Jarvis dashboard. The supplied
+  screenshot shows overlapping bright clusters. Compare spacing, node sizes and glow with the read-only donor before
+  choosing a fix. Removing junk has not settled this separate visual issue; no further Vault changes were made.
+- **Haiku 5.5, intended role:** the owner wants to use it for adaptive-panel proposals and desktop work through
+  Windows-MCP. Current code offers `claude-haiku-5-5`; that does not itself enable desktop control or adaptive panels.
+  Models propose validated intent; deterministic code retains authority, state transitions, layout and placement.
+- **Panel cost, proposed:** displaying, navigating or laying out existing panels should run in deterministic code.
+  Model calls should serve new tasks or meaningful semantic decisions rather than every UI update. This is a design
+  recommendation, not a verified measurement or an implemented change.
+- **Work authorised now:** document the discussion, then commit and push the pending changes in this Noctis checkout.
+  No implementation, deployment, plugin installation or quota-consuming tests have been requested.
 
 The graphify code graph (8,812 files) was moved out of MindVault to
 `C:\Users\mushaf.zarrar\Documents\MindVault-archive\jarvis-dashboard\codegraph`, with the owner's approval.
@@ -41,7 +62,8 @@ The graphify code graph (8,812 files) was moved out of MindVault to
 - Codex is run with the codex binary bundled in the VS Code extension. The CLI on `PATH` is older and cannot use the
   configured model.
 - Running three heavy Codex jobs at once exhausted the ChatGPT allowance in about 30 minutes.
-- Commit and push as work goes along, always. That is a standing yes for this repo, recorded in Claude's memory.
+- Commits and pushes require the owner's explicit request and confirmation for the specific action. An earlier
+  discussion described a standing yes; the owner's current repository instructions supersede that permission.
 
 ## 3. eBay listing
 
@@ -84,6 +106,30 @@ The normal seller account is the one used to grant Noctis access.
 - the Workbench, which is reachable only through the Command page behind `VITE_NOCTIS_ALL_PAGES`, still in its old look.
 
 The plan is in `docs/superpowers/plans/2026-10-09-adaptive-panels.md`.
+
+### Adaptive-panel discussion continued
+
+**Reference direction.** The owner asked to ground the discussion in the Vinted and trainers mockups in
+`docs/Mockups`, rather than a generic daily-plan example. All four stages of each journey were reviewed:
+
+- Trainers: define requirements, explore candidates, inspect one shoe, then decide from a shortlist.
+- Vinted: show photos, shape a listing draft, continue in the real Vinted form, then show the listing reference/status.
+
+These references show the workspace changing with the task: the current work gets the main area, relevant supporting
+information appears alongside it, and Vesper's position and size adapt. Interactive drafts, comparisons and evidence
+views need discussion beyond the existing media and read-only document proposal.
+
+**Decided: replace revised result sets together.** Keep the current candidates visible with an "Updating..." indicator
+while replacements are prepared. Replace the whole set once it is ready, rather than changing candidates as partial
+results arrive. The owner prefers this to frequent live updates.
+
+**Decided: preserve the view the owner is using.** If revised recommendations become ready while the owner is
+inspecting a shoe, keep that shoe open until the owner navigates back. Show "Updated recommendations ready" without
+taking over the screen. The same principle applies to an open listing draft or photo.
+
+**Open.** Failure/retry behaviour, independent updates to supporting panels, interactive panel capabilities, and phone
+layouts remain proposals to discuss. The six decisions in the existing implementation plan have not been accepted as
+a group. These design decisions alone do not authorise implementation, deployment, commits or pushes.
 
 **What Tauri would add.** It only adds things native code can do on the PC the owner is sitting at:
 
@@ -174,6 +220,80 @@ Jester's soul also forbids sending, and it would need changing for approved send
 
 - Bridge Hermes memory with the Vault: read the agent brain back, and give the agents a Noctis recall tool.
 - Route Hermes scheduling through Noctis.
+
+### Subscription-backed Hermes: research on 9 October 2026
+
+**Open; researched, not enabled.** The owner initially asked about using existing ChatGPT/Codex or Claude subscriptions
+inside Hermes, the new Claude subscription plugin, and reports of headless Claude consuming quota at three times the
+rate. The owner then clarified that subscription-backed Hermes is not planned now; the concern is Claude quota
+consumption through Noctis itself.
+
+- **ChatGPT/Codex as Hermes's model provider:** Hermes documents a "ChatGPT or Codex Subscription" OAuth option.
+  Hermes retains its own agent loop. Its provider guide does not establish exact plan eligibility or quota weighting.
+  OpenAI documents subscription sign-in for Codex and a ChatGPT-plan app-server integration.
+- **Codex app-server inside Hermes:** an optional beta hands execution to Codex. The documented limitations include
+  unavailable in-turn `delegate_task`, `memory`, `session_search` and `todo` tools. Background memory/skill reviews
+  remain supported through Hermes's own loop. It needs evaluation against the owner's desired Hermes capabilities.
+- **Claude Subscription DirectSDK:** NousResearch's experimental plugin was added on 20 September and its catalog was
+  updated on 7 October. It uses the official Claude Code CLI with Pro/Max subscription login, preserving Hermes's
+  tools, approvals and compaction. Despite the name, it uses stream-json rather than the Python Agent SDK package.
+  It requires Hermes 0.21.4 or newer; its documented Haiku 5.5 CLI minimum is 2.1.293. This is distinct from Hermes's
+  direct Anthropic OAuth provider, which its provider guide describes as requiring Max plus purchased extra usage.
+- **The three-times claim:** the original first-person report compares six runs of one coding task on one Pro account
+  using Opus 5. Headless runs consumed about 5.2 percentage points of the five-hour allowance per dollar of
+  API-equivalent usage, versus about 1.7 interactively. This is a reported measurement, not a confirmed universal
+  multiplier. It does not establish the same rate for Haiku 5.5, Max plans, weekly limits, or perfect cache hits.
+  Anthropic's current subscription/SDK notice permits subscription usage but does not specify a three-times rate.
+- **Noctis exposure:** the current Claude runtime calls the Agent SDK's `query()` and keeps a process per thread.
+  It is therefore in the headless SDK category; persistent processes do not establish exemption from provider quota
+  weighting. Noctis's reported usage retains input/output token counts, not cache reads/writes or the subscription
+  allowance delta, so those records alone cannot validate the claim. API-key authentication is refused.
+- **Noctis's Hermes integration:** `hermesConfig()` currently writes `provider: lmstudio` before process startup, and
+  the probe exposes only local models. Installing a plugin or manually editing that generated config would not
+  complete subscription integration. Provider selection, authentication, approvals, cancellation and auxiliary-model
+  routing need explicit integration and verification before changing the live route.
+- **Separate API credits:** Anthropic's 7 October notice adds monthly API credits for Max/Team. With Console API-key
+  authentication these are separate from subscription limits; subscription login still consumes plan limits.
+  Purchased credits or auto-reload can continue paid usage after the included balance runs out. Noctis currently
+  refuses API-key authentication, so this is a separate option requiring approval and integration, not an automatic
+  benefit of its existing Claude route.
+
+**Conflicting community observations.** The owner shared a report that both native Hermes Claude Pro OAuth and the
+official experimental plugin worked without API keys or extra credits, with no noticeable difference in quota use.
+That report attributes the practical difference to configurable native cache TTL versus the plugin's fixed one-hour
+TTL. This is a report shared by the owner, not a test performed in Noctis. It conflicts with the native-provider credit
+requirements described in Hermes's guide. Neither it nor the earlier six-run report establishes a universal quota
+multiplier.
+
+**Noctis follow-up, not yet implemented or run.** Keep the existing official Claude SDK route while measuring actual
+allowance consumption. The installed SDK 0.3.270 declares an experimental structured usage method returning plan
+utilization percentages and reset times when available; Noctis does not currently call it. Record before/after
+five-hour and weekly usage, model/effort, cache reads/writes and outputs for comparable interactive and Noctis tasks,
+with no other account activity. Account-wide utilization cannot attribute simultaneous sessions to one turn, and SDK
+dollar estimates are not authoritative subscription-quota measurements.
+
+Anthropic's cost-tracking guide documents a one-hour cache default for subscription-backed main turns within included
+usage. Actual Noctis cache hits and effective TTL remain unmeasured; changing a cache setting does not prove that a
+quota multiplier has been removed. The current SDK help notice permits subscription-backed usage, while the SDK
+developer overview separately restricts third-party products offering subscription login unless approved. The scope
+of that product-distribution restriction should not be inferred from community quota tests.
+
+Research involved reading sources and code and documenting the findings. No model calls, plugin installation,
+authentication changes or deployment were performed. Documentation publication was authorised separately.
+
+**Sources checked:**
+
+- [Hermes model providers](https://hermes-agent.nousresearch.com/docs/integrations/providers/)
+- [Hermes Codex app-server runtime](https://hermes-agent.nousresearch.com/docs/user-guide/features/codex-app-server-runtime)
+- [Claude Subscription DirectSDK catalog](https://hermes-agent.nousresearch.com/docs/plugins/claude-subscription-directsdk)
+- [DirectSDK source and qualification notes](https://github.com/NousResearch/hermes-plugin-claude-subscription-directsdk)
+- [Original headless-quota measurement report](https://www.reddit.com/r/ClaudeAI/comments/1wsijnv/measured_it_headless_claude_code_agent_sdk_claude/)
+- [Anthropic subscription/SDK notice](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+- [Anthropic monthly API credits](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans)
+- [Anthropic SDK usage accounting and cache TTL](https://code.claude.com/docs/en/agent-sdk/cost-tracking)
+- [Anthropic SDK overview and product-authentication restriction](https://code.claude.com/docs/en/agent-sdk/overview)
+- [OpenAI subscription authentication](https://learn.chatgpt.com/docs/auth)
+- [OpenAI ChatGPT-plan app-server integration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)
 
 ## 7. Safeguards for agents
 
