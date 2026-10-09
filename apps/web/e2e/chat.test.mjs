@@ -223,7 +223,9 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       // Free chat: the runtime's command asks, and the ask reaches Chat as a card.
       const asked = await waitFor(
         readPage,
-        (state) => state.approvals.length === 1,
+        (state) =>
+          state.approvals.length === 1 &&
+          state.items.some((item) => item.kind === "command" && item.status === "in_progress"),
         "the runtime's ask never became an approval card",
       );
 
@@ -537,6 +539,118 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       } finally {
         await page.setViewportSize({ width: 1900, height: 1000 });
       }
+    },
+  );
+
+  it(
+    "the picker announces details, skips disabled choices and closes when its page moves",
+    { timeout: 60_000 },
+    async () => {
+      await page.goto(WEB_URL);
+      await page.getByRole("textbox", { name: "Message Vesper" }).waitFor();
+      await page.evaluate(() => import("/e2e/picker.fixture.mjs"));
+      const fixture = page.getByRole("region", { name: "Picker fixture" });
+      const trigger = fixture.getByRole("button", { name: /^PC and folder/ });
+      const list = fixture.getByRole("listbox", { name: "PC and folder" });
+      assert.equal(
+        await trigger.getAttribute("aria-label"),
+        "PC and folder: Documents on home, offline",
+      );
+      assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+      await trigger.click();
+      await list.waitFor();
+      assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+      await page.keyboard.press("ArrowDown");
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.textContent?.trim()),
+        "Projects on home",
+      );
+      const disabled = list.getByRole("option", { name: "Unavailable folder" });
+      await disabled.click({ force: true });
+      assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+      assert.equal(
+        await trigger.getAttribute("aria-label"),
+        "PC and folder: Documents on home, offline",
+      );
+      await disabled.focus();
+      await page.keyboard.press("Enter");
+      assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+      await page.keyboard.press("Space");
+      assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await list.waitFor({ state: "hidden" });
+      assert.equal(await trigger.getAttribute("aria-label"), "PC and folder: Projects on home");
+      await trigger.click();
+      await list.waitFor();
+      await list.dispatchEvent("scroll");
+      assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+      await fixture.locator('[aria-label="Scrollable page"]').evaluate((element) => {
+        element.scrollTop = 50;
+      });
+      await list.waitFor({ state: "hidden" });
+      assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+      await trigger.click();
+      await list.waitFor();
+      await page.setViewportSize({ width: 1800, height: 950 });
+      await list.waitFor({ state: "hidden" });
+      assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+      await page.setViewportSize({ width: 1900, height: 1000 });
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve)),
+          ),
+      );
+      await fixture.locator('[aria-label="Scrollable page"]').evaluate((element) => {
+        element.scrollTop = 10;
+        element.querySelector("button").click();
+      });
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve)),
+          ),
+      );
+      assert.equal(
+        await trigger.getAttribute("aria-expanded"),
+        "true",
+        "a scroll queued before opening closed the picker",
+      );
+      await fixture.locator('[aria-label="Other scroller"]').evaluate((element) => {
+        element.scrollTop = 50;
+      });
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve)),
+          ),
+      );
+      assert.equal(
+        await trigger.getAttribute("aria-expanded"),
+        "true",
+        "a sibling scroller closed the picker",
+      );
+      await page.keyboard.press("Escape");
+      await list.waitFor({ state: "hidden" });
+      await trigger.click();
+      await page.keyboard.press("End");
+      await page.keyboard.press("Enter");
+      await list.waitFor({ state: "hidden" });
+      await fixture.locator('[role="listbox"]').evaluate((element) => {
+        element.closest("dialog").scrollTop = 0;
+      });
+      await trigger.click();
+      await list.waitFor();
+      const selectedVisible = await list.evaluate((element) => {
+        const row = element.querySelector('[aria-selected="true"]').getBoundingClientRect();
+        const sheet = element.closest("dialog").getBoundingClientRect();
+        return row.top >= sheet.top && row.bottom <= sheet.bottom;
+      });
+      assert.equal(selectedVisible, true, "the selected row is outside the visible list");
+      await page.keyboard.press("Escape");
+      await list.waitFor({ state: "hidden" });
     },
   );
 

@@ -1,6 +1,6 @@
 import { corner, depth, material, spacing, typography } from "@noctis/ui";
 import type { KeyboardEvent } from "react";
-import { useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { buttonStyle, fieldStyle, glass } from "./Page.js";
 import { useIsMobile } from "./useIsMobile.js";
@@ -65,11 +65,37 @@ export function Picker<T extends string>({
 }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const scrollPositions = useRef(new Map<Element, { left: number; top: number }>());
+  const [open, setOpen] = useState(false);
   const mobile = useIsMobile();
   const id = useId();
   const current = options.find((option) => option.value === value);
   // The one row Tab lands on: the chosen one, or the first that can be chosen.
   const entry = current ?? options.find((option) => option.disabled !== true);
+
+  useEffect(() => {
+    const closeOnMove = (event: Event): void => {
+      const sheet = dialog.current;
+      if (sheet?.open !== true) return;
+      if (event.type === "scroll") {
+        const target = event.target === document ? document.scrollingElement : event.target;
+        if (!(target instanceof Element)) return;
+        const before = scrollPositions.current.get(target);
+        if (
+          before === undefined ||
+          (before.left === target.scrollLeft && before.top === target.scrollTop)
+        )
+          return;
+      }
+      sheet.close();
+    };
+    window.addEventListener("resize", closeOnMove);
+    window.addEventListener("scroll", closeOnMove, true);
+    return () => {
+      window.removeEventListener("resize", closeOnMove);
+      window.removeEventListener("scroll", closeOnMove, true);
+    };
+  }, []);
 
   const show = (): void => {
     const sheet = dialog.current;
@@ -80,6 +106,7 @@ export function Picker<T extends string>({
     }
 
     sheet.showModal();
+    setOpen(true);
 
     if (mobile) {
       // Left behind by a desktop opening before the window narrowed.
@@ -106,6 +133,14 @@ export function Picker<T extends string>({
     }
 
     sheet.querySelector<HTMLElement>('[role="option"][tabindex="0"]')?.focus();
+    scrollPositions.current.clear();
+    for (
+      let parent = button.current?.parentElement;
+      parent != null;
+      parent = parent.parentElement
+    ) {
+      scrollPositions.current.set(parent, { left: parent.scrollLeft, top: parent.scrollTop });
+    }
   };
 
   const pick = (option: PickerOption<T>): void => {
@@ -148,7 +183,12 @@ export function Picker<T extends string>({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-controls={`${id}-list`}
-        aria-label={current === undefined ? label : `${label}: ${current.label}`}
+        aria-expanded={open}
+        aria-label={
+          current === undefined
+            ? label
+            : `${label}: ${current.label}${current.detail === undefined ? "" : `, ${current.detail}`}`
+        }
         onClick={show}
         style={{
           ...fieldStyle,
@@ -180,6 +220,7 @@ export function Picker<T extends string>({
         ref={dialog}
         aria-labelledby={id}
         onClose={() => {
+          setOpen(false);
           button.current?.focus();
         }}
         onClick={(event) => {
