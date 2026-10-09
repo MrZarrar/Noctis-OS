@@ -548,10 +548,15 @@ it(
         await page.screenshot({
           path: join(COMPANION_EVIDENCE, `companion-${name}-conversations.png`),
         });
-      await page.goBack();
+      const returnButton = page.getByRole("button", { name: "Back to the conversation" });
+      assert.equal(await returnButton.count(), 1, "the list's corner core has no return action");
+      await returnButton.click();
       await page.getByRole("textbox", { name: "Message Vesper" }).waitFor();
       const back = await settled('[data-core-slot="composer"]');
       assert.ok(near(back.box, back.slot), `the core did not return to the composer`);
+      await page.goBack();
+      await page.getByRole("heading", { name: "Presence", exact: true }).waitFor();
+      await nav.getByRole("button", { name: "Threads" }).click();
 
       await page.getByRole("textbox", { name: "Message Vesper" }).fill("SLOW: take your time");
       await page.getByRole("button", { name: "Send", exact: true }).click();

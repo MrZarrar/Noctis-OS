@@ -13,7 +13,7 @@ export type Dock = {
  * approval, which the owner must never lose sight of.
  */
 export function dockFor(page: RailItem, state: IntelligenceState, mobile: boolean): Dock {
-  if (page === "Presence") return { anchor: "slot", slot: "hero", size: 0 };
+  if (page === "Presence" || page === "Command") return { anchor: "slot", slot: "hero", size: 0 };
   if (page === "Threads") return { anchor: "slot", slot: "composer", size: 76 };
   if (page === "Vault" && state !== "waiting_for_approval") return { anchor: "hidden", size: 0 };
   return { anchor: "corner", size: cornerSize(mobile) };

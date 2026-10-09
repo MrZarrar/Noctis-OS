@@ -253,11 +253,15 @@ function Workbench({
   };
 
   const select = (item: RailItem): void => {
-    // Leaving for Presence closes the thread; its entry is spent with it.
-    const spent = item === "Presence" && threadLayer.owns();
-
+    if (item === "Presence" && openThreadId !== undefined) {
+      void threadLayer.closed().then(() => {
+        arrive(item);
+        show(item);
+      });
+      return;
+    }
     arrive(item);
-    show(item, spent);
+    show(item);
   };
 
   return (
@@ -465,7 +469,11 @@ function Workbench({
         listening={listening}
         mobile={isMobile}
         onOpenThreads={() => {
-          select("Threads");
+          if (active === "Threads") {
+            history.back();
+          } else {
+            select("Threads");
+          }
         }}
       />
 

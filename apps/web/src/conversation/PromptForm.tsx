@@ -48,7 +48,6 @@ export interface PromptFormProps {
    */
   lockedTo?: string;
   onSend: (text: string, options: SendOptions) => void;
-  onListeningChange?: (listening: boolean) => void;
   /**
    * Offered, the Vesper/Jester switch shows above the box, and typing exactly
    * `JESTER` or `VESPER` switches instead of sending (master plan §6).
@@ -239,7 +238,6 @@ export function PromptForm({
   roots = [],
   lockedTo,
   onSend,
-  onListeningChange,
   onSwitchIdentity,
   aside,
 }: PromptFormProps): JSX.Element {
@@ -305,7 +303,6 @@ export function PromptForm({
       ...(rootGrantId === "" || lockedTo !== undefined ? {} : { rootGrantId }),
     });
     setText("");
-    onListeningChange?.(false);
     setFiles([]);
   };
 
@@ -392,8 +389,6 @@ export function PromptForm({
           value={text}
           disabled={disabled}
           rows={2}
-          onFocus={() => onListeningChange?.(true)}
-          onBlur={() => onListeningChange?.(false)}
           onChange={(event) => {
             setText(event.target.value);
           }}

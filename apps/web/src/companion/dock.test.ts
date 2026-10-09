@@ -36,8 +36,20 @@ describe("where the one core sits", () => {
     });
   });
 
+  it("fills Command's hero slot on desktop and phone", () => {
+    for (const mobile of [false, true]) {
+      for (const state of STATES) {
+        expect(dockFor("Command", state, mobile)).toEqual({
+          anchor: "slot",
+          slot: "hero",
+          size: 0,
+        });
+      }
+    }
+  });
+
   it("docks in the corner everywhere else, smaller on a phone", () => {
-    for (const page of ["Files", "Nodes", "Approvals", "Settings", "Command"] as const) {
+    for (const page of ["Files", "Nodes", "Approvals", "Settings"] as const) {
       expect(dockFor(page, "idle", false)).toEqual({ anchor: "corner", size: 96 });
       expect(dockFor(page, "speaking", true)).toEqual({ anchor: "corner", size: 72 });
     }

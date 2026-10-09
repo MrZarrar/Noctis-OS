@@ -165,6 +165,9 @@ export function CompanionCore({
       CLEARANCE,
       corner ? `${String(size + gap)}px` : "0px",
     );
+    return () => {
+      document.documentElement.style.removeProperty(CLEARANCE);
+    };
   }, [corner, size, gap]);
 
   const name =
@@ -238,7 +241,7 @@ export function CompanionCore({
         {corner && (
           <button
             type="button"
-            aria-label="Open Threads"
+            aria-label={page === "Threads" ? "Back to the conversation" : "Open Threads"}
             onClick={onOpenThreads}
             style={{
               position: "absolute",

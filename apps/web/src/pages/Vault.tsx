@@ -79,6 +79,18 @@ export interface VaultProps {
   onReturn?: () => void;
 }
 
+export function firstDrawnHit(
+  entityIds: readonly string[],
+  nodes: readonly VaultSphereNode[],
+): string | undefined {
+  return entityIds.find((id) =>
+    nodes.some(
+      (node) =>
+        node.id === id && node.x !== undefined && node.y !== undefined && node.z !== undefined,
+    ),
+  );
+}
+
 export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element {
   const [status, setStatus] = useState<z.infer<typeof StatusSchema>>();
   const [nodes, setNodes] = useState<readonly VaultSphereNode[]>([]);
@@ -186,12 +198,12 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
     if (response.status === 200 && parsed.success) {
       setRecall({ ...parsed.data, query: query.trim() });
-      setFocus(parsed.data.entityIds[0]);
+      setFocus(firstDrawnHit(parsed.data.entityIds, nodes));
       setError(undefined);
     } else {
       setError("The core returned a recall that does not match its contract");
     }
-  }, [transport, query]);
+  }, [transport, query, nodes]);
 
   return (
     <Page

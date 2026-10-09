@@ -15,11 +15,38 @@ describe("entryPage", () => {
 });
 
 /** A session history in memory, with a back that fires popstate to whoever listens. */
-function installHistory(onPop: (state: unknown) => void): {
+function installHistory(
+  onPop: (state: unknown) => void,
+  deferred = false,
+): {
   length(): number;
+  flush(): void;
 } {
   const entries: unknown[] = [{ page: "Presence", depth: 0 }];
   let index = 0;
+  const pending: Array<() => void> = [];
+  const listeners = new Set<(event: { state: unknown }) => void>();
+  vi.stubGlobal(
+    "addEventListener",
+    (_type: string, listener: (event: { state: unknown }) => void) => {
+      listeners.add(listener);
+    },
+  );
+  vi.stubGlobal(
+    "removeEventListener",
+    (_type: string, listener: (event: { state: unknown }) => void) => {
+      listeners.delete(listener);
+    },
+  );
+  const arrive = (delta: number): void => {
+    index += delta;
+    onPop(entries[index]);
+    for (const listener of [...listeners]) listener({ state: entries[index] });
+  };
+  const move = (delta: number): void => {
+    if (deferred) pending.push(() => arrive(delta));
+    else arrive(delta);
+  };
 
   vi.stubGlobal("history", {
     get state() {
@@ -34,12 +61,17 @@ function installHistory(onPop: (state: unknown) => void): {
       entries[index] = state;
     },
     back() {
-      index -= 1;
-      onPop(entries[index]);
+      move(-1);
     },
+    go: move,
   });
 
-  return { length: () => entries.length };
+  return {
+    length: () => entries.length,
+    flush: () => {
+      while (pending.length > 0) pending.shift()?.();
+    },
+  };
 }
 
 /** What a mounted component does: a layer open or not, wired to the browser's popstate. */
@@ -196,4 +228,86 @@ describe("back layers", () => {
 
     expect((history.state as { page: string }).page).toBe("Threads");
   });
+
+  it.each([false, true])(
+    "reuses the open thread's entry when another thread is picked (deferred: %s)",
+    (deferred) => {
+      browser = installHistory((state) => {
+        for (const made of mounted) made.layer.popped(state);
+      }, deferred);
+      pushPage("Threads");
+      const thread = layerOf("thread", true);
+      const list = layerOf("conversations");
+      thread.layer.pushed();
+      thread.open = true;
+      list.layer.pushed();
+      list.open = true;
+      thread.layer.pushed();
+      list.layer.dismiss();
+      browser.flush();
+
+      expect(thread.open).toBe(true);
+      expect(list.open).toBe(false);
+      goBack();
+      browser.flush();
+      expect(thread.open).toBe(false);
+      expect(history.state).toEqual({ page: "Threads", depth: 1 });
+      goBack();
+      browser.flush();
+      expect(history.state).toEqual({ page: "Presence", depth: 0 });
+    },
+  );
+
+  it.each([false, true])(
+    "removes the open thread and list entries when free chat is picked (deferred: %s)",
+    (deferred) => {
+      browser = installHistory((state) => {
+        for (const made of mounted) made.layer.popped(state);
+      }, deferred);
+      pushPage("Threads");
+      const thread = layerOf("thread", true);
+      const list = layerOf("conversations");
+      thread.layer.pushed();
+      thread.open = true;
+      list.layer.pushed();
+      list.open = true;
+      thread.layer.dismiss();
+      list.layer.dismiss();
+      browser.flush();
+
+      expect(thread.open).toBe(false);
+      expect(list.open).toBe(false);
+      expect(history.state).toEqual({ page: "Threads", depth: 1 });
+      goBack();
+      browser.flush();
+      expect(history.state).toEqual({ page: "Presence", depth: 0 });
+    },
+  );
+
+  it.each([false, true])(
+    "spends a thread entry below Files before navigating to Presence (deferred: %s)",
+    async (deferred) => {
+      browser = installHistory((state) => {
+        for (const made of mounted) made.layer.popped(state);
+      }, deferred);
+      pushPage("Threads");
+      const thread = layerOf("thread", true);
+      thread.layer.pushed();
+      thread.open = true;
+      pushPage("Files");
+      const dismissed = thread.layer.closed();
+      browser.flush();
+      await dismissed;
+      pushPage("Presence");
+      void thread.layer.closed();
+
+      expect(thread.open).toBe(false);
+      goBack();
+      browser.flush();
+      expect(history.state).toEqual({ page: "Threads", depth: 1 });
+      goBack();
+      browser.flush();
+      expect(history.state).toEqual({ page: "Presence", depth: 0 });
+    },
+  );
 });

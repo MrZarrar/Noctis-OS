@@ -48,14 +48,14 @@ export function pushPage(page: RailItem, replace = false): void {
 export interface BackLayer {
   /** Call right after opening the layer. */
   pushed: () => void;
-  /** Closes the layer; goes back if its entry is the one on top. */
+  /** Closes the layer and returns below its entry. */
   dismiss: () => void;
   /** Whether the layer's entry is the one on top. */
   owns: () => boolean;
   /** Feed it every popstate: it closes only when its own entry was left. */
   popped: (state: unknown) => void;
-  /** The layer closed by some other route. */
-  closed: () => void;
+  /** Spends the entry when another route closes the layer. */
+  closed: () => Promise<void>;
 }
 
 /**
@@ -69,15 +69,55 @@ export interface BackLayer {
 export function createLayer(layer: string, onBack: () => void, outlivesPage = false): BackLayer {
   let owner: number | undefined;
 
+  const goTo = (depth: number, onArrival?: () => void): Promise<void> =>
+    new Promise((resolve) => {
+      const arrived = (): void => {
+        removeEventListener("popstate", arrived);
+        onArrival?.();
+        resolve();
+      };
+      addEventListener("popstate", arrived);
+      history.go(depth - depthOf(history.state));
+    });
+
   const topIsMine = (): boolean => {
     const top = history.state as HistoryEntry | null;
     return owner !== undefined && depthOf(top) === owner;
+  };
+
+  const close = (): Promise<void> => {
+    const top = history.state as HistoryEntry | null;
+    const depth = owner;
+    const mustPop =
+      depth !== undefined &&
+      (depth < depthOf(top) || (topIsMine() && (top?.layer === layer || top?.layer === undefined)));
+    owner = undefined;
+    onBack();
+    if (mustPop) {
+      // A list closing in the same click must not schedule a second back.
+      history.replaceState({ ...top, layer }, "");
+      return goTo(depth - 1);
+    }
+    return Promise.resolve();
   };
 
   return {
     pushed() {
       const top = history.state as HistoryEntry | null;
       const depth = Math.max(depthOf(top), 0);
+      if (owner !== undefined && owner < depth) {
+        const entry: HistoryEntry = {
+          page: entryPage(top) ?? "Presence",
+          depth: owner,
+          layer,
+          ...(outlivesPage ? { outlivesPage: true as const } : {}),
+        };
+        history.replaceState({ ...entry, depth }, "");
+        void goTo(owner, () => {
+          history.replaceState(entry, "");
+        });
+        return;
+      }
       // The layer reopening over its own entry (a thread opened from a thread),
       // or taking over the entry of a layer that closes with its page (a thread
       // picked from the list), reuses the entry; anything else stacks.
@@ -97,14 +137,7 @@ export function createLayer(layer: string, onBack: () => void, outlivesPage = fa
       owner = entry.depth;
     },
     dismiss() {
-      const top = history.state as HistoryEntry | null;
-
-      if (topIsMine() && (top?.layer === layer || top?.layer === undefined)) {
-        history.back();
-      } else {
-        owner = undefined;
-        onBack();
-      }
+      void close();
     },
     owns: topIsMine,
     popped(state) {
@@ -114,7 +147,7 @@ export function createLayer(layer: string, onBack: () => void, outlivesPage = fa
       }
     },
     closed() {
-      owner = undefined;
+      return owner === undefined ? Promise.resolve() : close();
     },
   };
 }
@@ -145,7 +178,7 @@ export function useBackLayer(
 
   useEffect(() => {
     if (!isOpen) {
-      current.closed();
+      void current.closed();
       return undefined;
     }
     const onPop = (event: PopStateEvent): void => {

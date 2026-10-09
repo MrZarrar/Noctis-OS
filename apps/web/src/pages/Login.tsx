@@ -54,8 +54,6 @@ export function Login({ baseUrl, onAuthenticated }: LoginProps): JSX.Element {
         boxSizing: "border-box",
         height: "100dvh",
         overflowY: "auto",
-        alignItems: "center",
-        justifyContent: "center",
         background: depth.floor,
         color: typography.color.primary,
         fontFamily: typography.family,
@@ -69,6 +67,7 @@ export function Login({ baseUrl, onAuthenticated }: LoginProps): JSX.Element {
         }}
         style={{
           display: "grid",
+          margin: "auto",
           gap: spacing.md,
           width: "100%",
           maxWidth: 360,

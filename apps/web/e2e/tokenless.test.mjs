@@ -207,6 +207,19 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
       assert.ok(refused.hasTokenField, "the login screen went away on a refusal");
       assert.equal(await sessionCookie(), undefined, "a refused login still set a session cookie");
 
+      const originalViewport = page.viewportSize();
+      await page.setViewportSize({ width: 400, height: 200 });
+      const tokenField = page.getByLabel("Core token");
+      await tokenField.scrollIntoViewIfNeeded();
+      const fieldBox = await tokenField.boundingBox();
+      assert.ok(fieldBox.y >= 0 && fieldBox.y + fieldBox.height <= 200);
+      await page.getByRole("heading", { name: "Noctis", exact: true }).scrollIntoViewIfNeeded();
+      const headingBox = await page
+        .getByRole("heading", { name: "Noctis", exact: true })
+        .boundingBox();
+      assert.ok(headingBox.y >= 0, "the top of the short login form cannot be scrolled into view");
+      await page.setViewportSize(originalViewport);
+
       // 3. The right one yields the workbench.
       await signIn(TOKEN);
 
