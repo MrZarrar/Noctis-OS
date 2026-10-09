@@ -37,6 +37,7 @@ import { AGENT_VERSION } from "../agent.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
+import { identityCard } from "./identity.js";
 import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
 import { probeClaudeInstalled } from "./probe.js";
 import type { LiveProcess } from "./sessions.js";
@@ -542,6 +543,12 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     // The SDK does not split read from write access: `additionalDirectories`
     // grants both, so a write into a read root is caught by the gate, where
     // `classifyAsk` calls a path outside every writable root external_write.
+    const card = identityCard({
+      identityId: payload.identityId,
+      runtime: "claude",
+      model: payload.model.model,
+      env: input.env,
+    });
     const sdkOptions: Options = {
       cwd: roots.cwd,
       additionalDirectories: [...roots.writable.filter((r) => r !== roots.cwd), ...roots.readable],
@@ -550,6 +557,12 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       permissionMode: "auto",
       settingSources: ["user", "project", "local"],
       skills: "all",
+      // The preset keeps Claude Code's own prompt, so the owner's setup still loads.
+      ...(card === undefined
+        ? {}
+        : {
+            systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: card },
+          }),
       includePartialMessages: true,
       abortController: controller,
       mcpServers: {

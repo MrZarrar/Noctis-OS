@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused } from "./Runtime.js";
+import { identityCard } from "./identity.js";
 import type { ModelHost } from "./lmstudio.js";
 
 /**
@@ -37,9 +38,9 @@ const PROBE_TIMEOUT_MS = 3_000;
 /** ponytail: the newest messages only, so a long thread still fits the model's context. Summarise when that bites. */
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_TEXT = 20_000;
-const SYSTEM_PROMPT =
-  "You are a language model running on the owner's own PC, reached through Noctis. " +
+const NO_TOOLS =
   "You have no tools: you cannot open files, browse or run anything, so answer in text only.";
+const SYSTEM_PROMPT = `You are a language model running on the owner's own PC, reached through Noctis. ${NO_TOOLS}`;
 
 const ModelsSchema = z
   .object({ data: z.array(z.object({ id: z.string().min(1) }).loose()) })
@@ -209,6 +210,13 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
 
     await ensureModel(options.host, payload.model.model);
 
+    const card = identityCard({
+      identityId: payload.identityId,
+      runtime: "local",
+      model: payload.model.model,
+      env: input.env,
+    });
+    const system = card === undefined ? SYSTEM_PROMPT : [card, NO_TOOLS].join("\n\n");
     const sessionRef = payload.sessionRef ?? randomUUID();
     const history = await load(payload.sessionRef);
     const asked: Message[] = [...history, { role: "user", content: payload.prompt }];
@@ -232,10 +240,7 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           model: payload.model.model,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...asked.slice(-MAX_HISTORY_MESSAGES),
-          ],
+          messages: [{ role: "system", content: system }, ...asked.slice(-MAX_HISTORY_MESSAGES)],
           stream: true,
           stream_options: { include_usage: true },
         }),

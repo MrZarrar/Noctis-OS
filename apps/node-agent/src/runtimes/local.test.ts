@@ -245,6 +245,19 @@ describe("the local model runtime", () => {
     ]);
   });
 
+  it("opens with the identity card ahead of the no-tools sentence, and drops the card when off", async () => {
+    const runtime = createLocalRuntime({ baseUrl: base, sessionsDir: scratch });
+
+    await runtime.turn(input(), recorder().sink);
+    await runtime.turn({ ...input(), env: { NOCTIS_IDENTITY_CARDS: "0" } }, recorder().sink);
+
+    expect(asked[0]?.messages[0]).toMatchObject({ role: "system" });
+    expect(asked[0]?.messages[0]?.content).toMatch(/^You are Vesper/);
+    expect(asked[0]?.messages[0]?.content).toContain("running as a local model on");
+    expect(asked[0]?.messages[0]?.content).toContain("You have no tools");
+    expect(asked[1]?.messages[0]?.content).toMatch(/^You are a language model/);
+  });
+
   it("does not follow a redirect off the machine", async () => {
     reply = "redirect";
 

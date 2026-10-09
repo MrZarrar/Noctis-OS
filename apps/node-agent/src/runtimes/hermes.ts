@@ -1,5 +1,5 @@
 import { spawn as spawnChild } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +13,7 @@ import type { ProposalChannel } from "../proposals-file.js";
 import { createProposalChannel } from "../proposals-file.js";
 import type { CodexSpawn } from "./codex.js";
 import { childEnvironment } from "./env.js";
+import { identityCard } from "./identity.js";
 import type { ModelHost } from "./lmstudio.js";
 import { ensureModel } from "./local.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
@@ -218,8 +219,20 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, "config.yaml"), hermesConfig(input.payload.model.model));
 
-    if (jester) {
-      writeFileSync(join(home, "SOUL.md"), JESTER_SOUL);
+    const soul = jester
+      ? JESTER_SOUL
+      : identityCard({
+          identityId: input.payload.identityId,
+          runtime: "hermes",
+          model: input.payload.model.model,
+          env: input.env,
+        });
+
+    if (soul === undefined) {
+      // A soul left over from when cards were on would keep speaking for Vesper.
+      rmSync(join(home, "SOUL.md"), { force: true });
+    } else {
+      writeFileSync(join(home, "SOUL.md"), soul);
     }
 
     const child = spawn(command, [], {

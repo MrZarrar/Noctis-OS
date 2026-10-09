@@ -452,6 +452,7 @@ describe("the Codex App Server runtime", () => {
         model: "gpt-5.5",
         approvalPolicy: "on-request",
         sandbox: "workspace-write",
+        developerInstructions: expect.stringContaining("You are Vesper") as string,
       },
     ]);
     expect(s?.requests.get("turn/start")).toEqual([
@@ -587,6 +588,48 @@ describe("the Codex App Server runtime", () => {
           excludeTmpdirEnvVar: false,
           excludeSlashTmp: false,
         },
+      }),
+    ]);
+  });
+
+  it("names the runtime and model in the card, and leaves it out with cards off", async () => {
+    const on = runtime(HAPPY);
+    const off = runtime(HAPPY);
+
+    await on.runtime.turn(input(), recorder().sink);
+    await off.runtime.turn(
+      { ...input(), env: { PATH: "C:\\bin", NOCTIS_IDENTITY_CARDS: "0" } },
+      recorder().sink,
+    );
+
+    expect(on.spawned[0]?.requests.get("thread/start")).toEqual([
+      expect.objectContaining({
+        developerInstructions: expect.stringContaining("running as Codex on gpt-5.5") as string,
+      }),
+    ]);
+    expect(off.spawned[0]?.requests.get("thread/start")?.[0]).not.toHaveProperty(
+      "developerInstructions",
+    );
+  });
+
+  it("carries the card on resume and fork too", async () => {
+    const resumed = runtime({ ...HAPPY, resume: "ok" });
+    const forked = runtime({ ...HAPPY, resume: "ok" });
+
+    await resumed.runtime.turn(input({ sessionRef: "thread-9" }), recorder().sink);
+    await forked.runtime.turn(
+      input({ sessionRef: "thread-9", forkSession: true }),
+      recorder().sink,
+    );
+
+    expect(resumed.spawned[0]?.requests.get("thread/resume")).toEqual([
+      expect.objectContaining({
+        developerInstructions: expect.stringContaining("You are Vesper") as string,
+      }),
+    ]);
+    expect(forked.spawned[0]?.requests.get("thread/fork")).toEqual([
+      expect.objectContaining({
+        developerInstructions: expect.stringContaining("You are Vesper") as string,
       }),
     ]);
   });

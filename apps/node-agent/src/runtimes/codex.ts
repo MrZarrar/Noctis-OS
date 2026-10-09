@@ -25,6 +25,7 @@ import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { resolveCodexCommand } from "./codex-command.js";
 import { installCodexRules } from "./codex-rules.js";
 import { childEnvironment } from "./env.js";
+import { identityCard } from "./identity.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
 import { probeCodexInstalled } from "./probe.js";
@@ -823,11 +824,19 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           });
 
           // `approval_policy` is refused as a config key by 0.154; the per-request field still takes it.
+          const card = identityCard({
+            identityId: payload.identityId,
+            runtime: "codex",
+            model: payload.model.model,
+            env: input.env,
+          });
+          // developerInstructions adds to Codex's own prompt; baseInstructions would replace it.
           const thread = {
             cwd: roots.cwd,
             model: payload.model.model,
             approvalPolicy: "on-request",
             sandbox: "workspace-write",
+            ...(card === undefined ? {} : { developerInstructions: card }),
           };
 
           if (payload.sessionRef !== undefined) {

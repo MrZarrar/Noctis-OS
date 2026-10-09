@@ -310,6 +310,27 @@ describe("the Claude Agent SDK runtime", () => {
     expect(Object.keys(options?.env ?? {})).not.toContain("ANTHROPIC_API_KEY");
   });
 
+  it("tells Vesper who it is through the preset's append, and sends nothing with cards off", async () => {
+    const on = scripted(list(init(), result()));
+    const off = scripted(list(init(), result()));
+
+    await createClaudeRuntime({ query: on.query }).turn(input(), recorder().sink);
+    await createClaudeRuntime({ query: off.query }).turn(
+      { ...input(), env: { PATH: "C:\\bin", NOCTIS_IDENTITY_CARDS: "0" } },
+      recorder().sink,
+    );
+
+    expect(on.calls[0]?.options?.systemPrompt).toEqual({
+      type: "preset",
+      preset: "claude_code",
+      append: expect.stringContaining("You are Vesper") as string,
+    });
+    expect(on.calls[0]?.options?.systemPrompt).toMatchObject({
+      append: expect.stringContaining("running as Claude Code on sonnet") as string,
+    });
+    expect(off.calls[0]?.options?.systemPrompt).toBe(undefined);
+  });
+
   it("resumes the session the payload names", async () => {
     const { query, calls } = scripted(list(init(), result()));
 

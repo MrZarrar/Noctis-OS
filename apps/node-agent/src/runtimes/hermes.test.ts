@@ -466,7 +466,7 @@ describe("the Hermes runtime (ACP)", () => {
     expect(spawned[0]?.notes).toContainEqual(["session/cancel", { sessionId: "hs-1" }]);
   });
 
-  it("speaks as Jester on Jester's own Hermes home, and leaves Vesper's Hermes plain", async () => {
+  it("speaks as Jester on Jester's own Hermes home, and keeps Vesper's soul on Vesper's", async () => {
     const { runtime: hermes, spawned } = runtime();
 
     await hermes.turn(input({ identityId: "jester" }), recorder().sink);
@@ -485,7 +485,27 @@ describe("the Hermes runtime (ACP)", () => {
       "memory_enabled: false",
     );
     expect(spawned[1]?.env.HERMES_HOME).toBe(join(scratch, "hermes"));
-    expect(existsSync(join(scratch, "hermes", "SOUL.md"))).toBe(false);
+    expect(readFileSync(join(scratch, "hermes", "SOUL.md"), "utf8")).toMatch(/^You are Vesper/);
+  });
+
+  it("writes the identity card as Vesper's soul, and removes it once cards are off", async () => {
+    const { runtime: hermes } = runtime();
+    const soul = join(scratch, "hermes", "SOUL.md");
+
+    await hermes.turn(input(), recorder().sink);
+
+    expect(readFileSync(soul, "utf8")).toMatch(/^You are Vesper/);
+    expect(readFileSync(soul, "utf8")).toContain("running as Hermes on");
+
+    await hermes.turn(
+      {
+        ...input({ threadId: "0199a000-0000-7000-8000-0000000000f2" }),
+        env: { PATH: "C:\\bin", NOCTIS_IDENTITY_CARDS: "0" },
+      },
+      recorder().sink,
+    );
+
+    expect(existsSync(soul)).toBe(false);
   });
 
   it("starts LM Studio and loads the model before Hermes starts, when the node drives LM Studio", async () => {
