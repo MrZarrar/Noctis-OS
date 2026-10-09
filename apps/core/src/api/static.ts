@@ -166,9 +166,15 @@ function cacheControlFor(pathname: string): string {
  * was moved into a bundled stylesheet so the policy did not have to be widened
  * to keep it. Adding a font CDN, an inline script, or an analytics endpoint
  * means changing this line first, which is the point.
+ *
+ * Images are `'self'` plus `blob:`, and only because the composer previews a
+ * screenshot the owner just pasted or dropped: the page makes that URL itself
+ * from bytes already in the browser, so it names no origin and loads nothing
+ * from anywhere else.
  */
-const CONTENT_SECURITY_POLICY =
+const BASE_POLICY =
   "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
+const CONTENT_SECURITY_POLICY = `${BASE_POLICY}; img-src 'self' blob:`;
 
 /**
  * The policy above, widened for the embedded remote desktop (ADR-0035) when —
@@ -185,7 +191,7 @@ export function pageSecurityPolicy(gatewayOrigins: readonly string[]): string {
     return CONTENT_SECURITY_POLICY;
   }
 
-  return `${CONTENT_SECURITY_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
+  return `${BASE_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
 }
 
 function respond(

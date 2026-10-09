@@ -48,6 +48,26 @@ body {
   scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
 }
 
+/* The idle core's only motion. It lives here rather than in the renderer
+   because the core's policy has no 'unsafe-inline' and refuses an inline
+   <style>. */
+@keyframes noctis-core-breathe {
+  0%,
+  100% {
+    transform: scale(0.99) rotate(-0.6deg);
+  }
+  50% {
+    transform: scale(1.015) rotate(0.6deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .noctis-intelligence[data-core-state="idle"][data-core-visible="true"] > canvas {
+    will-change: transform;
+    animation: noctis-core-breathe 7s ease-in-out infinite;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

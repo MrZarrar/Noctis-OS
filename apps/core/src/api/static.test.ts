@@ -183,6 +183,9 @@ describe("serveStatic", () => {
       // writes, which CSP does not govern, and index.html's one `<style>` block
       // became a bundled stylesheet rather than an exception in this line.
       expect(headers["content-security-policy"], pathname).not.toContain("unsafe-inline");
+      // The composer previews an image the owner pasted from a blob: URL the
+      // page made itself; nothing else is allowed to load an image from elsewhere.
+      expect(headers["content-security-policy"], pathname).toContain("img-src 'self' blob:");
       expect(headers["x-frame-options"], pathname).toBe("DENY");
       expect(headers["referrer-policy"], pathname).toBe("no-referrer");
     }
@@ -298,8 +301,9 @@ describe("serveStatic", () => {
 });
 
 describe("pageSecurityPolicy (Task 3.9)", () => {
-  const strict =
+  const base =
     "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
+  const strict = `${base}; img-src 'self' blob:`;
 
   it("is unchanged when no remote desktop is configured", () => {
     expect(pageSecurityPolicy([])).toBe(strict);
@@ -308,7 +312,7 @@ describe("pageSecurityPolicy (Task 3.9)", () => {
   it("widens exactly as far as the remote desktop needs, for the configured Gateways only", () => {
     const policy = pageSecurityPolicy(["wss://zarrarpc.tail9594ed.ts.net"]);
 
-    expect(policy.startsWith(strict)).toBe(true);
+    expect(policy.startsWith(base)).toBe(true);
     // WASM compiles; no string is ever evaluated, and no script is inline.
     expect(policy).toContain("script-src 'self' 'wasm-unsafe-eval'");
     expect(policy).not.toMatch(/(^|[\s;])'unsafe-eval'/);
@@ -317,7 +321,8 @@ describe("pageSecurityPolicy (Task 3.9)", () => {
     expect(policy.split("'unsafe-inline'")).toHaveLength(2);
     // Its WASM is an inlined data: URL it fetch()es, and its cursors are data: images.
     expect(policy).toContain("connect-src 'self' data: wss://zarrarpc.tail9594ed.ts.net");
-    expect(policy).toContain("img-src 'self' data:");
+    expect(policy).toContain("img-src 'self' data: blob:");
+    expect(policy.split("img-src")).toHaveLength(2);
   });
 
   it("is the header serveStatic sends when it is given one", async () => {

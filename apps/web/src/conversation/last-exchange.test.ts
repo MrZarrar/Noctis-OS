@@ -39,7 +39,11 @@ describe("lastExchange", () => {
       streaming: new Map([["a1", "Because panic"]]),
     });
 
-    expect(exchange).toEqual({ you: "Give me one reason it fails.", reply: "Because panic" });
+    expect(exchange).toEqual({
+      you: "Give me one reason it fails.",
+      reply: "Because panic",
+      outputs: [],
+    });
   });
 
   it("uses the stored reply once the turn has one, and says why a turn failed", () => {
@@ -49,14 +53,14 @@ describe("lastExchange", () => {
         turns: [turn({ status: "completed", replyMessageId: "m-reply" })],
         streaming: new Map(),
       }),
-    ).toEqual({ you: "Hi", reply: "Fine." });
+    ).toEqual({ you: "Hi", reply: "Fine.", outputs: [] });
     expect(
       lastExchange({
         messages: [message("m-you", "user", "Hi")],
         turns: [turn({ status: "failed", failureReason: "LM Studio is not running" })],
         streaming: new Map(),
       }),
-    ).toEqual({ you: "Hi", reply: "Failed: LM Studio is not running" });
+    ).toEqual({ you: "Hi", reply: "Failed: LM Studio is not running", outputs: [] });
   });
 
   it("follows the newest turn, not the first", () => {
@@ -69,6 +73,35 @@ describe("lastExchange", () => {
       streaming: new Map(),
     });
 
-    expect(exchange).toEqual({ you: "New", reply: "" });
+    expect(exchange).toEqual({ you: "New", reply: "", outputs: [] });
+  });
+
+  it("carries the files the newest turn made, in order, and skips any it cannot fetch", () => {
+    const outputId = "0199a000-0000-7000-8000-000000000001";
+    const exchange = lastExchange({
+      messages: [message("m-you", "user", "Make me a logo")],
+      turns: [
+        turn({
+          status: "completed",
+          items: [
+            { itemId: "a1", kind: "agent_message", status: "completed", text: "Done." },
+            {
+              itemId: "o1",
+              kind: "output",
+              status: "completed",
+              mediaType: "image/png",
+              attachmentId: outputId,
+              path: "jester.png",
+            },
+            { itemId: "o2", kind: "output", status: "completed", mediaType: "text/plain" },
+          ],
+        }),
+      ],
+      streaming: new Map(),
+    });
+
+    expect(exchange?.outputs).toEqual([
+      { attachmentId: outputId, mediaType: "image/png", path: "jester.png" },
+    ]);
   });
 });

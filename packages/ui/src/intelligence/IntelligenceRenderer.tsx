@@ -904,18 +904,6 @@ export function IntelligenceRenderer({
         overflow: "hidden",
       }}
     >
-      <style>{`
-        @keyframes noctis-core-breathe {
-          0%, 100% { transform: scale(.99) rotate(-.6deg); }
-          50% { transform: scale(1.015) rotate(.6deg); }
-        }
-        @media (prefers-reduced-motion: no-preference) {
-          .noctis-intelligence[data-core-state="idle"][data-core-visible="true"] > canvas {
-            will-change: transform;
-            animation: noctis-core-breathe 7s ease-in-out infinite;
-          }
-        }
-      `}</style>
       {!webgl && <StaticCore state={state} profile={profile} />}
     </div>
   );

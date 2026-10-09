@@ -109,6 +109,20 @@ function fixture() {
     },
   };
   globalThis.s6Fixture = {
+    output() {
+      turn.items.push({
+        itemId: "o1",
+        kind: "output",
+        status: "completed",
+        mediaType: "image/png",
+        path: "jester.png",
+        attachmentId: id("e1"),
+      });
+      emit("identity.turn_item.v1", "identity", thread.id, {
+        turnId: turn.id,
+        item: turn.items.at(-1),
+      });
+    },
     set(state) {
       waiting = state === "waiting_for_approval";
       if (!waiting) emit("authority.declined.v1", "authority", approval.id);
@@ -189,6 +203,7 @@ it(
       const core = page.locator(".noctis-intelligence");
       await core.waitFor();
       assert.equal(await page.locator("h1").textContent(), "Presence");
+      assert.match(await page.locator("time").first().innerText(), /^\d{2}:\d{2}/);
       await page.waitForFunction(
         () => document.querySelector(".noctis-intelligence")?.dataset.coreRenderer === "webgl",
       );
@@ -354,6 +369,10 @@ it(
       await page.waitForFunction(
         () => document.querySelector(".noctis-intelligence")?.dataset.coreState === "thinking",
       );
+      // What the turn made shows under its words, not only in Threads. This
+      // transport cannot say where the bytes are, so it is named in plain text.
+      await page.evaluate(() => globalThis.s6Fixture.output());
+      await page.locator('[aria-live="polite"]').getByText("jester.png", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Open in Threads →" }).click();
       await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
       // And Threads carries a small core of its own.

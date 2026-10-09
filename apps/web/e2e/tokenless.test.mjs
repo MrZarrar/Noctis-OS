@@ -218,6 +218,50 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
 
       assert.ok(!workbench.hasTokenField, "the login screen is still showing after a login");
 
+      // The idle core's breathing is a keyframes rule. This page is served
+      // under the core's own policy, which refuses an inline <style>, so the
+      // rule has to arrive in the bundled stylesheet.
+      assert.ok(
+        await page.evaluate(() =>
+          [...document.styleSheets].some((sheet) =>
+            [...sheet.cssRules].some((rule) => rule.name === "noctis-core-breathe"),
+          ),
+        ),
+        "the core's breathing keyframes never loaded under the core's CSP",
+      );
+
+      // A pasted screenshot previews from a blob: URL, which the policy has to
+      // allow for the thumbnail to be anything but a blank square.
+      const box = page.getByRole("textbox", { name: "Message Vesper" });
+
+      await box.evaluate((textarea) => {
+        const png = Uint8Array.from(
+          globalThis.atob(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          ),
+          (character) => character.charCodeAt(0),
+        );
+        const clipboard = new globalThis.DataTransfer();
+
+        clipboard.items.add(new globalThis.File([png], "image.png", { type: "image/png" }));
+        textarea.dispatchEvent(
+          new globalThis.ClipboardEvent("paste", {
+            clipboardData: clipboard,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+
+      const thumbnail = page.getByRole("list", { name: "Attached files" }).locator("img");
+
+      await thumbnail.waitFor();
+      await page.waitForFunction(
+        () => document.querySelector('ul[aria-label="Attached files"] img')?.naturalWidth > 0,
+        undefined,
+        { timeout: 5000 },
+      );
+
       // 4. The credential is a cookie script cannot touch. This is the whole
       //    argument for the session realm: an XSS that reads every variable in
       //    the page still cannot exfiltrate anything a browser would present.

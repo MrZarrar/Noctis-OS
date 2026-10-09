@@ -17,6 +17,7 @@ import {
 import type { RailItem } from "@noctis/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { guardStrayFileDrops } from "./conversation/file-drops.js";
 import type { RuntimeRootOption, SendOptions } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
@@ -77,6 +78,8 @@ export function App(): JSX.Element {
   // otherwise a reload, an evicted tab, a Home Screen cold start or a tapped
   // notification is a token prompt with a valid session already in hand.
   const [resuming, setResuming] = useState(needsLogin);
+
+  useEffect(() => guardStrayFileDrops(window), []);
 
   useEffect(() => {
     if (!needsLogin()) {

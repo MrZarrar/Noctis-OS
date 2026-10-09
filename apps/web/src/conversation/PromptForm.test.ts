@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { offeredModels, rootOption } from "./PromptForm.js";
+import { offeredModels, pastedFiles, rootOption } from "./PromptForm.js";
 
 const CLAUDE = { providerId: "claude" as const, model: "opus" };
 const LOCAL = { providerId: "local" as const, model: "qwen/qwen3.5-9b" };
@@ -41,5 +41,60 @@ describe("rootOption", () => {
     expect(rootOption({ ...ROOT, connected: false, mode: "read" })).toMatchObject({
       detail: "offline · read only",
     });
+  });
+});
+
+describe("pastedFiles", () => {
+  const item = (kind: string, type: string, file: File | null) => ({
+    kind,
+    type,
+    getAsFile: () => file,
+  });
+  const now = new Date(2026, 9, 9, 7, 5, 3);
+
+  it("names every pasted image for when it was taken, since the clipboard calls them all image.png", () => {
+    const files = pastedFiles(
+      [
+        item("file", "image/png", new File(["a"], "image.png", { type: "image/png" })),
+        item("string", "text/plain", null),
+        item("file", "image/jpeg", new File(["b"], "image.jpg", { type: "image/jpeg" })),
+      ],
+      now,
+    );
+
+    expect(files.map((file) => file.name)).toEqual([
+      "screenshot-20261009-070503.png",
+      "screenshot-20261009-070503-2.jpg",
+    ]);
+    expect(files.map((file) => file.type)).toEqual(["image/png", "image/jpeg"]);
+  });
+
+  it("keeps counting across pastes, so two in one second still get different names", () => {
+    const first = pastedFiles(
+      [item("file", "image/png", new File(["a"], "image.png", { type: "image/png" }))],
+      now,
+    );
+    const second = pastedFiles(
+      [item("file", "image/png", new File(["a"], "image.png", { type: "image/png" }))],
+      now,
+      2,
+    );
+
+    expect(first[0]?.name).toBe("screenshot-20261009-070503.png");
+    expect(second[0]?.name).toBe("screenshot-20261009-070503-2.png");
+  });
+
+  it("ignores a file that is not an image the core takes, and an empty clipboard", () => {
+    expect(
+      pastedFiles(
+        [
+          item("file", "application/pdf", new File(["a"], "a.pdf", { type: "application/pdf" })),
+          item("file", "image/svg+xml", new File(["a"], "a.svg", { type: "image/svg+xml" })),
+          item("file", "image/png", null),
+        ],
+        now,
+      ),
+    ).toEqual([]);
+    expect(pastedFiles([], now)).toEqual([]);
   });
 });

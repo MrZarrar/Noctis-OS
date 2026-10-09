@@ -12,11 +12,12 @@ import {
   typography,
 } from "@noctis/ui";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { buttonStyle } from "../layout/Page.js";
 import type { PickerOption } from "../layout/Picker.js";
 import { Picker } from "../layout/Picker.js";
+import { carriesFiles } from "./file-drops.js";
 import type { RuntimeRootOption, SendOptions } from "./useConversation.js";
 
 export interface PromptFormProps {
@@ -57,6 +58,61 @@ export interface PromptFormProps {
 
 /** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
 const MAX_FILES = 8;
+
+const ALLOWED_TYPES: readonly string[] = ATTACHMENT_MEDIA_TYPES;
+
+/**
+ * The images on a clipboard, named for when they were pasted: the browser calls
+ * every one of them `image.png`, which says nothing in the attached list and
+ * collides on a second paste. A file type the core would refuse is left out.
+ */
+export function pastedFiles(
+  items: ReadonlyArray<{ kind: string; type: string; getAsFile(): File | null }>,
+  now: Date,
+  firstNumber = 1,
+): File[] {
+  const two = (value: number): string => String(value).padStart(2, "0");
+  const stamp =
+    `${String(now.getFullYear())}${two(now.getMonth() + 1)}${two(now.getDate())}` +
+    `-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+
+  return items
+    .filter(
+      (item) =>
+        item.kind === "file" && item.type.startsWith("image/") && ALLOWED_TYPES.includes(item.type),
+    )
+    .flatMap((item) => {
+      const file = item.getAsFile();
+      return file === null ? [] : [{ file, type: item.type }];
+    })
+    .map(({ file, type }, index) => {
+      const number = firstNumber + index;
+      const extension = type.slice("image/".length).replace("jpeg", "jpg");
+      const name = `screenshot-${stamp}${number === 1 ? "" : `-${String(number)}`}.${extension}`;
+      return new File([file], name, { type, lastModified: now.getTime() });
+    });
+}
+
+/** A small preview of an attached image; the object URL goes with the file. */
+function Thumbnail({ file }: { file: File }): JSX.Element | null {
+  const [url, setUrl] = useState<string>();
+
+  useEffect(() => {
+    const made = URL.createObjectURL(file);
+    setUrl(made);
+    return () => {
+      URL.revokeObjectURL(made);
+    };
+  }, [file]);
+
+  return url === undefined ? null : (
+    <img
+      src={url}
+      alt=""
+      style={{ width: 32, height: 32, objectFit: "cover", borderRadius: corner.sm }}
+    />
+  );
+}
 
 const attachedListStyle = {
   listStyle: "none",
@@ -189,6 +245,8 @@ export function PromptForm({
   const [chosen, setChosen] = useState<string>();
   const [files, setFiles] = useState<readonly File[]>([]);
   const [rootGrantId, setRootGrantId] = useState("");
+  // Screenshots pasted so far, so two in the same second never share a name.
+  const pasted = useRef(0);
 
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
@@ -206,6 +264,10 @@ export function PromptForm({
       ? [usableDefault, ...offered]
       : offered;
   const selectedKey = chosen ?? defaultKey ?? "";
+
+  const attach = (incoming: readonly File[]): void => {
+    setFiles((current) => [...current, ...incoming].slice(0, MAX_FILES));
+  };
 
   const submit = (): void => {
     const trimmed = text.trim();
@@ -246,6 +308,23 @@ export function PromptForm({
       onSubmit={(event) => {
         event.preventDefault();
         submit();
+      }}
+      onDragOver={(event) => {
+        // A drop only lands where the dragover said it may.
+        if (canAttach && !disabled && carriesFiles(event.dataTransfer)) {
+          event.preventDefault();
+        }
+      }}
+      onDrop={(event) => {
+        // Text dragged into the box is the browser's to insert.
+        if (!canAttach || disabled || !carriesFiles(event.dataTransfer)) {
+          return;
+        }
+
+        event.preventDefault();
+        attach(
+          Array.from(event.dataTransfer.files).filter((file) => ALLOWED_TYPES.includes(file.type)),
+        );
       }}
       style={{ display: "grid", gap: spacing.sm, width: "100%" }}
     >
@@ -312,6 +391,23 @@ export function PromptForm({
           onChange={(event) => {
             setText(event.target.value);
           }}
+          onPaste={(event) => {
+            const images = canAttach
+              ? pastedFiles(Array.from(event.clipboardData.items), new Date(), pasted.current + 1)
+              : [];
+
+            if (images.length === 0) {
+              return;
+            }
+
+            pasted.current += images.length;
+            attach(images);
+
+            // Text copied along with the image still pastes as text.
+            if (event.clipboardData.getData("text/plain") === "") {
+              event.preventDefault();
+            }
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -353,6 +449,7 @@ export function PromptForm({
         <ul aria-label="Attached files" style={{ ...attachedListStyle }}>
           {files.map((file) => (
             <li key={`${file.name}:${String(file.size)}`} style={attachedItemStyle}>
+              {file.type.startsWith("image/") && <Thumbnail file={file} />}
               <span>{file.name}</span>
               <button
                 type="button"
@@ -467,7 +564,7 @@ export function PromptForm({
               accept={ATTACHMENT_MEDIA_TYPES.join(",")}
               disabled={disabled}
               onChange={(event) => {
-                setFiles([...files, ...Array.from(event.target.files ?? [])].slice(0, MAX_FILES));
+                attach(Array.from(event.target.files ?? []));
                 // Cleared so picking the same file twice in a row still fires.
                 event.target.value = "";
               }}

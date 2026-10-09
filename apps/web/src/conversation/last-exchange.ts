@@ -1,13 +1,19 @@
 import type { ConversationSnapshot } from "./useConversation.js";
 
+export interface ExchangeOutput {
+  attachmentId: string;
+  mediaType: string;
+  path?: string;
+}
+
 /**
- * What Presence shows under the core after a send: the owner's latest line and
- * the reply as far as it has come, as in the Jester mockup. Threads keeps the
- * history; this is only the exchange in progress.
+ * What Presence shows under the core after a send: the owner's latest line, the
+ * reply as far as it has come, as in the Jester mockup, and any file the turn
+ * made. Threads keeps the history; this is only the exchange in progress.
  */
 export function lastExchange(
   snapshot: Pick<ConversationSnapshot, "messages" | "turns" | "streaming">,
-): { you: string; reply: string } | undefined {
+): { you: string; reply: string; outputs: ExchangeOutput[] } | undefined {
   const turn = snapshot.turns.at(-1);
 
   if (turn === undefined) {
@@ -28,5 +34,17 @@ export function lastExchange(
       : streamed) ??
     "";
 
-  return { you: body(turn.userMessageId) ?? "", reply };
+  const outputs = turn.items.flatMap((item) =>
+    item.kind === "output" && item.attachmentId !== undefined
+      ? [
+          {
+            attachmentId: item.attachmentId,
+            mediaType: item.mediaType,
+            ...(item.path === undefined ? {} : { path: item.path }),
+          },
+        ]
+      : [],
+  );
+
+  return { you: body(turn.userMessageId) ?? "", reply, outputs };
 }

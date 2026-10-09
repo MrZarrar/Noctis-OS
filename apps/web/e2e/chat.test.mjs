@@ -356,4 +356,115 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       );
     },
   );
+
+  it(
+    "attaches a screenshot pasted into the message box, and uploads it with the send",
+    { timeout: 120_000 },
+    async () => {
+      await openChat();
+      await waitFor(readPage, (state) => state.messages.length > 0, "history did not load");
+
+      const box = page.getByRole("textbox", { name: "Message Vesper" });
+
+      await box.focus();
+      await box.evaluate((textarea) => {
+        const png = Uint8Array.from(
+          globalThis.atob(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          ),
+          (character) => character.charCodeAt(0),
+        );
+        const clipboard = new globalThis.DataTransfer();
+
+        clipboard.items.add(new globalThis.File([png], "image.png", { type: "image/png" }));
+        textarea.dispatchEvent(
+          new globalThis.ClipboardEvent("paste", {
+            clipboardData: clipboard,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+
+      const attached = page.getByRole("list", { name: "Attached files" });
+
+      await attached.waitFor();
+      assert.match(await attached.innerText(), /screenshot-\d{8}-\d{6}\.png/);
+
+      const upload = page.waitForRequest(
+        (request) => request.url().endsWith("/attachments") && request.method() === "POST",
+      );
+
+      await box.fill("PASTE: look at this");
+      await box.press("Enter");
+
+      const sent = await upload;
+
+      assert.match(sent.headers()["x-noctis-filename"], /^screenshot-\d{8}-\d{6}\.png$/);
+      assert.equal((await sent.response()).status(), 200);
+      await waitFor(
+        readPage,
+        (state) =>
+          // The fake runtime lists the files it was handed under its reply.
+          state.messages.some(
+            (text) =>
+              text.startsWith("Vesper: Hello PASTE: look at this") &&
+              /screenshot-\d{8}-\d{6}\.png \(image\/png\)/.test(text),
+          ) && state.turns.every((status) => status === "completed"),
+        "the turn with the pasted screenshot never completed",
+      );
+    },
+  );
+
+  it("attaches a file dropped on the message box", { timeout: 60_000 }, async () => {
+    await openChat();
+    await waitFor(readPage, (state) => state.messages.length > 0, "history did not load");
+
+    await page.getByRole("textbox", { name: "Message Vesper" }).evaluate((textarea) => {
+      const dropped = new globalThis.DataTransfer();
+
+      dropped.items.add(new globalThis.File(["notes"], "notes.txt", { type: "text/plain" }));
+      textarea.closest("form").dispatchEvent(
+        new globalThis.DragEvent("drop", {
+          dataTransfer: dropped,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    const attached = page.getByRole("list", { name: "Attached files" });
+
+    await attached.waitFor();
+    assert.match(await attached.innerText(), /notes\.txt/);
+
+    // Text dragged into the box is left to the browser, and a file dropped
+    // anywhere else is stopped from replacing the app with that file.
+    const prevented = await page
+      .getByRole("textbox", { name: "Message Vesper" })
+      .evaluate((textarea) => {
+        const drop = (target, fill) => {
+          const transfer = new globalThis.DataTransfer();
+
+          fill(transfer);
+
+          return !target.dispatchEvent(
+            new globalThis.DragEvent("drop", {
+              dataTransfer: transfer,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        };
+
+        return {
+          text: drop(textarea, (transfer) => transfer.setData("text/plain", "dragged words")),
+          stray: drop(document.body, (transfer) =>
+            transfer.items.add(new globalThis.File(["x"], "stray.txt", { type: "text/plain" })),
+          ),
+        };
+      });
+
+    assert.deepEqual(prevented, { text: false, stray: true });
+  });
 });

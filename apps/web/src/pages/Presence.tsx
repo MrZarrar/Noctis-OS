@@ -6,7 +6,7 @@ import {
   semantic,
   typography,
 } from "@noctis/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { PromptForm } from "../conversation/PromptForm.js";
 import { intelligenceState } from "../conversation/intelligence-state.js";
@@ -16,13 +16,18 @@ import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { ExchangeOutputs } from "./ExchangeOutputs.js";
+import { clockText, greetingFor, msToNextMinute } from "./clock.js";
 
 export interface PresenceProps {
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
   conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots"> &
     Partial<
-      Pick<ConversationState, "messages" | "turns" | "streaming" | "pendingApprovals" | "error">
+      Pick<
+        ConversationState,
+        "messages" | "turns" | "streaming" | "pendingApprovals" | "error" | "outputUrl"
+      >
     >;
   onSend: (text: string, options: SendOptions) => void;
   onReview?: () => void;
@@ -62,8 +67,18 @@ export function Presence({
     },
     listening,
   );
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening.";
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    let timer = window.setTimeout(function tick() {
+      setNow(new Date());
+      timer = window.setTimeout(tick, msToNextMinute(new Date()));
+    }, msToNextMinute(new Date()));
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, []);
+  const greeting = greetingFor(now);
+  const clock = clockText(now);
   const error = conversation.error ?? identity.error;
   const accent = identityAccent[identityId].primary;
   const exchange = sent
@@ -102,25 +117,68 @@ export function Presence({
       >
         Presence
       </h1>
-      {identityId === "jester" && (
-        // The mockups' marker: which identity is listening, in its own colour.
-        <p
+      <div
+        style={{
+          alignSelf: "stretch",
+          display: "flex",
+          // On a phone the marker has a line of its own, so the clock below it
+          // is centred and a long date cannot push the marker around.
+          flexDirection: mobile ? "column" : "row",
+          alignItems: mobile ? "stretch" : "flex-start",
+          justifyContent: "space-between",
+          gap: mobile ? 6 : 0,
+        }}
+      >
+        {identityId === "jester" && (
+          // The mockups' marker: which identity is listening, in its own colour.
+          <p
+            style={{
+              alignSelf: "flex-start",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              margin: 0,
+              color: accent,
+              fontFamily: typography.monoFamily,
+              fontSize: 12,
+              letterSpacing: "0.14em",
+            }}
+          >
+            <JesterGlyph size={16} />
+            JESTER · ACTIVE
+          </p>
+        )}
+        <time
+          dateTime={now.toISOString()}
+          aria-label={`${clock.time}, ${clock.day}`}
           style={{
-            alignSelf: "flex-start",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            margin: 0,
-            color: accent,
-            fontFamily: typography.monoFamily,
-            fontSize: 12,
-            letterSpacing: "0.14em",
+            display: "grid",
+            justifyItems: mobile ? "center" : "end",
+            marginLeft: "auto",
+            marginRight: mobile ? "auto" : 0,
           }}
         >
-          <JesterGlyph size={16} />
-          JESTER · ACTIVE
-        </p>
-      )}
+          <span
+            style={{
+              font: `200 ${String(mobile ? 40 : 56)}px/1 ${typography.family}`,
+              fontVariantNumeric: "tabular-nums",
+              letterSpacing: "0.02em",
+              color: typography.color.primary,
+            }}
+          >
+            {clock.time}
+          </span>
+          <span
+            style={{
+              fontSize: typography.scale.sm,
+              color: typography.color.muted,
+              letterSpacing: "0.08em",
+            }}
+          >
+            {clock.day}
+          </span>
+        </time>
+      </div>
       <div
         style={{
           flex: "1 1 320px",
@@ -208,6 +266,11 @@ export function Presence({
                   <span>{exchange.reply}</span>
                 </p>
               )}
+              <ExchangeOutputs
+                outputs={exchange.outputs}
+                outputUrl={conversation.outputUrl}
+                mobile={mobile}
+              />
             </div>
             {onOpenThread !== undefined && (
               <button
