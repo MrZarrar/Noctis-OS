@@ -7,6 +7,7 @@ import { VaultItemSchema } from "@noctis/contracts";
 import type { Coordinate, ParsedNote, Result, SettleNode } from "@noctis/domain";
 import {
   LAYOUT_VERSION,
+  isGeneratedNote,
   keysFor,
   normalizeKey,
   ok,
@@ -97,13 +98,18 @@ function scan(root: VaultRoot): ScannedFile[] {
 
       const raw = readFileSync(resolved);
       const text = raw.toString("utf8");
+      const note = parseNote(text);
+
+      if (isGeneratedNote(note)) {
+        continue;
+      }
 
       files.push({
         path: relative(root.path, resolved).split(sep).join(posix.sep),
         hash: createHash("sha256").update(raw).digest("hex"),
         byteLength: raw.byteLength,
         modifiedAt: new Date(statSync(resolved).mtimeMs).toISOString(),
-        note: parseNote(text),
+        note,
       });
     }
   };
@@ -429,6 +435,16 @@ export function indexVault(
         `UPDATE vault_edges SET lifecycle = 'resolved'
           WHERE lifecycle = 'unresolved'
             AND dst_entity_id IN (SELECT id FROM vault_entities WHERE item_id IS NOT NULL)`,
+      ).run();
+
+      // A note that goes away, or a link nobody writes any more, leaves a
+      // placeholder with nothing pointing at it. Those would otherwise float in
+      // the graph forever, so they go.
+      tx.prepare(
+        `DELETE FROM vault_entities
+          WHERE item_id IS NULL
+            AND id NOT IN (SELECT dst_entity_id FROM vault_edges)
+            AND id NOT IN (SELECT src_entity_id FROM vault_edges)`,
       ).run();
 
       result.entities = (

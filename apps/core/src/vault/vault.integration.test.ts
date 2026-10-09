@@ -1,5 +1,6 @@
 import {
   appendFileSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -147,6 +148,39 @@ describe("indexing a test Vault", () => {
 
     // Markdown is the memory authority: indexing reads it and never writes it.
     expect(TEST_VAULT_FILES.map((file) => readNote(root.path, file.path))).toEqual(before);
+  });
+
+  it("THE GATE: leaves generated code-graph notes out, and drops ones indexed before", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+    const generated = join(root.path, "projects/demo/codegraph");
+    mkdirSync(generated, { recursive: true });
+    const note = join(generated, "$$t().md");
+
+    // First as an ordinary note, so it is indexed the way the live Vault's were.
+    writeFileSync(note, "# $$t()\n\n## Connections\n- [[_0n()]]\n- [[Shared Ghost]]\n");
+    writeFileSync(
+      join(root.path, "inbox/keeper.md"),
+      "# Keeper\n\nStill waiting on [[Shared Ghost]].\n",
+    );
+    indexVault(kernel, context, root, key());
+
+    writeFileSync(
+      note,
+      '---\ntype: "code"\ntags:\n  - graphify/code\n---\n\n# $$t()\n\n## Connections\n- [[_0n()]]\n- [[Shared Ghost]]\n',
+    );
+    const after = indexVault(kernel, context, root, key());
+    expect(after.ok).toBe(true);
+    const rows = kernel.db
+      .prepare(`SELECT COUNT(*) AS n FROM vault_items WHERE path LIKE 'projects/demo/codegraph/%'`)
+      .get() as { n: number };
+    expect(rows.n).toBe(0);
+    const entity = (name: string): unknown =>
+      kernel.db.prepare(`SELECT id FROM vault_entities WHERE name = ?`).get(name);
+    expect(entity("$$t()")).toBeUndefined();
+    expect(entity("_0n()")).toBeUndefined();
+    // A placeholder an owner note still links to is not an orphan.
+    expect(entity("Shared Ghost")).toBeDefined();
   });
 
   it("THE GATE: repeated indexing is stable", () => {

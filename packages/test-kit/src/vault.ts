@@ -100,6 +100,13 @@ Reviewed [[Jarvis Project]] with [[Acme Travel]].
 No links here at all. It should still be indexed and still be findable.
 `,
   },
+  {
+    path: "agent/brain.md",
+    contents: `# Agent Brain
+
+- prefers short replies
+`,
+  },
 ];
 
 export interface CreateTestVaultResult {

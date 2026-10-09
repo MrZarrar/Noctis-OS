@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeKey, parseNote, titleFor } from "./markdown.js";
+import { isGeneratedNote, normalizeKey, parseNote, titleFor } from "./markdown.js";
 
 const NOTE = `---
 title: Jarvis Project
@@ -128,5 +128,52 @@ describe("choosing a title", () => {
     expect(titleFor("projects/x.md", parseNote(NOTE))).toBe("Jarvis Project");
     expect(titleFor("projects/x.md", parseNote("# From Heading\n\nbody"))).toBe("From Heading");
     expect(titleFor("projects/my-note.md", parseNote("no heading"))).toBe("my-note");
+  });
+});
+
+describe("isGeneratedNote", () => {
+  it("knows a graphify code-graph note by its tags, block list or inline", () => {
+    const block = parseNote(
+      '---\nsource_file: "wiki/mermaid.min.js"\ntype: "code"\ntags:\n  - graphify/code\n  - community/G0\n---\n\n# $$t()\n',
+    );
+    const inline = parseNote("---\ntags: [graphify/EXTRACTED]\n---\n# x\n");
+
+    expect(isGeneratedNote(block)).toBe(true);
+    expect(isGeneratedNote(inline)).toBe(true);
+  });
+
+  it("leaves the owner's own notes alone, even ones that mention graphify", () => {
+    expect(
+      isGeneratedNote(
+        parseNote("---\ntags: [projects]\n---\n# Graphify notes\n\nTried graphify/code today.\n"),
+      ),
+    ).toBe(false);
+    expect(isGeneratedNote(parseNote("# No frontmatter\n"))).toBe(false);
+  });
+
+  it("reads only the tags field, never other frontmatter lines", () => {
+    for (const line of [
+      "source: graphify/out",
+      "description: tried graphify/code",
+      "aliases: [graphify/x]",
+    ]) {
+      expect(isGeneratedNote(parseNote(`---\n${line}\ntags: [projects]\n---\n# x\n`))).toBe(false);
+    }
+
+    expect(
+      isGeneratedNote(parseNote("---\ntags:\n  - projects\nsource: graphify/out\n---\n# x\n")),
+    ).toBe(false);
+  });
+
+  it("accepts quoted tags and a comma list", () => {
+    expect(isGeneratedNote(parseNote('---\ntags: ["graphify/code", other]\n---\n# x\n'))).toBe(
+      true,
+    );
+    expect(isGeneratedNote(parseNote("---\ntags:\n  - 'graphify/code'\n---\n# x\n"))).toBe(true);
+    expect(isGeneratedNote(parseNote('---\ntags:\n  - "graphify/code"\n---\n# x\n'))).toBe(true);
+    expect(isGeneratedNote(parseNote("---\ntags: a, graphify/code\n---\n# x\n"))).toBe(true);
+    expect(isGeneratedNote(parseNote("---\ntags:\n  - a\n  - graphify/code\ntype: x\n---\n"))).toBe(
+      true,
+    );
   });
 });

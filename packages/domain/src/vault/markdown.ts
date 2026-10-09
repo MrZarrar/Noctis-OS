@@ -253,3 +253,35 @@ export function keysFor(path: string, note: ParsedNote): string[] {
 
   return [...keys];
 }
+
+/**
+ * Notes a tool wrote about code, not notes the owner wrote. graphify drops
+ * thousands of them into a Vault at once, and they drown the second brain.
+ * Only the `tags` field is read, so prose or other fields that mention
+ * graphify keep their note.
+ */
+export function isGeneratedNote(note: ParsedNote): boolean {
+  if (note.frontmatter === undefined) {
+    return false;
+  }
+
+  let inTags = false;
+
+  for (const line of note.frontmatter.raw.split(/\r?\n/)) {
+    const key = /^([A-Za-z_][\w-]*)\s*:(.*)$/.exec(line);
+    let values: string[];
+
+    if (key !== null) {
+      inTags = key[1] === "tags";
+      values = inTags ? (key[2] ?? "").replace(/^\s*\[|\]\s*$/g, "").split(",") : [];
+    } else {
+      values = inTags ? [line.replace(/^\s*-\s*/, "")] : [];
+    }
+
+    if (values.some((value) => unquote(value).startsWith("graphify/"))) {
+      return true;
+    }
+  }
+
+  return false;
+}

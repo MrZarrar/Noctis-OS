@@ -706,8 +706,12 @@ function readGraph(
   total: number;
   truncated: boolean;
 } {
+  // The brain is the agents' shared notes, read by agents; the sphere is the
+  // owner's second brain.
   const total = (
-    db.prepare("SELECT COUNT(*) AS count FROM vault_entities").get() as { count: number }
+    db.prepare("SELECT COUNT(*) AS count FROM vault_entities WHERE type <> 'agent'").get() as {
+      count: number;
+    }
   ).count;
 
   const nodes = db
@@ -717,6 +721,7 @@ function readGraph(
          FROM vault_entities e
          LEFT JOIN vault_items i ON i.id = e.item_id
          LEFT JOIN vault_layout l ON l.entity_id = e.id
+        WHERE e.type <> 'agent'
         ORDER BY e.key
         LIMIT ?`,
     )

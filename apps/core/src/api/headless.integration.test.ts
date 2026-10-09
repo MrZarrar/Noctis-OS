@@ -877,6 +877,15 @@ describe("the Vault graph read", () => {
     expect(nodes.filter((node) => node.x === null)).toHaveLength(0);
   });
 
+  it("leaves the agents' own brain out of the owner's sphere", async () => {
+    const graph = await read(await indexedCore(), "/vault/graph");
+    const nodes = graph.body.nodes as Array<{ type: string }>;
+
+    expect(nodes.length).toBeGreaterThan(0);
+    expect(nodes.filter((node) => node.type === "agent")).toHaveLength(0);
+    expect(graph.body.total).toBe(nodes.length);
+  });
+
   it("THE GATE: says so when the graph is larger than the read, rather than truncating in silence", async () => {
     const core = await indexedCore();
     const full = await read(core, "/vault/graph");
