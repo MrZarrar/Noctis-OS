@@ -99,6 +99,15 @@ It adds nothing on the phone or remotely.
 - an installer and signing, for Smart App Control;
 - the Rust toolchain on the work PC.
 
+**Windows-MCP instead of Tauri (Open, leaning to drop the Tauri revival).** Windows-MCP gives agents the window and
+app control Tauri's native shell was for. To keep "deterministic code owns physical window placement", layouts go
+through a Noctis tool that the node executes with the existing placement code (`crates/noctis-windows`) or a
+PowerShell helper, while ad-hoc app tasks ("open Teams, say hi to Tolga") go through Windows-MCP. No Tauri shell is
+needed for either. Only an always-on-top floating core, a global hotkey and a tray remain Tauri-only. Model: Haiku 4.5
+(the current small model) can do simple desktop steps; Sonnet for long multi-step work; Noctis's Claude probe offers
+only Sonnet and Opus today, so adding Haiku is a small change. Desktop actions that send something must never be
+classed as a local edit (same fix as Hermes computer use).
+
 ## 5. Connectors and skills for the agents
 
 **Decided:** the owner considers the researched set mostly good. Nothing is installed yet.
