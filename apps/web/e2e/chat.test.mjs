@@ -98,10 +98,18 @@ function readPage() {
       approvals: texts('li[data-entry="approval"]'),
       confirmDisabled: confirm === undefined ? null : confirm.disabled,
       // Visible only: Command stays mounted behind `display: none`, and its
-      // Presence prompt carries a selector of its own.
-      modelOptions: [...document.querySelectorAll("select")]
-        .filter((select) => select.checkVisibility())
-        .flatMap((select) => [...select.options].map((option) => option.textContent ?? "")),
+      // Presence prompt carries a picker of its own. A closed picker's rows are
+      // still in the page, in the list its button controls.
+      modelOptions: [
+        ...document.querySelectorAll('button[aria-haspopup="listbox"][aria-label^="Agent"]'),
+      ]
+        .filter((button) => button.checkVisibility())
+        .flatMap((button) => [
+          ...(document
+            .getElementById(button.getAttribute("aria-controls") ?? "")
+            ?.querySelectorAll('[role="option"]') ?? []),
+        ])
+        .map((option) => option.textContent ?? ""),
       errors: texts("p").filter((text) => text.includes("refused") || text.includes("could not")),
     };
   });

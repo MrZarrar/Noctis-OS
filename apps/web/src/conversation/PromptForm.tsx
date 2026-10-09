@@ -14,7 +14,9 @@ import {
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-import { buttonStyle, fieldStyle } from "../layout/Page.js";
+import { buttonStyle } from "../layout/Page.js";
+import type { PickerOption } from "../layout/Picker.js";
+import { Picker } from "../layout/Picker.js";
 import type { RuntimeRootOption, SendOptions } from "./useConversation.js";
 
 export interface PromptFormProps {
@@ -136,8 +138,17 @@ export function folderName(path: string): string {
  * with `node_offline` and writes nothing — and hiding it would leave them
  * looking for the only root they wanted.
  */
-export function rootLabel(root: RuntimeRootOption): string {
-  return `${folderName(root.path)} on ${root.hostId}${root.connected ? "" : " (offline)"}${root.mode === "read" ? " — read only" : ""}`;
+export function rootOption(root: RuntimeRootOption): PickerOption<string> {
+  const notes = [
+    ...(root.connected ? [] : ["offline"]),
+    ...(root.mode === "read" ? ["read only"] : []),
+  ];
+
+  return {
+    value: root.grantId,
+    label: `${folderName(root.path)} on ${root.hostId}`,
+    ...(notes.length === 0 ? {} : { detail: notes.join(" · ") }),
+  };
 }
 
 /** What the identity may run on: Jester is Hermes (ADR-0030), and the core refuses anything else. */
@@ -390,51 +401,44 @@ export function PromptForm({
           </p>
         ) : (
           <>
-            <label style={pickerStyle}>
-              <span>Agent</span>
-              <select
+            <div style={pickerStyle}>
+              <span aria-hidden="true">Agent</span>
+              <Picker
+                label="Agent"
                 value={selectedKey}
                 disabled={disabled || options.length === 0}
-                onChange={(event) => {
-                  setChosen(event.target.value);
-                }}
-                style={fieldStyle}
-              >
-                {options.length === 0 && (
-                  <option value="">
-                    {identityId === "jester"
-                      ? "Jester needs Hermes and LM Studio on a connected PC"
-                      : "No agent offered by any PC"}
-                  </option>
-                )}
-                {options.map((model) => (
-                  <option key={modelKey(model)} value={modelKey(model)}>
-                    {modelLabel(model)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={setChosen}
+                options={
+                  options.length === 0
+                    ? [
+                        {
+                          value: "",
+                          label:
+                            identityId === "jester"
+                              ? "Jester needs Hermes and LM Studio on a connected PC"
+                              : "No agent offered by any PC",
+                        },
+                      ]
+                    : options.map((model) => ({ value: modelKey(model), label: modelLabel(model) }))
+                }
+              />
+            </div>
             {roots.length > 0 && (
-              <label style={pickerStyle}>
-                <span>PC and folder</span>
-                <select
+              <div style={pickerStyle}>
+                <span aria-hidden="true">PC and folder</span>
+                <Picker
+                  label="PC and folder"
                   value={rootGrantId}
                   disabled={disabled}
-                  onChange={(event) => {
-                    setRootGrantId(event.target.value);
-                  }}
-                  style={fieldStyle}
-                >
-                  {/* The core's own rule when nothing is named: the chosen node's
-                  first writable root. Said out loud rather than left blank. */}
-                  <option value="">Wherever Noctis chooses</option>
-                  {roots.map((root) => (
-                    <option key={root.grantId} value={root.grantId}>
-                      {rootLabel(root)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  onChange={setRootGrantId}
+                  // The core's own rule when nothing is named: the chosen node's
+                  // first writable root. Said out loud rather than left blank.
+                  options={[
+                    { value: "", label: "Wherever Noctis chooses" },
+                    ...roots.map(rootOption),
+                  ]}
+                />
+              </div>
             )}
           </>
         )}

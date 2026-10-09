@@ -41,6 +41,9 @@ const WEB_URL = `http://localhost:${WEB_PORT}`;
 const PHONE = { width: 400, height: 860 };
 const DESKTOP = { width: 1280, height: 800 };
 
+/** Where the picker and composer screenshots go, when the owner asks for them. */
+const EVIDENCE = process.env.NOCTIS_PHONE_EVIDENCE;
+
 /** Section 5.2's touch floor. */
 const MIN_TARGET = 44;
 
@@ -170,6 +173,24 @@ function readFiles() {
   });
 }
 
+/** An open picker: its sheet's box and colour, and each row as drawn. */
+function readPicker(list) {
+  return list.evaluate((element) => {
+    const dialog = element.closest("dialog");
+    const box = dialog.getBoundingClientRect();
+
+    return {
+      background: getComputedStyle(dialog).backgroundColor,
+      box: { top: box.top, bottom: box.bottom, left: box.left, right: box.right },
+      rows: [...element.querySelectorAll('[role="option"]')].map((row) => ({
+        text: row.textContent ?? "",
+        height: row.getBoundingClientRect().height,
+        bottom: row.getBoundingClientRect().bottom,
+      })),
+    };
+  });
+}
+
 describe("the phone shell: the rail becomes a tab bar where a rail does not fit", () => {
   before(async () => {
     for (const built of ["packages/ui/dist/index.js", "apps/core/dist/main.js", AGENT_MAIN]) {
@@ -228,6 +249,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     }));
     await waitForHttp(WEB_URL, "the web app", web);
 
+    if (EVIDENCE) mkdirSync(EVIDENCE, { recursive: true });
     browser = await chromium.launch(launchOptions());
     page = await browser.newPage({ viewport: PHONE });
   });
@@ -851,6 +873,174 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       );
 
       assert.ok(listed.scrollWidth <= PHONE.width, "the Approvals page scrolls sideways");
+    },
+  );
+
+  it(
+    "picks the PC and folder from a sheet in the app's own glass",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+      const button = page.getByRole("button", { name: /^PC and folder/ });
+      const before = await button.getAttribute("aria-label");
+      await button.click();
+      const list = page.getByRole("listbox", { name: "PC and folder" });
+      await list.waitFor();
+
+      const sheet = await readPicker(list);
+      assert.notEqual(sheet.background, "rgb(255, 255, 255)");
+      // A bottom sheet: edge to edge, resting on the bottom of the screen.
+      assert.equal(Math.round(sheet.box.left), 0);
+      assert.equal(Math.round(sheet.box.right), PHONE.width);
+      assert.equal(Math.round(sheet.box.bottom), PHONE.height);
+      for (const row of sheet.rows) {
+        assert.ok(row.height >= MIN_TARGET, `"${row.text}" is ${String(row.height)}px tall`);
+        assert.ok(row.bottom <= PHONE.height, `"${row.text}" is below the screen`);
+      }
+      if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, "picker-phone.png") });
+
+      await page.getByRole("option").nth(1).click();
+      await list.waitFor({ state: "hidden" });
+      assert.notEqual(await button.getAttribute("aria-label"), before, "the pick did not take");
+      assert.equal(await page.locator("select").count(), 0, "a native select is still on the page");
+    },
+  );
+
+  it(
+    "opens a picker beside its button on a desktop, and drives it from the keyboard",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(DESKTOP);
+      await page.goto(WEB_URL);
+      await open("Threads");
+
+      const button = page.getByRole("button", { name: /^PC and folder/ });
+      const list = page.getByRole("listbox", { name: "PC and folder" });
+      const focused = () =>
+        page.evaluate(() => ({
+          text: document.activeElement?.textContent ?? "",
+          selected: document.activeElement?.getAttribute("aria-selected") ?? null,
+          label: document.activeElement?.getAttribute("aria-label") ?? "",
+        }));
+
+      await button.focus();
+      await page.keyboard.press("Enter");
+      await list.waitFor();
+
+      // The composer sits at the foot of the screen, so the list opens upward.
+      const above = await readPicker(list);
+      const anchor = await button.boundingBox();
+      assert.ok(
+        above.box.bottom <= anchor.y,
+        `the list covers its button: ${JSON.stringify(above)}`,
+      );
+      assert.ok(
+        above.box.top >= 0 && above.box.right <= DESKTOP.width,
+        "the list leaves the screen",
+      );
+      assert.equal((await focused()).selected, "true", "the chosen row did not take the focus");
+      if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, "picker-desktop.png") });
+
+      const rows = above.rows.map((row) => row.text);
+      await page.keyboard.press("End");
+      assert.equal((await focused()).text, rows.at(-1));
+      await page.keyboard.press("Home");
+      assert.equal((await focused()).text, rows[0]);
+
+      await page.keyboard.press("Escape");
+      await list.waitFor({ state: "hidden" });
+      assert.match((await focused()).label, /^PC and folder/, "Escape lost the focus");
+
+      await page.keyboard.press("Enter");
+      await list.waitFor();
+      await page.keyboard.press("ArrowDown");
+      const next = (await focused()).text;
+      await page.keyboard.press("Enter");
+      await list.waitFor({ state: "hidden" });
+      const picked = await focused();
+      assert.match(picked.label, /^PC and folder/, "picking lost the focus");
+      assert.ok(next.startsWith(picked.label.replace("PC and folder: ", "")), picked.label);
+
+      // At the top of a page there is room below, so it opens there.
+      await open("Settings");
+      const vesper = page.getByRole("button", { name: /^Vesper: / });
+      await vesper.click();
+      const below = await readPicker(page.getByRole("listbox", { name: "Vesper" }));
+      const settingsAnchor = await vesper.boundingBox();
+      assert.ok(
+        below.box.top >= settingsAnchor.y + settingsAnchor.height,
+        `the list did not open under its button: ${JSON.stringify(below.box)}`,
+      );
+      assert.ok(below.box.bottom <= DESKTOP.height, "the list runs off the screen");
+      if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, "picker-desktop-below.png") });
+      await page.mouse.click(5, 5);
+      await page.getByRole("listbox", { name: "Vesper" }).waitFor({ state: "hidden" });
+    },
+  );
+
+  it(
+    "shows nothing of the thread under the composer on a desktop",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(DESKTOP);
+      await page.goto(WEB_URL);
+      await open("Threads");
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type(`${"a long line to read back through ".repeat(120)}`);
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.startsWith("You")),
+        "never sent",
+        30_000,
+      );
+
+      /** Scrolls the thread `up` px from its end, then finds any text drawn below the composer. */
+      const underComposer = (up) =>
+        page.evaluate((distance) => {
+          const list = document.querySelector('ul[aria-label="Conversation"]');
+          const composer = [...document.querySelectorAll("textarea")]
+            .find((box) => box.checkVisibility())
+            .closest("form").parentElement;
+          let box = list;
+
+          while (box !== null && getComputedStyle(box).overflowY !== "auto") {
+            box = box.parentElement;
+          }
+
+          box.scrollTop = box.scrollHeight - box.clientHeight - distance;
+          const floor = composer.getBoundingClientRect().bottom;
+          const edge = Math.min(box.getBoundingClientRect().bottom, globalThis.innerHeight);
+          const seen = [];
+          const walker = document.createTreeWalker(list, globalThis.NodeFilter.SHOW_TEXT);
+
+          for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+            // The 1px spoken labels are for screen readers, not drawn.
+            if (node.textContent.trim() === "" || node.parentElement.clientWidth <= 1) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+
+            for (const rect of range.getClientRects()) {
+              if (rect.height > 1 && rect.bottom > floor + 0.5 && rect.top < edge) {
+                seen.push(node.textContent.trim().slice(0, 40));
+              }
+            }
+          }
+
+          return { gap: edge - floor, seen };
+        }, up);
+
+      const atEnd = await underComposer(0);
+      assert.deepEqual(atEnd.seen, [], "thread text shows under the composer at the end");
+      const readingBack = await underComposer(300);
+      assert.deepEqual(readingBack.seen, [], "thread text shows under the composer");
+      assert.ok(
+        Math.abs(readingBack.gap) <= 1,
+        `the composer floats ${String(readingBack.gap)}px above the bottom edge`,
+      );
+      if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, "threads-composer-desktop.png") });
     },
   );
 

@@ -200,11 +200,14 @@ it(
       const box = page.getByRole("textbox", { name: "Message Jester" });
       assert.equal(await box.getAttribute("placeholder"), "Ask Jester...");
       // Jester is Hermes: no other agent is offered.
+      await page.getByRole("button", { name: /^Agent\b/ }).click();
       const agents = await page
-        .getByRole("combobox", { name: "Agent" })
-        .locator("option")
+        .getByRole("listbox", { name: "Agent" })
+        .getByRole("option")
         .allTextContents();
       assert.deepEqual(agents, ["Qwen3.5-9B (hermes)"]);
+      await page.keyboard.press("Escape");
+      await page.getByRole("listbox", { name: "Agent" }).waitFor({ state: "hidden" });
 
       await page.waitForFunction(
         () => document.querySelector(".noctis-intelligence")?.dataset.coreRenderer === "webgl",

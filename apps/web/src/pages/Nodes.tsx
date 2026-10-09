@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { Page, SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { Picker } from "../layout/Picker.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { mountRemoteDesktop } from "../remote/component.js";
 import type { RemoteHandle, RemoteState, RemoteUserInteraction } from "../remote/session.js";
@@ -210,23 +211,16 @@ export function Nodes({ transport }: { transport: CoreTransport | undefined }): 
                 alignItems: "end",
               }}
             >
-              <label style={labelStyle}>
-                <span>Host</span>
-                <select
+              <div style={labelStyle}>
+                <span aria-hidden="true">Host</span>
+                <Picker
+                  label="Host"
                   value={host}
                   disabled={busy || connected}
-                  onChange={(event) => {
-                    setHost(event.target.value);
-                  }}
-                  style={fieldStyle}
-                >
-                  {hosts.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  onChange={setHost}
+                  options={hosts.map((name) => ({ value: name, label: name }))}
+                />
+              </div>
 
               {!connected && (
                 <>

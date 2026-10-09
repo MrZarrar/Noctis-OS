@@ -690,7 +690,9 @@ export function Threads({
           <div
             style={{
               position: "sticky",
-              bottom: 0,
+              // Down over the page's bottom padding, which sticky positioning
+              // otherwise keeps clear: the thread showed through that strip.
+              bottom: -spacing.lg,
               marginTop: "auto",
               padding: spacing.sm,
               borderRadius: corner.lg,

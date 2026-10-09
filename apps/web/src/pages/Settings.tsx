@@ -5,7 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { modelKey, modelLabel } from "../conversation/PromptForm.js";
-import { Page, SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { RuntimeRootOptionSchema } from "../conversation/useConversation.js";
+import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
+import { Picker } from "../layout/Picker.js";
 import type { PushState } from "../notify/subscribe.js";
 import { enablePush, initialPushState } from "../notify/subscribe.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
@@ -51,6 +53,9 @@ const ModelsSchema = z
     defaults: z
       .object({ vesper: ModelRefSchema.optional(), jester: ModelRefSchema.optional() })
       .strict(),
+    // Unused here, but the core sends them, and a strict parse without them
+    // refused the whole catalogue.
+    roots: z.array(RuntimeRootOptionSchema).default([]),
   })
   .strict();
 
@@ -312,32 +317,32 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
               : catalogue;
 
           return (
-            <label key={profile.id} style={{ display: "grid", gap: spacing.xs, maxWidth: 420 }}>
-              <span>{profile.displayName}</span>
-              <select
+            <div key={profile.id} style={{ display: "grid", gap: spacing.xs, maxWidth: 420 }}>
+              <span aria-hidden="true">{profile.displayName}</span>
+              <Picker
+                label={profile.displayName}
                 value={currentKey}
                 disabled={transport === undefined || options.length === 0}
-                onChange={(event) => {
-                  const chosen = options.find((model) => modelKey(model) === event.target.value);
+                onChange={(key) => {
+                  const chosen = options.find((model) => modelKey(model) === key);
 
                   if (chosen !== undefined) {
                     void setDefaultModel(profile.id, chosen);
                   }
                 }}
-                style={fieldStyle}
-              >
-                {current === undefined && (
-                  <option value="">
-                    {options.length === 0 ? "No model offered by any node" : "Not set"}
-                  </option>
-                )}
-                {options.map((model) => (
-                  <option key={modelKey(model)} value={modelKey(model)}>
-                    {modelLabel(model)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={[
+                  ...(current === undefined
+                    ? [
+                        {
+                          value: "",
+                          label: options.length === 0 ? "No model offered by any node" : "Not set",
+                        },
+                      ]
+                    : []),
+                  ...options.map((model) => ({ value: modelKey(model), label: modelLabel(model) })),
+                ]}
+              />
+            </div>
           );
         })}
       </section>
