@@ -221,6 +221,7 @@ export async function startFakeNode({
   nodeHome,
   scratch,
   keyPrefix,
+  env = {},
 }) {
   const issued = await coreCommand(coreUrl, "node.issue_pairing_code", {
     idempotencyKey: `${keyPrefix}-pairing`,
@@ -229,7 +230,7 @@ export async function startFakeNode({
 
   assert.equal(issued.status, 200, JSON.stringify(issued.body));
 
-  const agentEnv = { ...process.env, NOCTIS_NODE_HOME: nodeHome, NOCTIS_RUNTIME: "fake" };
+  const agentEnv = { ...process.env, ...env, NOCTIS_NODE_HOME: nodeHome, NOCTIS_RUNTIME: "fake" };
 
   await runOnce(
     process.execPath,

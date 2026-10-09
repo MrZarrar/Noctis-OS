@@ -103,6 +103,8 @@ export const NODE_CAPABILITIES = [
   "session.list",
   /** The last exchanges of one of those sessions, shown above an adopted thread. */
   "session.history",
+  /** The owner watching a PC's desktop as it is. View only: nothing goes back to it. */
+  "screen.view",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -130,6 +132,7 @@ export const CAPABILITY_OPERATION_CLASS = {
   "file.read": "read_inspect",
   "session.list": "read_inspect",
   "session.history": "read_inspect",
+  "screen.view": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
 /**
@@ -327,6 +330,27 @@ export const VerificationNoopPayloadSchema = z
 export const VerificationNoopEvidenceSchema = z.object({ verified: z.literal(true) }).strict();
 
 /**
+ * One look at a PC's desktop. The frames do not travel in the evidence: the
+ * node streams them to `POST /node/files` for this job, as a file read does,
+ * and the core pipes them to the browser watching. Fixed steps rather than
+ * free numbers, so nobody can ask a PC to encode 4K at 120 fps.
+ */
+export const ScreenViewPayloadSchema = z
+  .object({
+    fps: z.union([z.literal(15), z.literal(30)]),
+    width: z.union([z.literal(960), z.literal(1280), z.literal(1920)]),
+  })
+  .strict();
+
+export const ScreenViewEvidenceSchema = z
+  .object({
+    frames: z.int().nonnegative(),
+    /** `locked`: the desktop refused capture (locked, signed out, or a UAC prompt). */
+    endedBy: z.enum(["client", "error", "locked"]),
+  })
+  .strict();
+
+/**
  * The payload a job of each capability accepts, and the evidence it must return.
  *
  * Both directions parse against the same table, so a node cannot answer a job
@@ -351,6 +375,7 @@ export const CAPABILITY_CONTRACTS = {
     payload: SessionHistoryPayloadSchema,
     evidence: SessionHistoryEvidenceSchema,
   },
+  "screen.view": { payload: ScreenViewPayloadSchema, evidence: ScreenViewEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**
@@ -538,3 +563,5 @@ export type FileListEvidence = z.infer<typeof FileListEvidenceSchema>;
 export type FileReadPayload = z.infer<typeof FileReadPayloadSchema>;
 export type ExternalSession = z.infer<typeof ExternalSessionSchema>;
 export type SessionExchange = z.infer<typeof SessionExchangeSchema>;
+export type ScreenViewPayload = z.infer<typeof ScreenViewPayloadSchema>;
+export type ScreenViewEvidence = z.infer<typeof ScreenViewEvidenceSchema>;

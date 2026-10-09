@@ -43,6 +43,8 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   "file.read": 2_000,
   "session.list": 200,
   "session.history": 200,
+  /** A heartbeat every ten seconds for as long as someone watches. */
+  "screen.view": 2_000,
 };
 
 /** In-flight jobs the core will track frames for on one connection. */
@@ -136,29 +138,32 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
         close(code, reason) {
           ws.close(code, reason);
         },
+        // The same credential again: a grant changed, not the connection.
+        sendGrants() {
+          live.send({
+            kind: "welcome",
+            envelopeVersion: NODE_ENVELOPE_VERSION,
+            nodeId,
+            generation: connected.value.generation,
+            credential: connected.value.credential,
+            grants: listGrants(deps.kernel.db, nodeId).filter(
+              (grant) => grant.revokedAt === undefined,
+            ),
+          });
+        },
       };
 
       connection = live;
-
-      const grants = listGrants(deps.kernel.db, nodeId).filter(
-        (grant) => grant.revokedAt === undefined,
-      );
-
-      live.send({
-        kind: "welcome",
-        envelopeVersion: NODE_ENVELOPE_VERSION,
-        nodeId,
-        generation: connected.value.generation,
-        credential: connected.value.credential,
-        grants,
-      });
+      live.sendGrants();
 
       deps.dispatcher.register(live);
 
       logger.log("info", "node connected", {
         agentVersion,
         advertised: [...advertised],
-        granted: grants.map((grant) => grant.capability),
+        granted: listGrants(deps.kernel.db, nodeId)
+          .filter((grant) => grant.revokedAt === undefined)
+          .map((grant) => grant.capability),
       });
 
       // Anything already queued for this node can go out now.

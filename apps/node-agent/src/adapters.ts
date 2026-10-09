@@ -38,6 +38,7 @@ import { AdapterRefused } from "./runtimes/Runtime.js";
 import { promptWithAttachments, stageAttachments } from "./runtimes/attachments.js";
 import { childEnvironment } from "./runtimes/env.js";
 import { resolveRoots } from "./runtimes/roots.js";
+import { createScreenView } from "./screen/view.js";
 
 export { AdapterRefused };
 
@@ -77,6 +78,8 @@ export interface AdapterContext {
   uploadOutput(output: RuntimeUpload): Promise<string>;
   /** Streams a file range to the core for this job; resolves once the core has it all. */
   streamFile(file: StreamedFile): Promise<void>;
+  /** Streams a live screen to the core for this job; rejects when the core hangs up. */
+  streamScreen(screen: { contentType: string; body: ReadableStream<Uint8Array> }): Promise<void>;
 }
 
 export type Adapter = (payload: unknown, context: AdapterContext) => Promise<unknown>;
@@ -569,4 +572,5 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "file.read": fileRead,
   "session.list": sessionList,
   "session.history": sessionHistory,
+  "screen.view": createScreenView(),
 };

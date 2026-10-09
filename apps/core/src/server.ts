@@ -1,4 +1,11 @@
-import { createServer, type Server } from "node:http";
+import {
+  createServer,
+  STATUS_CODES,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import type { Clock } from "@noctis/domain";
@@ -6,7 +13,7 @@ import { createIdFactory, systemClock } from "@noctis/domain";
 import webpush from "web-push";
 
 import type { ApiDeps } from "./api/http.js";
-import { handleRequest } from "./api/http.js";
+import { handleRequest, isScreenUpload } from "./api/http.js";
 import { attachClientSocket, refuseUpgrade } from "./api/ws.js";
 import type { CoreConfig } from "./config/server.js";
 import type { ConversationService } from "./conversation/service.js";
@@ -20,6 +27,7 @@ import { createLiveBroker } from "./events/live.js";
 import type { Dispatcher } from "./nodes/dispatch.js";
 import { createDispatcher } from "./nodes/dispatch.js";
 import { createFileGateway } from "./files/gateway.js";
+import { createScreenGateway } from "./screen/gateway.js";
 import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { createRuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { attachNodeSocket } from "./nodes/ws.js";
@@ -175,6 +183,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
   });
 
   const files = createFileGateway({ kernel, dispatcher });
+  const screen = createScreenGateway({ kernel, dispatcher });
 
   const notifier = createNotifier({
     db,
@@ -213,14 +222,53 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     dispatcher,
     conversation,
     files,
+    screen,
     live,
     notifier,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     vaultEnv: env,
   };
 
+  const requests = new WeakMap<Duplex, { req: IncomingMessage; res: ServerResponse }>();
   const server: Server = createServer((req, res) => {
+    const socket = req.socket;
+    requests.set(socket, { req, res });
+    res.once("close", () => {
+      if (requests.get(socket)?.res === res) requests.delete(socket);
+    });
     void handleRequest(deps, req, res);
+  });
+
+  // A mirror has no final byte; the other requests still have a deadline.
+  server.on("clientError", (error: NodeJS.ErrnoException, socket: Duplex) => {
+    const active = requests.get(socket);
+
+    if (
+      error.code === "ERR_HTTP_REQUEST_TIMEOUT" &&
+      active !== undefined &&
+      isScreenUpload(active.req)
+    ) {
+      return;
+    }
+
+    if (socket.writable && (active === undefined || !active.res.headersSent)) {
+      const status =
+        error.code === "ERR_HTTP_REQUEST_TIMEOUT"
+          ? 408
+          : error.code === "HPE_HEADER_OVERFLOW"
+            ? 431
+            : error.code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
+              ? 413
+              : 400;
+      // Destroying straight after a write can drop the status before it leaves.
+      socket.end(
+        `HTTP/1.1 ${String(status)} ${STATUS_CODES[status] ?? "Bad Request"}\r\nConnection: close\r\n\r\n`,
+        () => socket.destroy(error),
+      );
+      return;
+    }
+
+    socket.destroy(error);
   });
 
   const clients = attachClientSocket(deps);
@@ -270,6 +318,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     async close() {
       conversation.close();
       files.close();
+      screen.close();
       dispatcher.stop();
 
       for (const realm of [clients, nodes]) {

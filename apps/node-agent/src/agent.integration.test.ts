@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,14 +17,19 @@ import {
   FileSearchEvidenceSchema,
   NODE_ENVELOPE_VERSION,
   RuntimeTurnEvidenceSchema,
+  ScreenViewEvidenceSchema,
 } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
+import { ADAPTERS } from "./adapters.js";
 import type { AgentOptions, RunningAgent } from "./agent.js";
 import { ApprovalTimedOut } from "./runtimes/Runtime.js";
 import { startAgent } from "./agent.js";
 import { FAKE_PROBE, createFakeRuntime } from "./runtimes/fake.js";
+import type { ScreenHelper } from "./screen/helper.js";
+import { startHelper } from "./screen/helper.js";
+import { createScreenView } from "./screen/view.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -32,6 +37,7 @@ const started: Array<{ core: RunningCore; directory: string }> = [];
 const agents: RunningAgent[] = [];
 const fakes: Array<{ server: Server; sockets: WebSocketServer }> = [];
 const scratches: string[] = [];
+const helpers: ScreenHelper[] = [];
 
 interface TestCore {
   core: RunningCore;
@@ -64,6 +70,10 @@ async function startTestCore(): Promise<TestCore> {
 afterEach(async () => {
   while (agents.length > 0) {
     agents.pop()?.close();
+  }
+
+  while (helpers.length > 0) {
+    await helpers.pop()?.close();
   }
 
   while (fakes.length > 0) {
@@ -883,5 +893,135 @@ describe("the agent refuses what a real core would never send", () => {
       outcome: "failed",
       failureReason: "capability environment.inspect is not granted to this node",
     });
+  });
+});
+
+describe("the screen mirror, through the real core", () => {
+  const FAKE_FFMPEG = join(import.meta.dirname, "screen", "fake-ffmpeg.ts");
+
+  async function mirroringAgent(): Promise<{ core: TestCore; nodeId: string; log: string }> {
+    const core = await startTestCore();
+    const credential = await pair(core);
+    const directory = mkdtempSync(join(tmpdir(), "noctis-mirror-"));
+    const infoPath = join(directory, "screen-helper.json");
+    const log = join(directory, "ffmpeg.json");
+
+    scratches.push(directory);
+
+    const helper = await startHelper({ ffmpeg: [process.execPath, FAKE_FFMPEG, log], infoPath });
+
+    helpers.push(helper);
+    await connectAgent(core, credential, [], {
+      adapters: {
+        ...ADAPTERS,
+        "screen.view": createScreenView({ infoPath, interactive: () => Promise.resolve(false) }),
+      },
+    });
+
+    return { core, nodeId: credential.nodeId, log };
+  }
+
+  function live(core: TestCore, nodeId: string, signal?: AbortSignal): Promise<Response> {
+    return fetch(`${core.base}/screen/live?node=${nodeId}&fps=15&width=1280`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  async function grantScreen(core: TestCore, nodeId: string): Promise<void> {
+    await command(core, "node.grant_capability", {
+      idempotencyKey: "g-screen",
+      nodeId,
+      capability: "screen.view",
+      constraints: {},
+    });
+  }
+
+  async function screenResults(core: TestCore): Promise<unknown[]> {
+    const response = await fetch(`${core.base}/events?after=0&limit=500`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    const { events } = (await response.json()) as {
+      events: Array<{ type: string; payload: { capability?: string; evidence?: unknown } }>;
+    };
+
+    return events
+      .filter((event) => event.type === "node.job_result.v1")
+      .filter((event) => event.payload.capability === "screen.view")
+      .map((event) => event.payload.evidence);
+  }
+
+  it("THE GATE: three frames reach the browser in order, and leaving ends the job as the viewer's doing", async () => {
+    const { core, nodeId, log } = await mirroringAgent();
+
+    // Granted while the node is already connected: no reconnect should be needed.
+    await grantScreen(core, nodeId);
+
+    const viewer = new AbortController();
+    const response = await live(core, nodeId, viewer.signal);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("multipart/x-mixed-replace;boundary=ffmpeg");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+
+    const reader = response.body?.getReader();
+    let received = "";
+
+    while (!received.includes("frame-3")) {
+      const chunk = await reader?.read();
+
+      if (chunk === undefined || chunk.done) {
+        throw new Error("the stream ended before three frames");
+      }
+
+      received += Buffer.from(chunk.value).toString("latin1");
+    }
+
+    expect(received.startsWith("--ffmpeg\r\nContent-type: image/jpeg\r\nContent-length: ")).toBe(
+      true,
+    );
+    expect(received.indexOf("frame-1")).toBeLessThan(received.indexOf("frame-2"));
+    expect(received.indexOf("frame-2")).toBeLessThan(received.indexOf("frame-3"));
+
+    const { pid } = JSON.parse(readFileSync(log, "utf8")) as { pid: number };
+
+    viewer.abort();
+
+    await waitFor(async () => (await screenResults(core)).length === 1, "the job's result");
+
+    const evidence = ScreenViewEvidenceSchema.parse((await screenResults(core))[0]);
+
+    expect(evidence.endedBy).toBe("client");
+    expect(evidence.frames).toBeGreaterThanOrEqual(3);
+    await waitFor(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    }, "ffmpeg to exit");
+  });
+
+  it("refuses a PC that was never granted it, and says when the desktop is locked", async () => {
+    const { core, nodeId, log } = await mirroringAgent();
+
+    const ungranted = await live(core, nodeId);
+
+    expect(ungranted.status).toBe(403);
+    expect(await ungranted.json()).toMatchObject({ error: { code: "not_granted" } });
+
+    await grantScreen(core, nodeId);
+    writeFileSync(`${log}.locked`, "");
+
+    const locked = await live(core, nodeId);
+
+    expect(locked.status).toBe(423);
+    expect(await locked.json()).toMatchObject({ error: { code: "locked" } });
+
+    const anonymous = await fetch(`${core.base}/screen/live?node=${nodeId}`);
+
+    expect(anonymous.status).toBe(401);
+    await anonymous.body?.cancel();
   });
 });

@@ -56,6 +56,22 @@ describe("routeJob", () => {
     ).toEqual({ ok: false, reason: "grant_expired" });
   });
 
+  it("will not place a screen mirror on a PC that only shares its folders", () => {
+    const pinned = {
+      capability: "screen.view",
+      pinnedNodeId: "0199a000-0000-7000-8000-00000000000a",
+    };
+
+    expect(route([candidate({ grants: [{ capability: "runtime.turn" }] })], pinned)).toEqual({
+      ok: false,
+      reason: "no_node_with_capability",
+    });
+    expect(route([candidate({ grants: [{ capability: "screen.view" }] })], pinned)).toEqual({
+      ok: true,
+      nodeId: "0199a000-0000-7000-8000-00000000000a",
+    });
+  });
+
   it("refuses a core_only Mission before looking at any node", () => {
     expect(route([candidate()], { hostPolicy: "core_only" })).toEqual({
       ok: false,

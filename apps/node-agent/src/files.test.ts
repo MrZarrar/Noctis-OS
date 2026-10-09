@@ -77,6 +77,7 @@ function context(root: string, overrides: Partial<AdapterContext> = {}): Adapter
     delegate: () => Promise.reject(new Error("no delegation expected")),
     uploadOutput: () => Promise.reject(new Error("no output expected")),
     streamFile: () => Promise.reject(new Error("no file expected")),
+    streamScreen: () => Promise.reject(new Error("no screen expected")),
     ...overrides,
   };
 }

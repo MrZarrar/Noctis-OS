@@ -203,17 +203,34 @@ export function startAgent(options: AgentOptions): RunningAgent {
    * buffered so a film costs the node no more memory than a script.
    */
   async function streamFile(jobId: string, file: StreamedFile, signal: AbortSignal): Promise<void> {
-    const response = await fetch(new URL("/node/files", credential.coreUrl), {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${credential.nodeId}.${credential.credential}`,
+    await streamToCore(
+      jobId,
+      {
         "content-type": "application/octet-stream",
-        "x-noctis-job": jobId,
         "x-noctis-file-size": String(file.sizeBytes),
         "x-noctis-file-offset": String(file.offset),
         "x-noctis-file-length": String(file.length),
       },
-      body: Readable.toWeb(file.body) as ReadableStream<Uint8Array>,
+      Readable.toWeb(file.body) as ReadableStream<Uint8Array>,
+      signal,
+    );
+  }
+
+  /** The one long upload a job's bytes take: a file range, or a screen for as long as it is watched. */
+  async function streamToCore(
+    jobId: string,
+    headers: Record<string, string>,
+    body: ReadableStream<Uint8Array>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(new URL("/node/files", credential.coreUrl), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential.nodeId}.${credential.credential}`,
+        "x-noctis-job": jobId,
+        ...headers,
+      },
+      body,
       duplex: "half",
       signal,
     });
@@ -221,7 +238,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
     await response.body?.cancel();
 
     if (!response.ok) {
-      throw new AdapterRefused(`the core refused the file with ${String(response.status)}`);
+      throw new AdapterRefused(`the core refused the stream with ${String(response.status)}`);
     }
   }
 
@@ -259,6 +276,8 @@ export function startAgent(options: AgentOptions): RunningAgent {
       fetchAttachment: (id) => fetchAttachment(id, controller.signal),
       uploadOutput: (output) => uploadOutput(jobId, output, controller.signal),
       streamFile: (file) => streamFile(jobId, file, controller.signal),
+      streamScreen: (screen) =>
+        streamToCore(jobId, { "content-type": screen.contentType }, screen.body, controller.signal),
       delegate(delegation) {
         if (controller.signal.aborted) {
           return Promise.reject(new AdapterRefused("job was cancelled"));

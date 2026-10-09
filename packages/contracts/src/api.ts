@@ -47,6 +47,7 @@ export const API_SEGMENTS = [
   "push",
   "ready",
   "remote",
+  "screen",
   "session",
   "sessions",
   "sources",

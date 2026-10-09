@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Readable } from "node:stream";
 
 import {
   ActivateIdentityCommandSchema,
@@ -42,6 +43,7 @@ import {
   UpsertSurfaceIntentCommandSchema,
   FileRelativePathSchema,
   MAX_ATTACHMENT_BYTES,
+  ScreenViewPayloadSchema,
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
@@ -90,6 +92,8 @@ import { latestSequence, readEventsAfter } from "../db/events.js";
 import type { FileGateway, FileLocation } from "../files/gateway.js";
 import { FileUnavailable, fileMediaType, parseRange } from "../files/gateway.js";
 import type { LiveBroker } from "../events/live.js";
+import type { ScreenGateway } from "../screen/gateway.js";
+import { ScreenUnavailable } from "../screen/gateway.js";
 import {
   activateIdentity,
   getActiveIdentity,
@@ -190,8 +194,14 @@ export const ATTACHMENT_FILENAME_HEADER = "x-noctis-filename";
 export const NODE_OUTPUT_PATH = "/node/outputs";
 /** The job the output belongs to. The node must hold it. */
 export const OUTPUT_JOB_HEADER = "x-noctis-job";
-/** `POST /node/files` — the bytes of a `file.read` job, streamed by the node holding it. */
+/** `POST /node/files` — the bytes of a `file.read` or `screen.view` job, streamed by the node holding it. */
 export const NODE_FILE_PATH = "/node/files";
+
+const screenUploads = new WeakSet<Readable>();
+
+export function isScreenUpload(req: IncomingMessage): boolean {
+  return screenUploads.has(req);
+}
 /** The file's whole size, and the range the body carries. */
 export const FILE_SIZE_HEADER = "x-noctis-file-size";
 export const FILE_OFFSET_HEADER = "x-noctis-file-offset";
@@ -221,6 +231,8 @@ export interface ApiDeps {
   conversation: ConversationService;
   /** Files on a PC, listed and streamed through jobs on its node (v1 S4). */
   files: FileGateway;
+  /** A PC's desktop, watched through a job on its node. */
+  screen: ScreenGateway;
   /** Token deltas for streaming clients. Never persisted. */
   live: LiveBroker;
   /** Web push. Present always; without VAPID keys its `publicKey()` is undefined. */
@@ -1256,6 +1268,29 @@ async function handleNodeFile(
   }
 
   const jobId = headerValue(req.headers[OUTPUT_JOB_HEADER]) ?? "";
+
+  // A screen has no size or range: what it carries is the boundary ffmpeg chose.
+  if (
+    UuidSchema.safeParse(jobId).success &&
+    getJob(deps.kernel.db, jobId)?.job.capability === "screen.view"
+  ) {
+    const contentType = headerValue(req.headers["content-type"]) ?? "";
+
+    if (!/^multipart\/x-mixed-replace;\s?boundary=[\w.-]{1,70}$/.test(contentType)) {
+      req.resume();
+      send(res, 400, errorBody("invalid_request", "A screen must be MJPEG"), correlationId);
+      return;
+    }
+
+    finishNodeStream(
+      res,
+      await deps.screen.accept(nodeId, jobId, { contentType, body: req }),
+      req,
+      correlationId,
+    );
+    return;
+  }
+
   const sizeBytes = headerCount(req.headers[FILE_SIZE_HEADER]);
   const offset = headerCount(req.headers[FILE_OFFSET_HEADER]);
   const length = headerCount(req.headers[FILE_LENGTH_HEADER]);
@@ -1277,17 +1312,109 @@ async function handleNodeFile(
     return;
   }
 
-  const accepted = await deps.files.accept(nodeId, jobId, { sizeBytes, offset, length, body: req });
+  finishNodeStream(
+    res,
+    await deps.files.accept(nodeId, jobId, { sizeBytes, offset, length, body: req }),
+    req,
+    correlationId,
+  );
+}
 
+function finishNodeStream(
+  res: ServerResponse,
+  accepted: boolean,
+  req: IncomingMessage,
+  correlationId: string,
+): void {
   if (!accepted) {
     req.resume();
-    send(res, 403, errorBody("forbidden", "Nobody is waiting for that file"), correlationId);
+    send(res, 403, errorBody("forbidden", "Nobody is waiting for that stream"), correlationId);
     return;
   }
 
   if (!res.destroyed) {
     send(res, 200, { status: "sent" }, correlationId);
   }
+}
+
+/**
+ * `GET /screen/live?node=&fps=&width=`: a PC's desktop as MJPEG, for an
+ * `<img>`. With `probe=1` it asks the same question and hangs up once frames
+ * flow, which is how a page whose image failed finds out why: an image's
+ * error event carries no status.
+ */
+async function handleScreen(
+  deps: ApiDeps,
+  url: URL,
+  res: ServerResponse,
+  correlationId: string,
+): Promise<void> {
+  const nodeId = url.searchParams.get("node") ?? "";
+  // ponytail: 15 fps at 1280 by default, about 1-2 MB/s of MJPEG.
+  const request = ScreenViewPayloadSchema.safeParse({
+    fps: Number(url.searchParams.get("fps") ?? 15),
+    width: Number(url.searchParams.get("width") ?? 1280),
+  });
+
+  if (!UuidSchema.safeParse(nodeId).success || !request.success) {
+    send(
+      res,
+      400,
+      errorBody("invalid_request", "Name a PC, fps 15 or 30, and width 960, 1280 or 1920"),
+      correlationId,
+    );
+    return;
+  }
+
+  let gone = false;
+  const connecting = new AbortController();
+  res.once("close", () => {
+    gone = true;
+    connecting.abort();
+  });
+
+  let stream;
+
+  try {
+    stream = await deps.screen.open(
+      { correlationId, actorType: "user", actorId: "local" },
+      { nodeId, ...request.data },
+      connecting.signal,
+    );
+  } catch (error) {
+    if (!(error instanceof ScreenUnavailable)) {
+      throw error;
+    }
+
+    if (!gone) {
+      send(res, error.status, errorBody(error.code, error.message), correlationId);
+    }
+    return;
+  }
+
+  // Dropping the node's upload is what tells it nobody is watching.
+  if (gone || url.searchParams.get("probe") === "1") {
+    stream.body.destroy();
+
+    if (!gone) {
+      send(res, 200, { status: "live" }, correlationId);
+    }
+
+    return;
+  }
+
+  screenUploads.add(stream.body);
+  stream.body.once("close", () => screenUploads.delete(stream.body));
+  res.writeHead(200, {
+    "content-type": stream.contentType,
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "x-correlation-id": correlationId,
+  });
+  res.once("close", () => stream.body.destroy());
+  stream.body.once("close", () => res.end());
+  stream.body.once("error", () => res.end());
+  stream.body.pipe(res);
 }
 
 /** Where `/files/*` points, or undefined when the query does not name a place. */
@@ -1979,6 +2106,11 @@ export async function handleRequest(
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/screen/live") {
+      await handleScreen(deps, url, res, correlationId);
+      return;
+    }
+
     if (req.method === "GET") {
       const result = handleRead(deps, segments, url);
       send(res, result.status, result.body, correlationId);
@@ -2108,7 +2240,7 @@ export async function handleRequest(
     const result = route.handle(deps, context, body);
 
     if (result.status === 200) {
-      // The two commands whose effect reaches beyond the database. Both run after
+      // The commands whose effect reaches beyond the database. All run after
       // the commit, never inside it: a job frame that describes state a rollback
       // erased is worse than one that arrives a millisecond late.
       if (name === "node.job_enqueue") {
@@ -2120,6 +2252,12 @@ export async function handleRequest(
           // A revoked node that keeps its socket is only revoked on paper: it
           // could still answer for work it already holds.
           deps.dispatcher.disconnect(revoked.data.nodeId, 1008, "node revoked");
+        }
+      } else if (name === "node.grant_capability") {
+        const granted = GrantNodeCapabilityCommandSchema.safeParse(body);
+
+        if (granted.success) {
+          deps.dispatcher.sendGrants(granted.data.nodeId);
         }
       } else if (name === "node.job_cancel") {
         const cancelled = CancelNodeJobCommandSchema.safeParse(body);

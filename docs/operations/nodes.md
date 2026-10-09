@@ -92,6 +92,18 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:7717/commands/node.grant_c
   `pinned_node_unavailable` while that node is offline.
 - Set `NOCTIS_RUNTIME=fake` on the agent to run the scripted fake runtime (CI and E2E only).
 
+## Granting `screen.view`
+
+The screen mirror (Nodes → Screen → Mirror) is its own grant, off for every PC until the owner presses **Allow
+mirroring this PC** there, which sends `node.grant_capability` with `capability = "screen.view"` and empty
+constraints. A `runtime.turn` grant does not cover it. The core pushes the new grant list to a connected node at once,
+so the node needs no restart.
+
+Capture runs in a separate helper process in the owner's session (`apps/node-agent/src/screen/helper.ts`), not in the
+agent. It is the one listener in the node package: `127.0.0.1` only, a random token in
+`%LOCALAPPDATA%\Noctis\screen-helper.json`, and ffmpeg only while a request is open. Where the node runs in session 0
+(the boot task above), the helper is started by an at-logon task: `HOME-SETUP.md`, step 2.
+
 ## What a request may name
 
 A `file.search` job names a **grant id**, never a path. The path lives on the grant, chosen by you at

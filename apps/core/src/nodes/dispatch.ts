@@ -39,6 +39,8 @@ export interface NodeConnection {
   credential: string;
   send(frame: NodeServerFrame): void;
   close(code: number, reason: string): void;
+  /** Re-sends `welcome` with the grants as they are now. */
+  sendGrants(): void;
 }
 
 export interface Dispatcher {
@@ -51,6 +53,11 @@ export interface Dispatcher {
   sendAnswer(nodeId: string, jobId: string, answer: RuntimeAnswer): boolean;
   /** How a delegation ended, on the parent turn's job. False if the node is not connected. */
   sendDelegated(nodeId: string, jobId: string, result: RuntimeDelegationResult): boolean;
+  /**
+   * Tells a connected node its grants changed. The node trusts only the grants
+   * it was sent, so without this a new grant waits for the next reconnect.
+   */
+  sendGrants(nodeId: string): boolean;
   /** Drops a node's socket. Revoking a node that stays connected is not revoked. */
   disconnect(nodeId: string, code: number, reason: string): boolean;
   /** One sweep: lapsed leases first, then placement of queued work. */
@@ -252,6 +259,12 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
       connections.delete(nodeId);
       connection.close(code, reason);
       return true;
+    },
+    sendGrants(nodeId) {
+      const connection = connections.get(nodeId);
+
+      connection?.sendGrants();
+      return connection !== undefined;
     },
     sendCancel(nodeId, jobId) {
       const connection = connections.get(nodeId);
