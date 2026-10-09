@@ -20,7 +20,8 @@ import type { NoctisDatabase } from "../db/connection.js";
 import { createEventBroker } from "../events/broker.js";
 import { createLogger } from "../logging.js";
 import type { CommandContext, Kernel } from "../kernel.js";
-import { indexVault } from "./indexer.js";
+import { readGraph } from "../api/http.js";
+import { indexVault, listVaultItems } from "./indexer.js";
 import { recallFor, recordRecall } from "./recall.js";
 import type { VaultRoot } from "./root.js";
 import { resolveVaultRoot } from "./root.js";
@@ -527,3 +528,57 @@ describe("Vault writes", () => {
 function readNote(root: string, path: string): string {
   return readFileSync(join(root, path), "utf8");
 }
+
+describe("sensitive notes", () => {
+  function indexedWithSecret(): { kernel: Kernel; root: VaultRoot } {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+    writeFileSync(
+      join(root.path, "people/secret-person.md"),
+      "---\nsensitive: true\n---\n# Secret Person\n\nMet [[Hidden Contact]] about [[Jarvis Project]].\n",
+    );
+    expect(indexVault(kernel, context, root, key()).ok).toBe(true);
+    return { kernel, root };
+  }
+
+  it("THE GATE: a sensitive note is hidden from the list, the sphere and recall while locked", () => {
+    const { kernel, root } = indexedWithSecret();
+    const db = kernel.db;
+    const paths = (open: boolean) =>
+      listVaultItems(db, { includeSensitive: open }).map((item) => item.path);
+    const names = (open: boolean) =>
+      (readGraph(db, 5000, open).nodes as Array<{ name: string }>).map((node) => node.name);
+    const recalled = (query: string, open: boolean) =>
+      recallFor(db, query, { root, includeSensitive: open });
+
+    expect(paths(false)).not.toContain("people/secret-person.md");
+    expect(paths(true)).toContain("people/secret-person.md");
+
+    // The note, and a name only it mentions, are gone; what others link to stays.
+    expect(names(false)).not.toContain("Secret Person");
+    expect(names(false)).not.toContain("Hidden Contact");
+    expect(names(false)).toContain("Jarvis Project");
+    expect(names(true)).toEqual(expect.arrayContaining(["Secret Person", "Hidden Contact"]));
+
+    expect(recalled("Jarvis Project", false).evidence.map((e) => e.path)).not.toContain(
+      "people/secret-person.md",
+    );
+    expect(recalled("Jarvis Project", true).evidence.map((e) => e.path)).toContain(
+      "people/secret-person.md",
+    );
+    expect(recalled("Hidden Contact", false).entityIds).toEqual([]);
+    // Agents' recall passes no option, so it is always the locked view.
+    expect(recallFor(db, "Hidden Contact", { root }).entityIds).toEqual([]);
+  });
+
+  it("a note indexed before sensitivity was read learns it on the next reindex", () => {
+    const { kernel, root } = indexedWithSecret();
+    kernel.db.prepare("UPDATE vault_items SET sensitive = 0").run();
+
+    indexVault(kernel, context, root, key());
+
+    expect(listVaultItems(kernel.db).map((item) => item.path)).not.toContain(
+      "people/secret-person.md",
+    );
+  });
+});

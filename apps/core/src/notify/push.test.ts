@@ -104,6 +104,18 @@ describe("push notifier", () => {
     expect(sent).toEqual([]);
   });
 
+  it("sends a notification no event produced, such as the digest", async () => {
+    const { send, sent } = recorder(() => 201);
+    const push = notifier(VAPID, send);
+
+    store(push, "https://push.example/1");
+    await push.send({ title: "Today with Noctis", body: "2 turns.", url: "/", tag: "digest" });
+
+    expect(sent.map((one) => JSON.parse(one.payload) as unknown)).toEqual([
+      { title: "Today with Noctis", body: "2 turns.", url: "/", tag: "digest" },
+    ]);
+  });
+
   it("offers the public key", () => {
     expect(notifier(VAPID, recorder(() => 201).send).publicKey()).toBe("public-key");
   });

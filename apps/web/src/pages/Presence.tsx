@@ -12,6 +12,8 @@ import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { clockText, greetingFor, msToNextMinute } from "./clock.js";
+import type { DigestView } from "./digest-view.js";
+import { DigestSchema, localMidnight, todayLine } from "./digest-view.js";
 
 export interface PresenceProps {
   identity: IdentityRuntimeState;
@@ -75,6 +77,28 @@ export function Presence({
   }, []);
   const greeting = greetingFor(now);
   const clock = clockText(now);
+  // The day so far, re-read as each turn settles and when the day rolls over.
+  const [digest, setDigest] = useState<DigestView>();
+  useEffect(() => {
+    if (transport === undefined || state !== "idle") {
+      return;
+    }
+
+    const now = new Date();
+    void transport
+      .request(
+        "GET",
+        `/digest?from=${encodeURIComponent(localMidnight(now).toISOString())}&to=${encodeURIComponent(now.toISOString())}`,
+      )
+      .then((response) => {
+        const parsed = DigestSchema.safeParse(response.body);
+        setDigest(parsed.success ? parsed.data : undefined);
+      })
+      .catch(() => {
+        setDigest(undefined);
+      });
+  }, [transport, state, clock.day]);
+  const today = todayLine(digest);
   const error = conversation.error ?? identity.error;
   const accent = identityAccent[identityId].primary;
   const exchange = sent
@@ -173,6 +197,14 @@ export function Presence({
           >
             {clock.day}
           </span>
+          {today !== undefined && (
+            <span
+              data-presence-digest
+              style={{ fontSize: typography.scale.xs, color: typography.color.muted, marginTop: 6 }}
+            >
+              {today}
+            </span>
+          )}
         </time>
       </div>
       {/* The app's one core flies into this box; it is drawn above the page. */}

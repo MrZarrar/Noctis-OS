@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { NoctisDatabase } from "../db/connection.js";
 import type { Logger } from "../logging.js";
 
+import type { PushPayload } from "./triggers.js";
 import { pushFor } from "./triggers.js";
 
 /**
@@ -124,6 +125,8 @@ export interface Notifier {
   /** The public key a browser needs to subscribe, or `undefined` when push is off. */
   publicKey(): string | undefined;
   notify(events: readonly OrchestrationEvent[]): Promise<void>;
+  /** One notification that no event produced, such as the daily digest. */
+  send(payload: PushPayload): Promise<void>;
 }
 
 /**
@@ -142,6 +145,50 @@ export function createNotifier(deps: NotifierDeps): Notifier {
 
   function forget(endpoint: string): void {
     deps.db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+  }
+
+  async function deliver(payloads: readonly PushPayload[]): Promise<void> {
+    // No keys, nothing to sign with: a core configured without push is
+    // quietly without push rather than broken.
+    if (deps.vapid === undefined) {
+      return;
+    }
+
+    if (payloads.length === 0) {
+      return;
+    }
+
+    // Read once, not per payload: two pushes in the same committed batch go
+    // to the same set of phones.
+    const targets = subscriptions();
+
+    for (const payload of payloads) {
+      const body = JSON.stringify(payload);
+      const results = await Promise.allSettled(
+        targets.map(async (target) => deps.send(target, body)),
+      );
+
+      results.forEach((result, index) => {
+        const target = targets[index];
+
+        if (target === undefined) {
+          return;
+        }
+
+        if (result.status === "rejected") {
+          // A transport failure carries no status, so it says nothing about
+          // whether the browser still exists. Logged and left alone.
+          deps.logger.log("warn", "push delivery failed", {
+            reason: result.reason instanceof Error ? result.reason.message : "unknown",
+          });
+          return;
+        }
+
+        if (GONE.has(result.value.statusCode)) {
+          forget(target.endpoint);
+        }
+      });
+    }
   }
 
   return {
@@ -181,50 +228,11 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     },
 
     async notify(events) {
-      // No keys, nothing to sign with: a core configured without push is
-      // quietly without push rather than broken. Checked before the payloads
-      // are built so nothing is computed for a delivery that cannot happen.
-      if (deps.vapid === undefined) {
-        return;
-      }
+      await deliver(events.map(pushFor).filter((one) => one !== undefined));
+    },
 
-      const payloads = events.map(pushFor).filter((one) => one !== undefined);
-
-      if (payloads.length === 0) {
-        return;
-      }
-
-      // Read once, not per payload: two pushes in the same committed batch go
-      // to the same set of phones.
-      const targets = subscriptions();
-
-      for (const payload of payloads) {
-        const body = JSON.stringify(payload);
-        const results = await Promise.allSettled(
-          targets.map(async (target) => deps.send(target, body)),
-        );
-
-        results.forEach((result, index) => {
-          const target = targets[index];
-
-          if (target === undefined) {
-            return;
-          }
-
-          if (result.status === "rejected") {
-            // A transport failure carries no status, so it says nothing about
-            // whether the browser still exists. Logged and left alone.
-            deps.logger.log("warn", "push delivery failed", {
-              reason: result.reason instanceof Error ? result.reason.message : "unknown",
-            });
-            return;
-          }
-
-          if (GONE.has(result.value.statusCode)) {
-            forget(target.endpoint);
-          }
-        });
-      }
+    send(payload) {
+      return deliver([payload]);
     },
   };
 }

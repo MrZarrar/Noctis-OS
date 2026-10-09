@@ -36,6 +36,7 @@ import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
 import { createLogger } from "./logging.js";
 import type { SendPush, VapidKeys } from "./notify/push.js";
+import { digestLine, msUntilNext, readDigest } from "./notify/digest.js";
 import { createNotifier } from "./notify/push.js";
 import { resolveVaultRoot } from "./vault/root.js";
 
@@ -214,6 +215,38 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     });
   });
 
+  // The daily digest: off unless NOCTIS_DIGEST_AT names a local time such as
+  // "21:30". It goes only to the owner's own phones, over push already set up.
+  let digestTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleDigest = (): void => {
+    const wait = msUntilNext(new Date(clock.now()), env.NOCTIS_DIGEST_AT ?? "");
+
+    if (wait === undefined) {
+      return;
+    }
+
+    digestTimer = setTimeout(() => {
+      const to = clock.now();
+      const digest = readDigest(
+        db,
+        new Date(to - 24 * 3_600_000).toISOString(),
+        new Date(to).toISOString(),
+      );
+
+      void notifier
+        .send({ title: "Today with Noctis", body: digestLine(digest), url: "/", tag: "digest" })
+        .catch((error: unknown) => {
+          logger.log("warn", "digest delivery failed", {
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        });
+      scheduleDigest();
+    }, wait);
+    digestTimer.unref();
+  };
+
+  scheduleDigest();
+
   const deps: ApiDeps = {
     kernel,
     config,
@@ -316,6 +349,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     live,
     conversation,
     async close() {
+      clearTimeout(digestTimer);
       conversation.close();
       files.close();
       screen.close();

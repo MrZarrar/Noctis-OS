@@ -7,6 +7,8 @@ import { z } from "zod";
 import { Page, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
+import { VaultLock } from "./VaultLock.js";
+
 /**
  * The dedicated Vault view (Section 7).
  *
@@ -250,6 +252,14 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
           Search
         </button>
       </form>
+
+      <VaultLock
+        transport={transport}
+        onChange={() => {
+          setRecall(undefined);
+          setRevision((current) => current + 1);
+        }}
+      />
 
       {recall !== undefined && (
         <div style={{ ...glass, padding: spacing.lg }}>

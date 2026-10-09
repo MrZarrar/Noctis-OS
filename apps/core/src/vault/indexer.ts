@@ -8,6 +8,7 @@ import type { Coordinate, ParsedNote, Result, SettleNode } from "@noctis/domain"
 import {
   LAYOUT_VERSION,
   isGeneratedNote,
+  isSensitiveNote,
   keysFor,
   normalizeKey,
   ok,
@@ -154,13 +155,17 @@ export function getVaultItem(db: NoctisDatabase, id: string): VaultItem | undefi
   return row === undefined ? undefined : toItem(row);
 }
 
-export function listVaultItems(db: NoctisDatabase): VaultItem[] {
+/** Sensitive notes are left out unless the caller holds a passcode unlock. */
+export function listVaultItems(
+  db: NoctisDatabase,
+  options: { includeSensitive?: boolean } = {},
+): VaultItem[] {
   const rows = db
     .prepare(
       `SELECT id, path, title, content_hash, byte_length, modified_at, indexed_at
-         FROM vault_items ORDER BY path`,
+         FROM vault_items WHERE ? = 1 OR sensitive = 0 ORDER BY path`,
     )
-    .all() as ItemRow[];
+    .all(options.includeSensitive === true ? 1 : 0) as ItemRow[];
 
   return rows.map(toItem);
 }
@@ -332,14 +337,24 @@ export function indexVault(
           .get(file.path) as { id: string; content_hash: string } | undefined;
 
         const title = titleFor(file.path, file.note);
+        const sensitive = isSensitiveNote(file.note) ? 1 : 0;
 
         if (existing === undefined) {
           const itemId = kernel.ids.nextId();
 
           tx.prepare(
-            `INSERT INTO vault_items (id, path, title, content_hash, byte_length, modified_at, indexed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          ).run(itemId, file.path, title, file.hash, file.byteLength, file.modifiedAt, now);
+            `INSERT INTO vault_items (id, path, title, content_hash, byte_length, modified_at, indexed_at, sensitive)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            itemId,
+            file.path,
+            title,
+            file.hash,
+            file.byteLength,
+            file.modifiedAt,
+            now,
+            sensitive,
+          );
 
           result.added += 1;
           changed.push({ file, itemId, entityId: entityForNote(tx, kernel, file, itemId, now) });
@@ -347,14 +362,21 @@ export function indexVault(
         }
 
         if (existing.content_hash === file.hash) {
+          // Rows indexed before migration 0014 learn their flag without a rewrite.
+          tx.prepare(`UPDATE vault_items SET sensitive = ? WHERE id = ? AND sensitive <> ?`).run(
+            sensitive,
+            existing.id,
+            sensitive,
+          );
           result.unchanged += 1;
           continue;
         }
 
         tx.prepare(
-          `UPDATE vault_items SET title = ?, content_hash = ?, byte_length = ?, modified_at = ?, indexed_at = ?
+          `UPDATE vault_items SET title = ?, content_hash = ?, byte_length = ?, modified_at = ?, indexed_at = ?,
+                  sensitive = ?
             WHERE id = ?`,
-        ).run(title, file.hash, file.byteLength, file.modifiedAt, now, existing.id);
+        ).run(title, file.hash, file.byteLength, file.modifiedAt, now, sensitive, existing.id);
 
         // Only this note's derivations are dropped. Every other note's edges and
         // mentions are untouched by a change here.

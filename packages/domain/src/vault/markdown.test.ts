@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isGeneratedNote, normalizeKey, parseNote, titleFor } from "./markdown.js";
+import { isGeneratedNote, isSensitiveNote, normalizeKey, parseNote, titleFor } from "./markdown.js";
 
 const NOTE = `---
 title: Jarvis Project
@@ -175,5 +175,15 @@ describe("isGeneratedNote", () => {
     expect(isGeneratedNote(parseNote("---\ntags:\n  - a\n  - graphify/code\ntype: x\n---\n"))).toBe(
       true,
     );
+  });
+});
+
+describe("isSensitiveNote", () => {
+  it("is sensitive only when the frontmatter says sensitive: true", () => {
+    expect(isSensitiveNote(parseNote("---\nsensitive: true\n---\n# x\n"))).toBe(true);
+    expect(isSensitiveNote(parseNote('---\ntitle: x\nsensitive: "true"\n---\n# x\n'))).toBe(true);
+    expect(isSensitiveNote(parseNote("---\nsensitive: false\n---\n# x\n"))).toBe(false);
+    expect(isSensitiveNote(parseNote("# No frontmatter\n\nsensitive: true\n"))).toBe(false);
+    expect(isSensitiveNote(parseNote("---\ndescription: sensitive: true\n---\n# x\n"))).toBe(false);
   });
 });

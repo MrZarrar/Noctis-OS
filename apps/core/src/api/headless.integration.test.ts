@@ -329,7 +329,7 @@ describe("headless kernel loop", () => {
     // attachments a prompt carries and the turns that carried them; 0010 the
     // child threads a delegation runs on; 0011 named and pinned threads; 0012
     // the session a thread adopted; 0013 archived conversations.
-    expect(diagnostics.body.schemaVersion).toBe(13);
+    expect(diagnostics.body.schemaVersion).toBe(14);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -671,6 +671,19 @@ describe("hostile input", () => {
     );
   });
 
+  it("answers the digest for a window, and refuses a window that is not a time", async () => {
+    const core = await startTestCore();
+    const digest = await read(core, "/digest?from=2026-10-09T00:00:00Z&to=2026-10-10T00:00:00Z");
+
+    expect(digest.status).toBe(200);
+    expect(digest.body).toMatchObject({
+      from: "2026-10-09T00:00:00.000Z",
+      turns: { total: 0 },
+      approvals: { asked: 0 },
+    });
+    expect((await read(core, "/digest?from=yesterday")).status).toBe(400);
+  });
+
   it("serves liveness without a token but nothing else", async () => {
     const core = await startTestCore();
 
@@ -909,6 +922,61 @@ describe("the Vault graph read", () => {
       expect(ids.has(edge.source)).toBe(true);
       expect(ids.has(edge.target)).toBe(true);
     }
+  });
+
+  it("THE GATE (passcode): sensitive notes appear only to the session that unlocked them", async () => {
+    const vault = mkdtempSync(join(tmpdir(), "noctis-graph-vault-"));
+    createTestVault(vault);
+    vaults.push(vault);
+    writeFileSync(
+      join(vault, "people/secret-person.md"),
+      "---\nsensitive: true\n---\n# Secret Person\n\nMet [[Hidden Contact]].\n",
+    );
+    const core = await startTestCore({}, { NOCTIS_VAULT_ROOT: vault });
+    expect((await command(core, "vault.reindex", { idempotencyKey: "secret" })).status).toBe(200);
+
+    const a = await session(core);
+    const b = await session(core);
+    const as = (who: { cookie: string; csrf: string }) => ({
+      cookie: who.cookie,
+      "x-noctis-csrf": who.csrf,
+      "content-type": "application/json",
+    });
+    const post = async (path: string, who: { cookie: string; csrf: string }, body: unknown) => {
+      const response = await fetch(`${core.base}${path}`, {
+        method: "POST",
+        headers: as(who),
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+    };
+    const names = async (headers: Record<string, string>) => {
+      const response = await fetch(`${core.base}/vault/graph`, { headers });
+      const body = (await response.json()) as { nodes: Array<{ name: string }> };
+      return body.nodes.map((node) => node.name);
+    };
+
+    const before = await fetch(`${core.base}/passcode`, { headers: as(a) });
+    expect(await before.json()).toMatchObject({ configured: false, unlocked: false });
+    expect(await names(as(a))).not.toContain("Secret Person");
+
+    expect(await post("/passcode/setup", a, { passcode: "2468", timeoutMinutes: 5 })).toMatchObject(
+      { status: 200, body: { configured: true, unlocked: true } },
+    );
+    expect(await names(as(a))).toEqual(expect.arrayContaining(["Secret Person", "Hidden Contact"]));
+    expect(await names(as(b))).not.toContain("Secret Person");
+    expect(await names(authorized())).not.toContain("Secret Person");
+
+    expect(await post("/passcode/unlock", b, { passcode: "0000" })).toMatchObject({
+      status: 401,
+      body: { error: { code: "wrong_passcode", details: { attemptsRemaining: 4 } } },
+    });
+    expect((await post("/passcode/unlock", b, { passcode: "2468" })).status).toBe(200);
+    expect(await names(as(b))).toContain("Secret Person");
+
+    expect((await post("/passcode/lock", a, {})).body).toMatchObject({ unlocked: false });
+    expect(await names(as(a))).not.toContain("Secret Person");
+    expect(await names(as(b))).toContain("Secret Person");
   });
 
   it("refuses a limit above the graph ceiling instead of quietly clamping it", async () => {

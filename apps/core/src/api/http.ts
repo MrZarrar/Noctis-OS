@@ -154,9 +154,18 @@ import {
   sourceState,
 } from "../sources/service.js";
 import { listRemoteHosts, openRemoteDesktop } from "../remote/service.js";
+import { readDigest } from "../notify/digest.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
-import { getRecall, recallFor, recordRecall } from "../vault/recall.js";
+import { VISIBLE_ENTITY, getRecall, recallFor, recordRecall } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
+import {
+  isUnlocked,
+  lockPasscode,
+  passcodeStatus,
+  setupPasscode,
+  unlockPasscode,
+} from "../vault/passcode.js";
+import type { PasscodeResult } from "../vault/passcode.js";
 import { writesEnabled } from "../vault/writes.js";
 import type { CoreConfig } from "../config/server.js";
 import type { Notifier } from "../notify/push.js";
@@ -709,9 +718,10 @@ function handleSurfaceRead(
  */
 export const MAX_GRAPH_NODES = 5000;
 
-function readGraph(
+export function readGraph(
   db: NoctisDatabase,
   limit: number,
+  includeSensitive = false,
 ): {
   nodes: unknown[];
   edges: unknown[];
@@ -719,9 +729,10 @@ function readGraph(
   truncated: boolean;
 } {
   // The brain is the agents' shared notes, read by agents; the sphere is the
-  // owner's second brain.
+  // owner's second brain. Sensitive notes need the passcode.
+  const visible = `e.type <> 'agent'${includeSensitive ? "" : ` AND ${VISIBLE_ENTITY}`}`;
   const total = (
-    db.prepare("SELECT COUNT(*) AS count FROM vault_entities WHERE type <> 'agent'").get() as {
+    db.prepare(`SELECT COUNT(*) AS count FROM vault_entities e WHERE ${visible}`).get() as {
       count: number;
     }
   ).count;
@@ -733,7 +744,7 @@ function readGraph(
          FROM vault_entities e
          LEFT JOIN vault_items i ON i.id = e.item_id
          LEFT JOIN vault_layout l ON l.entity_id = e.id
-        WHERE e.type <> 'agent'
+        WHERE ${visible}
         ORDER BY e.key
         LIMIT ?`,
     )
@@ -759,6 +770,7 @@ function handleRead(
   deps: ApiDeps,
   segments: readonly string[],
   url: URL,
+  principal: string,
 ): { status: number; body: unknown } {
   // The Vault graph is a whole graph, not a page of a collection, so it gets
   // its own ceiling and its own default. Everything else pages.
@@ -799,6 +811,33 @@ function handleRead(
     };
   }
 
+  // Sensitive notes are read only by a credential that holds a passcode unlock.
+  const unlocked = (): boolean => isUnlocked(deps.kernel.db, deps.kernel.clock.now(), principal);
+
+  // What the agents did. The page passes its own midnight, so "today" is the
+  // owner's day, not the core's; without one it is the last 24 hours.
+  if (segments.length === 1 && segments[0] === "digest") {
+    const to = url.searchParams.get("to") ?? new Date(deps.kernel.clock.now()).toISOString();
+    const from =
+      url.searchParams.get("from") ?? new Date(Date.parse(to) - 24 * 3_600_000).toISOString();
+
+    if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) {
+      return { status: 400, body: errorBody("invalid_request", "from and to must be ISO times") };
+    }
+
+    return {
+      status: 200,
+      body: readDigest(deps.kernel.db, new Date(from).toISOString(), new Date(to).toISOString()),
+    };
+  }
+
+  if (segments.length === 1 && segments[0] === "passcode") {
+    return {
+      status: 200,
+      body: passcodeStatus(deps.kernel.db, deps.kernel.clock.now(), principal),
+    };
+  }
+
   if (segments.length === 1 && segments[0] === "vault") {
     return {
       status: 200,
@@ -808,13 +847,16 @@ function handleRead(
         configured: deps.vaultRoot !== undefined,
         live: deps.vaultRoot?.live ?? false,
         writesEnabled: writesEnabled(deps.vaultEnv ?? {}),
-        items: deps.vaultRoot === undefined ? [] : listVaultItems(deps.kernel.db).slice(0, limit),
+        items:
+          deps.vaultRoot === undefined
+            ? []
+            : listVaultItems(deps.kernel.db, { includeSensitive: unlocked() }).slice(0, limit),
       },
     };
   }
 
   if (isGraph) {
-    return { status: 200, body: readGraph(deps.kernel.db, limit) };
+    return { status: 200, body: readGraph(deps.kernel.db, limit, unlocked()) };
   }
 
   if (segments.length === 2 && segments[0] === "vault" && segments[1] === "recall") {
@@ -827,7 +869,11 @@ function handleRead(
     // A read, so nothing is recorded. `vault.recall` is the command that audits.
     return {
       status: 200,
-      body: recallFor(deps.kernel.db, query, { root: deps.vaultRoot, limit }),
+      body: recallFor(deps.kernel.db, query, {
+        root: deps.vaultRoot,
+        limit,
+        includeSensitive: unlocked(),
+      }),
     };
   }
 
@@ -1683,6 +1729,66 @@ function handlePair(
  * unguessable URL, and a phone whose session has just been replaced must still
  * be able to turn its own notifications off.
  */
+const PasscodeBodySchema = z.object({
+  passcode: z.string().max(64),
+  timeoutMinutes: z.number().int().optional(),
+});
+
+const PASSCODE_REFUSALS: Record<string, number> = {
+  bad_passcode: 400,
+  bad_timeout: 400,
+  already_configured: 409,
+  not_configured: 409,
+  wrong_passcode: 401,
+  locked_out: 429,
+};
+
+/** `/passcode/setup`, `/passcode/unlock` and `/passcode/lock`: transport state, like a session. */
+function handlePasscode(
+  deps: ApiDeps,
+  action: string | undefined,
+  principal: string,
+  body: unknown,
+): { status: number; body: unknown } {
+  const db = deps.kernel.db;
+  const now = deps.kernel.clock.now();
+  let result: PasscodeResult;
+
+  if (action === "lock") {
+    lockPasscode(db, principal);
+    result = { ok: true };
+  } else if (action === "setup" || action === "unlock") {
+    const parsed = PasscodeBodySchema.safeParse(body);
+
+    if (!parsed.success) {
+      return { status: 400, body: errorBody("invalid_request", "Body must be {passcode}") };
+    }
+
+    result =
+      action === "setup"
+        ? setupPasscode(db, now, principal, parsed.data.passcode, parsed.data.timeoutMinutes ?? 5)
+        : unlockPasscode(db, now, principal, parsed.data.passcode);
+  } else {
+    return { status: 404, body: errorBody("not_found", "No such resource") };
+  }
+
+  if (!result.ok) {
+    const { reason, ...details } = result as { reason: string } & Record<string, unknown>;
+    delete details.ok;
+
+    return {
+      status: PASSCODE_REFUSALS[reason] ?? 400,
+      body: errorBody(
+        reason,
+        "The passcode was not accepted",
+        Object.keys(details).length === 0 ? undefined : details,
+      ),
+    };
+  }
+
+  return { status: 200, body: passcodeStatus(db, now, principal) };
+}
+
 function handlePush(
   deps: ApiDeps,
   action: "subscribe" | "unsubscribe",
@@ -2129,20 +2235,49 @@ export async function handleRequest(
       return;
     }
 
+    // An unlock belongs to the credential that made it. Every request past the
+    // gate above has one.
+    const principal = authorized?.kind === "session" ? `session:${authorized.id}` : "bearer";
+
     if (req.method === "GET") {
-      const result = handleRead(deps, segments, url);
+      const result = handleRead(deps, segments, url, principal);
       send(res, result.status, result.body, correlationId);
       return;
     }
 
     const isCommand = req.method === "POST" && segments[0] === "commands" && segments.length === 2;
     const isSession = isLogin || isLogout;
+    const passcodeAction =
+      req.method === "POST" && segments.length === 2 && segments[0] === "passcode"
+        ? segments[1]
+        : undefined;
     const pushAction =
       req.method === "POST" && url.pathname === PUSH_SUBSCRIBE_PATH
         ? "subscribe"
         : req.method === "POST" && url.pathname === PUSH_UNSUBSCRIBE_PATH
           ? "unsubscribe"
           : undefined;
+
+    if (passcodeAction !== undefined) {
+      const raw = await readBody(req, MAX_BODY_BYTES);
+      let body: unknown;
+
+      try {
+        body = raw === "too_large" ? undefined : (JSON.parse(raw.toString("utf8")) as unknown);
+      } catch {
+        body = undefined;
+      }
+
+      const result = handlePasscode(deps, passcodeAction, principal, body);
+
+      // Never the passcode, only what happened to it.
+      logger.log(result.status === 200 ? "info" : "warn", "passcode request handled", {
+        action: passcodeAction,
+        status: result.status,
+      });
+      send(res, result.status, result.body, correlationId);
+      return;
+    }
 
     if (!isCommand && !isPair && !isSession && pushAction === undefined) {
       send(res, 404, errorBody("not_found", "No such resource"), correlationId);

@@ -99,7 +99,18 @@ export function freshnessFor(
 export interface RecallOptions {
   root: VaultRoot | undefined;
   limit?: number;
+  /** Only a passcode unlock sets this. Agents' recall never does. */
+  includeSensitive?: boolean;
 }
+
+/**
+ * An entity a locked reader may see, written against the alias `e`: not a
+ * sensitive note itself, and not a name that only sensitive notes mention.
+ */
+export const VISIBLE_ENTITY = `(e.item_id IS NULL OR e.item_id NOT IN (SELECT id FROM vault_items WHERE sensitive = 1))
+  AND (e.item_id IS NOT NULL OR EXISTS (
+    SELECT 1 FROM vault_mentions vm JOIN vault_items vi ON vi.id = vm.item_id
+     WHERE vm.entity_id = e.id AND vi.sensitive = 0))`;
 
 /**
  * Opens the subgraph a query touches, and nothing else.
@@ -118,12 +129,13 @@ export function recallFor(
   const limit = options.limit ?? DEFAULT_LIMIT;
   const key = normalizeKey(query);
   const pattern = `%${key}%`;
+  const open = options.includeSensitive === true;
 
   const entities = db
     .prepare(
-      `SELECT id FROM vault_entities
-        WHERE key LIKE ? OR LOWER(name) LIKE ?
-        ORDER BY (key = ?) DESC, key
+      `SELECT e.id FROM vault_entities e
+        WHERE (e.key LIKE ? OR LOWER(e.name) LIKE ?)${open ? "" : ` AND ${VISIBLE_ENTITY}`}
+        ORDER BY (e.key = ?) DESC, e.key
         LIMIT ?`,
     )
     .all(pattern, `%${query.trim().toLowerCase()}%`, key, limit) as Array<{ id: string }>;
@@ -143,7 +155,7 @@ export function recallFor(
               m.content_hash AS mention_hash, i.path AS item_path
          FROM vault_mentions m
          JOIN vault_items i ON i.id = m.item_id
-        WHERE m.entity_id IN (${placeholders})
+        WHERE m.entity_id IN (${placeholders})${open ? "" : " AND i.sensitive = 0"}
         ORDER BY i.path, m.span_start
         LIMIT ?`,
     )

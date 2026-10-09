@@ -103,7 +103,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 41 tables", () => {
+  it("applies every migration and creates all 43 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -125,12 +125,13 @@ describe("migrate", () => {
     const nodes = columns("nodes");
     const threads = columns("identity_threads");
     const runtimeSessions = columns("identity_sessions");
+    const vaultItems = columns("vault_items");
     const version = db.prepare("SELECT MAX(version) v FROM schema_migrations").get() as {
       v: number;
     };
     db.close();
 
-    expect(row.c).toBe(41);
+    expect(row.c).toBe(43);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -141,6 +142,8 @@ describe("migrate", () => {
         "push_subscriptions",
         "attachments",
         "turn_attachments",
+        "passcode",
+        "passcode_unlocks",
       ]),
     );
     expect(indexes).toEqual(
@@ -175,6 +178,7 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(13);
+    expect(version.v).toBe(14);
+    expect(vaultItems).toContain("sensitive");
   });
 });

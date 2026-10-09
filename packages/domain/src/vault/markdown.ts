@@ -285,3 +285,20 @@ export function isGeneratedNote(note: ParsedNote): boolean {
 
   return false;
 }
+
+/**
+ * A note the owner marked `sensitive: true` in its frontmatter (the Jarvis
+ * donor's flag, `server/lib/notes.js` `isSensitiveValue`, ee7b4527, MIT).
+ * Only a top-level `sensitive` key counts, never prose that says so.
+ */
+export function isSensitiveNote(note: ParsedNote): boolean {
+  return (
+    note.frontmatter?.raw
+      .split(/\r?\n/)
+      .some(
+        (line) =>
+          /^sensitive\s*:/.exec(line) !== null &&
+          unquote(line.slice(line.indexOf(":") + 1)) === "true",
+      ) ?? false
+  );
+}
