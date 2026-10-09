@@ -3461,3 +3461,79 @@ dismissal red and long-list visibility red before their green checks.
 Fresh checks used Node 22.23.2, Chrome and long TMP/TEMP paths; PowerShell commands used the
 `npx.cmd` and `npm.cmd` shims. No packages were installed. The live redeploy, Vault reindex and
 identity questions remain outstanding; companion review, screen mirror and eBay were not started.
+
+### 2026-10-09 The companion core, review fixes, and the screen mirror
+
+Commits `1ee1aa0`, `a2c8976`, `b0a0c0b`. Built and verified locally; no deploy yet.
+
+- **One companion core for the whole app** (`1ee1aa0`). Vesper's core is drawn once and mounted in
+  `App.tsx` instead of on each page. It stays on the hero slot on Presence, docks to the composer on
+  Threads with size 76, and moves to the corner on every other page at 96 (desktop) or 72 (phone).
+  A single `IntelligenceRenderer` and one WebGL context now cover the whole app. The core re-measures
+  its slot on window resize, page change, `ResizeObserver` on the slot, `MutationObserver` for late
+  or redrawn slots, and scroll. It animates between docks with `motion.durationMs.slow`. Pages set
+  `--noctis-core-clearance` to leave room at the bottom on the phone. The corner dock has an "Open
+  Threads" button and a one-line glass caption showing state or the first line of the streamed reply.
+  The z-index is `elevation.rail - 1` (9), above page content and below headers and dialogs.
+- **No dead back presses, and fixes from review** (`a2c8976`). Closing a thread or the conversation
+  list by any route now spends its history entry, so back never lands on the same screen twice. The
+  corner core from Conversations' Threads button calls `history.back()` on Threads (the list's entry
+  is on top), else `select("Threads")` from other pages, so it returns to the conversation instead of
+  re-opening Threads. Command keeps the core in the hero slot. Login scrolls inside its frame on short
+  windows. Vault search focuses the first hit that the sphere actually draws. An unused `onListeningChange`
+  prop is removed from PromptForm. Page now removes the clearance variable on mount.
+- **A screen mirror: view-only desktop at 15 or 30 fps** (`b0a0c0b`). Nodes has a Mirror view beside
+  Remote desktop, showing the owner's console desktop at 15 or 30 fps on the phone or any browser, view
+  only, and nobody is signed out. A helper runs on the owner's session, spawned at logon or on demand
+  if interactive. It captures with ffmpeg only while someone watches, bound to loopback with a token in
+  an owner-only profile file. The node streams it through the core, which relays it as MJPEG and keeps
+  nothing. Each PC streams only after its owner allows it, with its own `screen.view` grant. The stream
+  survives the server's request deadline (5 min), ends cleanly if the node drops, is refused for a job
+  that was cancelled or expired, and stops capturing if the viewer leaves before the first frame. The
+  helper takes ffmpeg down with it on exit. HOME-SETUP.md has the setup steps for the home PC.
+
+| Gate clause                                                        | State       | Evidence                                                                                     |
+| ------------------------------------------------------------------ | ----------- | -------------------------------------------------------------------------------------------- |
+| Exactly one core on each page; one canvas, one context per session | implemented | `task-7-evidence/unit-green.txt`, e2e presence 3/3, phone 16/16                              |
+| Core lands on the correct slot rect (within 2 px)                  | implemented | `dock.test.ts` "fills Presence hero slot" (4 tests); e2e `THE GATE (companion)`              |
+| Corner core has "Open Threads" button and state caption            | implemented | `CompanionCore.test.ts`, e2e presence gate ("Open Threads" button and "Vesper: thinking...") |
+| Companion gate: all navigation, clearance, z-index, listening      | implemented | `apps/web/e2e/presence.test.mjs` THE GATE (companion)                                        |
+| No dead back presses: closing a layer spends its entry             | implemented | `back.test.ts` cases (a), (b), (c); phone delegation                                         |
+| Conversations corner takes back to conversation, not Threads       | implemented | `CompanionCore.test.ts` "Threads back button"; presence e2e                                  |
+| Login scrollable on short viewport, Vault search focused           | implemented | `Login.test.ts`, `Vault.test.ts`; tokenless e2e short window block                           |
+| Screen mirror: contract, helper, node, core, HTTP, web UI          | implemented | `packages/contracts/src/screen.test.ts`, `helper.test.ts` (7), `view.test.ts` (5)            |
+| Screen mirror: E2E gate with real-ffmpeg smoke test                | implemented | `apps/web/e2e/mirror.test.mjs` 1/1; smoke test at 15 and 30 fps                              |
+| Deploy work PC core and node to enable E1.5                        | not yet     | Owner decision; none of today's work is live yet                                             |
+| Vault reindex to clear the prune                                   | not yet     | Requires redeployed core; owner check                                                        |
+| Live screen mirror from the phone (E1.5)                           | not yet     | Needs work PC core and node deployed; E1.5 brief in task-8-report.md                         |
+| Home PC helper startup and grant (HOME-SETUP section 2)            | not yet     | Requires E1 deploy; owner runs Register-ScheduledTask and grants screen.view                 |
+| Identity "who are you?" live check                                 | not yet     | Owner opens each agent on the phone; card already in place per runtime                       |
+
+| Command                                                                       | Result                                                            |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `npx vitest run apps/web packages/ui`                                         | exit 0; 38 files, 347 tests (C1 before fixes, 39 files 350 after) |
+| `node --test apps/web/e2e/{presence,phone,chat,jester,files}.test.mjs`        | exit 0; 55 tests                                                  |
+| `npx vitest run apps/core apps/node-agent packages/contracts`                 | exit 0; 74 files, 1326 tests (E1)                                 |
+| `node --test apps/web/e2e/mirror.test.mjs` (chrome channel, long TMP)         | exit 0; 1 test, E1                                                |
+| `npm run typecheck`; `npx eslint` and `npx prettier --check` on changed files | exit 0                                                            |
+| Smoke test: 15 fps 1280 (6 s, ffmpeg 9.0.2, i7-14700K)                        | 15.6 fps, 597 KB/s, 29% CPU, 200 ms first byte                    |
+| Smoke test: 30 fps 1280 (6 s)                                                 | 29.5 fps, 1.13 MB/s, 53% CPU, 125 ms first byte                   |
+| Smoke test: 30 fps 1920 (6 s)                                                 | 29.1 fps, 2.49 MB/s, 51% CPU, 125 ms first byte                   |
+
+#### Known, not fixed
+
+- **Companion core edges.** The core may paint over a sticky header when Presence scrolls on a short
+  phone, because z-index is 9 and the header is 10. Content on long pages scrolls under the fixed
+  corner core. The caption has no live region, so screen readers are not flooded while a reply streams.
+  A dock-change transition can snap at its tail end if a re-measure happens after the core leaves its
+  source slot but before the CSS transition ends.
+- **Screen mirror edges.** No grant revoke command; revoking the node or re-issuing with `expiresAt`
+  are the only ways to stop mirroring. The helper is not scanned by the top-level `no-listener.test.ts`
+  guard (same as `runtimes/` already). Locked detection heuristic (`error 5 | access is denied | failed
+to capture image` on ffmpeg stderr); a real locked screen was not tested. Deploy order matters: the core
+  must be redeployed before any node, or the node's advertisement is refused. A node that dies mid-stream
+  leaves a requeued job; nobody is waiting, so capture stops at once. The at-logon helper task opens a
+  console window in the owner's session; it should be minimised, as closing it stops the mirror until
+  next logon. This PC runs Node v22.23.1, not the pinned 22.23.2.
+- **E1.5 live:** no e2e for pre-first-frame cancel through ffmpeg; late error reply during idle keep-alive
+  not tested.
