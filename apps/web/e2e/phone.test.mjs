@@ -337,6 +337,26 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     },
   );
 
+  it("goes back with the phone's back gesture: list, then page", { timeout: 120_000 }, async () => {
+    await page.setViewportSize(PHONE);
+    await page.goto(WEB_URL);
+    await open("Threads");
+    await tabTo(page, "Conversations");
+    await page.keyboard.press("Enter");
+    await waitFor(readPage, (s) => s.body.includes("New conversation"), "the list never opened");
+
+    await page.goBack();
+    await waitFor(
+      readPage,
+      (s) => !s.body.includes("New conversation"),
+      "back did not close the list",
+    );
+    assert.equal((await readPage()).heading, "Threads");
+
+    await page.goBack();
+    await waitFor(readPage, (s) => s.heading === "Presence", "back did not leave Threads");
+  });
+
   it(
     "THE GATE: from the phone, a shared folder opens and a script in it fills the screen",
     { timeout: 120_000 },

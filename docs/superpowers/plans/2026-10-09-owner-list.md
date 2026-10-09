@@ -940,6 +940,47 @@ text ("Created your Jester AI agent.").
       turn completes; otherwise extend the fixture minimally. Run `node --test apps/web/e2e/{presence,phone}.test.mjs`.
 - [ ] **Step 7: Commit, once the owner says yes** — `feat(web): Presence shows the image a turn made, not just its words`.
 
+### Task A9: Paste a screenshot into the message box
+
+Owner, 2026-10-09: pasting a screenshot into the chat field does nothing, and it is the most common way to show an
+agent something.
+
+**Files:**
+
+- Modify: `apps/web/src/conversation/PromptForm.tsx`. The textarea gets `onPaste` and the form gets `onDragOver` and
+  `onDrop`. Both add to the existing `files` state (line 179) through the same `MAX_FILES` cap the Attach input uses
+  (line 466).
+- Test: `apps/web/src/conversation/PromptForm.test.ts` (the pure part) and `apps/web/e2e/chat.test.mjs` (a real
+  paste).
+
+**Interfaces:**
+
+- Produces: `pastedFiles(items: ReadonlyArray<{ kind: string; type: string; getAsFile(): File | null }>, now: Date): File[]`.
+  It returns the image files on the clipboard, each renamed `screenshot-YYYYMMDD-HHMMSS.png` (or the matching
+  extension), because every pasted image is otherwise called `image.png`.
+
+**Behaviour:**
+
+- **When it works:** only when `canAttach` is true, the same condition as the Attach button. Otherwise the paste falls
+  through as text.
+- **Mixed clipboard:** if the clipboard holds an image, the image is attached and any plain text on the clipboard is
+  still pasted normally. Call `preventDefault()` only when there is no text.
+- **Drag and drop:** dropping files on the composer attaches them the same way.
+- **What the owner sees:** the attached-files list (line 338) shows the screenshot as a small thumbnail. Use
+  `URL.createObjectURL`, and revoke it on removal or unmount.
+
+- [ ] **Step 1: Write the failing unit test** for `pastedFiles`. Two image items and one text item give two files
+      with screenshot names. A non-image file item is ignored. An empty clipboard gives `[]`.
+- [ ] **Step 2: Write the failing e2e test** in `chat.test.mjs`. Focus "Message Vesper" and dispatch a `paste` event
+      whose `clipboardData` carries a PNG. In Playwright, build it with
+      `page.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File([bytes], "image.png", { type: "image/png" })); textarea.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); })`.
+      Assert that "Attached files" lists a `screenshot-…png`. Send, then check that the turn's attachments reach the
+      fake core, as the existing Attach test does.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Go green.** Run `npx vitest run apps/web/src/conversation` and
+      `node --test apps/web/e2e/{chat,phone}.test.mjs`, then typecheck and lint.
+- [ ] **Step 5: Commit, once the owner says yes.** `feat(web): paste or drop a screenshot into the message box`.
+
 ---
 
 # B. Vault: the second brain without the junk
@@ -1448,3 +1489,294 @@ The master plan already defines the shape (P10 and P11, §12.3):
   - D to F, H and I: decision-gated, with a task outline rather than step code.
   - B3: conditional.
 - **Names used across tasks:** `useBackLayer`, `pushPage`, `entryPage`, `HistoryEntry` (A4); `Picker`, `PickerOption` (A5); `clockText`, `greetingFor`, `msToNextMinute` (A6); `isGeneratedNote` (B1); `dockFor`, `Dock`, `CompanionCore` (C).
+
+---
+
+# Detailed tasks after the owner's answers
+
+These tasks replace the outlines above for C, D, E and I. They are written for an implementer with design judgment.
+Each names the files, the interfaces, the tests that gate it and the exact values, and leaves the wiring to the code
+the implementer finds.
+
+### Task D1: Vesper knows it is Vesper, on every runtime, once per session
+
+**Files:**
+
+- Create: `apps/node-agent/src/runtimes/identity.ts` and `apps/node-agent/src/runtimes/identity.test.ts`.
+- Modify:
+  - `apps/node-agent/src/runtimes/claude.ts`: `sdkOptions`, about line 545.
+  - `codex.ts`: the `thread` params, about line 826.
+  - `hermes.ts`: `open`, about line 213, to write Vesper's soul into Vesper's home.
+  - `local.ts`: `SYSTEM_PROMPT`, line 40.
+- Test: `claude.test.ts`, `codex.test.ts`, `hermes.test.ts` and `local.test.ts`.
+
+**Interfaces:**
+
+- Produces:
+  `identityCard(input: { identityId: "vesper" | "jester"; runtime: "claude" | "codex" | "hermes" | "local"; model: string; env: NodeJS.ProcessEnv }): string | undefined`.
+  It returns `undefined` in two cases:
+  - when `env.NOCTIS_IDENTITY_CARDS === "0"`;
+  - for Jester on anything but Hermes. Jester runs on Hermes alone, and its soul stays `JESTER_SOUL`.
+
+**The card.** Use this exact text. Fill in `${model}`, and fill in `${runtimeName}` as "Claude Code", "Codex",
+"Hermes" or "a local model":
+
+```text
+You are Vesper, the primary identity of Noctis: the owner's own control plane for their agents, reached from their
+phone and desktop. Right now you are running as ${runtimeName} on ${model}, on one of the owner's PCs. Noctis keeps
+this conversation, shows the owner what you produce, and asks them before anything consequential; an approval is how
+anything that leaves this PC happens, and a refusal is final. Be calm, precise and brief, and lead with the answer.
+If you are asked who or what you are, say you are Vesper, running on ${model} through Noctis.
+```
+
+**How each runtime takes it.** Once per session, never per prompt:
+
+- **Claude:** `systemPrompt: { type: "preset", preset: "claude_code", append: card }` in `sdkOptions`. The preset keeps
+  Claude Code's own prompt, so the owner's setup still loads. A process is reused only within a thread, so the card is
+  sent once and is prompt-cached after that.
+- **Codex:** the instructions field on `thread/start`, `thread/resume` and `thread/fork`. Verify the field name against
+  the installed CLI first:
+  1. Run `codex app-server generate-json-schema --out <a scratch dir>`.
+  2. Read `ThreadStartParams`. Expect `developerInstructions`.
+  3. Use `baseInstructions` only if that is all there is, because it would replace Codex's own prompt.
+  4. Record which field you used in the report.
+- **Hermes:** Vesper's home gets a `SOUL.md` holding the card, the same way Jester's home gets `JESTER_SOUL`. With
+  cards off, write no soul. If a `SOUL.md` is already there, remove it.
+- **Local:** the system message becomes the card, followed by the existing sentence about having no tools.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `identity.test.ts`:
+    - the Vesper card names the runtime and the model;
+    - Jester on Claude gives `undefined`;
+    - `NOCTIS_IDENTITY_CARDS=0` gives `undefined`.
+  - Runtime tests. Each runtime test already has a fake you can inspect requests on; add these beside the existing
+    assertions on `sdkOptions` and the RPC params:
+    - Claude: for a Vesper turn, the `query()` options carry a `systemPrompt.append` containing "You are Vesper", and
+      carry none when the env switch is off.
+    - Codex: the `thread/start` params carry the card.
+    - Hermes: a Vesper Hermes home contains a `SOUL.md` with "You are Vesper".
+    - Local: the first message is a system message starting "You are Vesper".
+- [ ] **Step 2: Watch them fail.** Run `npx vitest run apps/node-agent/src/runtimes`. Each test should go red for the
+      reason stated above.
+- [ ] **Step 3: Implement** `identity.ts` and wire it into the four runtimes.
+- [ ] **Step 4: Go green.** Rerun the tests, then run `npm run typecheck` and lint the changed files.
+- [ ] **Step 5: Hand the live check to the owner.** In a Vesper thread, ask Claude and Codex "who are you?". This
+      needs the node restarted after a deploy, so the owner runs it. Leave a note for the status log.
+
+### Task C1: One companion core for the whole app
+
+**Files:**
+
+- Create: `apps/web/src/companion/dock.ts`, `dock.test.ts` and `CompanionCore.tsx`.
+- Modify:
+  - `apps/web/src/App.tsx`: mount the core once, outside `<main>`.
+  - `pages/Presence.tsx`: the core box becomes a `data-core-slot="hero"` placeholder of the same size.
+  - `pages/Threads.tsx`: the composer `aside` becomes `<div data-core-slot="composer" style={{ width: 76, height: 76 }} />`.
+- Test: `dock.test.ts`, plus the e2e suites `presence.test.mjs`, `phone.test.mjs`, `jester.test.mjs` and
+  `chat.test.mjs`. Their existing gates on `[data-core-state]` must keep passing against the single core.
+
+**Interfaces:**
+
+- Produces `type Dock = { anchor: "slot" | "corner" | "hidden"; slot?: "hero" | "composer"; size: number }` and
+  `dockFor(page: RailItem, state: IntelligenceState, mobile: boolean): Dock`:
+  - Presence: `{ anchor: "slot", slot: "hero", size: 0 }`. The size comes from the slot.
+  - Threads: `{ anchor: "slot", slot: "composer", size: 76 }`.
+  - Vault: `{ anchor: "hidden", size: 0 }`, unless `state === "waiting_for_approval"`.
+  - Every other page: `{ anchor: "corner", size: mobile ? 72 : 96 }`, bottom-right, above the tab bar on the phone.
+  - `waiting_for_approval` never yields `hidden`.
+
+**Behaviour:**
+
+- **One renderer.** `CompanionCore` renders `IntelligenceRenderer` once, in a `position: fixed` box with
+  `pointerEvents: "none"`. The exception is a core docked in a corner: it is a button that opens Threads, with
+  `aria-label="Open Threads"`.
+- **Finding its slot.** It finds the active page's `[data-core-slot]` with `getBoundingClientRect()`. It re-measures
+  on `resize`, through a `ResizeObserver` on the slot, and when the page changes.
+- **Moving.** It moves with `transform: translate(...)` plus `width` and `height`, using a `transition` of
+  `motion.slow` with `easing.standard`. With `prefers-reduced-motion` it jumps instead.
+- **Which state it shows.** The app-wide state: the shared `conversation` plus pending approvals, computed as Presence
+  does today. `listening` is true while any composer textarea has focus, tracked with a `focusin`/`focusout` listener
+  on the document.
+- **Caption.** A core docked in a corner shows one line beside it:
+  - while a turn runs: "Vesper: thinking…", or the first line of the streamed reply from `lastExchange`;
+  - while waiting: "Vesper: needs your approval".
+- **Exactly one** `.noctis-intelligence` element exists in the document at all times.
+
+- [ ] **Step 1: Write the failing unit tests** for `dockFor`: the cases above, plus "an approval is never hidden".
+- [ ] **Step 2: Write the failing e2e test.** In `presence.test.mjs`, add "THE GATE (companion): one core follows the
+      owner from Presence into Threads and to a corner on Files". Assert that:
+  - `document.querySelectorAll(".noctis-intelligence").length === 1` on each page;
+  - its bounding box differs between Presence, Threads and Files;
+  - its `data-core-state` is `thinking` on Files while a `SLOW:` turn runs.
+- [ ] **Step 3: Implement.** Remove the renderer from Presence and Threads.
+- [ ] **Step 4: Go green.** Run the unit tests and `node --test apps/web/e2e/{presence,phone,jester,chat}.test.mjs`,
+      then typecheck and lint.
+- [ ] **Step 5: Record evidence.** Make a screen recording with Playwright `recordVideo` of Presence → Threads → Files,
+      on desktop and phone. Save it under `.noctis/owner-list/` for the owner to approve.
+
+### Task E1: The screen mirror, view-only, from any device
+
+**Files:**
+
+- Modify: `packages/contracts/src/node.ts`. Add `"screen.view"` to `NODE_CAPABILITIES`, with class `read_inspect`.
+  - Payload: `{ fps: 15 | 30; width: 960 | 1280 | 1920 }`.
+  - Evidence: `{ frames: number; endedBy: "client" | "error" | "locked" }`.
+- Create:
+  - `apps/node-agent/src/screen/helper.ts` (the capture helper that runs in the owner's session) and `helper.test.ts`;
+  - `apps/node-agent/src/screen/view.ts` (the node's `screen.view` job handler) and `view.test.ts`;
+  - `apps/core/src/screen/gateway.ts`, the relay, modelled on `apps/core/src/files/gateway.ts`;
+  - its route, `GET /screen/live?node=<id>&fps=&width=`, in `apps/core/src/api/http.ts`.
+- Modify: `apps/web/src/pages/Nodes.tsx` to add a **Mirror** view beside Remote desktop.
+- Test: an integration test with a fake helper, in the style of `apps/core/src/agent.integration.test.ts`, and e2e on
+  the Nodes page.
+
+**Design (decided):**
+
+- **Capture runs in the signed-in user's session**, never in session 0.
+  - **The helper.** `helper.ts` is a small Node HTTP server bound to `127.0.0.1`. It writes its port and a random token
+    to `%LOCALAPPDATA%\Noctis\screen-helper.json`, which is owner-only because it sits in the profile folder.
+  - **Starting a capture.** `GET /mirror?fps=&width=`, with the token in a header, spawns
+    `ffmpeg -hide_banner -loglevel error -f gdigrab -framerate <fps> -i desktop -vf scale=<width>:-2 -q:v 7 -f mpjpeg -`
+    and pipes its stdout to the response. ffmpeg is killed when the request closes, so nothing captures while nobody
+    watches. ffmpeg is found on `PATH` or at `NOCTIS_FFMPEG`.
+  - **Locked screen.** If capture fails because the desktop is locked or on the secure desktop, the helper answers 423
+    with `{ locked: true }`.
+- **Where the helper runs.**
+  - On the work PC the node runs in the owner's session, so the node starts the helper as a child the first time
+    `screen.view` is asked for.
+  - On the home PC the boot node is in session 0. There, a scheduled task starts the helper at logon (`HOME-SETUP.md`),
+    and the node only reads `screen-helper.json`.
+  - That makes one code path: the node reads the JSON. If the file is missing and the node is in an interactive
+    session, it spawns the helper and waits for the file.
+- **The stream.**
+  1. The core's `GET /screen/live` (cookie session, owner only) enqueues a `screen.view` job pinned to the node.
+  2. The node opens the helper's `/mirror` and streams the bytes to the core's existing long streaming upload for that
+     job: the `POST /node/files` mechanism, with its job check generalised to accept `screen.view`.
+  3. The core pipes the bytes to the browser as `multipart/x-mixed-replace`, passing ffmpeg's boundary through.
+  4. Closing the browser response cancels the job. That closes the helper request, which kills ffmpeg.
+- **The page.** Nodes gets a segmented control per PC: **Mirror | Remote desktop**.
+  - **Display:** Mirror is an `<img>` on the stream URL. That works on the iPhone with no WASM and no CSP change.
+  - **Controls:** fps 15 or 30 and size 960, 1280 or 1920, using the A5 `Picker`, and Fullscreen
+    (`requestFullscreen` on the image's frame).
+  - **States:**
+    - connecting;
+    - live, with frames counted through the image's `load` events;
+    - locked: "The PC is locked. Sign in at the PC, or use Remote desktop";
+    - unavailable: no helper or no ffmpeg, naming the HOME-SETUP step.
+- **Default-off.** A PC streams only after the owner grants it `screen.view` in Settings → Nodes, through the same
+  grant flow as folders. Without the grant the route answers 403, and the Mirror tab says how to turn it on.
+- **Bandwidth.** The default is 15 fps at 1280. Mark it `ponytail:` in the code: MJPEG over the existing relay, with
+  H.264 over Media Source Extensions (MSE) as the upgrade if mobile data makes it hurt.
+
+**Sub-tasks, each test first:**
+
+- [ ] **E1.1 The contract:** `screen.view` parses, a job without a grant is refused, and the class is `read_inspect`.
+- [ ] **E1.2 The helper:** unit tests with a fake ffmpeg, a small script that emits three JPEG parts in mpjpeg
+      framing. Check that:
+  - it binds to loopback only;
+  - a request without the token gets 401;
+  - the ffmpeg arguments are exactly as above for each fps and width;
+  - ffmpeg is killed within 2 s of the client closing;
+  - a locked-desktop failure answers 423.
+- [ ] **E1.3 The node handler and core relay:** an integration test with the fake helper. Three frames arrive at the
+      browser response in order with the boundary intact. Closing the browser response ends the job with
+      `endedBy: "client"`, and the fake ffmpeg exits.
+- [ ] **E1.4 The web page:** e2e against a core whose node has the fake helper.
+  - The Mirror `<img>` loads frames.
+  - The locked state shows its message.
+  - Without the grant, the tab explains how to grant it.
+- [ ] **E1.5 Live on the work PC:**
+  1. Install ffmpeg with `winget install --id Gyan.FFmpeg -e`. The owner approved this.
+  2. Grant the work PC `screen.view`, then open Mirror from the phone.
+  3. Record in the status log: fps, latency (time a stopwatch on screen), node CPU and bandwidth.
+- [ ] **E1.6 `HOME-SETUP.md`:**
+  - installing ffmpeg;
+  - the logon task for the helper: the exact `Register-ScheduledTask` call with `-LogonType Interactive`, the node
+    runtime's `node.exe` and the helper's built entry;
+  - the grant;
+  - how to check it works.
+
+### Task I1: Photos in, an eBay listing out
+
+**Files** (new unless marked):
+
+- `packages/contracts/src/listing.ts`: `ListingDraftSchema`, `.strict()`, with these fields:
+  - `title`: 1 to 80 characters;
+  - `description`: 1 to 4000 characters;
+  - `categoryHint`;
+  - `condition`: a subset of eBay's conditions: `NEW`, `NEW_OTHER`, `USED_EXCELLENT`, `USED_VERY_GOOD`, `USED_GOOD`,
+    `USED_ACCEPTABLE` and `FOR_PARTS_OR_NOT_WORKING`;
+  - optional `brand`, `size` and `colour`;
+  - `priceGBP`: 0.99 to 10000, two decimals;
+  - `priceRationale`: 1 to 600 characters;
+  - `photoAttachmentIds`: 1 to 12 UUIDs, in order.
+- `apps/node-agent/src/runtimes/claude.ts` (modify): a `noctis_propose_listing` tool beside `noctis_propose_surface`,
+  carrying a `ListingDraft`. The core validates it the way it validates other proposals.
+- `apps/core/migrations/0014_listing_drafts.sql` and `apps/core/src/listings/service.ts`: drafts. Create one from a
+  proposal, edit it, reorder its photos, and mark it published with `{ marketplace: "ebay", offerId, listingId, url }`.
+- `apps/core/src/adapters/ebay/oauth.ts`, `client.ts` and `publish.ts`: the adapter.
+  - It is off unless `NOCTIS_EBAY_ENABLED=1`.
+  - Tokens live in `%LOCALAPPDATA%\Noctis\ebay-token.dpapi`, encrypted to the Windows account with DPAPI, the way the
+    home node keeps the core token.
+  - App keys come from `NOCTIS_EBAY_CLIENT_ID`, `NOCTIS_EBAY_CLIENT_SECRET` and `NOCTIS_EBAY_RUNAME`.
+  - Business policy ids come from `NOCTIS_EBAY_POLICIES` (`{"payment":"…","fulfillment":"…","return":"…"}`).
+  - The inventory location comes from `NOCTIS_EBAY_LOCATION`.
+  - The marketplace is `EBAY_GB`.
+- `apps/web/src/pages/Listing.tsx`: the draft editor. It has a photo strip you can reorder, the fields, the price with
+  its rationale, a **Publish to eBay** button, and then the published listing's reference and status.
+- `docs/operations/ebay.md`: the owner's one-time setup.
+
+**The publish pipeline** (`publish.ts`). Every call goes to `https://api.ebay.com` with the user's token:
+
+1. `getCategorySuggestions?q=<categoryHint>` on the Taxonomy API, using the default category tree id for `EBAY_GB`.
+   Take the first leaf id.
+2. For each photo: `createImageFromFile` on the Media API, a multipart upload, which returns an `imageUrl`.
+3. `PUT /sell/inventory/v1/inventory_item/{sku}`, where the sku is `noctis-<draftId>`. Send:
+   - `product.title`, `product.description` and `product.imageUrls`;
+   - `product.aspects`: Brand, Size and Colour, when given;
+   - `condition`;
+   - `availability.shipToLocationAvailability.quantity: 1`.
+4. `POST /sell/inventory/v1/offer`, which returns an `offerId`. Send:
+   - `marketplaceId: EBAY_GB`, `format: FIXED_PRICE` and `categoryId`;
+   - `pricingSummary.price` as `{ value, currency: GBP }`;
+   - `listingPolicies` from `NOCTIS_EBAY_POLICIES` and `merchantLocationKey` from `NOCTIS_EBAY_LOCATION`.
+
+   If an offer for the sku already exists, reuse it, so a retried publish never makes a second offer.
+
+5. `POST /sell/inventory/v1/offer/{offerId}/publish`, which returns a `listingId`.
+6. Status: `GET /sell/inventory/v1/offer/{offerId}`, recorded as a source observation with its time.
+
+Take the exact URLs, scopes and the "offer already exists" error code from eBay's API documentation. Record them in
+the test fixtures, and don't invent them.
+
+**Authority.**
+
+- Step 5 is an external write. It runs only after the owner approves a confirm-level card, for example "Publish 'Black
+  Nike hoodie' to eBay for £28".
+- Steps 1 to 4 run before the card, so the card can show exactly what will go live.
+
+- [ ] **I1.1 Contract and tool:** a malformed proposal (a title of 81 characters, a price of 0) is refused with a
+      reason, and a valid one creates a draft. A core integration test.
+- [ ] **I1.2 Drafts service and migration:** create, edit and reorder, idempotent on the proposal id.
+- [ ] **I1.3 OAuth.** Tests run against a local fake eBay server, with no live calls.
+  - The authorize URL carries the RuName and the inventory, account and media scopes, plus a state bound to the
+    session.
+  - The callback rejects a state mismatch.
+  - The token refreshes before it expires.
+  - DPAPI round trip: PowerShell `ConvertTo-SecureString` and `ConvertFrom-SecureString` called through `execFile`, the
+    pattern `home-node.ps1` uses.
+- [ ] **I1.4 Publish pipeline,** against the fake server replaying eBay's documented responses:
+  - the happy path;
+  - a failed publish leaves the offer in place, and a retry reuses it;
+  - a 401 refreshes once and then fails cleanly;
+  - nothing is published without the approval.
+- [ ] **I1.5 Web.** E2E against the fake server: attach photos in Threads and say "sell this", and a draft opens; edit
+      it; Publish asks for approval; the reference shows "Live on eBay · checked <time>".
+- [ ] **I1.6 `docs/operations/ebay.md`,** covering:
+  - the developer account and the production keyset;
+  - the account-deletion **opt-out**;
+  - a RuName whose accept URL is `https://mushafzarrar.tail9594ed.ts.net/oauth/ebay/callback`;
+  - business policies in Seller Hub, and an inventory location;
+  - the env vars, and turning it on.
+- [ ] **I1.7 Live,** with the owner present and approving at that moment: list one real item, check it, then end the
+      listing.

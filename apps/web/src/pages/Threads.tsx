@@ -22,6 +22,7 @@ import type {
   Turn,
 } from "../conversation/useConversation.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
+import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { BeforeNoctis } from "./BeforeNoctis.js";
 import { Conversations } from "./Conversations.js";
@@ -372,6 +373,9 @@ export function Threads({
   transport,
 }: ThreadsProps): JSX.Element {
   const [listing, setListing] = useState(false);
+  const list = useBackLayer("conversations", listing, () => {
+    setListing(false);
+  });
   const {
     thread,
     messages,
@@ -444,7 +448,14 @@ export function Threads({
       actions={
         <>
           {transport !== undefined && onOpenThread !== undefined && !listing && (
-            <button type="button" onClick={() => setListing(true)} style={buttonStyle}>
+            <button
+              type="button"
+              onClick={() => {
+                setListing(true);
+                list.pushed();
+              }}
+              style={buttonStyle}
+            >
               Conversations
             </button>
           )}
@@ -484,7 +495,7 @@ export function Threads({
           roots={conversation.roots}
           currentThreadId={thread?.kind === "named" ? thread.id : undefined}
           onOpen={onOpenThread}
-          onClose={() => setListing(false)}
+          onClose={list.dismiss}
         />
       ) : (
         <>

@@ -6,6 +6,7 @@ import { folderName } from "../conversation/PromptForm.js";
 import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
+import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { FileTarget } from "./files-view.js";
 import { childPath, filesQuery, parentPath, viewerKind } from "./files-view.js";
@@ -93,6 +94,9 @@ export function Files({
   const [pending, setPending] = useState(target?.relativePath.split("/").at(-1));
   const [listing, setListing] = useState<Listing>({ state: "loading" });
   const [opened, setOpened] = useState<Entry & { path: string }>();
+  const viewer = useBackLayer("file", opened !== undefined, () => {
+    setOpened(undefined);
+  });
 
   useEffect(() => {
     if (target !== undefined) {
@@ -111,6 +115,11 @@ export function Files({
 
     if (entry !== undefined) {
       setOpened({ ...entry, path: childPath(folder, entry.name) });
+      // No click opens this one, so the entry is made here. It runs once the
+      // folder has listed, never on mount, so a double-mounted effect can't repeat it.
+      if (opened === undefined) {
+        viewer.pushed();
+      }
     }
 
     setPending(undefined);
@@ -154,7 +163,7 @@ export function Files({
   const hosts = [...new Set(roots.map((root) => root.hostId))];
 
   function back(): void {
-    setOpened(undefined);
+    viewer.dismiss();
 
     if (folder === "") {
       setPlace(undefined);
@@ -213,7 +222,7 @@ export function Files({
                         onClick={() => {
                           setPlace(root);
                           setFolder("");
-                          setOpened(undefined);
+                          viewer.dismiss();
                         }}
                         style={{
                           ...rowStyle,
@@ -289,10 +298,13 @@ export function Files({
                     aria-current={selected ? "true" : undefined}
                     onClick={() => {
                       if (entry.kind === "directory") {
-                        setOpened(undefined);
+                        viewer.dismiss();
                         setFolder(path);
                       } else {
                         setOpened({ ...entry, path });
+                        if (opened === undefined) {
+                          viewer.pushed();
+                        }
                       }
                     }}
                     style={{
@@ -354,7 +366,7 @@ export function Files({
           place={place}
           file={opened}
           transport={transport}
-          onClose={() => setOpened(undefined)}
+          onClose={viewer.dismiss}
           fullScreen
         />
       </div>
@@ -387,12 +399,7 @@ export function Files({
             }}
           >
             {opened !== undefined && place !== undefined && transport !== undefined ? (
-              <Viewer
-                place={place}
-                file={opened}
-                transport={transport}
-                onClose={() => setOpened(undefined)}
-              />
+              <Viewer place={place} file={opened} transport={transport} onClose={viewer.dismiss} />
             ) : (
               <EmptyViewer />
             )}

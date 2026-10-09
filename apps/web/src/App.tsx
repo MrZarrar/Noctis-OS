@@ -23,6 +23,8 @@ import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js"
 import { useWaitingCount } from "./notify/useWaitingCount.js";
 import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
 import { useIsMobile } from "./layout/useIsMobile.js";
+import type { HistoryEntry } from "./navigation/back.js";
+import { entryPage, pushPage, useBackLayer } from "./navigation/back.js";
 import { Approvals } from "./pages/Approvals.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Command } from "./pages/Command.js";
@@ -169,26 +171,44 @@ function Workbench({
   const objectiveId = freeThread ? undefined : identity.activeObjectiveId;
   /** A delegated thread the owner opened; undefined is the identity's own thread. */
   const [openThreadId, setOpenThreadId] = useState<string | undefined>(undefined);
+  // Unlike the layers inside a page, an open thread stays open across a page
+  // change, so its history entry does too.
+  const threadLayer = useBackLayer(
+    "thread",
+    openThreadId !== undefined,
+    () => {
+      setOpenThreadId(undefined);
+    },
+    true,
+  );
+  /** Opening a thread is something back undoes; going to the free thread is closing one. */
+  const openThread = (threadId: string | undefined): void => {
+    setOpenThreadId(threadId);
+    if (threadId === undefined) {
+      threadLayer.dismiss();
+    } else {
+      threadLayer.pushed();
+    }
+  };
   const conversation = useConversation(transport, identityId, objectiveId, openThreadId);
   /** An open conversation belongs to the identity it was opened under, so switching leaves it. */
   const switchIdentity = (next: ConversationalIdentityId): void => {
-    setOpenThreadId(undefined);
+    threadLayer.dismiss();
     void identity.activate(next);
   };
   /** What waits on the owner, on the Approvals tab wherever they are. */
   const counts = { Approvals: useWaitingCount(transport) };
 
-  const openInVault = (entityId: string): void => {
-    setHandoff({ entityId, returnTo: active });
-    setActive("Vault");
+  // Every move to another page is a history entry, so back lands on the page before.
+  const show = (item: RailItem, replace = false): void => {
+    if (item !== active) {
+      pushPage(item, replace);
+    }
+    setActive(item);
   };
 
-  const sendAndShow = (text: string, options: SendOptions): void => {
-    void conversation.send(text, options);
-    setActive("Threads");
-  };
-
-  const select = (item: RailItem): void => {
+  /** What arriving on a page resets, whether by a tap or by going back to it. */
+  const arrive = (item: RailItem): void => {
     if (item === "Presence") {
       setOpenThreadId(undefined);
       setFreeThread(true);
@@ -198,8 +218,41 @@ function Workbench({
     if (item !== "Vault") {
       setHandoff(undefined);
     }
+  };
 
-    setActive(item);
+  // The first entry names the page the app opened on; back from any page
+  // lands on the one before it.
+  useEffect(() => {
+    history.replaceState({ page: "Presence", depth: 0 } satisfies HistoryEntry, "");
+    const onPop = (event: PopStateEvent): void => {
+      const page = entryPage(event.state);
+      if (page !== undefined) {
+        arrive(page);
+        setActive(page);
+      }
+    };
+    addEventListener("popstate", onPop);
+    return () => {
+      removeEventListener("popstate", onPop);
+    };
+  }, []);
+
+  const openInVault = (entityId: string): void => {
+    setHandoff({ entityId, returnTo: active });
+    show("Vault");
+  };
+
+  const sendAndShow = (text: string, options: SendOptions): void => {
+    void conversation.send(text, options);
+    show("Threads");
+  };
+
+  const select = (item: RailItem): void => {
+    // Leaving for Presence closes the thread; its entry is spent with it.
+    const spent = item === "Presence" && threadLayer.owns();
+
+    arrive(item);
+    show(item, spent);
   };
 
   return (
@@ -291,8 +344,8 @@ function Workbench({
             onSend={(text, options) => {
               void conversation.send(text, options);
             }}
-            onReview={() => setActive("Threads")}
-            onOpenThread={() => setActive("Threads")}
+            onReview={() => show("Threads")}
+            onOpenThread={() => show("Threads")}
             onSwitchIdentity={switchIdentity}
           />
         )}
@@ -321,12 +374,12 @@ function Workbench({
             {...(identity.activeObjectiveId === undefined
               ? {}
               : { freeThread, onUseFreeThread: setFreeThread })}
-            onOpenThread={setOpenThreadId}
+            onOpenThread={openThread}
             onSwitchIdentity={switchIdentity}
             transport={transport}
             onOpenFile={(target) => {
               setFileTarget(target);
-              setActive("Files");
+              show("Files");
             }}
           />
         )}
@@ -350,7 +403,7 @@ function Workbench({
               ? {}
               : {
                   onReturn: () => {
-                    setActive(handoff.returnTo);
+                    show(handoff.returnTo);
                     setHandoff(undefined);
                   },
                 })}
@@ -370,7 +423,7 @@ function Workbench({
               }
 
               setFreeThread(turn.objectiveId === undefined);
-              setActive("Threads");
+              show("Threads");
             }}
           />
         )}

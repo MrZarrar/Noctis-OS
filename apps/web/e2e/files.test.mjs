@@ -205,6 +205,17 @@ describe("files on a PC, opened from a signed-in phone", () => {
       assert.equal(await download.getAttribute("target"), "_blank");
       assert.equal(await download.getAttribute("rel"), "noopener");
 
+      // The phone's back gesture closes the viewer and stays on Files.
+      await page.goBack();
+      await waitFor(
+        readFiles,
+        (state) => state.viewer === "" && state.rows.length > 0,
+        "back did not close the viewer",
+      );
+      assert.equal((await readFiles()).heading, "Files");
+
+      await openRow("frame-01.png");
+      await waitFor(readFiles, (state) => state.imageDrawn, "the frame never drew again");
       await press("Close");
       await press("Up");
       await openRow("render.mp4");
