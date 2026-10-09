@@ -352,6 +352,19 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
           `${name} scrolls the whole document: scrollHeight ${String(shown.scrollHeight)}`,
         );
 
+        // iOS zooms into any field under 16px when it takes focus, and the
+        // Home Screen app has no way back out.
+        const small = await page.evaluate(() =>
+          [...document.querySelectorAll("input, textarea, select")]
+            .filter((field) => parseFloat(getComputedStyle(field).fontSize) < 16)
+            .map((field) => field.getAttribute("aria-label") ?? field.getAttribute("placeholder")),
+        );
+        assert.deepEqual(small, [], `${name}: fields under 16px zoom the phone on focus`);
+        assert.match(
+          (await page.locator('meta[name="viewport"]').getAttribute("content")) ?? "",
+          /maximum-scale=1/,
+        );
+
         for (const control of await readControls()) {
           assert.ok(
             control.left >= 0 && control.right <= PHONE.width,
