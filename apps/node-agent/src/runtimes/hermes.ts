@@ -32,6 +32,8 @@ import { createProcessPool, processKey } from "./sessions.js";
  * pushing and publishing are refused outright by `approvals.deny`, because
  * Hermes has no sandbox. Whatever Hermes asks about comes to the owner as an
  * ask. It thinks on the local model, so its turns are costed as local.
+ * Inside that home Hermes is left whole: it remembers, searches its past
+ * sessions and learns skills as it normally does. Only its scheduler is off.
  */
 
 export interface HermesRuntimeOptions {
@@ -66,8 +68,8 @@ Your job is to make the owner's ideas better by attacking them. Find the premise
 
 You prepare; you do not commit. Draft the offer, the message, the list, the plan, for the owner to review. You never send, publish, spend money or change anything outside this PC. Noctis asks the owner before anything consequential, and a refusal is final.
 `;
-/** Hermes's own memory, its search over past sessions, and its scheduler. */
-const MEMORYLESS = ["memory", "session_search", "cronjob"];
+/** Hermes's own scheduler stays off until scheduling runs through Noctis, where the owner can see and stop it. */
+const NO_SCHEDULER = ["cronjob"];
 
 /** `hermes-acp.exe` where Hermes's own installer puts it, unless the operator names one. */
 export function resolveHermesCommand(env: NodeJS.ProcessEnv): string | undefined {
@@ -97,20 +99,23 @@ function hermesConfig(model: string): string {
     "  timeout: 600",
     "  deny:",
     ...DENIED.map((pattern) => `    - ${JSON.stringify(pattern)}`),
-    // ADR-0030: memory off, cron off. Noctis keeps the threads; Hermes keeps
-    // nothing of its own between them and schedules nothing behind the owner.
+    // Hermes keeps what it learns, in this home's own MEMORY.md and USER.md, so
+    // Vesper and Jester each remember separately. These are its own defaults,
+    // written out so a change upstream cannot quietly move them.
     "memory:",
-    "  memory_enabled: false",
-    "  user_profile_enabled: false",
-    "  nudge_interval: 0",
+    "  memory_enabled: true",
+    "  user_profile_enabled: true",
+    "  memory_char_limit: 2200",
+    "  user_char_limit: 1375",
+    "  nudge_interval: 10",
     "auxiliary:",
     "  background_review:",
-    "    enabled: false",
+    "    enabled: true",
     "skills:",
-    "  creation_nudge_interval: 0",
+    "  creation_nudge_interval: 10",
     "agent:",
     "  disabled_toolsets:",
-    ...MEMORYLESS.map((toolset) => `    - ${JSON.stringify(toolset)}`),
+    ...NO_SCHEDULER.map((toolset) => `    - ${JSON.stringify(toolset)}`),
     "",
   ].join("\n");
 }

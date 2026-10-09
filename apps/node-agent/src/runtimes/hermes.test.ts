@@ -302,20 +302,29 @@ describe("the Hermes runtime (ACP)", () => {
     expect(config).toContain('"*git push*"');
   });
 
-  it("keeps no memory and schedules nothing (ADR-0030): no stores, no review fork, no memory or cron tools", async () => {
+  it("lets Hermes remember and learn on both homes, but schedules nothing", async () => {
     const { runtime: hermes } = runtime();
 
     await hermes.turn(input(), recorder().sink);
-
-    const config = readFileSync(join(scratch, "hermes", "config.yaml"), "utf8");
-
-    expect(config).toContain("memory_enabled: false");
-    expect(config).toContain("user_profile_enabled: false");
-    expect(config).toMatch(/background_review:\n {4}enabled: false/);
-    expect(config).toContain("creation_nudge_interval: 0");
-    expect(config).toMatch(
-      /disabled_toolsets:\n {4}- "memory"\n {4}- "session_search"\n {4}- "cronjob"/,
+    await hermes.turn(
+      input({ identityId: "jester", threadId: "0199a000-0000-7000-8000-0000000000f1" }),
+      recorder().sink,
     );
+
+    for (const home of ["hermes", "hermes-jester"]) {
+      const config = readFileSync(join(scratch, home, "config.yaml"), "utf8");
+
+      expect(config).toContain("memory_enabled: true");
+      expect(config).toContain("user_profile_enabled: true");
+      expect(config).toContain("memory_char_limit: 2200");
+      expect(config).toContain("user_char_limit: 1375");
+      expect(config).toContain("nudge_interval: 10");
+      expect(config).toMatch(/background_review:\n {4}enabled: true/);
+      expect(config).toContain("creation_nudge_interval: 10");
+      expect(config).toMatch(/disabled_toolsets:\n {4}- "cronjob"\n/);
+      expect(config).not.toContain('"memory"');
+      expect(config).not.toContain('"session_search"');
+    }
   });
 
   it("attaches the Noctis MCP tools, and turns what they propose into proposal items (ADR-0030)", async () => {
@@ -481,9 +490,7 @@ describe("the Hermes runtime (ACP)", () => {
     expect(spawned[0]?.env.HERMES_HOME).toBe(jesterHome);
     expect(soul).toMatch(/^You are Jester/);
     expect(soul).toContain("never send, publish, spend");
-    expect(readFileSync(join(jesterHome, "config.yaml"), "utf8")).toContain(
-      "memory_enabled: false",
-    );
+    expect(readFileSync(join(jesterHome, "config.yaml"), "utf8")).toContain("memory_enabled: true");
     expect(spawned[1]?.env.HERMES_HOME).toBe(join(scratch, "hermes"));
     expect(readFileSync(join(scratch, "hermes", "SOUL.md"), "utf8")).toMatch(/^You are Vesper/);
   });
