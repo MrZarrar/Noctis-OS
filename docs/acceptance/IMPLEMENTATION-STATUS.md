@@ -3362,3 +3362,102 @@ Codex, Hermes and local.
 | `node --test apps/web/e2e/{presence,phone,chat,jester}.test.mjs` | exit 0                  |
 | `.noctis/home-node.test.ps1`                                     | exit 0                  |
 | typecheck, eslint, prettier on the changed files                 | exit 0                  |
+
+### 2026-10-09 The owner's list: UI pass, Vault, identity
+
+Commits `8c3ad03`, `ebe94e1`, `7292e42`, `2292e05`, `772717f`, `1bd0ba7`,
+`cecda00` and `af5a680`. Built and checked locally; this pass did not deploy anything.
+Earlier results below come from the per-task reports in `.superpowers/sdd/task-*-report.md`;
+the attachment preview and picker polish checks were run fresh for this entry.
+
+- **UI pass** (`8c3ad03`). The document cannot scroll beneath a long thread, page headers stay
+  on screen, Login scrolls inside its own frame, and Files downloads open without replacing the app.
+- **Back gesture** (`ebe94e1`). Pages and layers share a history stack; Back closes the
+  conversation list or file viewer before leaving the page, and keeps delegated threads across pages.
+- **Pickers** (`7292e42`, `af5a680`). Agent, PC and folder, Settings defaults and Host use the
+  app's glass list: a sheet on the phone, a popover on desktop. The trigger now announces detail
+  pills and whether it is expanded. Real ancestor scrolling and resize close it; internal,
+  sibling and queued pre-open scrolls do not. Disabled rows are skipped and cannot be picked,
+  and reopening a long list reveals the selected row.
+- **Presence and screenshots** (`2292e05`). Minute-aligned clock and greeting, output thumbnails
+  in the last exchange, and breathing keyframes in the bundled stylesheet under the core's CSP.
+  Paste or drop attaches named screenshots to the composer, with thumbnails and removal before send.
+- **Preview before sending** (`cecda00`). Each attachment chip opens a modal: blob images and
+  inline video controls, the first 200 KiB of text as plain text, or name, type and size. Close,
+  Escape, backdrop and Back dismiss it; focus returns to the chip, or the composer after Remove.
+  URLs are revoked on close, removal and unmount. Phone sheet and centred desktop layout; both
+  core policy variants and the desktop shell allow blob media. The upload allowlist still excludes
+  video; the preview does not change that contract.
+- **Vault** (`772717f`). Generated notes tagged `graphify/` are skipped and unlinked orphan
+  placeholders are pruned on reindex. Agent brain notes remain indexed but are omitted from the
+  sphere's graph, with their edges filtered out too. No live Vault was opened or reindexed.
+- **Identity** (`1bd0ba7`). Vesper's card reaches every runtime, through appended system
+  instructions, thread instructions, Hermes's soul or a local system message. The per-turn
+  `NOCTIS_IDENTITY_CARDS=0` switch disables it; Jester retains its own Hermes soul.
+
+| Gate clause                                                                            | State           | Evidence                                                                                        |
+| -------------------------------------------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| Long threads stay inside the shell; headers and downloads remain usable                | implemented     | Phone overflow and sticky-header gates; Files download target assertion                         |
+| Back closes the top layer before leaving its page                                      | implemented     | `back.test.ts`, phone list navigation and Files viewer Back                                     |
+| Picker announces the full choice, rejects disabled rows and closes when its page moves | implemented     | Chat picker fixture, keyboard and scroll assertions; phone sheet and desktop picker gates       |
+| Presence clock, outputs and idle breathing work under the core's CSP                   | implemented     | `clock.test.ts`, exchange output tests, Presence and tokenless gates                            |
+| Pasted image opens full-size before send, closes and can be removed                    | implemented     | Chat preview gate; tokenless preview image `naturalWidth > 0`                                   |
+| Text is plain and bounded; video is inline; binary files show metadata                 | implemented     | Phone preview assertions: 200 KiB, no HTML element, video controls, metadata and URL revocation |
+| Generated graph notes and the agent brain stay out of the sphere                       | implemented     | Markdown, Vault reindex and headless graph integration tests                                    |
+| Vesper receives its identity card on every runtime                                     | implemented     | Identity, runtime start, resume and fork tests                                                  |
+| Live redeploy, Vault reindex and asking each agent "who are you?"                      | not yet         | Owner checks, not performed in this pass                                                        |
+| Companion core                                                                         | awaiting review | Built on `wip/companion-core` (`c27895f`); review and merge left for later                      |
+| Screen mirror and eBay                                                                 | not started     | Tasks 8 and 9 left for later                                                                    |
+
+Red evidence in the earlier reports includes document overflow, an offscreen Conversations
+button, a missing download target, missing history-layer and picker wiring, missing clock and
+stylesheet rules, the absent pasted-file list, retained generated-note ghosts and missing
+identity cards. Some extracted output and option-label unit tests were written after the code;
+the reports record that exception. This pass showed the preview button and helper red, both
+missing media policies red, removal focus red, the incomplete picker name red, queued-scroll
+dismissal red and long-list visibility red before their green checks.
+
+#### Known, not fixed
+
+- **Layout and coverage.** The header has a literal translucent colour; Login's flex centring
+  can clip its top on very short viewports. Early overflow and download gates do not assert every
+  style, blur repaint on a low-end phone is unmeasured, and the composer's negative bottom offset
+  still depends on Page padding and can shift about 16 px at the thread end.
+- **History edges.** A redundant Back press can remain after picking another or a free thread
+  from an open thread's list, or tapping Presence while the thread's entry is not on top.
+  Hook wiring has narrower coverage than the pure history logic; the existing Chat delegation
+  gate passed in this run. The picker's unmatched-value "Choose" fallback is still untested.
+- **Presence and attachment edges.** The clock's accessible label, minute re-render, and
+  output-image coverage limits remain. Token transports show output names; the image path has
+  unit and screenshot evidence. There is no drag-hover affordance, stray drags show a copy cursor,
+  and truncating at eight attachments can skip screenshot numbers. Video controls use synthetic
+  bytes in the test; codec playback and physical-phone gestures were not checked.
+- **Vault edges.** Tag key case, singular tags and `#` prefixes can evade the generated-note
+  test. Pruning can re-identify a transiently deleted unlinked note; search can focus an agent
+  entity omitted from the sphere.
+- **Identity edges.** Vesper's Hermes soul names one model in a shared home, so concurrent
+  model opens can race. Changing the card switch applies on the next runtime open, not mid-session.
+- **Deferred companion concerns.** Its report notes possible header overlap, content beneath
+  the fixed corner core, no caption live region and a late-measure transition snap. These are
+  awaiting review, not accepted results from this pass.
+
+| Command                                                                                                                                                     | Result                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| UI pass: `node --test apps/web/e2e/phone.test.mjs` / `apps/web/e2e/files.test.mjs`                                                                          | recorded exit 0; 12 / 1 tests                                                                                  |
+| Back: `npx vitest run apps/web`; phone and Files e2e                                                                                                        | recorded exit 0; 181 unit, 14 browser tests                                                                    |
+| Original picker: `npx vitest run apps/web/src`; phone, Chat, Files, Jester and Presence e2e                                                                 | recorded exit 0; 183 unit, 16 + 3 + 1 + 1 + 2 browser tests                                                    |
+| Presence: `npx vitest run apps/web packages/ui apps/core/src/api/static.test.ts`                                                                            | recorded exit 0; 38 files, 366 tests                                                                           |
+| Presence: shell boundary; Presence, phone, Chat, Jester and tokenless e2e                                                                                   | recorded exit 0; 5 boundary, 2 + 16 + 5 + 1 + 3 browser tests                                                  |
+| Vault: `npx vitest run apps/core/src/vault packages/domain/src/vault apps/core/src/api/headless.integration.test.ts`                                        | recorded exit 0; 7 files, 180 tests                                                                            |
+| Vault: full `npx vitest run` before the review fixes                                                                                                        | recorded 2073 passed, 2 failed in node file session tests because of short TMP paths; no fresh full sweep here |
+| Identity: `npx vitest run apps/node-agent/src/runtimes`                                                                                                     | recorded exit 0; 16 files, 186 tests                                                                           |
+| Preview: `npx vitest run apps/web/src/conversation/AttachmentPreview.test.ts apps/web/src/conversation/PromptForm.test.ts apps/core/src/api/static.test.ts` | fresh exit 0; 33 tests                                                                                         |
+| Preview: `node --test apps/desktop/tests/shell-boundary.test.mjs`                                                                                           | fresh exit 0; 5 tests                                                                                          |
+| Preview: `node --test apps/web/e2e/chat.test.mjs` / `apps/web/e2e/tokenless.test.mjs`                                                                       | fresh exit 0; 7 / 3 tests before picker polish                                                                 |
+| Picker polish: `node --test apps/web/e2e/chat.test.mjs` / `apps/web/e2e/phone.test.mjs`                                                                     | fresh exit 0; 8 / 16 tests                                                                                     |
+| `npm run typecheck`; focused `npx eslint` and `npx prettier --check` for preview and picker files                                                           | fresh exit 0; earlier tasks also recorded clean checks                                                         |
+| `npx prettier --check docs/acceptance/IMPLEMENTATION-STATUS.md`                                                                                             | fresh exit 0                                                                                                   |
+
+Fresh checks used Node 22.23.2, Chrome and long TMP/TEMP paths; PowerShell commands used the
+`npx.cmd` and `npm.cmd` shims. No packages were installed. The live redeploy, Vault reindex and
+identity questions remain outstanding; companion review, screen mirror and eBay were not started.
