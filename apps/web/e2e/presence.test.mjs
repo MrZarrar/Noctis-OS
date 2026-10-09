@@ -375,8 +375,9 @@ it(
       await page.locator('[aria-live="polite"]').getByText("jester.png", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Open in Threads →" }).click();
       await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
-      // And Threads carries a small core of its own.
-      await page.locator('[data-threads-core="true"] .noctis-intelligence').waitFor();
+      // And the same core follows into the composer.
+      await page.locator('[data-core-slot="composer"]').waitFor();
+      await page.locator('[data-core-dock="composer"] .noctis-intelligence').waitFor();
       assert.equal(errors.length, 0, errors.join("\n"));
       await context.close();
       if (EVIDENCE && video) await video.saveAs(join(EVIDENCE, `${name}-all-states.webm`));
@@ -435,3 +436,161 @@ it("keeps every state readable when WebGL is unavailable", { timeout: 60_000 }, 
     await context.close();
   }
 });
+
+/** Set to a folder to keep a recording and a screenshot of every dock. */
+const COMPANION_EVIDENCE = process.env.NOCTIS_COMPANION_EVIDENCE;
+
+it(
+  "THE GATE (companion): one core follows the owner from Presence into Threads and to a corner on Files",
+  { timeout: 120_000 },
+  async () => {
+    if (COMPANION_EVIDENCE) mkdirSync(COMPANION_EVIDENCE, { recursive: true });
+    for (const [name, viewport] of Object.entries({
+      desktop: { width: 1440, height: 900 },
+      phone: { width: 400, height: 860 },
+    })) {
+      const context = await browser.newContext({
+        viewport,
+        deviceScaleFactor: name === "phone" ? 2 : 1,
+        ...(COMPANION_EVIDENCE ? { recordVideo: { dir: COMPANION_EVIDENCE, size: viewport } } : {}),
+      });
+      await context.addInitScript(fixture);
+      // Every WebGL context the page ever asks for, so a page that builds its
+      // own core shows up even if it tears it down again.
+      await context.addInitScript(() => {
+        globalThis.webglContexts = 0;
+        const getContext = globalThis.HTMLCanvasElement.prototype.getContext;
+        globalThis.HTMLCanvasElement.prototype.getContext = function (kind, ...args) {
+          const made = getContext.call(this, kind, ...args);
+          if (kind.startsWith("webgl") && made !== null) globalThis.webglContexts++;
+          return made;
+        };
+      });
+      const page = await context.newPage();
+      const errors = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(URL);
+      await page.waitForFunction(
+        () => document.querySelector(".noctis-intelligence")?.dataset.coreRenderer === "webgl",
+      );
+      const nav = page.getByRole("navigation", { name: "Primary" });
+      const contextsAtStart = await page.evaluate(() => globalThis.webglContexts);
+
+      /** The one core, once it has finished moving: where it is and how many there are. */
+      const settled = async (slot) => {
+        let last;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const now = await page.evaluate((selector) => {
+            const cores = document.querySelectorAll(".noctis-intelligence");
+            const box = cores[0]?.getBoundingClientRect();
+            const target = selector ? document.querySelector(selector) : null;
+            const slotBox = target?.getBoundingClientRect();
+            return {
+              count: cores.length,
+              canvases: document.querySelectorAll("canvas").length,
+              state: cores[0]?.dataset.coreState,
+              box: box && { x: box.x, y: box.y, width: box.width, height: box.height },
+              slot: slotBox && {
+                x: slotBox.x,
+                y: slotBox.y,
+                width: slotBox.width,
+                height: slotBox.height,
+              },
+            };
+          }, slot);
+          if (last !== undefined && JSON.stringify(now.box) === JSON.stringify(last.box))
+            return now;
+          last = now;
+          await page.waitForTimeout(150);
+        }
+        return last;
+      };
+      const near = (a, b) =>
+        Math.abs(a.x - b.x) < 2 &&
+        Math.abs(a.y - b.y) < 2 &&
+        Math.abs(a.width - b.width) < 2 &&
+        Math.abs(a.height - b.height) < 2;
+
+      const presence = await settled('[data-core-slot="hero"]');
+      assert.equal(presence.count, 1, "Presence has more than one core");
+      assert.ok(presence.slot, "Presence has no hero slot");
+      assert.ok(
+        near(presence.box, presence.slot),
+        `the core is not in the hero slot: ${JSON.stringify(presence)}`,
+      );
+      if (COMPANION_EVIDENCE)
+        await page.screenshot({ path: join(COMPANION_EVIDENCE, `companion-${name}-presence.png`) });
+
+      await nav.getByRole("button", { name: "Threads" }).click();
+      await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+      const threads = await settled('[data-core-slot="composer"]');
+      assert.equal(threads.count, 1, "Threads has more than one core");
+      assert.ok(threads.slot, "Threads has no composer slot");
+      assert.ok(
+        near(threads.box, threads.slot),
+        `the core is not in the composer: ${JSON.stringify(threads)}`,
+      );
+      assert.ok(threads.box.y + threads.box.height <= viewport.height, "core below the fold");
+      if (COMPANION_EVIDENCE)
+        await page.screenshot({ path: join(COMPANION_EVIDENCE, `companion-${name}-threads.png`) });
+
+      // The list of conversations takes the composer's place, and the core
+      // with it: it waits in the corner rather than freezing over the rows.
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "New conversation" }).waitFor();
+      const listing = await settled('[data-core-slot="corner"]');
+      assert.equal(listing.count, 1, "the list has more than one core");
+      assert.ok(
+        near(listing.box, listing.slot),
+        `the core is not in the corner over the list: ${JSON.stringify(listing)}`,
+      );
+      if (COMPANION_EVIDENCE)
+        await page.screenshot({
+          path: join(COMPANION_EVIDENCE, `companion-${name}-conversations.png`),
+        });
+      await page.goBack();
+      await page.getByRole("textbox", { name: "Message Vesper" }).waitFor();
+      const back = await settled('[data-core-slot="composer"]');
+      assert.ok(near(back.box, back.slot), `the core did not return to the composer`);
+
+      await page.getByRole("textbox", { name: "Message Vesper" }).fill("SLOW: take your time");
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await nav.getByRole("button", { name: "Files" }).click();
+      await page.getByRole("heading", { name: "Files", exact: true }).waitFor();
+      const files = await settled();
+      assert.equal(files.count, 1, "Files has more than one core");
+      assert.equal(files.state, "thinking", "the corner core does not show the turn running");
+      assert.ok(
+        files.box.x + files.box.width <= viewport.width &&
+          files.box.y + files.box.height <= viewport.height - (name === "phone" ? 60 : 0),
+        `the corner core is off screen or under the tab bar: ${JSON.stringify(files)}`,
+      );
+      await page.getByText("Vesper: thinking…").waitFor();
+      if (COMPANION_EVIDENCE)
+        await page.screenshot({ path: join(COMPANION_EVIDENCE, `companion-${name}-files.png`) });
+
+      for (const [a, b] of [
+        [presence, threads],
+        [threads, files],
+        [presence, files],
+      ])
+        assert.ok(!near(a.box, b.box), `the core did not move: ${JSON.stringify([a.box, b.box])}`);
+      assert.equal(files.canvases, 1, "more than one canvas in the document");
+      assert.equal(
+        await page.evaluate(() => globalThis.webglContexts),
+        contextsAtStart,
+        "a page change built another WebGL context",
+      );
+
+      // The corner core is the way back to the conversation.
+      await page.getByRole("button", { name: "Open Threads" }).click();
+      await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+      await context.close();
+      if (COMPANION_EVIDENCE) {
+        await page.video()?.saveAs(join(COMPANION_EVIDENCE, `companion-${name}.webm`));
+        await page.video()?.delete();
+      }
+    }
+  },
+);

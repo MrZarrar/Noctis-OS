@@ -17,6 +17,7 @@ import {
 import type { RailItem } from "@noctis/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { CompanionCore, useComposerFocus } from "./companion/CompanionCore.js";
 import { guardStrayFileDrops } from "./conversation/file-drops.js";
 import type { RuntimeRootOption, SendOptions } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
@@ -194,6 +195,7 @@ function Workbench({
     }
   };
   const conversation = useConversation(transport, identityId, objectiveId, openThreadId);
+  const listening = useComposerFocus();
   /** An open conversation belongs to the identity it was opened under, so switching leaves it. */
   const switchIdentity = (next: ConversationalIdentityId): void => {
     threadLayer.dismiss();
@@ -343,6 +345,7 @@ function Workbench({
             identity={identity}
             transport={transport}
             conversation={conversation}
+            listening={listening}
             // Stays on Presence, where the core shows the turn (owner, 2026-10-09).
             onSend={(text, options) => {
               void conversation.send(text, options);
@@ -361,6 +364,7 @@ function Workbench({
               transport={transport}
               identity={identity}
               conversation={conversation}
+              listening={listening}
               onSend={sendAndShow}
               onOpenInVault={openInVault}
             />
@@ -452,6 +456,18 @@ function Workbench({
           </section>
         )}
       </main>
+
+      <CompanionCore
+        page={active}
+        identityId={identityId}
+        protocolIds={identity.protocolIds}
+        conversation={conversation}
+        listening={listening}
+        mobile={isMobile}
+        onOpenThreads={() => {
+          select("Threads");
+        }}
+      />
 
       {/* After the pages in source order, never before them: a bottom bar that
           comes first is the first thing a screen reader announces on every

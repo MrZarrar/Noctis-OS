@@ -43,6 +43,8 @@ export interface CommandProps {
   identity: IdentityRuntimeState;
   /** The identity's conversation, for Presence's model selector. */
   conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots">;
+  /** Whether a composer has the focus, for Presence's words. */
+  listening: boolean;
   /** Presence's prompt: sends on the thread and takes the rail to Chat. */
   onSend: (text: string, options: SendOptions) => void;
   /** Handoff to the dedicated Vault view, from a recall Surface. */
@@ -67,6 +69,7 @@ export function Command({
   transport,
   identity,
   conversation,
+  listening,
   onSend,
   onOpenInVault,
 }: CommandProps): JSX.Element {
@@ -270,6 +273,7 @@ export function Command({
           identity={identity}
           transport={transport}
           conversation={conversation}
+          listening={listening}
           onSend={onSend}
         />
         <ObjectiveList

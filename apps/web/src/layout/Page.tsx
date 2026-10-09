@@ -41,6 +41,9 @@ export function Page({
         flexDirection: "column",
         boxSizing: "border-box",
         padding: `${String(spacing.lg)}px clamp(${String(spacing.lg)}px, 4vw, ${String(spacing.xxxl)}px)`,
+        // Room for the app's core when it waits in the corner, so the end of a
+        // long page can scroll clear of it instead of resting under it.
+        paddingBottom: `calc(${String(spacing.lg)}px + var(--noctis-core-clearance, 0px))`,
       }}
     >
       <div

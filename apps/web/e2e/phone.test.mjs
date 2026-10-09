@@ -148,7 +148,14 @@ function readControls() {
           element.textContent?.trim() ??
           element.tagName;
 
-        return { name, left: box.left, right: box.right, height: box.height };
+        return {
+          name,
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          bottom: box.bottom,
+          height: box.height,
+        };
       }),
   );
 }
@@ -355,7 +362,93 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
             `${name}: "${control.name}" is ${String(Math.round(control.height))}px tall, under the ${String(MIN_TARGET)}px touch floor`,
           );
         }
+
+        // The core waiting in the corner is a control too, and must not sit on
+        // another one — as the page first draws, or scrolled to its very end,
+        // where the last row would otherwise come to rest under it.
+        for (const where of ["top", "end"]) {
+          if (where === "end") {
+            await page.evaluate(() => {
+              for (const element of document.querySelectorAll("*")) {
+                if (element.scrollHeight > element.clientHeight + 1) {
+                  element.scrollTop = element.scrollHeight;
+                }
+              }
+            });
+            await page.waitForTimeout(200);
+            // However short the page is today, its end must stop above the core.
+            const rest = await page.evaluate(() => {
+              const core = document
+                .querySelector('[aria-label="Open Threads"]')
+                ?.getBoundingClientRect();
+              const scroller = [...document.querySelectorAll("main section")].find(
+                (section) => getComputedStyle(section).overflowY === "auto",
+              );
+              const content = scroller?.firstElementChild?.getBoundingClientRect();
+              return core && content
+                ? { coreTop: core.top, contentBottom: content.bottom }
+                : undefined;
+            });
+            if (rest !== undefined)
+              assert.ok(
+                rest.contentBottom <= rest.coreTop + 1,
+                `${name}: scrolled to the end, the page's content runs ${String(Math.round(rest.contentBottom - rest.coreTop))}px under the corner core`,
+              );
+          }
+          const controls = await readControls();
+          const companion = controls.find((control) => control.name === "Open Threads");
+          for (const control of companion === undefined ? [] : controls) {
+            if (control === companion) continue;
+            assert.ok(
+              control.right <= companion.left ||
+                control.left >= companion.right ||
+                control.bottom <= companion.top ||
+                control.top >= companion.bottom,
+              `${name}, at the ${where}: the corner core covers "${control.name}"`,
+            );
+          }
+        }
       }
+    },
+  );
+
+  it(
+    "THE GATE: scrolled on a short phone, Presence's core goes under the header, never over it",
+    { timeout: 60_000 },
+    async () => {
+      const SHORT = { width: 400, height: 560 };
+      await page.setViewportSize(SHORT);
+      await page.goto(WEB_URL);
+      await waitFor(readPage, (state) => state.heading === "Presence", "Presence never drew");
+      await page.evaluate(() => {
+        const presence = document.querySelector('section[aria-label="Presence"]');
+        presence.scrollTop = presence.scrollHeight;
+      });
+
+      const covered = await waitFor(
+        () =>
+          page.evaluate(() => {
+            const header = document.querySelector("header");
+            const dock = document.querySelector("[data-core-dock]");
+            const top = header.getBoundingClientRect();
+            const core = document.querySelector(".noctis-intelligence").getBoundingClientRect();
+            const y = (Math.max(top.top, core.top) + top.bottom) / 2;
+            // The core lets taps through, so elementFromPoint would look past
+            // it whatever it painted over. Catching taps for a moment makes it
+            // answer by what is actually on top.
+            dock.style.pointerEvents = "auto";
+            const hit = document.elementFromPoint(top.left + top.width / 2, y);
+            dock.style.pointerEvents = "none";
+            return {
+              under: core.top < top.bottom,
+              headerOnTop: header.contains(hit),
+              hit: hit?.outerHTML.slice(0, 80),
+            };
+          }),
+        (state) => state.under,
+        "Presence did not scroll far enough for its core to reach the header",
+      );
+      assert.ok(covered.headerOnTop, `the core paints over the header: ${covered.hit}`);
     },
   );
 

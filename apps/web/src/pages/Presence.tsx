@@ -1,11 +1,5 @@
 ﻿import type { ConversationalIdentityId } from "@noctis/contracts";
-import {
-  IntelligenceRenderer,
-  JesterGlyph,
-  identityAccent,
-  semantic,
-  typography,
-} from "@noctis/ui";
+import { JesterGlyph, identityAccent, semantic, typography } from "@noctis/ui";
 import { useEffect, useState } from "react";
 
 import { PromptForm } from "../conversation/PromptForm.js";
@@ -29,6 +23,8 @@ export interface PresenceProps {
         "messages" | "turns" | "streaming" | "pendingApprovals" | "error" | "outputUrl"
       >
     >;
+  /** Whether a composer has the focus; the app's core reads the same signal. */
+  listening: boolean;
   onSend: (text: string, options: SendOptions) => void;
   onReview?: () => void;
   /** The whole thread, in Threads; Presence shows only the exchange in progress. */
@@ -48,12 +44,12 @@ export function Presence({
   identity,
   transport,
   conversation,
+  listening,
   onSend,
   onReview,
   onOpenThread,
   onSwitchIdentity,
 }: PresenceProps): JSX.Element {
-  const [listening, setListening] = useState(false);
   // Only what was said from here, this visit: an exchange from yesterday is
   // history, which Threads keeps, not something to greet the owner with.
   const [sent, setSent] = useState(false);
@@ -179,7 +175,9 @@ export function Presence({
           </span>
         </time>
       </div>
+      {/* The app's one core flies into this box; it is drawn above the page. */}
       <div
+        data-core-slot="hero"
         style={{
           flex: "1 1 320px",
           width: "100%",
@@ -189,11 +187,6 @@ export function Presence({
           position: "relative",
         }}
       >
-        <IntelligenceRenderer
-          identityId={identityId}
-          protocolIds={identity.protocolIds}
-          state={state}
-        />
         <div
           aria-hidden="true"
           style={{
@@ -311,7 +304,6 @@ export function Presence({
             setSent(true);
             onSend(text, options);
           }}
-          onListeningChange={setListening}
           {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
         />
         {error !== undefined && (
