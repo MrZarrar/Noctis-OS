@@ -62,8 +62,9 @@ The graphify code graph (8,812 files) was moved out of MindVault to
 - Codex is run with the codex binary bundled in the VS Code extension. The CLI on `PATH` is older and cannot use the
   configured model.
 - Running three heavy Codex jobs at once exhausted the ChatGPT allowance in about 30 minutes.
-- Commits and pushes require the owner's explicit request and confirmation for the specific action. An earlier
-  discussion described a standing yes; the owner's current repository instructions supersede that permission.
+- Commit and push as work goes along, always, without asking. That is a standing yes for this repo (confirmed by the
+  owner again on 9 October). Asking before consequential actions is a safeguard for Noctis's own agents (§7), not
+  for development of this repository.
 
 ## 3. eBay listing
 

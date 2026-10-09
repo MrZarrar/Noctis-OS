@@ -6,7 +6,7 @@ owner. Each step says how to check it worked. Nothing in this file is run automa
 ## 0. Bring the checkout up to date
 
 ```powershell
-cd $env:USERPROFILE\Documents\Noctis-OS
+cd $env:USERPROFILE\Documents\Jarvis\Noctis-OS
 git pull --ff-only
 npm ci
 ```
@@ -49,7 +49,7 @@ recognised, the task below finds it in winget's folder instead.
 **Build the helper**, if step 0 did not already:
 
 ```powershell
-cd $env:USERPROFILE\Documents\Noctis-OS
+cd $env:USERPROFILE\Documents\Jarvis\Noctis-OS
 npm run build
 Test-Path .\apps\node-agent\dist\screen\helper.js   # True
 ```
@@ -57,7 +57,7 @@ Test-Path .\apps\node-agent\dist\screen\helper.js   # True
 **Start the helper at logon.** As the owner, in PowerShell:
 
 ```powershell
-$repo = "$env:USERPROFILE\Documents\Noctis-OS"
+$repo = "$env:USERPROFILE\Documents\Jarvis\Noctis-OS"
 # The same node.exe the boot node runs, so both are on the pinned version.
 $node = (Get-ScheduledTask -TaskName "Noctis node agent").Actions[0].Execute
 $ffmpeg = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source

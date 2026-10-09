@@ -3537,3 +3537,52 @@ to capture image` on ffmpeg stderr); a real locked screen was not tested. Deploy
   next logon. This PC runs Node v22.23.1, not the pinned 22.23.2.
 - **E1.5 live:** no e2e for pre-first-frame cancel through ffmpeg; late error reply during idle keep-alive
   not tested.
+
+### 2026-10-09 Daily digest, the Vault passcode, and the PWA zoom fix
+
+Three items the owner decided on 9 October (`docs/architecture/2026-10-09-owner-decisions.md` §7, §8, §10), built
+on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
+
+- **Daily digest.** `apps/core/src/notify/digest.ts` reads a window of the ledger: turns by agent and thread, files
+  written, outputs, and the approvals the owner was asked (approved, declined, unanswered). No model call.
+  `GET /digest?from&to` (default: the last 24 hours). Presence shows one line under the clock for the owner's own
+  day ("Today · 6 turns · 2 files · 1 approval"), re-read as each turn settles; nothing on a quiet day. A nightly
+  push is **off by default**: set `NOCTIS_DIGEST_AT=21:30` (the core's local time) on the core to send "Today with
+  Noctis" to the owner's subscribed phones. `Notifier.send` delivers a payload no event produced.
+- **Passcode for sensitive notes.** Ported from the donor's Brain PIN lock (ledger entry of this date). A note with
+  `sensitive: true` in its frontmatter is flagged at index time (migration `0014_passcode.sql`: `vault_items.sensitive`,
+  `passcode`, `passcode_unlocks`). While locked it is left out of `/vault`, `/vault/graph` and `/vault/recall`, and so
+  is any name only sensitive notes mention. Agent recall (`recall-context.ts`, Objective surfaces, `vault.recall`)
+  never includes them. `GET /passcode`, `POST /passcode/setup|unlock|lock`; 4 to 8 digits, scrypt, five wrong tries
+  lock it for 15 minutes, an unlock lasts 5 minutes from last use and belongs to the session that made it. The Vault
+  page has the control under Recall.
+- **PWA zoom fix.** `maximum-scale=1` in the viewport, `touch-action: manipulation` on `html`, and every input,
+  textarea and select at 16px (`!important`, because fields size themselves inline).
+
+| Clause                                                                     | State       | Evidence                                                                                            |
+| -------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
+| Digest counts only its window; one-line summary; next-time-of-day          | implemented | `apps/core/src/notify/digest.test.ts` (3)                                                           |
+| `/digest` answers a window and refuses a non-time                          | implemented | `headless.integration.test.ts` "answers the digest for a window…"                                   |
+| A push no event produced reaches the phones                                | implemented | `push.test.ts` "sends a notification no event produced…"                                            |
+| Passcode: set once, unlock, timeout extended by use, lockout, no plaintext | implemented | `apps/core/src/vault/passcode.test.ts` (6)                                                          |
+| THE GATE: sensitive notes hidden from list, sphere and recall while locked | implemented | `vault.integration.test.ts` "sensitive notes" (2)                                                   |
+| THE GATE (passcode): only the unlocking session sees them                  | implemented | `headless.integration.test.ts` THE GATE (passcode)                                                  |
+| No field under 16px, viewport forbids zoom, on every v1 page               | implemented | `phone.test.mjs` THE GATE: red with the CSS rule off ("Presence: fields under 16px"), green with it |
+| Live: passcode, digest line, nightly push, zoom on the iPhone              | not yet     | Needs the work PC core redeployed (migration 0014), a Vault reindex, and the owner's phone          |
+
+| Command                                                                          | Result                       |
+| -------------------------------------------------------------------------------- | ---------------------------- |
+| `npx vitest run apps/core packages/domain apps/web/src`                          | exit 0; 89 files, 1231 tests |
+| `npm run typecheck`; `npx eslint` and `npx prettier --check` on changed files    | exit 0                       |
+| `node --test apps/web/e2e/phone.test.mjs` (chrome)                               | exit 0; 17 tests             |
+| `node --test apps/web/e2e/presence.test.mjs`, `vault.keyboard.test.mjs` (chrome) | exit 0; 3 and 1 tests        |
+
+#### Known, not fixed
+
+- **No passcode change or reset.** Forgotten, it is cleared with `DELETE FROM passcode` in `core.db`, which offers
+  setup again. The bearer token is one credential, so an unlock made with it covers every bearer client.
+- **Agents still read sensitive notes from disk.** The passcode hides them in Noctis only; an agent with the Vault
+  folder in a granted root can open the file.
+- **Existing notes are flagged at the next reindex** after the migration; until then nothing reads as sensitive.
+- **`maximum-scale=1` also stops pinch zoom** on browsers that honour it. iOS Safari ignores it for pinch.
+- **The digest's tests were written red-first except two** (`/digest` route, `Notifier.send`), added after the code.
