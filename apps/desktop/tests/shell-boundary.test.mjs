@@ -99,5 +99,6 @@ test("a content security policy is set and opens the page only as far as the rem
   ]);
   // The composer previews a pasted image from a blob: URL the page made itself.
   assert.deepEqual(policy["img-src"], ["'self'", "data:", "blob:"]);
+  assert.deepEqual(policy["media-src"], ["'self'", "blob:"]);
   assert.equal(policy["frame-src"], undefined);
 });

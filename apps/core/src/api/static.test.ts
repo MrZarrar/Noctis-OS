@@ -303,7 +303,7 @@ describe("serveStatic", () => {
 describe("pageSecurityPolicy (Task 3.9)", () => {
   const base =
     "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'";
-  const strict = `${base}; img-src 'self' blob:`;
+  const strict = `${base}; img-src 'self' blob:; media-src 'self' blob:`;
 
   it("is unchanged when no remote desktop is configured", () => {
     expect(pageSecurityPolicy([])).toBe(strict);
@@ -322,6 +322,7 @@ describe("pageSecurityPolicy (Task 3.9)", () => {
     // Its WASM is an inlined data: URL it fetch()es, and its cursors are data: images.
     expect(policy).toContain("connect-src 'self' data: wss://zarrarpc.tail9594ed.ts.net");
     expect(policy).toContain("img-src 'self' data: blob:");
+    expect(policy).toContain("media-src 'self' blob:");
     expect(policy.split("img-src")).toHaveLength(2);
   });
 

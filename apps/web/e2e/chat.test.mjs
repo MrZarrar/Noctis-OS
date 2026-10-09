@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -358,6 +359,59 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
   );
 
   it(
+    "previews a pasted screenshot, closes with focus restored and removes it",
+    { timeout: 60_000 },
+    async () => {
+      await openChat();
+      await page.getByRole("textbox", { name: "Message Vesper" }).evaluate((textarea) => {
+        const png = Uint8Array.from(
+          globalThis.atob(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          ),
+          (character) => character.charCodeAt(0),
+        );
+        const clipboard = new globalThis.DataTransfer();
+        clipboard.items.add(new globalThis.File([png], "image.png", { type: "image/png" }));
+        textarea.dispatchEvent(
+          new globalThis.ClipboardEvent("paste", {
+            clipboardData: clipboard,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      const chip = page.getByRole("button", { name: /^Preview screenshot-/ });
+      await chip.click();
+      const preview = page.getByRole("dialog", { name: /^screenshot-/ });
+      await preview.waitFor();
+      await page.waitForFunction(
+        () => document.querySelector("dialog[open] img")?.naturalWidth > 0,
+      );
+      assert.ok((await preview.locator("img").getAttribute("src")).startsWith("blob:"));
+      await preview.getByRole("button", { name: "Close", exact: true }).click();
+      await preview.waitFor({ state: "hidden" });
+      assert.equal(await chip.evaluate((button) => button === document.activeElement), true);
+      await chip.press("Space");
+      await preview.waitFor();
+      await page.keyboard.press("Escape");
+      await preview.waitFor({ state: "hidden" });
+      await chip.press("Enter");
+      await preview.waitFor();
+      await page.evaluate(() => globalThis.history.back());
+      await preview.waitFor({ state: "hidden" });
+      await chip.click();
+      await preview.getByRole("button", { name: "Remove", exact: true }).click();
+      await page.getByRole("list", { name: "Attached files" }).waitFor({ state: "hidden" });
+      assert.equal(
+        await page
+          .getByRole("textbox", { name: "Message Vesper" })
+          .evaluate((textarea) => textarea === document.activeElement),
+        true,
+      );
+    },
+  );
+
+  it(
     "attaches a screenshot pasted into the message box, and uploads it with the send",
     { timeout: 120_000 },
     async () => {
@@ -413,6 +467,76 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
           ) && state.turns.every((status) => status === "completed"),
         "the turn with the pasted screenshot never completed",
       );
+    },
+  );
+
+  it(
+    "previews text safely, video inline and binary metadata on a phone",
+    { timeout: 60_000 },
+    async () => {
+      await openChat();
+      await page.setViewportSize({ width: 400, height: 850 });
+      try {
+        await page.evaluate(() => {
+          const revoke = globalThis.URL.revokeObjectURL.bind(globalThis.URL);
+          globalThis.revokedPreviewUrls = [];
+          globalThis.URL.revokeObjectURL = (url) => {
+            globalThis.revokedPreviewUrls.push(url);
+            revoke(url);
+          };
+        });
+        await page
+          .locator('input[type="file"]')
+          .filter({ visible: true })
+          .setInputFiles([
+            {
+              name: "notes.txt",
+              mimeType: "text/plain",
+              buffer: Buffer.from("<b>plain text</b>" + "x".repeat(200 * 1024) + "UNREAD_TAIL"),
+            },
+            { name: "clip.mp4", mimeType: "video/mp4", buffer: Buffer.from("video bytes") },
+            { name: "report.pdf", mimeType: "application/pdf", buffer: Buffer.from("PDF bytes") },
+          ]);
+        await page.getByRole("button", { name: "Preview notes.txt" }).click();
+        const text = page.getByRole("dialog", { name: "notes.txt", exact: true });
+        await page.waitForFunction(() =>
+          document.querySelector("dialog[open] pre")?.textContent?.startsWith("<b>plain text</b>"),
+        );
+        assert.equal((await text.locator("pre").innerText()).length, 200 * 1024);
+        assert.equal(await text.locator("b").count(), 0);
+        assert.ok(!(await text.innerText()).includes("UNREAD_TAIL"));
+        const bounds = await text.boundingBox();
+        assert.equal(Math.round(bounds.x), 0);
+        assert.equal(Math.round(bounds.width), 400);
+        assert.equal(Math.round(bounds.y + bounds.height), 850);
+        await page.mouse.click(200, Math.max(1, bounds.y - 10));
+        await text.waitFor({ state: "hidden" });
+        await page.getByRole("button", { name: "Preview clip.mp4" }).click();
+        const video = page.getByRole("dialog", { name: "clip.mp4", exact: true }).locator("video");
+        await video.waitFor();
+        const videoUrl = await video.getAttribute("src");
+        assert.ok(videoUrl.startsWith("blob:"));
+        assert.equal(
+          await video.evaluate((element) => element.controls && element.playsInline),
+          true,
+        );
+        await page
+          .getByRole("dialog", { name: "clip.mp4", exact: true })
+          .getByRole("button", { name: "Remove", exact: true })
+          .click();
+        await video.waitFor({ state: "hidden" });
+        assert.ok(
+          await page.evaluate((url) => globalThis.revokedPreviewUrls.includes(url), videoUrl),
+        );
+        await page.getByRole("button", { name: "Preview report.pdf" }).click();
+        const metadata = page.getByRole("dialog", { name: "report.pdf", exact: true });
+        assert.match(await metadata.innerText(), /application\/pdf · 9 bytes/);
+        assert.equal(await metadata.locator("img, video, pre, iframe").count(), 0);
+        await metadata.getByRole("button", { name: "Close", exact: true }).click();
+        await metadata.waitFor({ state: "hidden" });
+      } finally {
+        await page.setViewportSize({ width: 1900, height: 1000 });
+      }
     },
   );
 

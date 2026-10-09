@@ -17,6 +17,8 @@ import { useEffect, useRef, useState } from "react";
 import { buttonStyle } from "../layout/Page.js";
 import type { PickerOption } from "../layout/Picker.js";
 import { Picker } from "../layout/Picker.js";
+import { useBackLayer } from "../navigation/back.js";
+import { AttachmentPreview } from "./AttachmentPreview.js";
 import { carriesFiles } from "./file-drops.js";
 import type { RuntimeRootOption, SendOptions } from "./useConversation.js";
 
@@ -244,6 +246,10 @@ export function PromptForm({
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string>();
   const [files, setFiles] = useState<readonly File[]>([]);
+  const [preview, setPreview] = useState<File>();
+  const previewLayer = useBackLayer("attachment", preview !== undefined, () => {
+    setPreview(undefined);
+  });
   const [rootGrantId, setRootGrantId] = useState("");
   // Screenshots pasted so far, so two in the same second never share a name.
   const pasted = useRef(0);
@@ -449,8 +455,26 @@ export function PromptForm({
         <ul aria-label="Attached files" style={{ ...attachedListStyle }}>
           {files.map((file) => (
             <li key={`${file.name}:${String(file.size)}`} style={attachedItemStyle}>
-              {file.type.startsWith("image/") && <Thumbnail file={file} />}
-              <span>{file.name}</span>
+              <button
+                type="button"
+                aria-label={`Preview ${file.name}`}
+                onClick={() => {
+                  setPreview(file);
+                  previewLayer.pushed();
+                }}
+                style={{
+                  ...buttonStyle,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: spacing.xs,
+                  background: "transparent",
+                  border: "none",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {file.type.startsWith("image/") && <Thumbnail file={file} />}
+                <span>{file.name}</span>
+              </button>
               <button
                 type="button"
                 aria-label={`Remove ${file.name}`}
@@ -471,6 +495,17 @@ export function PromptForm({
             </li>
           ))}
         </ul>
+      )}
+
+      {preview !== undefined && (
+        <AttachmentPreview
+          file={preview}
+          onDismiss={previewLayer.dismiss}
+          onRemove={() => {
+            setFiles((attached) => attached.filter((file) => file !== preview));
+            previewLayer.dismiss();
+          }}
+        />
       )}
 
       {/* Which agent, and which PC it runs on: the two choices a thread is

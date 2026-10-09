@@ -262,6 +262,17 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
         { timeout: 5000 },
       );
 
+      await page.getByRole("button", { name: /^Preview screenshot-/ }).click();
+      await page.waitForFunction(
+        () => document.querySelector("dialog[open] img")?.naturalWidth > 0,
+        undefined,
+        { timeout: 5000 },
+      );
+      await page
+        .getByRole("dialog", { name: /^screenshot-/ })
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+
       // 4. The credential is a cookie script cannot touch. This is the whole
       //    argument for the session realm: an XSS that reads every variable in
       //    the page still cannot exfiltrate anything a browser would present.
