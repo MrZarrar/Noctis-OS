@@ -701,6 +701,72 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   );
 
   it(
+    "never lets the document scroll under a long thread, so no black band opens below",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(DESKTOP);
+      await page.goto(WEB_URL);
+      await open("Threads");
+      // Each message's spoken label is placed where its bubble is; four long
+      // messages put the last one far below the screen.
+      for (let index = 0; index < 4; index += 1) {
+        await tabTo(page, "Message Vesper");
+        await page.keyboard.type(
+          `${String(index)} ${"a long line to read back through ".repeat(60)}`,
+        );
+        await page.keyboard.press("Enter");
+        await waitFor(
+          readPage,
+          (state) => state.messages.filter((m) => m.startsWith("You")).length > index,
+          `message ${String(index)} never showed`,
+          30_000,
+        );
+      }
+
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollHeight - document.documentElement.clientHeight,
+      );
+      assert.ok(overflow <= 0, `the document scrolls ${String(overflow)}px past the screen`);
+    },
+  );
+
+  it(
+    "keeps Conversations on screen after reading down a long thread",
+    { timeout: 120_000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+      await tabTo(page, "Message Vesper");
+      await page.keyboard.type(`${"a long line to read back through ".repeat(120)}`);
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => state.messages.some((m) => m.startsWith("You")),
+        "never sent",
+        30_000,
+      );
+
+      await page.evaluate(() => {
+        const list = document.querySelector('ul[aria-label="Conversation"]');
+        let box = list;
+
+        while (box !== null && getComputedStyle(box).overflowY !== "auto") {
+          box = box.parentElement;
+        }
+
+        box.scrollTop = box.scrollHeight;
+      });
+
+      const button = await page.getByRole("button", { name: "Conversations" }).boundingBox();
+      assert.ok(
+        button !== null && button.y >= 0 && button.y < 200,
+        `Conversations is at ${JSON.stringify(button)}`,
+      );
+    },
+  );
+
+  it(
     "keeps both answers to a consequence on screen at a phone's width",
     { timeout: 120_000 },
     async () => {

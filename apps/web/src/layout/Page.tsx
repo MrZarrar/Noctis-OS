@@ -1,4 +1,4 @@
-import { corner, material, spacing, typography } from "@noctis/ui";
+import { corner, elevation, material, spacing, typography } from "@noctis/ui";
 import type { ReactNode } from "react";
 
 /**
@@ -32,6 +32,11 @@ export function Page({
         minHeight: 0,
         overflowY: "auto",
         overflowX: "hidden",
+        // The containing block for anything absolutely placed inside a page
+        // (the spoken labels in Threads), so it scrolls with the page instead
+        // of stretching the document.
+        position: "relative",
+        overscrollBehavior: "contain",
         display: "flex",
         flexDirection: "column",
         boxSizing: "border-box",
@@ -56,6 +61,17 @@ export function Page({
             alignItems: "center",
             gap: spacing.sm,
             rowGap: spacing.xs,
+            // Stays put while the page scrolls, so Back and Conversations are
+            // never a long scroll away.
+            position: "sticky",
+            top: -spacing.lg,
+            zIndex: elevation.surface,
+            marginInline: -spacing.sm,
+            padding: `${String(spacing.lg)}px ${String(spacing.sm)}px ${String(spacing.sm)}px`,
+            marginTop: -spacing.lg,
+            background: "rgba(5, 4, 9, 0.5)",
+            backdropFilter: `blur(${String(material.blurPx)}px)`,
+            WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
           }}
         >
           <div style={{ display: "grid", gap: 2, minWidth: 0, flex: "1 1 auto" }}>

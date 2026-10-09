@@ -82,6 +82,7 @@ export function Presence({
         minWidth: 0,
         minHeight: 0,
         overflowY: "auto",
+        position: "relative",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",

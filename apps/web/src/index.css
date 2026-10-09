@@ -20,6 +20,15 @@ body {
   margin: 0;
 }
 
+/* The shell is exactly one screen tall and every page scrolls inside it. If the
+   document could scroll too, a wheel at the end of a page would carry the whole
+   shell up and leave the background showing underneath. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 /* One focus ring for every control, in the accent, so keyboard focus is never
    the browser's blue on a violet interface. */
 :focus-visible {

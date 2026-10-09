@@ -907,6 +907,39 @@ Then delete the `<style>` element from `IntelligenceRenderer.tsx`.
 
 - [ ] **Step 5: Commit, once the owner says yes.** `fix(ui): the idle core breathes under the core's own CSP`.
 
+### Task A8: Presence shows what the turn produced, not only its words
+
+Owner, 2026-10-09: an image Codex generated shows in Threads, but Presence's exchange under the core shows only the
+text ("Created your Jester AI agent.").
+
+**Files:**
+
+- Modify: `apps/web/src/conversation/last-exchange.ts` (return the turn's outputs too)
+- Modify: `apps/web/src/pages/Presence.tsx:183-229` (draw them)
+- Test: `apps/web/src/conversation/last-exchange.test.ts`, and `apps/web/e2e/presence.test.mjs` if its fixture can
+  carry an `output` item (the Chat E2E's delegation fixture already returns an image output to copy from)
+
+**Interfaces:**
+
+- Produces: `lastExchange(...)` returns `{ you: string; reply: string; outputs: Array<{ attachmentId: string; mediaType: string; path?: string }> }`
+  — the newest turn's `output` items that carry an `attachmentId`, in order.
+
+- [ ] **Step 1: Failing unit test** in `last-exchange.test.ts`: a turn whose items are an `agent_message` and an
+      `output` `{ mediaType: "image/png", attachmentId, path: "jester.png" }` returns that output in `outputs`; a turn
+      with an `output` lacking `attachmentId` returns `outputs: []`.
+- [ ] **Step 2: Run** `npx vitest run apps/web/src/conversation/last-exchange.test.ts` — FAIL (`outputs` undefined).
+- [ ] **Step 3: Implement** — filter `turn.items` for `kind === "output"` with an `attachmentId`.
+- [ ] **Step 4: Run** — PASS.
+- [ ] **Step 5: Draw them in Presence**, under the reply, inside the same scrolling exchange box: for an `image/*`
+      output with `conversation.outputUrl` defined, a thumbnail (`<img>`, `maxHeight` about 28vh on desktop and 22vh on
+      the phone, `corner.md`, `material.border`) wrapped in a link that opens it (`target="_blank" rel="noreferrer"`,
+      as Threads does at `Threads.tsx:191-201`); anything else, or no `outputUrl` (token transports), a line
+      "Open <path or mediaType>" link, or plain text when there is no URL. Alt text: the output's path, else
+      "Generated image".
+- [ ] **Step 6: E2E** — if the Presence fixture can carry an output, assert an `img` inside the exchange after the
+      turn completes; otherwise extend the fixture minimally. Run `node --test apps/web/e2e/{presence,phone}.test.mjs`.
+- [ ] **Step 7: Commit, once the owner says yes** — `feat(web): Presence shows the image a turn made, not just its words`.
+
 ---
 
 # B. Vault: the second brain without the junk

@@ -527,6 +527,8 @@ function Viewer({
           <a
             href={`${url}&download=1`}
             download={file.name}
+            target="_blank"
+            rel="noopener"
             style={{
               ...buttonStyle,
               display: "inline-flex",

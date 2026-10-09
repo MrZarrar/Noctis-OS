@@ -198,6 +198,12 @@ describe("files on a PC, opened from a signed-in phone", () => {
         "the frame never drew in the viewer",
       );
       assert.match(frame.download, /\/files\/content\?.*download=1$/);
+      // Same-window, an iPhone Home Screen app navigates its only window to the
+      // file and has no way back; a new browsing context opens Safari's sheet
+      // over it.
+      const download = page.getByRole("link", { name: "Download" });
+      assert.equal(await download.getAttribute("target"), "_blank");
+      assert.equal(await download.getAttribute("rel"), "noopener");
 
       await press("Close");
       await press("Up");

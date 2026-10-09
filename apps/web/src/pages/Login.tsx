@@ -51,7 +51,9 @@ export function Login({ baseUrl, onAuthenticated }: LoginProps): JSX.Element {
     <main
       style={{
         display: "flex",
-        height: "100vh",
+        boxSizing: "border-box",
+        height: "100dvh",
+        overflowY: "auto",
         alignItems: "center",
         justifyContent: "center",
         background: depth.floor,
