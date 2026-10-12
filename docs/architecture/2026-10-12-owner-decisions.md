@@ -118,6 +118,9 @@ costs are elsewhere:
 - **Found on the way:** `/digest` was missing from the core's list of API paths, so the live core answered it with the
   web page and Presence never showed the digest line. Fixed with `/live-sessions`.
 
+**Installed on the work PC** (12 October 2026, for `mushaf.zarrar`). **Open: the home PC**, which needs its own
+install: `docs/operations/HOME-SETUP.md`, section 3. Codex on each PC also needs `/hooks` to trust them.
+
 **Next:** phase 2, approvals from the phone through `PermissionRequest`.
 
 ## 3. Vesper's identity does not survive on old sessions

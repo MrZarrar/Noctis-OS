@@ -117,3 +117,41 @@ If the page says no screen helper is running, step 1 failed: start the task by h
 it says ffmpeg did not start, `NOCTIS_FFMPEG` points nowhere: re-run the `$ffmpeg` lines above.
 
 To remove it: `Unregister-ScheduledTask -TaskName "Noctis screen helper" -Confirm:$false`.
+
+## 3. Live sessions from VS Code and Codex (the live bridge)
+
+Added 12 October 2026, and already on at the work PC. Your own VS Code and Codex sessions show in Noctis under
+Threads → Conversations → **Live sessions**, read only, as they happen. Each PC needs this once, because the hooks live
+in your own Claude Code and Codex settings on that PC and report with that PC's node credential.
+
+**Pull, build and restart the node**, so it has the bridge and the other fixes from that day:
+
+```powershell
+cd $env:USERPROFILE\Documents\Jarvis\Noctis-OS
+git pull --ff-only
+npm ci
+npm run build
+Stop-ScheduledTask -TaskName "Noctis node agent"
+Start-ScheduledTask -TaskName "Noctis node agent"
+```
+
+**Install the hooks.** As `mmush`, the account the node runs as: the hook reads that account's
+`~\.noctis\node.json`.
+
+```powershell
+$node = (Get-ScheduledTask -TaskName "Noctis node agent").Actions[0].Execute
+& $node apps\node-agent\dist\main.js bridge install
+```
+
+It adds four hooks to `~\.claude\settings.json` and `~\.codex\hooks.json` beside yours, and keeps each file as it was
+in `*.before-noctis`. Then open Codex (the app or VS Code) and run `/hooks` to trust the new ones: Codex skips a hook
+nobody has trusted.
+
+**Check it works:** start a new Claude Code session in VS Code, send one prompt, and it shows under Live sessions as
+`zarrarpc` with your prompt and the reply. Do the same in Codex. A session that was already open before the install
+does not report until it is started again.
+
+**The other Windows user** on this PC is not covered: their sessions use their own settings and have no node
+credential, so the hook says nothing for them. Ask before setting it up for that account.
+
+To remove it: `& $node apps\node-agent\dist\main.js bridge uninstall` removes only the Noctis hooks.
