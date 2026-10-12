@@ -156,3 +156,13 @@ reminder blocks, so the owner's prompt is unchanged in the transcript. Jester is
 composer (`conversation.start_fresh`) turns the current free thread into an ordinary conversation on the list, with its
 history and agent sessions, and the next message starts a new free thread on new agent sessions. So it also gives
 Vesper back its identity card. It is hidden while a turn runs.
+
+## 5. Reminders and to-dos
+
+**Deferred until the adaptive panels are built (owner, 12 October 2026).** The owner wants to say things like "remind
+me when I get home to do this" to Vesper. It is recorded, added to a Reminders section, and shown in Presence when
+relevant: at the time given, or when the home PC comes online.
+
+The plan, with six decisions to settle first, is `docs/superpowers/plans/2026-10-12-reminders.md`. The main
+recommendation: "when I get home" means the home PC is unlocked and in use, not just online, because the home node
+starts at boot and may be online with nobody there.
