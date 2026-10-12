@@ -13,6 +13,7 @@ import {
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 
+import { Markdown } from "../conversation/Markdown.js";
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
 import type {
   ConversationState,
@@ -597,9 +598,7 @@ export function Threads({
                           {roleLabel(entry.message.role)}
                           <span style={spoken}>: </span>
                         </span>
-                        <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                          {entry.message.body}
-                        </span>
+                        <Markdown text={entry.message.body} />
                       </li>
                     );
                   }
@@ -679,7 +678,7 @@ export function Threads({
                     >
                       {displayName} (typing)<span style={spoken}>: </span>
                     </span>
-                    <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</span>
+                    <Markdown text={text} />
                   </li>
                 ))}
               </ul>

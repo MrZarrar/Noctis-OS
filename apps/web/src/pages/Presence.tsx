@@ -2,6 +2,7 @@
 import { JesterGlyph, identityAccent, semantic, typography } from "@noctis/ui";
 import { useEffect, useState } from "react";
 
+import { Markdown } from "../conversation/Markdown.js";
 import { PromptForm } from "../conversation/PromptForm.js";
 import { intelligenceState } from "../conversation/intelligence-state.js";
 import { lastExchange } from "../conversation/last-exchange.js";
@@ -309,12 +310,12 @@ export function Presence({
                   <span>{exchange.you}</span>
                 </p>
                 {exchange.reply !== "" && (
-                  <p style={{ margin: 0, display: "flex", gap: 12, whiteSpace: "pre-wrap" }}>
+                  <div style={{ display: "flex", gap: 12 }}>
                     <span aria-hidden="true" style={{ color: accent }}>
                       ✦
                     </span>
-                    <span>{exchange.reply}</span>
-                  </p>
+                    <Markdown text={exchange.reply} />
+                  </div>
                 )}
                 <ExchangeOutputs
                   outputs={exchange.outputs}

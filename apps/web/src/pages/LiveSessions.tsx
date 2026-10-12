@@ -5,6 +5,7 @@ import { LiveEntrySchema, LiveSessionSchema } from "@noctis/contracts";
 import { identityAccent, spacing, typography } from "@noctis/ui";
 import { z } from "zod";
 
+import { Markdown } from "../conversation/Markdown.js";
 import { folderName } from "../conversation/PromptForm.js";
 import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { SectionHeading, buttonStyle, glass } from "../layout/Page.js";
@@ -221,7 +222,7 @@ export function LiveSessionView({
             >
               {entry.role === "user" ? "You" : agentName(session.providerId)}
             </span>
-            <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{entry.body}</span>
+            <Markdown text={entry.body} />
           </li>
         ))}
       </ul>

@@ -3710,41 +3710,61 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 
 All Slice 1 tasks (P1 to P7 and P15) are implemented and reviewed, and merged to `main`. Nothing has been deployed.
 
-| Clause | State | Evidence |
-| --- | --- | --- |
-| Exactly one Objective, thread or Presence owner; foreign owners cannot enter a composition | implemented and reviewed | `surface.test.ts`, `compose.test.ts`; focused red then 99 green tests |
-| Migration keeps existing panels, snapshots, live and released overrides and foreign keys | implemented and reviewed | `migrate.test.ts`; red before migration 0016, then 8 green tests |
-| Thread and Presence reads, owner isolation and override restart/release | implemented and reviewed | `surfaces.integration.test.ts`; 562 core tests green |
-| Presence is claimed by static/API and development proxy routing | implemented and reviewed | `static.test.ts`; regression red, then focused routing and service suite green |
-| Ambiguous owners rejected in direct upsert and compose calls | implemented and reviewed | `surfaces.integration.test.ts`; regression red, then 37 focused tests green |
-| Completed image/video/audio/PDF outputs become thread media panels; duplicate and closed outputs stay stable | implemented and reviewed | `proposed-surfaces.test.ts`; focused red then green |
-| Model proposals limited to allowed kinds, with separate panel identity per turn | implemented and reviewed | scripted-node tests in `conversation.integration.test.ts`; free-chat, forbidden kinds and later-turn dismissal checks |
-| Image/video/audio/PDF display with safe text fallback and media registry | implemented and reviewed | P4: 54 tests, build/types/lint/format and Presence 3/3 green |
-| Glass panel frame, Focus/Pin/Place/Size/Close, update states and visible focus restoration | implemented and reviewed | P5: 402 tests; keyboard 1/1 and approvals 2/2; close regression verified red then green |
-| Desktop thread hosts, owner refresh/update state and exact composer core placement | implemented and reviewed | P6: panel browser 6/6, focused 56 tests; two-owner focus/close/removal and stale A-to-B-to-A replies covered |
-| The same output in two threads gives each thread its own media panel | implemented | media panel key includes the thread; `proposed-surfaces.test.ts` regression red with the old key, then 25 green |
-| Phone chips above the composer, tap-to-open sheet, Back and focus restoration, overflow, failed Close keeps the sheet | implemented and reviewed | P7: `panels.test.mjs` 9/9 including both phone tests and the refused-Close regression; panel-present phone gate |
-| Desktop Leave focus no longer moves focus to the composer | implemented and reviewed | `panels.test.mjs` desktop assertion red, then green |
-| Phone pages never scroll content under the corner core | implemented and reviewed | `Page.tsx` clearance; `phone.test.mjs` 18/18 with a new scroll-area check that failed first |
-| Presence live briefs for running agent turns, with no prompt in the payload, retiring when the turn ends, and rebuilt at start-up | implemented and reviewed | P15: `live-briefs.test.ts` 10 tests red then green; `presence-panels.test.mjs` 1/1 on desktop and phone |
-| A finished turn leaves no brief row behind, so Presence does not slow down over time | implemented | review finding; bounded-row tests red, then green |
+| Clause                                                                                                                            | State                    | Evidence                                                                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Exactly one Objective, thread or Presence owner; foreign owners cannot enter a composition                                        | implemented and reviewed | `surface.test.ts`, `compose.test.ts`; focused red then 99 green tests                                                 |
+| Migration keeps existing panels, snapshots, live and released overrides and foreign keys                                          | implemented and reviewed | `migrate.test.ts`; red before migration 0016, then 8 green tests                                                      |
+| Thread and Presence reads, owner isolation and override restart/release                                                           | implemented and reviewed | `surfaces.integration.test.ts`; 562 core tests green                                                                  |
+| Presence is claimed by static/API and development proxy routing                                                                   | implemented and reviewed | `static.test.ts`; regression red, then focused routing and service suite green                                        |
+| Ambiguous owners rejected in direct upsert and compose calls                                                                      | implemented and reviewed | `surfaces.integration.test.ts`; regression red, then 37 focused tests green                                           |
+| Completed image/video/audio/PDF outputs become thread media panels; duplicate and closed outputs stay stable                      | implemented and reviewed | `proposed-surfaces.test.ts`; focused red then green                                                                   |
+| Model proposals limited to allowed kinds, with separate panel identity per turn                                                   | implemented and reviewed | scripted-node tests in `conversation.integration.test.ts`; free-chat, forbidden kinds and later-turn dismissal checks |
+| Image/video/audio/PDF display with safe text fallback and media registry                                                          | implemented and reviewed | P4: 54 tests, build/types/lint/format and Presence 3/3 green                                                          |
+| Glass panel frame, Focus/Pin/Place/Size/Close, update states and visible focus restoration                                        | implemented and reviewed | P5: 402 tests; keyboard 1/1 and approvals 2/2; close regression verified red then green                               |
+| Desktop thread hosts, owner refresh/update state and exact composer core placement                                                | implemented and reviewed | P6: panel browser 6/6, focused 56 tests; two-owner focus/close/removal and stale A-to-B-to-A replies covered          |
+| The same output in two threads gives each thread its own media panel                                                              | implemented              | media panel key includes the thread; `proposed-surfaces.test.ts` regression red with the old key, then 25 green       |
+| Phone chips above the composer, tap-to-open sheet, Back and focus restoration, overflow, failed Close keeps the sheet             | implemented and reviewed | P7: `panels.test.mjs` 9/9 including both phone tests and the refused-Close regression; panel-present phone gate       |
+| Desktop Leave focus no longer moves focus to the composer                                                                         | implemented and reviewed | `panels.test.mjs` desktop assertion red, then green                                                                   |
+| Phone pages never scroll content under the corner core                                                                            | implemented and reviewed | `Page.tsx` clearance; `phone.test.mjs` 18/18 with a new scroll-area check that failed first                           |
+| Presence live briefs for running agent turns, with no prompt in the payload, retiring when the turn ends, and rebuilt at start-up | implemented and reviewed | P15: `live-briefs.test.ts` 10 tests red then green; `presence-panels.test.mjs` 1/1 on desktop and phone               |
+| A finished turn leaves no brief row behind, so Presence does not slow down over time                                              | implemented              | review finding; bounded-row tests red, then green                                                                     |
 
-| Command | Result |
-| --- | --- |
-| Pinned portable `node --version` | exit 0; v22.23.2 |
-| `npx.cmd vitest run packages/contracts/src/surface.test.ts packages/domain/src/compositor apps/core/src/objectives apps/web/src/workbench` | exit 0; 99 tests |
-| `npx.cmd vitest run apps/core` after migration | exit 0; 562 tests |
-| Migration tests after SQL formatting | exit 0; 8 tests |
-| Focused static and surfaces tests after review fixes | exit 0; 37 tests |
-| `npx.cmd vitest run apps/core packages/contracts` after media/proposal rules | exit 0; 1175 tests across 53 files |
-| `npm.cmd run typecheck`; ESLint and Prettier on foundation task files | exit 0 |
-| Whole slice: `npm.cmd run build` and `npm.cmd run typecheck` | exit 0 |
-| Whole slice: `npx.cmd vitest run` with the long TMP path | exit 0; 2348 tests across 148 files |
-| Whole slice: ESLint and Prettier on all 67 changed or new ts/tsx/mjs files | exit 0 |
-| E2E, one file per call: panels, presence-panels, phone, presence, chat, workbench.keyboard, approval.keyboard | 9/9, 1/1, 18/18, 3/3, 11/11, 1/1, 2/2 |
+| Command                                                                                                                                    | Result                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| Pinned portable `node --version`                                                                                                           | exit 0; v22.23.2                      |
+| `npx.cmd vitest run packages/contracts/src/surface.test.ts packages/domain/src/compositor apps/core/src/objectives apps/web/src/workbench` | exit 0; 99 tests                      |
+| `npx.cmd vitest run apps/core` after migration                                                                                             | exit 0; 562 tests                     |
+| Migration tests after SQL formatting                                                                                                       | exit 0; 8 tests                       |
+| Focused static and surfaces tests after review fixes                                                                                       | exit 0; 37 tests                      |
+| `npx.cmd vitest run apps/core packages/contracts` after media/proposal rules                                                               | exit 0; 1175 tests across 53 files    |
+| `npm.cmd run typecheck`; ESLint and Prettier on foundation task files                                                                      | exit 0                                |
+| Whole slice: `npm.cmd run build` and `npm.cmd run typecheck`                                                                               | exit 0                                |
+| Whole slice: `npx.cmd vitest run` with the long TMP path                                                                                   | exit 0; 2348 tests across 148 files   |
+| Whole slice: ESLint and Prettier on all 67 changed or new ts/tsx/mjs files                                                                 | exit 0                                |
+| E2E, one file per call: panels, presence-panels, phone, presence, chat, workbench.keyboard, approval.keyboard                              | 9/9, 1/1, 18/18, 3/3, 11/11, 1/1, 2/2 |
 
 Evidence for the owner: `.noctis/panels/` holds desktop, phone chip, sheet, Back, overflow, Close, refresh failure, Retry and new-version screenshots, the Presence brief screenshots, and two recordings (`P7-panels-desktop-and-phone.webm`, `P15-presence-live-brief.webm`).
 
 Deployed to the work PC on 2026-10-12 at the owner's request. `core.db` was backed up with the core stopped (`core.db.bak-20261012-1948` plus `-wal`/`-shm`; integrity check ok, schema version 15). After the deploy the live database is at version 16 with `thread_id` and `presence` on `surface_intents`, no foreign key problems, and all 47 messages and 3 Surfaces kept. `/health` is ok and both nodes reconnected. During the deploy another process restarted the old core on port 7717 with Node 22.23.1, so the script's new core could not bind; that process was stopped and the deployed core started on Node 22.23.2 instead.
 
 Known edges: Scheduled tasks have no store in this checkout yet, so Presence live briefs cover running agent turns only. A second simultaneous brief goes to "+N" overflow on a phone. On a phone, pages with the core in the corner have 84 px less scrolling height, which is what keeps controls out from under it. The vitest run needs the long TMP path; the 8.3 path fails two node-agent session tests.
+
+### 2026-10-12 Message text drawn as Markdown
+
+Agents reply in Markdown, and Threads, Live sessions, Presence and the before-Noctis history showed it raw (`**`,
+backticks, `1.` lists run together). One `Markdown` component (`apps/web/src/conversation/Markdown.tsx`, on
+`markdown-to-jsx` 9.10.3, MIT, no dependencies) now draws every message body; its look is `.noctis-md` in `index.css`.
+
+| Clause                                                                  | State       | Evidence                                            |
+| ----------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
+| Bold, code, lists and tables are drawn, not shown as raw Markdown       | implemented | `Markdown.test.ts` (4): red (no module), then green |
+| A typed line break still shows                                          | implemented | `Markdown.test.ts` "keeps a typed line break"       |
+| HTML in a message stays text; only `http(s):`/`mailto:` links are links | implemented | `Markdown.test.ts` HTML and links cases             |
+
+| Command                                                       | Result                            |
+| ------------------------------------------------------------- | --------------------------------- |
+| `npx vitest run apps/web/src`                                 | exit 0; 247 tests across 40 files |
+| `npm run typecheck`; ESLint and Prettier on the changed files | exit 0                            |
+
+Not run: the browser suites. File previews and tool output stay raw text on purpose. The `ConversationSurface` primitive
+in `packages/ui` still shows plain text.

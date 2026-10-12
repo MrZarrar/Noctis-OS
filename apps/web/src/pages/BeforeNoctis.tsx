@@ -5,6 +5,7 @@ import { SessionExchangeSchema } from "@noctis/contracts";
 import { material, spacing, typography } from "@noctis/ui";
 import { z } from "zod";
 
+import { Markdown } from "../conversation/Markdown.js";
 import { SectionHeading } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { agentName } from "./conversations-view.js";
@@ -19,8 +20,6 @@ const bubble = {
   border: `1px dashed ${material.border}`,
   color: typography.color.muted,
   lineHeight: 1.5,
-  whiteSpace: "pre-wrap",
-  overflowWrap: "anywhere",
 } as const;
 
 const who = { display: "block", fontSize: typography.scale.xs, marginBottom: 2 } as const;
@@ -95,14 +94,14 @@ export function BeforeNoctis({
           {exchanges.flatMap((exchange, index) => [
             <li key={`${String(index)}-prompt`} style={{ ...bubble, justifySelf: "end" }}>
               <span style={who}>You, earlier</span>
-              {exchange.prompt}
+              <Markdown text={exchange.prompt} />
             </li>,
             ...(exchange.reply === ""
               ? []
               : [
                   <li key={`${String(index)}-reply`} style={{ ...bubble, justifySelf: "start" }}>
                     <span style={who}>{agent}, earlier</span>
-                    {exchange.reply}
+                    <Markdown text={exchange.reply} />
                   </li>,
                 ]),
           ])}

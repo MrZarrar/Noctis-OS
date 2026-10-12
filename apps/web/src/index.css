@@ -107,3 +107,82 @@ body {
     animation: none;
   }
 }
+
+/* A message body drawn from Markdown (conversation/Markdown.tsx). Typed line
+   breaks still show, as in plain chat; blocks sit tight inside a bubble; wide
+   code and tables scroll inside the message instead of widening it. */
+.noctis-md {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.noctis-md > :first-child {
+  margin-top: 0;
+}
+
+.noctis-md > :last-child {
+  margin-bottom: 0;
+}
+
+.noctis-md :is(p, ul, ol, pre, table, blockquote, h1, h2, h3, h4, h5, h6) {
+  margin: 0.5em 0;
+}
+
+.noctis-md :is(h1, h2, h3, h4, h5, h6) {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.noctis-md :is(ul, ol) {
+  padding-left: 1.4em;
+}
+
+.noctis-md li + li {
+  margin-top: 0.2em;
+}
+
+.noctis-md code {
+  font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 0.88em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.noctis-md pre {
+  padding: 0.75em;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow-x: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.noctis-md pre code {
+  padding: 0;
+  background: none;
+}
+
+.noctis-md a {
+  color: #a99cf8;
+}
+
+.noctis-md blockquote {
+  padding-left: 0.75em;
+  border-left: 2px solid rgba(255, 255, 255, 0.16);
+  opacity: 0.8;
+}
+
+.noctis-md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  white-space: normal;
+}
+
+.noctis-md :is(th, td) {
+  padding: 0.3em 0.6em;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-align: left;
+}
