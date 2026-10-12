@@ -746,6 +746,35 @@ describe("conversation service", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("a folder shared later, in a grant of its own, is offered and can be pinned", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const later = mkdtempSync(join(tmpdir(), "noctis-root-later-"));
+    const fake = await connectFake(core, directory);
+
+    await setDefault(core);
+    const shared = await command(core, "node.grant_capability", {
+      idempotencyKey: "share-later",
+      nodeId: fake.nodeId,
+      capability: "runtime.turn",
+      constraints: {
+        providers: ["codex"],
+        roots: [{ grantId: "later", path: later, mode: "write" }],
+      },
+    });
+    expect(shared.status).toBe(200);
+
+    const roots = (await read(core, "/models")).body.roots as Body[];
+    expect(roots.map((root) => root.grantId).sort()).toEqual(["d", "later"]);
+
+    const sent = await send(core, "pinned-later", { rootGrantId: "later" });
+    expect(sent.status).toBe(200);
+    expect(sent.body.jobId).toEqual(expect.any(String));
+
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(later, { recursive: true, force: true });
+  });
+
   it("a prompt nobody can run is an honest failed turn, not an error", async () => {
     const core = await startTestCore();
 

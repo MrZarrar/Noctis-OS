@@ -121,6 +121,22 @@ describe("resolveRoots", () => {
     ).rejects.toBeInstanceOf(AdapterRefused);
   });
 
+  it("leaves out another granted root that is missing, so one mistyped folder stops no other turn", async () => {
+    const write = join(scratch(), "write");
+
+    mkdirSync(write);
+
+    const roots = await resolveRoots(
+      [
+        turnGrant([{ grantId: "w", path: write, mode: "write" }]),
+        turnGrant([{ grantId: "typo", path: join(scratch(), "missing"), mode: "write" }]),
+      ],
+      "w",
+    );
+
+    expect(roots.writable).toEqual([realpathSync.native(write)]);
+  });
+
   it("uses paths a runtime can be told to rely on: no trailing separator, no relative segments", async () => {
     const base = scratch();
     const nested = join(base, "nested");

@@ -1,4 +1,9 @@
-import { NodeDescriptorSchema, RemoteDesktopTargetSchema } from "@noctis/contracts";
+import type { RuntimeProviderId } from "@noctis/contracts";
+import {
+  NodeDescriptorSchema,
+  RUNTIME_PROVIDERS,
+  RemoteDesktopTargetSchema,
+} from "@noctis/contracts";
 import { NavIcon, identityAccent, semantic, spacing, typography } from "@noctis/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
@@ -13,6 +18,8 @@ import { connectRemote, describeFailure } from "../remote/session.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { parseCoreBody } from "../transport/CoreTransport.js";
 import { agentName } from "./conversations-view.js";
+import type { SharedFolder } from "./folders-view.js";
+import { folderGrant, sharedFolders } from "./folders-view.js";
 import type { MirrorFps, MirrorState, MirrorWidth } from "./mirror-view.js";
 import { createMirrorDiagnostics, mirrorAllowed, mirrorPath } from "./mirror-view.js";
 
@@ -24,11 +31,14 @@ const GrantsSchema = z.object({
   grants: z.array(
     z.object({
       capability: z.string(),
+      constraints: z.unknown().optional(),
       revokedAt: z.string().optional(),
       expiresAt: z.string().optional(),
     }),
   ),
 });
+
+const RootIdsSchema = z.object({ roots: z.array(z.object({ grantId: z.string() })) });
 
 type NodeView = z.infer<typeof NodesSchema>["nodes"][number];
 
@@ -195,6 +205,11 @@ export function Nodes({ transport }: { transport: CoreTransport | undefined }): 
             <NodeCard key={node.id} node={node} />
           ))}
         </ul>
+      </section>
+
+      <section aria-label="Folders" style={{ display: "grid", gap: spacing.md }}>
+        <SectionHeading>Folders</SectionHeading>
+        <Folders transport={transport} nodes={nodes} />
       </section>
 
       <section aria-label="Screen" style={{ display: "grid", gap: spacing.md }}>
@@ -373,6 +388,224 @@ const WIDTH_OPTIONS = [
   { value: "1280", label: "1280 wide" },
   { value: "1920", label: "1920 wide" },
 ] as const;
+
+const ACCESS_OPTIONS = [
+  { value: "write", label: "Read and write" },
+  { value: "read", label: "Read only" },
+] as const;
+
+/**
+ * Folders: what each PC lets its agents work in. Sharing one adds a
+ * `runtime.turn` grant for the agents that PC has, and the core sends it to
+ * the PC at once. The path is not checked here, because only the PC can see
+ * its disk: a turn started in a folder that is not there is refused, and no
+ * other turn is.
+ */
+function Folders({
+  transport,
+  nodes,
+}: {
+  transport: CoreTransport | undefined;
+  nodes: readonly NodeView[] | undefined;
+}): JSX.Element {
+  const isMobile = useIsMobile();
+  const [chosen, setChosen] = useState("");
+  const [folders, setFolders] = useState<{ nodeId: string; list: SharedFolder[] }>();
+  const [path, setPath] = useState("");
+  const [mode, setMode] = useState<"read" | "write">("write");
+  const [sharing, setSharing] = useState(false);
+  const [problem, setProblem] = useState<string>();
+  const [revision, setRevision] = useState(0);
+
+  const node = nodes?.find((candidate) => candidate.id === chosen) ?? nodes?.[0];
+  const nodeId = node?.id ?? "";
+
+  useEffect(() => {
+    if (transport === undefined || nodeId === "") {
+      return;
+    }
+
+    let cancelled = false;
+
+    void transport.request("GET", `/nodes/${nodeId}`).then(
+      (response) => {
+        const parsed = GrantsSchema.safeParse(response.body);
+
+        if (!cancelled && response.status === 200 && parsed.success) {
+          setFolders({ nodeId, list: sharedFolders(parsed.data.grants, Date.now()) });
+        }
+      },
+      () => undefined,
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, nodeId, revision]);
+
+  if (nodes !== undefined && node === undefined) {
+    return (
+      <div style={{ ...glass, padding: spacing.lg }}>
+        <p style={{ margin: 0 }}>No PC is paired with this core yet.</p>
+      </div>
+    );
+  }
+
+  const list = folders?.nodeId === nodeId ? folders.list : undefined;
+
+  const share = async (): Promise<void> => {
+    if (transport === undefined || node === undefined) {
+      return;
+    }
+
+    setProblem(undefined);
+    setSharing(true);
+
+    try {
+      // The composer's picker lists every PC's folders by id, so every PC's ids count.
+      const models = await transport.request("GET", "/models");
+      const roots = RootIdsSchema.safeParse(models.body);
+      const constraints = folderGrant({
+        path,
+        mode,
+        providers: node.providers
+          .filter((provider) => provider.available)
+          .map((provider) => provider.providerId)
+          .filter((id): id is RuntimeProviderId =>
+            (RUNTIME_PROVIDERS as readonly string[]).includes(id),
+          ),
+        taken: [
+          ...(list ?? []).map((folder) => folder.grantId),
+          ...(roots.success ? roots.data.roots.map((root) => root.grantId) : []),
+        ],
+      });
+
+      if (constraints === undefined) {
+        setProblem("Give the folder's full path, such as C:\\Users\\you\\Documents\\project.");
+        return;
+      }
+
+      const response = await transport.request("POST", "/commands/node.grant_capability", {
+        idempotencyKey: nextKey("node.grant_capability"),
+        nodeId: node.id,
+        capability: "runtime.turn",
+        constraints,
+      });
+
+      if (response.status === 200) {
+        setPath("");
+        setRevision((current) => current + 1);
+      } else {
+        setProblem(`The core refused (HTTP ${String(response.status)}).`);
+      }
+    } catch {
+      setProblem("Noctis could not reach the core.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  return (
+    <div style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
+      <p style={{ margin: 0, color: typography.color.muted, fontSize: typography.scale.sm }}>
+        Agents on a PC work only in the folders it shares. A session started in one opens there,
+        with that folder&apos;s own CLAUDE.md and AGENTS.md.
+      </p>
+      <div style={labelStyle}>
+        <span aria-hidden="true">PC</span>
+        <Picker
+          label="PC"
+          value={nodeId}
+          onChange={setChosen}
+          options={(nodes ?? []).map((candidate) => ({
+            value: candidate.id,
+            label: candidate.hostId,
+            ...(candidate.connected ? {} : { detail: "offline" }),
+          }))}
+        />
+      </div>
+      {list !== undefined && list.length === 0 && (
+        <p style={{ margin: 0 }}>{node?.hostId ?? "This PC"} shares no folder yet.</p>
+      )}
+      {list !== undefined && list.length > 0 && (
+        <ul
+          aria-label="Shared folders"
+          style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: spacing.xs }}
+        >
+          {list.map((folder) => (
+            <li
+              key={folder.grantId}
+              style={{ display: "flex", flexWrap: "wrap", gap: spacing.sm, alignItems: "center" }}
+            >
+              <span style={{ fontFamily: typography.monoFamily, overflowWrap: "anywhere" }}>
+                {folder.path}
+              </span>
+              <span style={chipStyle}>
+                {folder.mode === "write" ? "read and write" : "read only"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isMobile
+            ? "minmax(0, 1fr)"
+            : "minmax(0, 3fr) minmax(140px, 1fr) auto",
+          gap: spacing.md,
+          alignItems: "end",
+        }}
+      >
+        <label style={labelStyle}>
+          <span>Folder path</span>
+          <input
+            value={path}
+            placeholder="C:\Users\you\Documents\project"
+            spellCheck={false}
+            disabled={sharing}
+            onChange={(event) => {
+              setPath(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && path.trim() !== "") {
+                void share();
+              }
+            }}
+            style={fieldStyle}
+          />
+        </label>
+        <div style={labelStyle}>
+          <span aria-hidden="true">Access</span>
+          <Picker
+            label="Access"
+            value={mode}
+            disabled={sharing}
+            onChange={(value) => {
+              setMode(value === "read" ? "read" : "write");
+            }}
+            options={ACCESS_OPTIONS}
+          />
+        </div>
+        <button
+          type="button"
+          disabled={sharing || path.trim() === "" || node === undefined}
+          onClick={() => {
+            void share();
+          }}
+          style={primaryButton}
+        >
+          Share folder
+        </button>
+      </div>
+      {problem !== undefined && (
+        <p role="alert" style={{ margin: 0, color: semantic.error }}>
+          {problem}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Mirror: a PC's desktop as it is, view only, in a plain `<img>` so an iPhone

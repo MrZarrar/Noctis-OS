@@ -18,9 +18,17 @@ marked **Decided**, **Built**, **Open** or **Deferred**.
   `work-documents` starts the session in `Documents`, so Neckermann's `CLAUDE.md` and project settings would not load as
   the starting context.
 
-**Open:** grant each project folder the owner works in (Neckermann first) as its own write root, so it appears in the
-picker. Granting is the owner's call. There is no UI for `runtime.turn` grants yet (Nodes only grants `screen.view`);
-today it is the `node.grant_capability` request in `docs/operations/nodes.md`. A folder picker on Nodes is proposed.
+**Built:** Nodes has a **Folders** section. Pick the PC, paste a folder's full path (Explorer's "Copy as path" works),
+choose read and write or read only, and press **Share folder**. It becomes a `runtime.turn` grant for the agents that
+PC has, reaches the PC at once, and shows in the composer's **PC and folder** picker under the folder's own name.
+Two fixes came with it:
+
+- The core read only the first grant per agent, so a folder shared in a second grant never showed in the picker. It
+  now reads them all, as the PC always did. This also brings back the home PC's second folder grant.
+- A shared folder that is missing on the PC (a typo, an unplugged drive) no longer stops every turn on that PC; only a
+  turn started in that folder is refused.
+
+**Open:** removing a shared folder from the UI. It needs a command to revoke one grant, which does not exist yet.
 
 ## 2. VS Code, the Codex app and Remote Control
 
@@ -57,6 +65,20 @@ costs are elsewhere:
   core, so Noctis lists live VS Code and Codex sessions and mirrors them read-only from their transcripts. A
   `PermissionRequest` hook asks the owner in Noctis and falls back to the native prompt on timeout. It is off by
   default, never approves on its own, and authenticates to the core.
+
+**The bridge compared with adopting (explained to the owner on 12 October 2026):**
+
+- **Today:** a VS Code session appears in Noctis only when the owner adopts it, and Noctis then runs its own copy.
+  Work done afterwards in VS Code and in Noctis drifts apart.
+- **With the bridge:** VS Code (or the Codex app) stays the one place the session runs. Noctis shows it live, read
+  only, and can answer its permission prompts from the phone. To type into it from the phone, Remote Control or Codex
+  Remote is still the route, or adopting it as today.
+- **For:** one session and no copy; no extra cache miss; the IDE context stays; approvals from anywhere; Noctis sees all
+  the owner's agent work, not only its own.
+- **Against:** no typing into a VS Code session from Noctis; hook config lives in the owner's global settings on every
+  PC; a Noctis bug or slow answer can hold an approval until it times out to the native prompt; a hook that can approve
+  is a strong permission and needs the core token and default-off; transcript formats are undocumented and change
+  between versions; the Codex desktop app is unverified.
 
 ## 3. Vesper's identity does not survive on old sessions
 

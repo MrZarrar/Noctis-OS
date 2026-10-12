@@ -3610,3 +3610,30 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 
 - **`node-agent/files.test.ts` fails twice on this PC** for a reason unrelated to this change: the temp folder is the
   8.3 short path (`MUSHAF~1.ZAR`) and the session list reports the long one.
+
+### 2026-10-12 Sharing folders from Nodes
+
+- **Folders on Nodes.** A path, an access level and **Share folder** add a `runtime.turn` grant for the PC's agents,
+  named after the folder and kept apart from every PC's existing ids.
+- **The core reads every grant per agent** (`listRuntimeCandidates`), not only the first.
+- **A missing secondary folder is left out** on the node (`resolveRoots`); a missing primary is still refused.
+
+| Clause                                                              | State       | Evidence                                                                                             |
+| ------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
+| Folder list and new grant (ids, quotes, trailing separators, paths) | implemented | `folders-view.test.ts` (3): red (no module), then green                                              |
+| A folder in a second grant is offered and can be pinned             | implemented | `conversation.integration.test.ts` "a folder shared later…": red (`['d']`), then green               |
+| A missing other folder stops no turn                                | implemented | `roots.test.ts` "leaves out another granted root that is missing…": red, then green                  |
+| Shared from the page, offered by the core                           | implemented | `chat.test.mjs` "shares a folder with the agents from Nodes": red (no field), red (core), then green |
+| Live on the work PC                                                 | not yet     | Core restarted with this build; the node needs a restart for the `resolveRoots` change               |
+
+| Command                                                                        | Result                                             |
+| ------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `npx vitest run`                                                               | 2204 passed, 2 failed (`node-agent/files.test.ts`) |
+| `npx tsc -b`; `npx eslint apps packages scripts`; `npx prettier --check .`     | exit 0                                             |
+| `node --test apps/web/e2e/chat.test.mjs apps/web/e2e/mirror.test.mjs` (msedge) | exit 0; 11 tests                                   |
+
+#### Known, not fixed
+
+- **No way to remove a shared folder from the UI** yet.
+- **`npx eslint .` fails on this PC** because it walks the ignored `.superpowers/` scratch folder, which holds a Hermes
+  checkout with its own ESLint config. Linting the tracked folders passes.

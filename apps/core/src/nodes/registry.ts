@@ -198,20 +198,23 @@ export function listRuntimeCandidates(
     );
 
     for (const probe of probes) {
-      const grant = grants.find((candidate) =>
-        RuntimeGrantConstraintsSchema.parse(candidate.constraints).providers.includes(
-          probe.providerId,
-        ),
-      );
-      const roots =
-        grant === undefined ? [] : RuntimeGrantConstraintsSchema.parse(grant.constraints).roots;
+      // Every grant naming this agent counts, as it does on the node: a folder
+      // shared later arrives as a grant of its own beside the first.
+      const granted = grants
+        .map((grant) => RuntimeGrantConstraintsSchema.parse(grant.constraints))
+        .filter((constraints) => constraints.providers.includes(probe.providerId));
+      const roots = [
+        ...new Map(
+          granted.flatMap((constraints) => constraints.roots).map((root) => [root.grantId, root]),
+        ).values(),
+      ];
       const rootIds = new Set(roots.map((root) => root.grantId));
 
       candidates.push({
         nodeId: node.id,
         hostId: node.hostId,
         connected: isConnected(node.id),
-        granted: grant !== undefined,
+        granted: granted.length > 0,
         probe,
         hasRoots: requiredRootGrantIds.every((id) => rootIds.has(id)),
         roots,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -722,5 +722,30 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
 
     assert.equal(listed.body.conversations.length, 1);
     assert.equal(listed.body.conversations[0].kind, "named");
+  });
+
+  it("shares a folder with the agents from Nodes", { timeout: 60_000 }, async () => {
+    const folder = join(scratch, "Shared Project");
+
+    mkdirSync(folder);
+    await page.goto(WEB_URL);
+    await tabTo(page, "Nodes");
+    await page.keyboard.press("Enter");
+    await page.getByRole("textbox", { name: "Folder path" }).fill(`"${folder}"`);
+    await page.getByRole("button", { name: "Share folder" }).click();
+
+    const shared = page.getByRole("list", { name: "Shared folders" });
+
+    await shared.getByText(folder, { exact: true }).waitFor();
+
+    const models = await coreRead(CORE_URL, "/models");
+
+    assert.ok(
+      models.body.roots.some(
+        (root) =>
+          root.grantId === "shared-project" && root.path === folder && root.mode === "write",
+      ),
+      JSON.stringify(models.body.roots),
+    );
   });
 });

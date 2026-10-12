@@ -43,7 +43,11 @@ export async function resolveRoots(
     try {
       roots.push({ root, real: await realpath(resolve(root.path)) });
     } catch {
-      throw new AdapterRefused(`granted root ${root.grantId} does not exist on this node`);
+      // Only the turn's own folder must exist. Another one missing (a typo, an
+      // unplugged drive) means less access for this turn, not no turn at all.
+      if (root.grantId === primaryRootGrantId) {
+        throw new AdapterRefused(`granted root ${root.grantId} does not exist on this node`);
+      }
     }
   }
 
