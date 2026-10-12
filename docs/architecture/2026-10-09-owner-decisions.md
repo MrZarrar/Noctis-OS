@@ -130,7 +130,7 @@ taking over the screen. The same principle applies to an open listing draft or p
 
 **Open.** Failure/retry behaviour, independent updates to supporting panels, interactive panel capabilities, and phone
 layouts remain proposals to discuss. The six decisions in the existing implementation plan have not been accepted as
-a group. These design decisions alone do not authorise implementation, deployment, commits or pushes.
+a group. These design decisions alone do not authorise implementation or deployment. Commits and pushes of finished work have a standing yes (`AGENTS.md`).
 
 **What Tauri would add.** It only adds things native code can do on the PC the owner is sitting at:
 

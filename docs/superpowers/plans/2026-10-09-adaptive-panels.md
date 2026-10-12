@@ -169,7 +169,7 @@ been revised to implement these newly agreed behaviours, and no implementation i
   - external writes;
   - using metered APIs.
 - No destructive Git or filesystem commands. Never modify the live MindVault without the owner's say-so. Reading it is fine.
-- Commit only when the owner asks (global `CLAUDE.md`). The commit steps below are where a commit would go, and each waits for that yes.
+- Commit and push each task to `origin/main` once it passes its tests and review. The owner has given a standing yes for this repo (`AGENTS.md`), so no step waits for a separate approval.
 - Record evidence in `docs/acceptance/IMPLEMENTATION-STATUS.md` before claiming a task done.
 - Keep the design language: tokens in `packages/ui/src/tokens/*` and `glass`, `buttonStyle` and `fieldStyle` from `apps/web/src/layout/Page.tsx`. 44 px touch floor.
 - Live testing of v1 is deferred by the owner (2026-10-09). Don't block on it.
@@ -308,7 +308,7 @@ The short 8.3 TMP path (`MUSHAF~1.ZAR`) breaks the node file-session tests. This
 - [ ] **Step 2: Watch them fail.** Run `npx.cmd vitest run packages/contracts/src/surface.test.ts packages/domain/src/compositor`.
 - [ ] **Step 3: Implement.** Then fix the callers the type checker names: `apps/core/src/objectives/surface-intents.ts` `planFor` and `composeSurfaces`, and `apps/web/src/workbench/useComposition.ts`. Each passes `{ objectiveId }` for now; P2 and P6 add the thread path.
 - [ ] **Step 4: Go green.** Rerun the tests, plus `npx.cmd vitest run apps/core/src/objectives apps/web/src/workbench` and `npm.cmd run typecheck`.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(contracts): a surface can belong to a thread`.
+- [ ] **Step 5: Commit and push.** `feat(contracts): a surface can belong to a thread`.
 
 ### Task P2: The core stores and serves a thread's panels
 
@@ -388,7 +388,7 @@ Then:
 - [ ] **Step 2: Watch them fail.** Run `npx.cmd vitest run apps/core/src/db/migrate.test.ts apps/core/src/objectives`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Run `npx.cmd vitest run apps/core` and `npm.cmd run typecheck`.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(core): a thread keeps its own panels`.
+- [ ] **Step 5: Commit and push.** `feat(core): a thread keeps its own panels`.
 
 ### Task P3: The core proposes a panel for each media output, and agents can propose in any thread
 
@@ -473,7 +473,7 @@ Other media types stay as links in the conversation.
 - [ ] **Step 2: Watch them fail.** Run `npx.cmd vitest run apps/core/src/objectives/proposed-surfaces.test.ts apps/core/src/conversation`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Run `npx.cmd vitest run apps/core packages/contracts` and `npm.cmd run typecheck`.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(core): media outputs and agent proposals become thread panels`.
+- [ ] **Step 5: Commit and push.** `feat(core): media outputs and agent proposals become thread panels`.
 
 ### Task P4: The Media panel
 
@@ -505,7 +505,7 @@ Other media types stay as links in the conversation.
 - [ ] **Step 2: Watch them fail.** Run `npx.cmd vitest run packages/ui/src/surfaces apps/web/src/surfaces`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Rerun the tests, then typecheck and lint.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(ui): a media panel`.
+- [ ] **Step 5: Commit and push.** `feat(ui): a media panel`.
 
 ### Task P5: Panels in the glass language
 
@@ -553,7 +553,7 @@ Other media types stay as links in the conversation.
   - `node --test apps/web/e2e/workbench.keyboard.test.mjs`;
   - `node --test apps/web/e2e/approval.keyboard.test.mjs`;
   - typecheck and lint.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(ui): panels in the glass language`.
+- [ ] **Step 5: Commit and push.** `feat(ui): panels in the glass language`.
 
 ### Task P6: Threads shows its panels beside the conversation (desktop)
 
@@ -600,7 +600,7 @@ Other media types stay as links in the conversation.
 
   Then typecheck and lint.
 
-- [ ] **Step 6: Commit, once the owner says yes.** `feat(web): a thread's panels beside the conversation`.
+- [ ] **Step 6: Commit and push.** `feat(web): a thread's panels beside the conversation`.
 
 ### Task P7: Panels on the phone: the tray, and a focused panel as a back layer
 
@@ -640,7 +640,7 @@ Other media types stay as links in the conversation.
   - e2e `panels`, `phone`, `presence` and `chat`, one file per call;
   - typecheck and lint.
 - [ ] **Step 6: Record evidence.** Make a Playwright `recordVideo` of the desktop gate and the phone gate. Save it under `.noctis/panels/` for the owner.
-- [ ] **Step 7: Commit, once the owner says yes.** `feat(web): panels on the phone`.
+- [ ] **Step 7: Commit and push.** `feat(web): panels on the phone`.
 
 ---
 
@@ -707,7 +707,7 @@ Mark it `ponytail:` with the ceiling (no tables, links or emphasis) and the upgr
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Run the same commands, then typecheck and lint.
 - [ ] **Step 5: Hand the live check to the owner.** After a deploy, ask Claude in free chat to "draft a plan as a panel". This needs the node restarted, so the owner runs it. Leave a note for the status log.
-- [ ] **Step 6: Commit, once the owner says yes.** `feat: document panels that agents propose`.
+- [ ] **Step 6: Commit and push.** `feat: document panels that agents propose`.
 
 ### Task P9: Pin, place and close persist and restore
 
@@ -730,7 +730,7 @@ Mark it `ponytail:` with the ceiling (no tables, links or emphasis) and the upgr
 - [ ] **Step 2: Watch them fail.** Run `npx.cmd vitest run packages/domain/src/compositor`, then `node --test apps/web/e2e/panels.test.mjs`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Run the compose tests, `npx.cmd vitest run apps/core/src/objectives` (the existing override tests), the e2e `panels` and `workbench.keyboard`, then typecheck.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat: pinned panels stay put`.
+- [ ] **Step 5: Commit and push.** `feat: pinned panels stay put`.
 
 ### Task P10: Vault recall as a panel
 
@@ -750,7 +750,7 @@ Mark it `ponytail:` with the ceiling (no tables, links or emphasis) and the upgr
   - "no Vault, or no match, proposes nothing";
   - "Open in Vault on the panel lands on the entity", as an e2e in `vault.keyboard.test.mjs` style, only if its fixture already has a Vault. Otherwise make it a renderer unit test that the handoff is called with the entity.
 - [ ] **Step 2: Watch them fail. Step 3: Implement. Step 4: Go green.** Run `npx.cmd vitest run apps/core/src/objectives apps/core/src/vault`, then typecheck.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(core): Vault recall as a thread panel`.
+- [ ] **Step 5: Commit and push.** `feat(core): Vault recall as a thread panel`.
 
 ### Task P11: A file a turn wrote opens as a panel
 
@@ -775,7 +775,7 @@ Mark it `ponytail:` with the ceiling (no tables, links or emphasis) and the upgr
   - "two files make two panels";
   - e2e "a written file opens as a panel and reads its text": send `WRITE: notes`, expect a document panel whose body includes "Written by the fake".
 - [ ] **Step 2: Watch them fail. Step 3: Implement. Step 4: Go green.** Run `npx.cmd vitest run packages/domain apps/core/src/objectives apps/web/src/pages`, then the e2e `panels` and `files`, then typecheck and lint.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat: files a turn writes open as panels`.
+- [ ] **Step 5: Commit and push.** `feat: files a turn writes open as panels`.
 
 ---
 
@@ -812,7 +812,7 @@ Mark it `ponytail:` with the ceiling (no tables, links or emphasis) and the upgr
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Run the unit tests, then the e2e `panels`, `presence`, `phone`, `chat` and `jester`, one per call, then typecheck and lint.
 - [ ] **Step 5: Record evidence.** Make a `recordVideo` of canvas, then focus, then Show conversation, at 1672 × 941, the mockups' size. Put it beside `02-active-canvas-shell-v2.png` and `noctis-vinted-02` in `.noctis/panels/` for the owner.
-- [ ] **Step 6: Commit, once the owner says yes.** `feat(web): focus shrinks the conversation to the companion`.
+- [ ] **Step 6: Commit and push.** `feat(web): focus shrinks the conversation to the companion`.
 
 ### Task P13: Timeline and Verification panels
 
@@ -875,7 +875,7 @@ export const VerificationPayloadSchema = z
   - the core accepts both from a model;
   - the tool description names both.
 - [ ] **Step 2: Watch them fail. Step 3: Implement. Step 4: Go green.** Run `npx.cmd vitest run packages packages/contracts apps/web/src/surfaces apps/core/src/conversation apps/node-agent/src`, then typecheck and lint.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(ui): timeline and verification panels`.
+- [ ] **Step 5: Commit and push.** `feat(ui): timeline and verification panels`.
 
 ### Task P14: Evidence and the status entry
 

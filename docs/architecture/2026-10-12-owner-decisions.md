@@ -259,3 +259,10 @@ better, focusing on readability, grouping, aesthetics and navigation.
 - Navigation: each lobe is named on the globe ("PEOPLE · 46"), a row of type buttons flies to a lobe, **Whole Vault**
   flies back out, and focusing a note orbits it from above so the core sits clear of it. While a note is focused, only
   it and its named links are labelled.
+
+## 7. Commits and pushes
+
+**Decided.** Finished work in this repo is committed and pushed to `origin/main` as it goes, without asking first.
+This is a standing yes for the whole repo and replaces every plan, brief or scope note that said to wait for the
+owner (`AGENTS.md` now says so for every agent). Adaptive panels Slice 1 and the Vault layout work were merged to
+`main` on this basis.

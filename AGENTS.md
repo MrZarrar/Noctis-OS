@@ -12,3 +12,6 @@
   without explicit approval.
 - Preserve unrelated work. Do not use destructive Git or filesystem commands.
 - Record fresh verification evidence before completion claims or commits.
+- Commit and push as you go. The owner has given a standing yes for this whole repo: once a task passes
+  its tests and review, commit it and push it to `origin/main` without asking first. Never force-push or
+  rewrite history.

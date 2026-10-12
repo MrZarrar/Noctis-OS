@@ -33,7 +33,7 @@
   - external writes (a marketplace listing is one);
   - using metered APIs.
 - No destructive Git or filesystem commands. Never modify the live MindVault without the owner's say-so. Reading it is fine.
-- Commit only when the owner asks (global `CLAUDE.md`). The commit steps below are where a commit would go, and each waits for that yes.
+- Commit and push each task to `origin/main` once it passes its tests and review. The owner has given a standing yes for this repo (`AGENTS.md`), so no step waits for a separate approval.
 - Record evidence in `docs/acceptance/IMPLEMENTATION-STATUS.md` before claiming a task done.
 - Keep the design language: tokens in `packages/ui/src/tokens/*` and `glass`, `buttonStyle` and `fieldStyle` from `apps/web/src/layout/Page.tsx`. 44 px touch floor.
 - Live testing of v1 is deferred by the owner (2026-10-09). Don't block on it.
@@ -88,7 +88,7 @@
 - **F, remote wake:** deferred until the owner is home.
 - **I, selling:** start with eBay. Other platforms (Vinted, Depop and the rest) will be done by Hermes as an agent,
   which is the point of an agent harness in Noctis. So I.3 step 6 and I8 are dropped from Noctis code.
-- **Execution:** subagent-driven, with no commits until the owner says yes (global `CLAUDE.md`).
+- **Execution:** subagent-driven, committing and pushing each reviewed task (`AGENTS.md`).
 
 ---
 
@@ -178,7 +178,7 @@ body {
 
 - [ ] **Step 4: Run the test and the phone gate.** Run `node --test apps/web/e2e/phone.test.mjs`. Expected: PASS, including "THE GATE: every v1 page fits a phone".
 
-- [ ] **Step 5: Commit, once the owner says yes.** `fix(web): the document never scrolls under a page`.
+- [ ] **Step 5: Commit and push.** `fix(web): the document never scrolls under a page`.
 
 ### Task A2: The page header stays on screen
 
@@ -243,7 +243,7 @@ it(
 
 - [ ] **Step 4: Run the test and the full phone suite.** Run `node --test apps/web/e2e/phone.test.mjs`. Expected: PASS. Take a desktop screenshot and a phone screenshot of Threads mid-scroll for the status log.
 
-- [ ] **Step 5: Commit, once the owner says yes.** `fix(web): page headers stay on screen while the page scrolls`.
+- [ ] **Step 5: Commit and push.** `fix(web): page headers stay on screen while the page scrolls`.
 
 ### Task A3: Download never strands the phone app
 
@@ -268,7 +268,7 @@ assert.equal(await download.getAttribute("rel"), "noopener");
 
 - [ ] **Step 4: Run it and watch it pass.** Run `node --test apps/web/e2e/files.test.mjs`. Expected: PASS.
 
-- [ ] **Step 5: Commit, once the owner says yes.** `fix(web): Download opens over the app instead of replacing it`.
+- [ ] **Step 5: Commit and push.** `fix(web): Download opens over the app instead of replacing it`.
 
 ### Task A4: Back works: pages, the conversation list, the file viewer
 
@@ -464,7 +464,7 @@ Add the same pattern to `files.test.mjs`: open a file, `page.goBack()`, and asse
 
 - [ ] **Step 8: Run both suites.** Run `node --test apps/web/e2e/phone.test.mjs apps/web/e2e/files.test.mjs`. Expected: PASS.
 
-- [ ] **Step 9: Commit, once the owner says yes.** `feat(web): the back gesture closes what opened and returns to the last page`.
+- [ ] **Step 9: Commit and push.** `feat(web): the back gesture closes what opened and returns to the last page`.
 
   Not covered: deep links (the URL stays `/`). Add them when push notifications should open the thread they're about.
 
@@ -717,7 +717,7 @@ export function Picker<T extends string>({
 
 - [ ] **Step 5: Run the test suites.** Run `npx vitest run apps/web/src` and then `node --test apps/web/e2e/{phone,chat,presence,jester}.test.mjs`. Expected: PASS. Take phone and desktop screenshots of the open sheet for the owner.
 
-- [ ] **Step 6: Commit, once the owner says yes.** `feat(web): pickers in the app's own glass instead of the OS list`.
+- [ ] **Step 6: Commit and push.** `feat(web): pickers in the app's own glass instead of the OS list`.
 
 ### Task A6: A digital clock on Presence, and a greeting that keeps time
 
@@ -856,7 +856,7 @@ Make the top of the section a row. The Jester marker goes on the left, when it s
 
 - [ ] **Step 6: Add an e2e assertion and run the suites.** Add to the Presence gate in `presence.test.mjs`: `assert.match(await page.locator("time").first().innerText(), /^\d{2}:\d{2}/);`. Then run `node --test apps/web/e2e/{presence,phone}.test.mjs`. Expected: PASS, with the phone gate still clean.
 
-- [ ] **Step 7: Commit, once the owner says yes.** `feat(web): a clock on Presence, and a greeting that keeps time`.
+- [ ] **Step 7: Commit and push.** `feat(web): a clock on Presence, and a greeting that keeps time`.
 
 ### Task A7: The idle core breathes under any CSP
 
@@ -905,7 +905,7 @@ Then delete the `<style>` element from `IntelligenceRenderer.tsx`.
 
 - [ ] **Step 4: Run the suites.** Run `node --test apps/web/e2e/presence.test.mjs` and `npx vitest run packages/ui/src/intelligence`. Expected: PASS.
 
-- [ ] **Step 5: Commit, once the owner says yes.** `fix(ui): the idle core breathes under the core's own CSP`.
+- [ ] **Step 5: Commit and push.** `fix(ui): the idle core breathes under the core's own CSP`.
 
 ### Task A8: Presence shows what the turn produced, not only its words
 
@@ -938,7 +938,7 @@ text ("Created your Jester AI agent.").
       "Generated image".
 - [ ] **Step 6: E2E** — if the Presence fixture can carry an output, assert an `img` inside the exchange after the
       turn completes; otherwise extend the fixture minimally. Run `node --test apps/web/e2e/{presence,phone}.test.mjs`.
-- [ ] **Step 7: Commit, once the owner says yes** — `feat(web): Presence shows the image a turn made, not just its words`.
+- [ ] **Step 7: Commit and push** — `feat(web): Presence shows the image a turn made, not just its words`.
 
 ### Task A9: Paste a screenshot into the message box
 
@@ -979,7 +979,7 @@ agent something.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Go green.** Run `npx vitest run apps/web/src/conversation` and
       `node --test apps/web/e2e/{chat,phone}.test.mjs`, then typecheck and lint.
-- [ ] **Step 5: Commit, once the owner says yes.** `feat(web): paste or drop a screenshot into the message box`.
+- [ ] **Step 5: Commit and push.** `feat(web): paste or drop a screenshot into the message box`.
 
 ---
 
@@ -1098,7 +1098,7 @@ Then use `note` in the pushed object in place of `parseNote(text)`. Already-inde
   - Expected from the core DB: about 171 items, no `projects/jarvis-dashboard/codegraph/` rows, and edges in the hundreds rather than about 59k.
   - Take a phone screenshot and a desktop screenshot of the sphere for the status log.
 
-- [ ] **Step 10: Commit, once the owner says yes.** `fix(vault): generated code-graph notes stay out of the second brain`.
+- [ ] **Step 10: Commit and push.** `fix(vault): generated code-graph notes stay out of the second brain`.
 
 ### Task B2: The agent brain stays out of the sphere
 
@@ -1131,7 +1131,7 @@ it("leaves the agents' own brain out of the owner's sphere", async () => {
 
 - [ ] **Step 4: Run the graph tests.** Run `npx vitest run apps/core/src/api/headless.integration.test.ts -t "graph"`. Expected: PASS.
 
-- [ ] **Step 5: Commit, once the owner says yes.** `fix(vault): the agent brain is the agents', not the sphere's`.
+- [ ] **Step 5: Commit and push.** `fix(vault): the agent brain is the agents', not the sphere's`.
 
 ### Task B3 (only if needed): Light budget and spread
 
