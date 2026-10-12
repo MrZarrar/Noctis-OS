@@ -176,5 +176,11 @@ Presence when it is relevant.
   owner can turn it on.
 - **Works with the Vault off.**
 
+- **One side menu item with two tabs**, Reminders and Scheduled tasks.
+- **A separate git worktree per run is off by default.**
+- **Outside triggers (webhooks, GitHub events) are deferred.**
+- **What an agent may do with tasks** is set out in the plan's "Who can start what": only the owner turns a task on
+  or widens what it may do, with one tap; after that it runs on its own.
+
 The plan is `docs/superpowers/plans/2026-10-12-reminders.md`. It covers what Claude's routines and Codex's scheduled
 tasks do, and the rules Noctis's version enforces.

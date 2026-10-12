@@ -162,12 +162,63 @@ A reminder tells the owner something; a **scheduled task** runs an agent. "When 
 - **S7. Presence and push** for runs that finished or need the owner.
 - **S8. Evidence**, including a live check: "when I get home, list what changed in the repo today" said while at work.
 
-### Still open
+### Decided (owner, 12 October 2026)
 
-- Whether reminders and scheduled tasks are one side menu item with two tabs, or two items.
-- Running each run in its own git worktree, as Claude Desktop and Codex offer. It is useful for code tasks, but it
-  leaves folders behind. Recommendation: off by default, with a per-task switch later.
-- Triggers from outside (a webhook, a GitHub event): not planned, because the core opens nothing to the internet.
+- **One side menu item with two tabs**, Reminders and Scheduled tasks.
+- **A separate git worktree per run: off by default**, with a per-task switch later.
+- **Outside triggers (a webhook, a GitHub event): deferred.** The core opens nothing to the internet.
+
+### Who can start what
+
+The limit applies only to the **owner's authority over a task**, not to how much a task can do once it is running. A
+task the owner has turned on runs fully on its own, on every trigger, with nobody watching.
+
+**The owner, and only the owner (one tap in Noctis):**
+
+- turns a task on;
+- widens what it may do: a new standing permission, another PC or folder, a more capable agent;
+- changes its prompt or trigger while it is on. An edit made in the Scheduled tasks tab is the owner's own. An edit an
+  agent proposes is shown as a before and after, and the task keeps its old version until the owner accepts it.
+
+**An agent (Vesper, Jester, or an agent inside a task run):**
+
+- proposes a new task, which is born paused;
+- proposes a change, which waits as above;
+- runs a task that is already on (**Run now**), because the owner already agreed to what it does. It is logged as
+  started by that agent, and the task's own rules still apply: no overlap, one per PC, the run-time limit;
+- pauses a task, because stopping is always safe;
+- never turns a task on, never grants a standing permission, and never edits a task that is on.
+
+**Why one tap and not "Vesper, turn it on".** A task runs unattended with the owner's subscriptions and files. A
+message in chat is only words the model relays, and words can come from anywhere: a web page an agent read, an email,
+a file. If an agent could create and turn on a task, one poisoned page could plant a job that runs every night. A tap
+in Noctis comes from the owner's signed-in device, which is something a page cannot fake. It is the same rule as an
+Objective an agent proposes being only a suggestion.
+
+### The workflow
+
+1. **Ask.** "Every weekday at 8, check my inbox and put anything urgent in Presence." Or, from the phone: "When I get
+   home, pull the repo and run the tests."
+2. **Vesper shows a card** in the thread: what it will do, when, on which PC and folder, with which agent, and what it
+   may do without asking. Two buttons: **Turn on** and **Edit**.
+3. **One tap on Turn on.** The card can also be answered from the push notification. From then on the task runs on
+   its trigger with nobody there.
+4. **Each run:**
+   - Everyday steps go ahead under the agent's own auto mode.
+   - A consequential step (push, send, publish) the task has no standing permission for asks once on the phone.
+     **Allow once**, **Always for this task**, or **Decline**.
+   - After **Always for this task**, later runs never ask about that step again: the task is now fully automatic for
+     it. Each permission is scoped to that task and that step (for example, "push to origin in `neckermann-mobile`"),
+     listed on the task, and revocable.
+   - A run whose question goes unanswered stops as "needs you" rather than guessing.
+5. **Results** reach Presence and the phone, and every run is a thread to open or continue.
+
+The most automatic a task gets is the owner turning it on once, plus granting its few consequential steps once each.
+After that, nothing asks.
+
+**Full automation from the start.** The owner can grant the standing permissions a task will need when turning it on.
+The card lists what the agent says the task will need, and the owner ticks them, so the first run doesn't stop to
+ask either.
 
 ## Already in place to build on
 
