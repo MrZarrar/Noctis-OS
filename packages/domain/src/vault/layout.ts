@@ -23,20 +23,31 @@ export interface Coordinate {
   z: number;
 }
 
-/** Bumped when placement changes, so persisted coordinates can be recognised as old. */
-export const LAYOUT_VERSION = 1;
+/**
+ * Bumped when placement changes, so persisted coordinates can be recognised as old.
+ *
+ * 2: version 1 pulled each note onto the average of its neighbours, which in a
+ * Vault averaging a dozen links per note collapsed everything into one blob.
+ */
+export const LAYOUT_VERSION = 2;
 
 export const SHELL_RADIUS = 10;
 
 /** Half-angle of a type's cluster cap. Wide enough to spread, tight enough to read as a cluster. */
 const CLUSTER_SPREAD = Math.PI / 5;
 
-const DEFAULT_ITERATIONS = 24;
+// ponytail: every pass is all-pairs, so a few thousand notes take seconds to
+// place. A spatial grid for the repulsion is the upgrade if the Vault gets there.
+const DEFAULT_ITERATIONS = 200;
 /** Below this much total movement the graph is at rest and settlement stops. */
 const REST_EPSILON = 1e-4;
-const NEIGHBOUR_PULL = 0.25;
-const SEPARATION = 1.2;
-const SEPARATION_PUSH = 0.5;
+/**
+ * Upper bound on the natural spacing. A Vault of two notes would otherwise
+ * want them a sphere apart, and repulsion would beat the link between them.
+ */
+const MAX_SPACING = 3;
+/** The furthest a note may move in the first pass; it cools to nothing by the last. */
+const START_TEMPERATURE = SHELL_RADIUS * 0.3;
 
 /** The donor's eight fixed cluster directions, one slot per note type. */
 const TYPE_SLOT: Readonly<Record<VaultEntityType, number>> = {
@@ -155,11 +166,18 @@ export interface SettleResult {
 /**
  * Places new nodes, and only new nodes.
  *
- * Bounded by construction: a fixed iteration ceiling, an early stop once total
- * movement falls under `REST_EPSILON`, and no velocity carried between passes.
- * There is nothing here that can keep running — settlement is a pure function
- * that returns final coordinates, so "at rest" is the absence of further calls
- * rather than a damping constant that never quite reaches zero.
+ * A force layout confined to the shell: every note pushes every other away, and
+ * each link pulls its two ends together. A link's pull is divided by the root
+ * of both ends' link counts, because a hub linked to everything says nothing
+ * about where any one note belongs, and at full strength it drags the whole
+ * Vault onto itself.
+ *
+ * Bounded by construction: a fixed iteration ceiling, a step limit that cools
+ * linearly to zero over it, an early stop once total movement falls under
+ * `REST_EPSILON`, and no velocity carried between passes. There is nothing here
+ * that can keep running — settlement is a pure function that returns final
+ * coordinates, so "at rest" is the absence of further calls rather than a
+ * damping constant that never quite reaches zero.
  */
 export function settle(input: SettleInput): SettleResult {
   const placed = new Map(input.placed);
@@ -177,10 +195,23 @@ export function settle(input: SettleInput): SettleResult {
     return { placed, iterations: 0 };
   }
 
+  const linkCount = new Map<string, number>();
+
+  for (const candidate of pending) {
+    for (const id of candidate.neighbourIds) {
+      linkCount.set(id, (linkCount.get(id) ?? 0) + 1);
+    }
+  }
+
+  const spacing = Math.min(
+    MAX_SPACING,
+    Math.sqrt((4 * Math.PI * SHELL_RADIUS * SHELL_RADIUS) / placed.size),
+  );
   const ceiling = input.iterations ?? DEFAULT_ITERATIONS;
   let iterations = 0;
 
   for (let pass = 0; pass < ceiling; pass += 1) {
+    const temperature = START_TEMPERATURE * (1 - pass / ceiling);
     let movement = 0;
     iterations = pass + 1;
 
@@ -191,48 +222,57 @@ export function settle(input: SettleInput): SettleResult {
         continue;
       }
 
-      let next = { ...current };
-      const neighbours = candidate.neighbourIds
-        .map((id) => placed.get(id))
-        .filter((point): point is Coordinate => point !== undefined);
+      const force = { x: 0, y: 0, z: 0 };
 
-      if (neighbours.length > 0) {
-        const mean = neighbours.reduce(
-          (total, point) => ({
-            x: total.x + point.x / neighbours.length,
-            y: total.y + point.y / neighbours.length,
-            z: total.z + point.z / neighbours.length,
-          }),
-          { x: 0, y: 0, z: 0 },
-        );
-
-        next = {
-          x: next.x + (mean.x - next.x) * NEIGHBOUR_PULL,
-          y: next.y + (mean.y - next.y) * NEIGHBOUR_PULL,
-          z: next.z + (mean.z - next.z) * NEIGHBOUR_PULL,
-        };
-      }
-
-      // Push off anything too close, so two notes cannot occupy one dot.
       for (const [otherId, other] of placed) {
         if (otherId === candidate.entityId) {
           continue;
         }
 
-        const gap = distance(next, other);
+        // Floored so two notes seeded on one point still push apart.
+        const gap = Math.max(distance(current, other), 1e-3);
+        const push = (spacing * spacing) / (gap * gap);
 
-        if (gap < SEPARATION && gap > 0) {
-          const scale = ((SEPARATION - gap) / gap) * SEPARATION_PUSH;
-
-          next = {
-            x: next.x + (next.x - other.x) * scale,
-            y: next.y + (next.y - other.y) * scale,
-            z: next.z + (next.z - other.z) * scale,
-          };
-        }
+        force.x += (current.x - other.x) * push;
+        force.y += (current.y - other.y) * push;
+        force.z += (current.z - other.z) * push;
       }
 
-      const direction = normalize(next);
+      const ownLinks = Math.max(1, linkCount.get(candidate.entityId) ?? 0);
+
+      for (const id of candidate.neighbourIds) {
+        const other = placed.get(id);
+
+        if (other === undefined || id === candidate.entityId) {
+          continue;
+        }
+
+        const pull =
+          distance(current, other) /
+          spacing /
+          Math.sqrt(ownLinks * Math.max(1, linkCount.get(id) ?? 0));
+
+        force.x += (other.x - current.x) * pull;
+        force.y += (other.y - current.y) * pull;
+        force.z += (other.z - current.z) * pull;
+      }
+
+      // Only the part of the force along the shell can move a note on it.
+      const radial = normalize(current);
+      const outward = force.x * radial.x + force.y * radial.y + force.z * radial.z;
+      const along = {
+        x: force.x - radial.x * outward,
+        y: force.y - radial.y * outward,
+        z: force.z - radial.z * outward,
+      };
+      const strength = Math.hypot(along.x, along.y, along.z);
+      const step = strength > temperature ? temperature / strength : 1;
+
+      const direction = normalize({
+        x: current.x + along.x * step,
+        y: current.y + along.y * step,
+        z: current.z + along.z * step,
+      });
       const shell = {
         x: direction.x * SHELL_RADIUS,
         y: direction.y * SHELL_RADIUS,

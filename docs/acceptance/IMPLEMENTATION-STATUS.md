@@ -3669,3 +3669,21 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 | `npx tsc -b`; `npx eslint apps packages scripts`; `npx prettier --check .` | exit 0                                                                 |
 | `node --test apps/web/e2e/chat.test.mjs` (msedge)                          | exit 0; 11 tests                                                       |
 | `node --test apps/web/e2e/presence.test.mjs` (msedge)                      | exit 0; 3 tests alone (one timed out when run beside two other suites) |
+
+### 2026-10-12 The Vault sphere: an even layout and a quiet render
+
+| Clause                                                                   | State       | Evidence                                                                                                     |
+| ------------------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| A densely linked Vault spreads over the sphere instead of forming a blob | implemented | `layout.test.ts` "spreads a densely linked Vault…": red (nearest pair 0.018 apart), then green               |
+| Placed notes never move; settlement stays bounded and order-independent  | implemented | `layout.test.ts` existing gates, unchanged and green                                                         |
+| Labels never overlap; the most important one wins                        | implemented | `sphere.test.ts` "placeLabels" (2): red (no function), then green                                            |
+| A mutual link draws once; a self-link not at all                         | implemented | `sphere.test.ts` "uniqueLinks": red (no function), then green                                                |
+| Rendered against the work PC's graph shape (206 notes, 750 unique links) | implemented | Throwaway preview page in Chrome: at rest, a mid-sized focus, a 222-link hub, and zoomed in; preview removed |
+| Live on the work PC                                                      | not yet     | Needs the core and web deployed, then a Vault reindex to apply layout version 2                              |
+
+| Command                                                                    | Result                                                                                          |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `npx vitest run`                                                           | 2216 passed, 6 failed; 4 pass alone (load), 2 are the known `node-agent/files.test.ts` failures |
+| `npx vitest run apps/core/src/vault packages/*/src/vault`                  | all passed                                                                                      |
+| `npx tsc -b`; `npx eslint packages/ui/src/vault packages/domain/src/vault` | exit 0                                                                                          |
+| `node --test apps/web/e2e/vault.keyboard.test.mjs` (chrome)                | exit 0; 1 test                                                                                  |

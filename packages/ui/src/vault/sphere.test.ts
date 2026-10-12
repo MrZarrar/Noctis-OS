@@ -1,16 +1,18 @@
 import { SHELL_RADIUS } from "@noctis/domain";
 import { describe, expect, it } from "vitest";
 
-import type { SphereEdge } from "./sphere.js";
+import type { LabelBox, SphereEdge } from "./sphere.js";
 import {
   CONTENT_R,
   bezier,
   degreeOf,
   edgeControl,
   labelOpacity,
+  placeLabels,
   radiusFor,
   thinEdges,
   toWorld,
+  uniqueLinks,
 } from "./sphere.js";
 
 function edge(id: string, source: string, target: string): SphereEdge {
@@ -127,6 +129,43 @@ describe("labelOpacity", () => {
 
   it("always labels the node being talked about, however small", () => {
     expect(labelOpacity(1, true)).toBe(0.95);
+  });
+});
+
+describe("uniqueLinks", () => {
+  it("draws a mutual link once and drops a note linking to itself", () => {
+    const kept = uniqueLinks([
+      edge("ab", "a", "b"),
+      edge("ba", "b", "a"),
+      edge("aa", "a", "a"),
+      edge("bc", "b", "c"),
+    ]);
+
+    expect(kept.map((entry) => entry.id)).toEqual(["ab", "bc"]);
+  });
+});
+
+describe("placeLabels", () => {
+  const label = (id: string, x: number, y: number, width = 60): LabelBox => ({
+    id,
+    x,
+    y,
+    width,
+    height: 12,
+  });
+
+  it("drops a label that would overlap one already placed, keeping the first", () => {
+    const kept = placeLabels([
+      label("focus", 100, 100),
+      label("crowded", 110, 104),
+      label("clear", 100, 140),
+    ]);
+
+    expect([...kept]).toEqual(["focus", "clear"]);
+  });
+
+  it("keeps labels that only sit side by side", () => {
+    expect(placeLabels([label("a", 0, 0, 50), label("b", 60, 0, 50)]).size).toBe(2);
   });
 });
 

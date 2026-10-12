@@ -76,6 +76,29 @@ export interface SphereEdge {
 }
 
 /**
+ * One edge per linked pair. Two notes that link each other arrive as two
+ * edges, and drawn twice an additive line is twice as bright as a one-way link.
+ */
+export function uniqueLinks(edges: readonly SphereEdge[]): SphereEdge[] {
+  const seen = new Set<string>();
+
+  return edges.filter((edge) => {
+    const pair =
+      edge.source < edge.target
+        ? `${edge.source}\u0000${edge.target}`
+        : `${edge.target}\u0000${edge.source}`;
+
+    if (edge.source === edge.target || seen.has(pair)) {
+      return false;
+    }
+
+    seen.add(pair);
+
+    return true;
+  });
+}
+
+/**
  * Donor edge thinning, kept because a personal Vault is densely cross-linked
  * and drawing every link is a hairball.
  *
@@ -182,6 +205,42 @@ export function labelOpacity(onScreenRadiusPx: number, isKey: boolean): number {
   const opacity = Math.min(0.85, (onScreenRadiusPx - 12) / 5);
 
   return opacity <= 0.02 ? 0 : opacity;
+}
+
+/** A label's screen rectangle, top-left anchored, in CSS pixels. */
+export interface LabelBox {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Which labels to draw, given them most-important first.
+ *
+ * Greedy: each label is kept unless it collides with one already kept. A
+ * crowded patch of the sphere then shows its most important name rather than
+ * a smear of all of them.
+ */
+export function placeLabels(boxes: readonly LabelBox[], gap = 2): Set<string> {
+  const kept: LabelBox[] = [];
+
+  for (const box of boxes) {
+    const collides = kept.some(
+      (other) =>
+        box.x < other.x + other.width + gap &&
+        other.x < box.x + box.width + gap &&
+        box.y < other.y + other.height + gap &&
+        other.y < box.y + box.height + gap,
+    );
+
+    if (!collides) {
+      kept.push(box);
+    }
+  }
+
+  return new Set(kept.map((box) => box.id));
 }
 
 export function degreeOf(edges: readonly SphereEdge[]): Map<string, number> {

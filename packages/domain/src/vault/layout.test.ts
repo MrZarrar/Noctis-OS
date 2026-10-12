@@ -172,6 +172,72 @@ describe("bounded settlement", () => {
     expect(distance(a, b)).toBeGreaterThan(0.1);
   });
 
+  it("spreads a densely linked Vault over the sphere instead of piling it into a blob", () => {
+    // Shaped like a real personal Vault: a dozen links per note, and one hub
+    // that links to nearly everything.
+    const count = 150;
+    const types = ["capture", "project", "person", "reference", "note", "daily"] as const;
+    const links = new Map<string, Set<string>>();
+    const link = (a: number, b: number): void => {
+      if (a === b) {
+        return;
+      }
+      const [x, y] = [`n${String(a)}`, `n${String(b)}`];
+      links.set(x, (links.get(x) ?? new Set()).add(y));
+      links.set(y, (links.get(y) ?? new Set()).add(x));
+    };
+
+    for (let index = 0; index < count; index += 1) {
+      link(0, index);
+      for (let step = 1; step <= 6; step += 1) {
+        link(index, (index * 7 + step * 13) % count);
+      }
+    }
+
+    const incoming = Array.from({ length: count }, (_unused, index) =>
+      node(`n${String(index)}`, {
+        type: types[index % types.length] ?? "note",
+        neighbourIds: [...(links.get(`n${String(index)}`) ?? [])],
+      }),
+    );
+
+    const placed = settle({ placed: new Map(), incoming }).placed;
+    const points = [...placed.values()];
+    const nearest = points
+      .map((point) =>
+        Math.min(
+          ...points.filter((other) => other !== point).map((other) => distance(point, other)),
+        ),
+      )
+      .sort((a, b) => a - b);
+    const ideal = Math.sqrt((4 * Math.PI * SHELL_RADIUS ** 2) / count);
+    const centroid = points.reduce(
+      (total, point) => ({
+        x: total.x + point.x / (SHELL_RADIUS * count),
+        y: total.y + point.y / (SHELL_RADIUS * count),
+        z: total.z + point.z / (SHELL_RADIUS * count),
+      }),
+      ORIGIN,
+    );
+
+    expect(nearest[0]).toBeGreaterThan(ideal * 0.3);
+    expect(nearest[Math.floor(count / 2)]).toBeGreaterThan(ideal * 0.6);
+    // Balanced over the whole shell, not crowded onto one side of it.
+    expect(distance(centroid, ORIGIN)).toBeLessThan(0.25);
+
+    // Spreading out must not throw away the point of a graph: linked notes
+    // still sit nearer each other than two notes picked at random (4R/3 apart
+    // on average).
+    const edgeLengths = [...links].flatMap(([id, others]) =>
+      [...others].map((other) =>
+        distance(placed.get(id) as Coordinate, placed.get(other) as Coordinate),
+      ),
+    );
+    const meanEdge = edgeLengths.reduce((total, length) => total + length, 0) / edgeLengths.length;
+
+    expect(meanEdge).toBeLessThan((4 * SHELL_RADIUS) / 3);
+  });
+
   it("declares a layout version so old coordinates can be recognised", () => {
     expect(LAYOUT_VERSION).toBeGreaterThan(0);
   });

@@ -13,18 +13,21 @@ import {
   spacing,
   typography,
 } from "../tokens/index.js";
-import type { SphereEdge } from "./sphere.js";
+import type { LabelBox, SphereEdge } from "./sphere.js";
 import {
+  CONTENT_R,
   EDGE_SEGS,
   R,
   bezier,
   degreeOf,
   edgeControl,
   labelOpacity,
+  placeLabels,
   radiusFor,
   slotFor,
   thinEdges,
   toWorld,
+  uniqueLinks,
 } from "./sphere.js";
 
 /**
@@ -34,7 +37,7 @@ import {
  * `client/src/components/VaultSphere.tsx`. MIT licence, Copyright (c) 2026 -
  * Now, Son Nguyen. See `docs/architecture/DONOR-PORT-LEDGER.md`.
  *
- * Three things differ from the donor, and only three:
+ * What differs from the donor:
  *
  * 1. There is no force simulation. Coordinates arrive settled from
  *    `vault_layout` and are drawn where they are, so Section 7's "remove
@@ -42,8 +45,14 @@ import {
  *    makes every client's sphere identical, which a per-client solver could
  *    not promise.
  * 2. `SphereFx` is gone — engine scan/spark/birth flashes and hot edges are
- *    donor coupling with no Noctis event behind them.
- * 3. Everything the canvas can do, the keyboard can do. The donor component has
+ *    donor coupling with no Noctis event behind them. So is the crystal core
+ *    and its rays, which read as a separate object rather than as the Vault.
+ * 3. The sphere is quiet until something is focused. Every note is a soft grey
+ *    orb with a hint of its type, the far side fades back, and colour, glow,
+ *    pulses, and labels are spent only on the focused note and its links.
+ *    With all of it on at once, a Vault of a few hundred densely linked notes
+ *    was a white smear.
+ * 4. Everything the canvas can do, the keyboard can do. The donor component has
  *    no `tabIndex`, `role`, or `aria-*` at all; the list below the globe is the
  *    same graph as a focusable tree, and the canvas is `aria-hidden` because it
  *    would otherwise announce as an unlabelled image of it.
@@ -66,7 +75,7 @@ export type VaultSphereEdge = SphereEdge;
 export interface VaultSphereProps {
   nodes: readonly VaultSphereNode[];
   edges: readonly VaultSphereEdge[];
-  /** The node under discussion. The camera flies to it and its label is pinned. */
+  /** The node under discussion. The globe turns to face it and its label is pinned. */
   focusId?: string;
   onFocus?: (id: string | undefined) => void;
   /** "Open in Vault" arrives here with the note to open. */
@@ -84,16 +93,26 @@ const TYPE_COLOUR: Readonly<Record<VaultEntityType, string>> = {
   note: typography.color.muted,
 };
 
-const PALETTE: readonly THREE.Color[] = (
-  ["capture", "project", "person", "reference", "daily", "agent", "note"] as const
-).map((type) => new THREE.Color(TYPE_COLOUR[type]));
+const TYPE_ORDER = ["capture", "project", "person", "reference", "daily", "agent", "note"] as const;
 
-// Donor visual balance. The nodes are the data; edges and pulses are context,
-// and keeping the context translucent is what lets the clusters read.
-const SHELL_OPACITY = 0.05;
-const EDGE_OPACITY = 0.11;
+const PALETTE: readonly THREE.Color[] = TYPE_ORDER.map(
+  (type) => new THREE.Color(TYPE_COLOUR[type]),
+);
+
+/** A note at rest: mostly grey, with just enough of its type to tell clusters apart. */
+const REST_PALETTE: readonly THREE.Color[] = PALETTE.map((colour) =>
+  new THREE.Color(0.6, 0.62, 0.72).lerp(colour, 0.3),
+);
+
+const SHELL_OPACITY = 0.04;
 const PULSE_OPACITY = 0.5;
 const PULSE_SIZE = 1.9;
+
+// Edge colours are added to the scene, so these are brightness, not tint.
+const REST_EDGE = new THREE.Color(0.014, 0.018, 0.028);
+const LIT_EDGE = new THREE.Color(0.36, 0.44, 0.68);
+/** A focused hub names this many of its links; the rest stay unlabelled dots. */
+const LABELLED_LINKS = 12;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -157,13 +176,14 @@ function buildShell(): THREE.LineSegments {
 }
 
 function buildStars(): THREE.Points {
-  const count = 420;
+  const count = 320;
   const positions = new Float32Array(count * 3);
 
   for (let i = 0; i < count; i += 1) {
+    // Only outside the shell: a star inside it is indistinguishable from a note.
     const point = new THREE.Vector3()
       .randomDirection()
-      .multiplyScalar(R * (0.3 + Math.random() * 1.8));
+      .multiplyScalar(R * (1.4 + Math.random() * 1.6));
 
     positions.set([point.x, point.y, point.z], i * 3);
   }
@@ -175,11 +195,13 @@ function buildStars(): THREE.Points {
     geometry,
     new THREE.PointsMaterial({
       color: 0xaabbdd,
-      size: 0.9,
+      // A fixed pixel size: attenuated, the near ones grow into grey squares
+      // as the camera zooms toward them.
+      size: 1.5,
       transparent: true,
       opacity: 0.35,
       depthWrite: false,
-      sizeAttenuation: true,
+      sizeAttenuation: false,
     }),
   );
 }
@@ -216,21 +238,58 @@ const ORB_STOPS: ReadonlyArray<[number, string]> = [
   [1, "rgba(255,255,255,0)"],
 ];
 
-const CORE_STOPS: ReadonlyArray<[number, string]> = [
-  [0, "rgba(255, 235, 240, 1)"],
-  [0.25, "rgba(255, 190, 205, 0.55)"],
-  [0.6, "rgba(200, 120, 160, 0.14)"],
-  [1, "rgba(0, 0, 0, 0)"],
-];
+/** Shared by the orbs and their glow: a world-sized point that shrinks with distance. */
+const POINT_VERTEX = `
+  attribute float size;
+  attribute float alpha;
+  varying vec3 vColor;
+  varying float vAlpha;
+  uniform float uScale;
+  uniform float uMax;
+  void main() {
+    vColor = color;
+    vAlpha = alpha;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = min(size * uScale / -mv.z, uMax);
+    gl_Position = projectionMatrix * mv;
+  }`;
+
+/** A round orb with a soft edge, lit a little from above so it is not a flat disc. */
+const ORB_FRAGMENT = `
+  varying vec3 vColor;
+  varying float vAlpha;
+  void main() {
+    vec2 c = gl_PointCoord - 0.5;
+    float d = length(c) * 2.0;
+    if (d > 1.0) discard;
+    float shade = 0.8 + 0.25 * (1.0 - smoothstep(0.0, 1.0, length(c + vec2(0.0, 0.18)) * 1.8));
+    gl_FragColor = vec4(vColor * shade, vAlpha * (1.0 - smoothstep(0.78, 1.0, d)));
+  }`;
+
+const GLOW_FRAGMENT = `
+  uniform sampler2D map;
+  varying vec3 vColor;
+  varying float vAlpha;
+  void main() {
+    gl_FragColor = vec4(vColor * vAlpha, 1.0) * texture2D(map, gl_PointCoord);
+  }`;
 
 interface DrawNode {
   id: string;
   name: string;
   type: VaultEntityType;
   degree: number;
+  written: boolean;
   /** Donor: a per-node offset so the breathing does not pulse in unison. */
   phase: number;
   position: THREE.Vector3;
+}
+
+interface DrawEdge {
+  a: DrawNode;
+  b: DrawNode;
+  /** Survived thinning, so it is drawn faintly even when nothing is focused. */
+  resting: boolean;
 }
 
 interface Scene {
@@ -242,6 +301,16 @@ interface SceneCallbacks {
   focusId: () => string | undefined;
   onSelect: (id: string | undefined) => void;
   onIsolate: (id: string) => void;
+}
+
+function pointsGeometry(count: number): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(count), 1));
+  geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(count), 1));
+
+  return geometry;
 }
 
 /**
@@ -260,17 +329,22 @@ function createScene(
   let renderer: THREE.WebGLRenderer;
 
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // Opaque: on a transparent canvas, additive lines still write alpha, and
+    // an unlit one shows up as a black streak over the page behind it.
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   } catch {
     return undefined;
   }
+
+  renderer.setClearColor(new THREE.Color(depthTokens.layers[0]));
 
   const reduceMotion = prefersReducedMotion();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
 
   renderer.setPixelRatio(dpr);
   renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
-  mount.appendChild(renderer.domElement);
+  // Under the labels, which let the pointer through to it.
+  mount.prepend(renderer.domElement);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
@@ -290,54 +364,30 @@ function createScene(
   scene.add(buildStars());
 
   const orbTexture = radialTexture(64, ORB_STOPS);
-  const coreTexture = radialTexture(128, CORE_STOPS);
-
-  const glow = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map: coreTexture,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      transparent: true,
-    }),
-  );
-  glow.scale.setScalar(38);
-  world.add(glow);
-
-  const crystal = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(5.2, 0),
-    new THREE.MeshBasicMaterial({ color: 0xffd9e2, transparent: true, opacity: 0.92 }),
-  );
-  world.add(crystal);
-
-  const cage = new THREE.LineSegments(
-    new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(7.4, 0)),
-    new THREE.LineBasicMaterial({
-      color: 0xffc7d8,
-      transparent: true,
-      opacity: 0.4,
-      depthWrite: false,
-    }),
-  );
-  world.add(cage);
 
   let drawNodes: DrawNode[] = [];
-  let drawEdges: Array<{ a: DrawNode; b: DrawNode }> = [];
+  let drawEdges: DrawEdge[] = [];
   let byId = new Map<string, DrawNode>();
   let neighbours = new Map<string, Set<string>>();
 
-  let nodeMesh: THREE.InstancedMesh | null = null;
-  let haloPoints: THREE.Points | null = null;
+  let orbs: THREE.Points | null = null;
+  let glows: THREE.Points | null = null;
   let edgeLines: THREE.LineSegments | null = null;
-  let rays: THREE.LineSegments | null = null;
   let pulses: THREE.Points | null = null;
+  /** What the edge colours were last written for; they only change with it. */
+  let edgesLitFor: string | undefined;
+  /** The focus the named links were chosen for; `null` after a rebuild. */
+  let labelledFor: string | undefined | null = null;
+  let labelledLinks = new Set<string>();
 
-  const haloUniforms = { uScale: { value: 600 }, map: { value: orbTexture } };
-  const nodeGeometry = new THREE.SphereGeometry(1, 10, 8);
-  const dummy = new THREE.Object3D();
+  // Capped on screen, so zooming toward a note does not fill the view with one disc.
+  const scale = { value: 600 };
+  const orbUniforms = { uScale: scale, uMax: { value: 64 } };
+  const glowUniforms = { uScale: scale, uMax: { value: 192 }, map: { value: orbTexture } };
   const disposables: Array<THREE.BufferGeometry | THREE.Material> = [];
 
   const disposeGraph = (): void => {
-    for (const object of [nodeMesh, haloPoints, edgeLines, rays, pulses]) {
+    for (const object of [orbs, glows, edgeLines, pulses]) {
       if (object !== null) {
         world.remove(object);
       }
@@ -347,14 +397,14 @@ function createScene(
       item.dispose();
     }
 
-    nodeMesh = haloPoints = edgeLines = rays = pulses = null;
+    orbs = glows = edgeLines = pulses = null;
   };
 
   const rebuild = (
     nextNodes: readonly VaultSphereNode[],
     nextEdges: readonly VaultSphereEdge[],
   ): void => {
-    const degree = degreeOf(nextEdges);
+    const degree = degreeOf(uniqueLinks(nextEdges));
 
     byId = new Map();
     drawNodes = nextNodes
@@ -366,6 +416,7 @@ function createScene(
           name: node.name,
           type: node.type,
           degree: degree.get(node.id) ?? 0,
+          written: node.path != null,
           // Derived from the id, not `Math.random()`: a rebuild must not
           // resynchronise the breathing of every node on screen.
           phase: (node.id.charCodeAt(0) % 32) * 0.196,
@@ -377,7 +428,9 @@ function createScene(
         return entry;
       });
 
-    const present = nextEdges.filter((edge) => byId.has(edge.source) && byId.has(edge.target));
+    const present = uniqueLinks(
+      nextEdges.filter((edge) => byId.has(edge.source) && byId.has(edge.target)),
+    );
 
     neighbours = new Map();
 
@@ -393,10 +446,17 @@ function createScene(
       neighbours.get(edge.target)?.add(edge.source);
     }
 
-    drawEdges = thinEdges(present).map((edge) => ({
+    // Every link is drawn, so a focused hub shows all of its links; thinning
+    // only decides which ones are visible when nothing is focused.
+    const resting = new Set(thinEdges(present).map((edge) => edge.id));
+
+    drawEdges = present.map((edge) => ({
       a: byId.get(edge.source) as DrawNode,
       b: byId.get(edge.target) as DrawNode,
+      resting: resting.has(edge.id),
     }));
+    edgesLitFor = undefined;
+    labelledFor = null;
 
     disposeGraph();
 
@@ -404,58 +464,40 @@ function createScene(
       return;
     }
 
-    const nodeMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95 });
-    nodeMesh = new THREE.InstancedMesh(nodeGeometry, nodeMaterial, drawNodes.length);
-    nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    disposables.push(nodeMaterial);
-    world.add(nodeMesh);
-
-    // Glow sprites behind each node: the radial falloff is what makes them read
-    // as light sources rather than beads.
-    const haloGeometry = new THREE.BufferGeometry();
-    haloGeometry.setAttribute(
-      "position",
-      new THREE.BufferAttribute(new Float32Array(drawNodes.length * 3), 3),
-    );
-    haloGeometry.setAttribute(
-      "color",
-      new THREE.BufferAttribute(new Float32Array(drawNodes.length * 3), 3),
-    );
-    haloGeometry.setAttribute(
-      "size",
-      new THREE.BufferAttribute(new Float32Array(drawNodes.length), 1),
-    );
-
-    const haloMaterial = new THREE.ShaderMaterial({
-      uniforms: haloUniforms,
-      vertexShader: `
-        attribute float size;
-        varying vec3 vColor;
-        uniform float uScale;
-        void main() {
-          vColor = color;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = size * uScale / -mv.z;
-          gl_Position = projectionMatrix * mv;
-        }`,
-      fragmentShader: `
-        uniform sampler2D map;
-        varying vec3 vColor;
-        void main() {
-          gl_FragColor = vec4(vColor, 1.0) * texture2D(map, gl_PointCoord);
-        }`,
+    // Glow first, so the orbs draw over their own light.
+    const glowGeometry = pointsGeometry(drawNodes.length);
+    const glowMaterial = new THREE.ShaderMaterial({
+      uniforms: glowUniforms,
+      vertexShader: POINT_VERTEX,
+      fragmentShader: GLOW_FRAGMENT,
       vertexColors: true,
       blending: THREE.AdditiveBlending,
       transparent: true,
       depthWrite: false,
     });
 
-    haloPoints = new THREE.Points(haloGeometry, haloMaterial);
-    disposables.push(haloGeometry, haloMaterial);
-    world.add(haloPoints);
+    glows = new THREE.Points(glowGeometry, glowMaterial);
+    disposables.push(glowGeometry, glowMaterial);
+    world.add(glows);
+
+    // Normal blending, not additive: overlapping orbs must stay orbs rather
+    // than stacking into a white clump.
+    const orbGeometry = pointsGeometry(drawNodes.length);
+    const orbMaterial = new THREE.ShaderMaterial({
+      uniforms: orbUniforms,
+      vertexShader: POINT_VERTEX,
+      fragmentShader: ORB_FRAGMENT,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+    });
+
+    orbs = new THREE.Points(orbGeometry, orbMaterial);
+    disposables.push(orbGeometry, orbMaterial);
+    world.add(orbs);
 
     // Edge geometry is written once, not every frame: the nodes do not move, so the
-    // only thing a frame can change about an edge is its colour.
+    // only thing that can change about an edge is its colour.
     const edgeGeometry = new THREE.BufferGeometry();
     const edgeVertices = drawEdges.length * EDGE_SEGS * 2;
     const edgePositions = new Float32Array(edgeVertices * 3);
@@ -483,40 +525,12 @@ function createScene(
       vertexColors: true,
       blending: THREE.AdditiveBlending,
       transparent: true,
-      opacity: EDGE_OPACITY,
       depthWrite: false,
     });
 
     edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
     disposables.push(edgeGeometry, edgeMaterial);
     world.add(edgeLines);
-
-    // Core rays: short filaments spilling from the crystal. Full lines to every
-    // node read as a cluttered sunburst at Vault scale, not as a glow.
-    const rayGeometry = new THREE.BufferGeometry();
-    const rayPositions = new Float32Array(drawNodes.length * 2 * 3);
-
-    drawNodes.forEach((node, index) => {
-      rayPositions.set([0, 0, 0], index * 6);
-      rayPositions.set(
-        [node.position.x * 0.22, node.position.y * 0.22, node.position.z * 0.22],
-        index * 6 + 3,
-      );
-    });
-
-    rayGeometry.setAttribute("position", new THREE.BufferAttribute(rayPositions, 3));
-
-    const rayMaterial = new THREE.LineBasicMaterial({
-      color: 0xffe0ea,
-      transparent: true,
-      opacity: 0.09,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-
-    rays = new THREE.LineSegments(rayGeometry, rayMaterial);
-    disposables.push(rayGeometry, rayMaterial);
-    world.add(rays);
 
     if (!reduceMotion && drawEdges.length > 0) {
       const pulseGeometry = new THREE.BufferGeometry();
@@ -556,7 +570,9 @@ function createScene(
     renderer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    haloUniforms.uScale.value = (height * dpr) / Math.tan((camera.fov * Math.PI) / 360);
+    scale.value = (height * dpr) / Math.tan((camera.fov * Math.PI) / 360);
+    orbUniforms.uMax.value = 64 * dpr;
+    glowUniforms.uMax.value = 192 * dpr;
     labelCanvas.width = Math.floor(width * dpr);
     labelCanvas.height = Math.floor(height * dpr);
   };
@@ -650,9 +666,13 @@ function createScene(
   renderer.domElement.addEventListener("pointerup", onPointerUp);
   renderer.domElement.addEventListener("dblclick", onDoubleClick);
 
+  let flownTo: string | undefined;
+  let flying = false;
   let userBusyUntil = 0;
   controls.addEventListener("start", () => {
     userBusyUntil = Infinity;
+    // Grabbing the globe mid-turn hands it to the user.
+    flying = false;
   });
   controls.addEventListener("end", () => {
     userBusyUntil = performance.now() + 2500;
@@ -662,14 +682,18 @@ function createScene(
   const colour = new THREE.Color();
   const edgeColour = new THREE.Color();
   const white = new THREE.Color(1, 1, 1);
-  const grey = new THREE.Color(0.32, 0.35, 0.4);
-  const baseEdge = new THREE.Color(0.22, 0.32, 0.45);
-  const litEdge = new THREE.Color(0.55, 0.78, 0.95);
+  const toCamera = new THREE.Vector3();
+  const toNode = new THREE.Vector3();
+  const turn = new THREE.Quaternion();
+  const step = new THREE.Quaternion();
+  /** Front of the globe, as each node was last drawn: 1 facing the camera, 0 behind. */
+  const front = new Map<string, number>();
 
-  const glowLevel = new Map<string, number>();
-  let flownTo: string | undefined;
-  let flying = false;
-  const flyTarget = new THREE.Vector3();
+  /**
+   * How lit each node is, eased toward its target so focus changes fade:
+   * 1 focused or hovered, 0.85 linked to the focus, 0.5 at rest, 0.15 dimmed.
+   */
+  const level = new Map<string, number>();
   let frame = 0;
   let last = performance.now();
 
@@ -686,92 +710,115 @@ function createScene(
       world.rotation.y += delta * 0.00005;
     }
 
-    const corePulse = reduceMotion ? 1 : 1 + 0.08 * Math.sin(now / 900);
-    glow.scale.setScalar(38 * corePulse);
-    crystal.rotation.y += delta * 0.0004;
-    crystal.rotation.x += delta * 0.00013;
-    cage.rotation.y -= delta * 0.00025;
-    crystal.scale.setScalar(corePulse);
+    world.updateMatrixWorld();
+    toCamera.copy(camera.position).normalize();
 
+    // A hub's links fade as they multiply, so focusing one reads as a fan
+    // of threads rather than a solid white starburst.
+    const share = (id: string | undefined): number =>
+      Math.min(1, 2.5 / Math.sqrt(Math.max(1, neighbours.get(id ?? "")?.size ?? 1)));
+
+    const fan = share(focusId ?? hover?.id);
     const hoverSet = hover === null ? null : neighbours.get(hover.id);
     const focusSet = focusId === undefined ? null : neighbours.get(focusId);
-    const dimming = hover !== null || focusId !== undefined;
 
-    if (nodeMesh !== null) {
-      const haloPosition = haloPoints?.geometry.getAttribute("position") as
-        THREE.BufferAttribute | undefined;
-      const haloColour = haloPoints?.geometry.getAttribute("color") as
-        THREE.BufferAttribute | undefined;
-      const haloSize = haloPoints?.geometry.getAttribute("size") as
-        THREE.BufferAttribute | undefined;
+    if (orbs !== null && glows !== null) {
+      const attribute = (points: THREE.Points, name: string): THREE.BufferAttribute =>
+        points.geometry.getAttribute(name) as THREE.BufferAttribute;
+      const orbPosition = attribute(orbs, "position");
+      const orbColour = attribute(orbs, "color");
+      const orbSize = attribute(orbs, "size");
+      const orbAlpha = attribute(orbs, "alpha");
+      const glowPosition = attribute(glows, "position");
+      const glowColour = attribute(glows, "color");
+      const glowSize = attribute(glows, "size");
+      const glowAlpha = attribute(glows, "alpha");
 
       for (let index = 0; index < drawNodes.length; index += 1) {
         const node = drawNodes[index] as DrawNode;
-        const isHover = hover?.id === node.id;
-        const isFocus = focusId === node.id;
-        const isNeighbour = (hoverSet?.has(node.id) ?? false) || (focusSet?.has(node.id) ?? false);
-        const lit = isHover || isFocus || isNeighbour;
-        const target = dimming && !lit ? 0.18 : 1;
-        const level =
-          (glowLevel.get(node.id) ?? 1) + (target - (glowLevel.get(node.id) ?? 1)) * 0.15;
-        glowLevel.set(node.id, level);
+        const isKey = hover?.id === node.id || focusId === node.id;
+        const isLinked = (hoverSet?.has(node.id) ?? false) || (focusSet?.has(node.id) ?? false);
+        // Hover lights a neighbourhood without dimming the rest, so sweeping
+        // the pointer across the globe does not make it flicker.
+        const target = isKey ? 1 : isLinked ? 0.85 : focusId !== undefined ? 0.15 : 0.5;
+        const previous = level.get(node.id) ?? 0.5;
+        const eased = reduceMotion ? target : previous + (target - previous) * 0.15;
+        level.set(node.id, eased);
 
-        let scale = radiusFor(node.degree);
+        const lit = THREE.MathUtils.clamp((eased - 0.5) / 0.35, 0, 1);
+        const key = THREE.MathUtils.clamp((eased - 0.85) / 0.15, 0, 1);
+        const presence = 0.3 + 0.7 * THREE.MathUtils.clamp((eased - 0.15) / 0.35, 0, 1);
+
+        toNode.copy(node.position).applyMatrix4(world.matrixWorld);
+        const facing = (toNode.dot(toCamera) / CONTENT_R + 1) / 2;
+        front.set(node.id, facing);
+
+        const slot = slotFor(node.type) - 1;
+        const typeColour = PALETTE[slot] ?? white;
+
+        colour
+          .copy(REST_PALETTE[slot] ?? white)
+          .lerp(typeColour, lit * 0.8)
+          .lerp(white, key * 0.6)
+          .multiplyScalar(0.55 + 0.45 * facing);
+
+        const resting = (0.15 + 0.7 * facing) * (node.written ? 1 : 0.55);
+        const alpha = (resting + (0.65 + 0.35 * facing - resting) * lit) * presence;
+
+        let radius = radiusFor(node.degree) * (1 + 0.25 * key);
 
         if (!reduceMotion) {
-          scale *= 1 + 0.07 * Math.sin(now / 1100 + node.phase);
+          radius *= 1 + 0.04 * Math.sin(now / 1100 + node.phase);
         }
 
-        // Dimmed nodes desaturate rather than only darken, so the lit set pops.
-        const litAmount = THREE.MathUtils.clamp((level - 0.18) / 0.82, 0, 1);
-        colour.copy(PALETTE[slotFor(node.type) - 1] ?? white).lerp(grey, 1 - litAmount);
-        colour.multiplyScalar(0.3 + 0.7 * level);
+        const { x, y, z } = node.position;
+        orbPosition.setXYZ(index, x, y, z);
+        orbColour.setXYZ(index, colour.r, colour.g, colour.b);
+        orbSize.setX(index, radius);
+        orbAlpha.setX(index, alpha);
 
-        if (isHover || isFocus) {
-          colour.lerp(white, 0.35);
-        }
-
-        haloPosition?.setXYZ(index, node.position.x, node.position.y, node.position.z);
-        // Brighter than the node body: it has to read as the light source.
-        haloColour?.setXYZ(index, colour.r * 1.35, colour.g * 1.35, colour.b * 1.35);
-        haloSize?.setX(index, scale * 3.5);
-
-        colour.lerp(white, 0.22);
-        dummy.position.copy(node.position);
-        dummy.scale.setScalar(scale);
-        dummy.updateMatrix();
-        nodeMesh.setMatrixAt(index, dummy.matrix);
-        nodeMesh.setColorAt(index, colour);
+        colour.copy(typeColour).lerp(white, key * 0.4);
+        glowPosition.setXYZ(index, x, y, z);
+        glowColour.setXYZ(index, colour.r, colour.g, colour.b);
+        glowSize.setX(index, radius * (2.5 + 2.5 * key));
+        glowAlpha.setX(index, lit * (0.35 * fan + 0.65 * key) * (0.5 + 0.5 * facing));
       }
 
-      nodeMesh.instanceMatrix.needsUpdate = true;
-
-      if (nodeMesh.instanceColor !== null) {
-        nodeMesh.instanceColor.needsUpdate = true;
-      }
-
-      for (const attribute of [haloPosition, haloColour, haloSize]) {
-        if (attribute !== undefined) {
-          attribute.needsUpdate = true;
-        }
+      for (const changed of [
+        orbPosition,
+        orbColour,
+        orbSize,
+        orbAlpha,
+        glowPosition,
+        glowColour,
+        glowSize,
+        glowAlpha,
+      ]) {
+        changed.needsUpdate = true;
       }
     }
 
-    if (edgeLines !== null) {
+    const touches = (edge: DrawEdge): boolean =>
+      hover?.id === edge.a.id ||
+      hover?.id === edge.b.id ||
+      focusId === edge.a.id ||
+      focusId === edge.b.id;
+
+    const litFor = `${hover?.id ?? ""}|${focusId ?? ""}`;
+
+    if (edgeLines !== null && litFor !== edgesLitFor) {
+      edgesLitFor = litFor;
       const colours = edgeLines.geometry.getAttribute("color") as THREE.BufferAttribute;
       let vertex = 0;
 
       for (const edge of drawEdges) {
-        const touching =
-          hover?.id === edge.a.id ||
-          hover?.id === edge.b.id ||
-          focusId === edge.a.id ||
-          focusId === edge.b.id;
-
-        edgeColour.copy(touching ? litEdge : baseEdge);
-
-        if (!touching && dimming) {
-          edgeColour.multiplyScalar(0.35);
+        if (touches(edge)) {
+          const end = focusId === edge.a.id || focusId === edge.b.id ? focusId : hover?.id;
+          edgeColour.copy(LIT_EDGE).multiplyScalar(share(end));
+        } else if (edge.resting) {
+          edgeColour.copy(REST_EDGE).multiplyScalar(focusId === undefined ? 1 : 0.35);
+        } else {
+          edgeColour.setRGB(0, 0, 0);
         }
 
         for (let point = 0; point < EDGE_SEGS * 2; point += 1) {
@@ -788,6 +835,12 @@ function createScene(
       const colours = pulses.geometry.getAttribute("color") as THREE.BufferAttribute;
 
       drawEdges.forEach((edge, index) => {
+        // Pulses show which way the focus reaches, so only its links carry them.
+        if (!touches(edge)) {
+          colours.setXYZ(index, 0, 0, 0);
+          return;
+        }
+
         const t = (now / 4200 + index * 0.618) % 1;
         const point = bezier(
           edge.a.position,
@@ -795,10 +848,10 @@ function createScene(
           edge.b.position,
           t,
         );
+        const end = focusId === edge.a.id || focusId === edge.b.id ? focusId : hover?.id;
+        const fade = Math.sin(t * Math.PI) * 0.7 * share(end);
 
         positions.setXYZ(index, point.x, point.y, point.z);
-
-        const fade = Math.sin(t * Math.PI) * (dimming ? 0.25 : 0.7);
         colours.setXYZ(index, 0.55 * fade, 0.8 * fade, fade);
       });
 
@@ -808,35 +861,22 @@ function createScene(
 
     if (focusId !== flownTo) {
       flownTo = focusId;
-      const node = focusId === undefined ? undefined : byId.get(focusId);
-      flyTarget.copy(
-        node === undefined
-          ? new THREE.Vector3()
-          : node.position.clone().applyMatrix4(world.matrixWorld),
-      );
-      flying = true;
+      flying = focusId !== undefined;
     }
 
-    if (flying) {
-      const selected = flownTo === undefined ? undefined : byId.get(flownTo);
+    // Turn the globe to face the focused note, at whatever zoom the user chose.
+    // Diving inside the sphere to reach it hid the very context it sits in.
+    const selected = flying && flownTo !== undefined ? byId.get(flownTo) : undefined;
 
-      if (selected !== undefined) {
-        flyTarget.copy(selected.position).applyMatrix4(world.matrixWorld);
-      }
+    if (selected !== undefined) {
+      toNode.copy(selected.position).applyMatrix4(world.matrixWorld).normalize();
 
-      controls.target.lerp(flyTarget, 0.08);
-
-      if (selected !== undefined) {
-        const want = Math.max(controls.minDistance, 62);
-        const distance = camera.position.distanceTo(controls.target);
-        camera.position
-          .sub(controls.target)
-          .multiplyScalar(1 + ((want - distance) / distance) * 0.08)
-          .add(controls.target);
-      }
-
-      if (controls.target.distanceTo(flyTarget) < 0.5) {
+      if (toCamera.angleTo(toNode) < 0.01) {
         flying = false;
+      } else {
+        turn.setFromUnitVectors(toCamera, toNode);
+        step.identity().slerp(turn, reduceMotion ? 1 : 0.07);
+        camera.position.applyQuaternion(step);
       }
     }
 
@@ -847,16 +887,32 @@ function createScene(
       const rect = renderer.domElement.getBoundingClientRect();
       labelContext.setTransform(dpr, 0, 0, dpr, 0, 0);
       labelContext.clearRect(0, 0, rect.width, rect.height);
-      labelContext.textAlign = "center";
-      labelContext.font = `11px ${typography.family}`;
+      labelContext.textAlign = "left";
+      labelContext.textBaseline = "middle";
+
+      if (focusId !== labelledFor) {
+        labelledFor = focusId;
+        labelledLinks = new Set(
+          [...(focusSet ?? [])]
+            .sort((a, b) => (byId.get(b)?.degree ?? 0) - (byId.get(a)?.degree ?? 0))
+            .slice(0, LABELLED_LINKS),
+        );
+      }
 
       const halfHeight = rect.height / 2;
       const tanFov = Math.tan((camera.fov * Math.PI) / 360);
+      const candidates: Array<
+        LabelBox & { rank: number; size: number; opacity: number; text: string; key: boolean }
+      > = [];
 
       for (const node of drawNodes) {
         const screen = project(node);
+        const isKey = hover?.id === node.id || focusId === node.id;
+        const isLinked = labelledLinks.has(node.id);
+        const facing = front.get(node.id) ?? 1;
 
-        if (screen.behind) {
+        // A name on the far side of the globe floats over the notes in front of it.
+        if (screen.behind || (!isKey && facing < 0.45)) {
           continue;
         }
 
@@ -865,15 +921,53 @@ function createScene(
           .applyMatrix4(world.matrixWorld)
           .distanceTo(camera.position);
         const onScreenRadius = (radiusFor(node.degree) * halfHeight) / (distance * tanFov);
-        const opacity = labelOpacity(onScreenRadius, hover?.id === node.id || focusId === node.id);
+        const opacity = isLinked
+          ? 0.8
+          : labelOpacity(onScreenRadius, isKey) * (focusId !== undefined && !isKey ? 0.4 : 1);
 
         if (opacity === 0) {
           continue;
         }
 
-        labelContext.fillStyle = `rgba(200, 218, 236, ${String(opacity * (glowLevel.get(node.id) ?? 1))})`;
-        labelContext.fillText(node.name.slice(0, 30), screen.x, screen.y + onScreenRadius + 11);
+        const text = node.name.length > 32 ? `${node.name.slice(0, 31)}…` : node.name;
+        labelContext.font = isKey ? `600 13px ${typography.family}` : `12px ${typography.family}`;
+
+        candidates.push({
+          id: node.id,
+          x: screen.x + Math.min(onScreenRadius, 32) + 6,
+          y: screen.y - 8,
+          width: labelContext.measureText(text).width,
+          height: 16,
+          rank: isKey ? 0 : isLinked ? 1 : 2,
+          size: onScreenRadius,
+          opacity: opacity * (0.5 + 0.5 * facing),
+          text,
+          key: isKey,
+        });
       }
+
+      candidates.sort((a, b) => a.rank - b.rank || b.size - a.size);
+
+      const shown = placeLabels(candidates);
+
+      labelContext.shadowColor = "rgba(5, 6, 12, 0.9)";
+      labelContext.shadowBlur = 4;
+
+      for (const label of candidates) {
+        if (!shown.has(label.id)) {
+          continue;
+        }
+
+        labelContext.font = label.key
+          ? `600 13px ${typography.family}`
+          : `12px ${typography.family}`;
+        labelContext.fillStyle = label.key
+          ? `rgba(244, 240, 255, ${String(label.opacity)})`
+          : `rgba(200, 210, 232, ${String(label.opacity)})`;
+        labelContext.fillText(label.text, label.x, label.y + label.height / 2);
+      }
+
+      labelContext.shadowBlur = 0;
     }
   };
 
@@ -890,9 +984,7 @@ function createScene(
       renderer.domElement.removeEventListener("dblclick", onDoubleClick);
       controls.dispose();
       disposeGraph();
-      nodeGeometry.dispose();
       orbTexture.dispose();
-      coreTexture.dispose();
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
         mesh.geometry?.dispose();
@@ -1039,7 +1131,13 @@ export function VaultSphere({
       >
         <canvas
           ref={labelRef}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+          }}
         />
       </div>
 

@@ -184,3 +184,28 @@ Presence when it is relevant.
 
 The plan is `docs/superpowers/plans/2026-10-12-reminders.md`. It covers what Claude's routines and Codex's scheduled
 tasks do, and the rules Noctis's version enforces.
+
+## 6. The Vault sphere looked cluttered and unpolished
+
+**Owner's report:** "The vault looks horrible, unstructured and cluttered and the graphics look weird and unpolished",
+with screenshots of two bright blobs, overlapping labels, and the crystal core with its rays. The target is the trace
+mockup, `docs/Mockups/02-vault-trace-v7.png`: an even sphere of quiet orbs, with only the focused note's links lit.
+
+**Cause, measured on the work PC's graph** (206 notes, 1,448 links, one note linked to 222): layout version 1 pulled
+each note onto the average of its neighbours, which in a graph this dense collapsed into one blob. The median gap to
+the nearest note was 0.59 where an even spread gives 2.47, and some notes sat 0.10 apart. Half the links were the same
+pair stored both ways, so they drew twice as bright. Every node also glowed additively, so clusters went white.
+
+**Built:**
+
+- Layout version 2: a bounded, cooling force layout on the shell. Notes push each other apart, links pull, and a hub's
+  pull is divided down. On the same graph: nearest-note median 2.12, minimum 1.48, centroid 0.01 from centre, and
+  linked notes still about three times closer than a random pair. Placed notes are still never moved. The version bump
+  means the next Vault reindex lays every note out again once.
+- The renderer: crystal core, cage and rays removed. Notes are soft grey orbs with a hint of type colour, the far side
+  fades back, and glow, full colour, pulses and labels are kept for the focused note and its links. A hub's fan dims
+  as its links multiply and names at most twelve of them. Labels never overlap. Focusing turns the globe to face the
+  note instead of zooming inside it. Mutual links draw once. Unlit edges no longer show as black streaks, and stars no
+  longer sit inside the shell or grow into squares when zoomed.
+
+**To see it on the work PC:** deploy the core and web build, then reindex the Vault.
