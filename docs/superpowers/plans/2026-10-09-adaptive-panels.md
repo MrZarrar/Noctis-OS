@@ -4,6 +4,12 @@
 
 > **Read first: six owner decisions (D1 to D6) are listed in the next section.** Slice 1 (P1 to P7) waits on D1 and D2. D3 to D6 shape later tasks and have defaults the plan is written to; a different answer changes only the task named beside it.
 
+## Discussion update: 12 October 2026
+
+The owner set a rule for this plan: **everything is a panel as well as its own page**. A section such as Reminders
+is a page with its own side menu item, and the same view also opens as a panel next to a conversation. Reminders,
+to-dos and scheduled tasks are planned to follow this work (`2026-10-12-reminders.md`).
+
 ## Discussion update: 9 October 2026
 
 This remains a draft implementation plan. The owner asked to use the Vinted and trainers mockups as the concrete
