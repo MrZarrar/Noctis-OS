@@ -326,7 +326,7 @@ describe("runtime.turn", () => {
     // The ask carries the real root as cwd: the runtime saw resolved roots.
     expect(asks[0]?.detail?.cwd).toBe(realpathSync.native(root));
     // THE GATE: the runtime's environment is the agent's minus the billing keys.
-    expect(seenEnv).toEqual({ PATH: "x" });
+    expect(seenEnv).toEqual({ PATH: "x", NOCTIS_RUNTIME_SESSION: "1" });
     expect(RuntimeTurnEvidenceSchema.parse(evidence)).toMatchObject({
       itemCount: 3,
       stoppedReason: "completed",

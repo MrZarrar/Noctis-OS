@@ -3,6 +3,7 @@ import type { Readable } from "node:stream";
 
 import {
   ActivateIdentityCommandSchema,
+  BridgeEventSchema,
   AdoptRuntimeSessionCommandSchema,
   ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
@@ -71,6 +72,7 @@ import {
   listArtifacts,
   recordArtifact,
 } from "../artifacts/service.js";
+import { listLiveEntries, listLiveSessions, recordBridgeEvent } from "../bridge/live.js";
 import { getAttachment, readAttachmentBytes, uploadAttachment } from "../attachments/service.js";
 import { catalogue, defaultModelFor, setDefaultModel } from "../conversation/models.js";
 import type { ConversationService } from "../conversation/service.js";
@@ -209,6 +211,9 @@ export const NODE_OUTPUT_PATH = "/node/outputs";
 export const OUTPUT_JOB_HEADER = "x-noctis-job";
 /** `POST /node/files` — the bytes of a `file.read` or `screen.view` job, streamed by the node holding it. */
 export const NODE_FILE_PATH = "/node/files";
+
+/** `POST /node/bridge` — what a PC's agent hooks saw, with the node's own credential. */
+export const NODE_BRIDGE_PATH = "/node/bridge";
 
 const screenUploads = new WeakSet<Readable>();
 
@@ -1031,7 +1036,19 @@ function handleRead(
     };
   }
 
+  if (segments.length === 1 && segments[0] === "live-sessions") {
+    return { status: 200, body: { sessions: listLiveSessions(deps.kernel.db) } };
+  }
+
   const [collection, id, sub] = segments;
+
+  if (collection === "live-sessions" && sub === "entries" && segments.length === 3) {
+    const entries = listLiveEntries(deps.kernel.db, id ?? "");
+
+    return entries === undefined
+      ? { status: 404, body: errorBody("not_found", "live session not found") }
+      : { status: 200, body: { entries } };
+  }
 
   if (id === undefined || !UuidSchema.safeParse(id).success) {
     return { status: 404, body: errorBody("not_found", "No such resource") };
@@ -1230,6 +1247,15 @@ function handleNodeAttachment(
 }
 
 /** The node presenting `authorization`, when its credential verifies. */
+/** A body as JSON, or undefined for one that is not. */
+function jsonOf(raw: Buffer): unknown {
+  try {
+    return JSON.parse(raw.toString("utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 function verifiedNode(deps: ApiDeps, authorization: string | undefined): string | undefined {
   const presented = parseNodeAuthorization(authorization);
 
@@ -1963,6 +1989,28 @@ export async function handleRequest(
       }
 
       send(res, result.status, result.body, correlationId);
+      return;
+    }
+
+    // Node realm too. Answered with no body: the hook that sent it is gone by then.
+    if (req.method === "POST" && url.pathname === NODE_BRIDGE_PATH) {
+      const nodeId = verifiedNode(deps, headerValue(req.headers.authorization));
+      const raw = nodeId === undefined ? undefined : await readBody(req, MAX_BODY_BYTES);
+      const event =
+        raw === undefined || raw === "too_large"
+          ? undefined
+          : BridgeEventSchema.safeParse(jsonOf(raw));
+
+      if (nodeId === undefined) {
+        send(res, 401, errorBody("unauthorized", "A node credential is required"), correlationId);
+      } else if (event?.success !== true) {
+        send(res, 400, errorBody("invalid_bridge_event", "Not a bridge event"), correlationId);
+      } else {
+        recordBridgeEvent(deps.kernel, nodeId, event.data);
+        res.writeHead(204, { "x-correlation-id": correlationId });
+        res.end();
+      }
+
       return;
     }
 

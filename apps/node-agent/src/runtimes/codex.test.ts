@@ -792,7 +792,7 @@ describe("the Codex App Server runtime", () => {
 
     expect(s?.file).toBe("C:\\tools\\codex.exe");
     expect(s?.cwd).toBe("C:\\work");
-    expect(s?.env).toEqual({ PATH: "C:\\bin" });
+    expect(s?.env).toEqual({ PATH: "C:\\bin", NOCTIS_RUNTIME_SESSION: "1" });
     expect(s?.args.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
     expect(s?.args).toEqual(
       expect.arrayContaining([

@@ -103,7 +103,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 43 tables", () => {
+  it("applies every migration and creates all 45 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -131,7 +131,7 @@ describe("migrate", () => {
     };
     db.close();
 
-    expect(row.c).toBe(43);
+    expect(row.c).toBe(45);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -144,6 +144,8 @@ describe("migrate", () => {
         "turn_attachments",
         "passcode",
         "passcode_unlocks",
+        "live_sessions",
+        "live_session_entries",
       ]),
     );
     expect(indexes).toEqual(
@@ -156,6 +158,8 @@ describe("migrate", () => {
         "idx_sessions_cookie_hash",
         "idx_sessions_expires_at",
         "idx_push_subscriptions_session",
+        "idx_live_sessions_updated",
+        "idx_live_session_entries_session",
       ]),
     );
     expect(approvals).toEqual(
@@ -178,7 +182,7 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(14);
+    expect(version.v).toBe(15);
     expect(vaultItems).toContain("sensitive");
   });
 });

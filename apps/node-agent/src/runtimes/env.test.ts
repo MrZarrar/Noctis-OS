@@ -14,7 +14,7 @@ describe("childEnvironment", () => {
 
     const child = childEnvironment(base);
 
-    expect(child).toEqual({ PATH: "C:\\bin", HOME: "C:\\Users\\x" });
+    expect(child).toEqual({ PATH: "C:\\bin", HOME: "C:\\Users\\x", NOCTIS_RUNTIME_SESSION: "1" });
 
     for (const key of BILLING_KEYS) {
       expect(Object.keys(child).map((k) => k.toUpperCase())).not.toContain(key);

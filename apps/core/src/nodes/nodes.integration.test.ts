@@ -1442,3 +1442,90 @@ describe("runtime frames", () => {
     expect(node.closed()?.code).toBe(1008);
   });
 });
+
+describe("the live bridge", () => {
+  type Row = Record<string, unknown>;
+
+  async function report(core: TestCore, authorization: string, event: Record<string, unknown>) {
+    const response = await fetch(`${core.base}/node/bridge`, {
+      method: "POST",
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify({ providerId: "claude", sessionRef: "vs-1", cwd: "C:\\app", ...event }),
+    });
+
+    return response.status;
+  }
+
+  it("THE GATE: a PC's hooks become a live session the owner reads, from start to end", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core, { hostId: "work" });
+    const bearer = `Bearer ${paired.nodeId}.${paired.credential}`;
+
+    expect(await report(core, bearer, { kind: "start" })).toBe(204);
+    expect(await report(core, bearer, { kind: "prompt", text: "Fix the build" })).toBe(204);
+    expect(await report(core, bearer, { kind: "reply", text: "Fixed: a missing import." })).toBe(
+      204,
+    );
+
+    const listed = (await read(core, "/live-sessions")).body.sessions as Row[];
+
+    expect(listed).toEqual([
+      expect.objectContaining({
+        nodeId: paired.nodeId,
+        hostId: "work",
+        providerId: "claude",
+        sessionRef: "vs-1",
+        cwd: "C:\\app",
+        title: "Fix the build",
+        status: "live",
+      }),
+    ]);
+
+    const id = listed[0]?.id as string;
+    const entries = (await read(core, `/live-sessions/${id}/entries`)).body.entries as Row[];
+
+    expect(entries.map((entry) => [entry.role, entry.body])).toEqual([
+      ["user", "Fix the build"],
+      ["agent", "Fixed: a missing import."],
+    ]);
+
+    expect(await report(core, bearer, { kind: "end" })).toBe(204);
+    expect(((await read(core, "/live-sessions")).body.sessions as Row[])[0]?.status).toBe("ended");
+
+    // Each change is a ledger event, so an open page reads again.
+    const events = (await read(core, "/events?limit=100")).body.events as Row[];
+    expect(events.filter((event) => event.type === "bridge.session_updated.v1")).toHaveLength(4);
+  });
+
+  it("a session that sends a prompt first, or comes back after it ended, is live again", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const bearer = `Bearer ${paired.nodeId}.${paired.credential}`;
+
+    await report(core, bearer, { kind: "prompt", text: "Hello" });
+    await report(core, bearer, { kind: "end" });
+    await report(core, bearer, { kind: "prompt", text: "Resumed" });
+
+    const listed = (await read(core, "/live-sessions")).body.sessions as Row[];
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ title: "Hello", status: "live" });
+  });
+
+  it("refuses anything but a paired node's own credential, and a body it cannot read", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+
+    expect(await report(core, `Bearer ${TOKEN}`, { kind: "start" })).toBe(401);
+    expect(await report(core, `Bearer ${paired.nodeId}.${"0".repeat(64)}`, { kind: "start" })).toBe(
+      401,
+    );
+    expect(
+      await report(core, `Bearer ${paired.nodeId}.${paired.credential}`, { kind: "nonsense" }),
+    ).toBe(400);
+    expect((await read(core, "/live-sessions")).body.sessions).toEqual([]);
+    expect(
+      (await read(core, "/live-sessions/0199a000-0000-7000-8000-000000000001/entries")).status,
+    ).toBe(404);
+  });
+});

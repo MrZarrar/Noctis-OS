@@ -3650,3 +3650,22 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 
 - **`npx eslint .` fails on this PC** because it walks the ignored `.superpowers/` scratch folder, which holds a Hermes
   checkout with its own ESLint config. Linting the tracked folders passes.
+
+### 2026-10-12 The live bridge, phase 1: a read-only mirror of VS Code and Codex sessions
+
+| Clause                                                                       | State       | Evidence                                                                                                                          |
+| ---------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Hooks map to start, prompt, reply, end; Noctis's own sessions say nothing    | implemented | `bridge.test.ts` (7): red (no module), then green                                                                                 |
+| The installer adds its hooks beside the owner's, once, and removes only them | implemented | `bridge.test.ts` "the bridge's hooks in an agent's settings" (2)                                                                  |
+| THE GATE: a PC's hooks become a live session, start to end, with events      | implemented | `nodes.integration.test.ts` "the live bridge" (3): red (401, no route), then green                                                |
+| Live sessions in Threads, read only, following new entries                   | implemented | `chat.test.mjs` "shows a session the PC's hooks report…": red (no section), red (path not proxied), then green                    |
+| `/digest` and `/live-sessions` reach the core, not the page                  | implemented | `api.test.ts` (3): red, then green; the live core answered `/digest` with `text/html` before                                      |
+| The compiled hook against a real core                                        | implemented | Throwaway core on port 8811: three hook runs exit 0 with empty stdout, one session and two entries; a marked run recorded nothing |
+| Live on the work PC                                                          | not yet     | Core and node restarted with this build; hooks not installed (owner's opt-in)                                                     |
+
+| Command                                                                    | Result                                                                 |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `npx vitest run`                                                           | 2216 passed, 2 failed (`node-agent/files.test.ts`)                     |
+| `npx tsc -b`; `npx eslint apps packages scripts`; `npx prettier --check .` | exit 0                                                                 |
+| `node --test apps/web/e2e/chat.test.mjs` (msedge)                          | exit 0; 11 tests                                                       |
+| `node --test apps/web/e2e/presence.test.mjs` (msedge)                      | exit 0; 3 tests alone (one timed out when run beside two other suites) |

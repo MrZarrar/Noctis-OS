@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -761,4 +761,43 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
     );
     assert.ok(after.body.roots.some((root) => root.grantId === "scratch"));
   });
+
+  it(
+    "shows a session the PC's hooks report, read only, as it goes",
+    { timeout: 60_000 },
+    async () => {
+      const { nodeId, credential } = JSON.parse(readFileSync(join(nodeHome, "node.json"), "utf8"));
+      const report = (event) =>
+        fetch(`${CORE_URL}/node/bridge`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${nodeId}.${credential}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            providerId: "claude",
+            sessionRef: "vs-1",
+            cwd: scratch,
+            ...event,
+          }),
+        }).then((response) => assert.equal(response.status, 204));
+
+      await report({ kind: "start" });
+      await report({ kind: "prompt", text: "Fix the build" });
+      await report({ kind: "reply", text: "Fixed: a missing import." });
+
+      await openChat();
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: /^Fix the build/ }).click();
+
+      const live = page.getByRole("list", { name: "Live session" });
+
+      await live.getByText("Fixed: a missing import.", { exact: true }).waitFor();
+      assert.equal(await page.getByRole("textbox", { name: "Message Vesper" }).count(), 0);
+
+      // It follows the session while it is open.
+      await report({ kind: "prompt", text: "Now the tests" });
+      await live.getByText("Now the tests", { exact: true }).waitFor();
+    },
+  );
 });

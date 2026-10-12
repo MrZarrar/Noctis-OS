@@ -328,8 +328,9 @@ describe("headless kernel loop", () => {
     // subscriptions that die with the session they belong to; 0009 the
     // attachments a prompt carries and the turns that carried them; 0010 the
     // child threads a delegation runs on; 0011 named and pinned threads; 0012
-    // the session a thread adopted; 0013 archived conversations.
-    expect(diagnostics.body.schemaVersion).toBe(14);
+    // the session a thread adopted; 0013 archived conversations; 0014 the
+    // Vault passcode; 0015 the live bridge's sessions.
+    expect(diagnostics.body.schemaVersion).toBe(15);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {

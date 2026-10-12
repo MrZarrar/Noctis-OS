@@ -102,6 +102,24 @@ costs are elsewhere:
 - What would make it stricter is a `PreToolUse` gate that stops consequential calls (push, send, publish) until you
   confirm in Noctis. That is how Noctis gates its own sessions. For bridged sessions it is **not** proposed by default.
 
+**Built, phase 1 (the live mirror), 12 October 2026:**
+
+- **Checked on this PC first.** Claude Code's hooks carry what the mirror needs: `UserPromptSubmit` has the prompt
+  and `Stop` has `last_assistant_message`, so nothing reads transcripts. Codex runs the same hook-file format, but it
+  skipped hooks given as config overrides, because Codex runs only hooks the owner has trusted (`/hooks`).
+- **The hook** (`apps/node-agent/dist/bridge-hook.js`) posts each session start, prompt, reply and end to the core's
+  node realm (`POST /node/bridge`) with the PC's own node credential, so no new secret is needed. It prints nothing and
+  always exits 0, and it says nothing for Noctis's own runtime sessions, which carry `NOCTIS_RUNTIME_SESSION=1`.
+- **Off until installed, per PC:** `node apps/node-agent/dist/main.js bridge install` adds the hooks to
+  `~/.claude/settings.json` and `~/.codex/hooks.json` beside the owner's own, keeping a `.before-noctis` copy of
+  each file; `bridge uninstall` takes only them out again.
+- **Threads, Conversations, Live sessions** lists them (only once one exists) and opens one read only, following it
+  while open. **Continue in Noctis** appears when the session's folder is shared, and adopts it as today.
+- **Found on the way:** `/digest` was missing from the core's list of API paths, so the live core answered it with the
+  web page and Presence never showed the digest line. Fixed with `/live-sessions`.
+
+**Next:** phase 2, approvals from the phone through `PermissionRequest`.
+
 ## 3. Vesper's identity does not survive on old sessions
 
 **Finding:** the owner asked a Vesper thread on Claude "what's your name" and got "I'm Claude ... Sonnet 5". The thread

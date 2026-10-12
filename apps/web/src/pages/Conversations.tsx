@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { ConversationalIdentityId } from "@noctis/contracts";
+import type { ConversationalIdentityId, LiveSession } from "@noctis/contracts";
 import { ConversationSummarySchema, ExternalSessionSchema } from "@noctis/contracts";
 import { identityAccent, semantic, spacing, typography } from "@noctis/ui";
 import { z } from "zod";
@@ -9,6 +9,7 @@ import { folderName } from "../conversation/PromptForm.js";
 import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { SectionHeading, buttonStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { LiveSessionList, LiveSessionView } from "./LiveSessions.js";
 import { agentName, ago, conversationLabel, pinnedTo } from "./conversations-view.js";
 
 /**
@@ -25,7 +26,11 @@ const CreatedSchema = z.object({ id: z.string() }).loose();
 type Summary = z.infer<typeof ListSchema>["conversations"][number];
 type Session = z.infer<typeof SessionsSchema>["sessions"][number];
 
-type Step = { kind: "list" } | { kind: "places" } | { kind: "sessions"; place: RuntimeRootOption };
+type Step =
+  | { kind: "list" }
+  | { kind: "places" }
+  | { kind: "sessions"; place: RuntimeRootOption }
+  | { kind: "live"; session: LiveSession };
 
 const rowStyle = {
   ...glass,
@@ -395,7 +400,33 @@ export function Conversations({
               })}
             </ul>
           )}
+          {!archived && (
+            <LiveSessionList
+              transport={transport}
+              onOpen={(session) => {
+                setStep({ kind: "live", session });
+              }}
+            />
+          )}
         </>
+      )}
+
+      {step.kind === "live" && (
+        <LiveSessionView
+          transport={transport}
+          session={step.session}
+          roots={roots}
+          busy={busy}
+          onContinue={(root) =>
+            void openCreated("conversation.adopt_session", {
+              nodeId: step.session.nodeId,
+              rootGrantId: root.grantId,
+              providerId: step.session.providerId,
+              sessionRef: step.session.sessionRef,
+              title: step.session.title ?? "Live session",
+            })
+          }
+        />
       )}
 
       {step.kind === "places" && (

@@ -3,6 +3,7 @@ export * from "./primitives.js";
 export * from "./api.js";
 export * from "./artifact.js";
 export * from "./attachment.js";
+export * from "./bridge.js";
 export * from "./authority.js";
 export * from "./command.js";
 export * from "./events.js";
