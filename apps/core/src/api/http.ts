@@ -7,6 +7,7 @@ import {
   ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
   RenameConversationThreadCommandSchema,
+  StartFreshConversationCommandSchema,
   AttentionStateSchema,
   CancelConversationTurnCommandSchema,
   CancelNodeJobCommandSchema,
@@ -86,6 +87,7 @@ import {
   listChildThreads,
   listConversations,
   renameThread,
+  startFresh,
 } from "../conversation/threads.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
@@ -600,6 +602,11 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   "conversation.archive_thread": defineCommand(
     ArchiveConversationThreadCommandSchema,
     archiveThread,
+    (db, id) => getThread(db, id),
+  ),
+  "conversation.start_fresh": defineCommand(
+    StartFreshConversationCommandSchema,
+    startFresh,
     (db, id) => getThread(db, id),
   ),
   "conversation.adopt_session": defineDepsCommand(

@@ -5,6 +5,7 @@ import type {
   ConversationThread,
   RenameConversationThreadCommand,
   RuntimeProviderId,
+  StartFreshConversationCommand,
 } from "@noctis/contracts";
 import { ConversationSummarySchema, ConversationThreadSchema } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
@@ -157,6 +158,45 @@ export function archiveThread(
     command.idempotencyKey,
     command.threadId,
     { archivedAt: command.archived ? new Date(kernel.clock.now()).toISOString() : null },
+  );
+}
+
+/**
+ * The free thread becomes a named one where it stands, so its history and its
+ * agent sessions stay together and it can still be continued from the list.
+ * Nothing creates the new free thread here: the next free-chat message does,
+ * and it starts every agent on a session of its own.
+ */
+export function startFresh(
+  kernel: Kernel,
+  _context: CommandContext,
+  command: StartFreshConversationCommand,
+): Result<ConversationThread> {
+  // The free thread's id is the result, so a replay names the thread it moved.
+  const current = getThreadForIdentity(kernel.db, command.identityId);
+
+  if (current === undefined) {
+    return conflict({ kind: "not_found", entity: "conversation", id: command.identityId });
+  }
+
+  return runCommand<ConversationThread>(
+    kernel,
+    { scope: "conversation.start_fresh", key: command.idempotencyKey, resultId: current.id },
+    (tx) => {
+      const free = getThreadForIdentity(tx, command.identityId);
+
+      if (free?.id !== current.id) {
+        return conflict({ kind: "not_found", entity: "conversation", id: command.identityId });
+      }
+
+      tx.prepare(
+        `UPDATE identity_threads
+            SET kind = 'named', revision = revision + 1, updated_at = ?
+          WHERE id = ?`,
+      ).run(new Date(kernel.clock.now()).toISOString(), free.id);
+
+      return ok({ value: getThread(tx, free.id) ?? free, events: [] });
+    },
   );
 }
 

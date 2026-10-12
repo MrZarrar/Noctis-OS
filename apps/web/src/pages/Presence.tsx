@@ -22,7 +22,14 @@ export interface PresenceProps {
     Partial<
       Pick<
         ConversationState,
-        "messages" | "turns" | "streaming" | "pendingApprovals" | "error" | "outputUrl"
+        | "thread"
+        | "messages"
+        | "turns"
+        | "streaming"
+        | "pendingApprovals"
+        | "error"
+        | "outputUrl"
+        | "startFresh"
       >
     >;
   /** Whether a composer has the focus; the app's core reads the same signal. */
@@ -338,6 +345,30 @@ export function Presence({
           }}
           {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
         />
+        {/* Not mid-turn: the turn would carry on in a thread Presence had just let go of. */}
+        {conversation.thread !== undefined &&
+          conversation.startFresh !== undefined &&
+          (state === "idle" || state === "listening") && (
+            <button
+              type="button"
+              onClick={() => {
+                setSent(false);
+                void conversation.startFresh?.();
+              }}
+              style={{
+                display: "block",
+                margin: "8px auto 0",
+                minHeight: 44,
+                background: "transparent",
+                border: "none",
+                color: typography.color.muted,
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              New chat
+            </button>
+          )}
         {error !== undefined && (
           <p role="alert" style={{ color: semantic.error }}>
             {error}

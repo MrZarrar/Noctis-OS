@@ -62,6 +62,7 @@ describe("Threads timeline", () => {
       error: undefined,
       send: () => Promise.resolve(),
       cancel: () => Promise.resolve(),
+      startFresh: () => Promise.resolve(),
       confirm: () => Promise.resolve(),
       decline: () => Promise.resolve(),
       retryElsewhere: () => Promise.resolve(),

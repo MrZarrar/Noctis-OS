@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 
 import {
   TOKEN,
+  coreRead,
   launchOptions,
   startFakeNode,
   startProcess,
@@ -704,5 +705,22 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       });
 
     assert.deepEqual(prevented, { text: false, stray: true });
+  });
+
+  it("starts a new chat from Presence, keeping the old one", { timeout: 60_000 }, async () => {
+    await page.goto(WEB_URL);
+    await prompt("Before the new chat");
+    await page.getByText("Before the new chat", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "New chat" }).click();
+    // Free chat is empty again, so Presence no longer offers to start it over.
+    await page.getByRole("button", { name: "New chat" }).waitFor({ state: "detached" });
+
+    await openChat();
+    await waitFor(readPage, (state) => state.messages.length === 0, "free chat kept its history");
+
+    const listed = await coreRead(CORE_URL, "/conversations?identityId=vesper");
+
+    assert.equal(listed.body.conversations.length, 1);
+    assert.equal(listed.body.conversations[0].kind, "named");
   });
 });

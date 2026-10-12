@@ -1686,4 +1686,28 @@ describe("many conversations", () => {
       expect(refused.status).toBe(404);
     }
   });
+
+  it("starts free chat afresh, keeping the old one as a conversation on the list", async () => {
+    const core = await startTestCore();
+    const startFresh = (key: string) =>
+      command(core, "conversation.start_fresh", { idempotencyKey: key, identityId: "vesper" });
+
+    expect((await startFresh("nothing-yet")).status).toBe(404);
+
+    await setDefault(core);
+    const old = (await send(core, "old-free")).body.threadId as string;
+
+    const fresh = await startFresh("fresh");
+    expect(fresh.status).toBe(200);
+    expect(fresh.body).toMatchObject({ id: old, kind: "named" });
+    expect((await read(core, "/threads?identityId=vesper")).status).toBe(404);
+
+    const next = (await send(core, "new-free")).body.threadId as string;
+    expect(next).not.toBe(old);
+    expect((await read(core, "/threads?identityId=vesper")).body.id).toBe(next);
+
+    const listed = (await read(core, "/conversations?identityId=vesper")).body
+      .conversations as Body[];
+    expect(listed.map((conversation) => conversation.id).sort()).toEqual([old, next].sort());
+  });
 });

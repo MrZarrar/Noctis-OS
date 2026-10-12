@@ -166,6 +166,14 @@ export const ArchiveConversationThreadCommandSchema = z
   })
   .strict();
 
+/**
+ * Free chat starts again: the current free thread joins the list as an ordinary
+ * conversation, sessions and all, and the next message opens a new one.
+ */
+export const StartFreshConversationCommandSchema = z
+  .object({ ...CommandBase, identityId: ConversationalIdentityIdSchema })
+  .strict();
+
 export const SendConversationMessageCommandSchema = z
   .object({
     ...CommandBase,
@@ -216,6 +224,7 @@ export type RenameConversationThreadCommand = z.infer<typeof RenameConversationT
 export type ArchiveConversationThreadCommand = z.infer<
   typeof ArchiveConversationThreadCommandSchema
 >;
+export type StartFreshConversationCommand = z.infer<typeof StartFreshConversationCommandSchema>;
 export type CancelConversationTurnCommand = z.infer<typeof CancelConversationTurnCommandSchema>;
 export type DeclineAuthorityCommand = z.infer<typeof DeclineAuthorityCommandSchema>;
 export type SetIdentityDefaultModelCommand = z.infer<typeof SetIdentityDefaultModelCommandSchema>;

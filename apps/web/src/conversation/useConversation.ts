@@ -147,6 +147,8 @@ export interface ConversationActions {
    */
   send: (text: string, options?: SendOptions) => Promise<void>;
   cancel: (jobId: string) => Promise<void>;
+  /** Free chat starts again; the old one stays on the conversation list. */
+  startFresh: () => Promise<void>;
   confirm: (requestId: string, typedConfirmation?: string) => Promise<void>;
   decline: (requestId: string, reason?: string) => Promise<void>;
 }
@@ -714,6 +716,11 @@ export function createConversation(
         await loadTurns(state.thread.id);
       }
     },
+    startFresh: async () => {
+      if ((await command("conversation.start_fresh", { identityId })) !== undefined) {
+        await loadThread();
+      }
+    },
     confirm: async (requestId, typedConfirmation) => {
       await command("authority.confirm", {
         requestId,
@@ -775,6 +782,7 @@ export function useConversation(
     send: store?.send ?? noTransport,
     retryElsewhere: store?.retryElsewhere ?? noTransport,
     cancel: store?.cancel ?? noTransport,
+    startFresh: store?.startFresh ?? noTransport,
     confirm: store?.confirm ?? noTransport,
     decline: store?.decline ?? noTransport,
   };

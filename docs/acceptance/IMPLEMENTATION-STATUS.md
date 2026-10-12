@@ -3586,3 +3586,27 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 - **Existing notes are flagged at the next reindex** after the migration; until then nothing reads as sensitive.
 - **`maximum-scale=1` also stops pinch zoom** on browsers that honour it. iOS Safari ignores it for pinch.
 - **The digest's tests were written red-first except two** (`/digest` route, `Notifier.send`), added after the code.
+
+### 2026-10-12 A new chat from Presence
+
+- **New chat.** `conversation.start_fresh` turns the identity's free thread into a named conversation where it stands,
+  sessions and all; the next free-chat message creates a new free thread. Presence offers it under the composer when
+  free chat has started and no turn is running.
+
+| Clause                                                               | State       | Evidence                                                                                         |
+| -------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------ |
+| The old free thread joins the list; the next message opens a new one | implemented | `conversation.integration.test.ts` "starts free chat afresh…": red (404, no command), then green |
+| The store asks the core and shows free chat empty                    | implemented | `useConversation.test.ts` "starts free chat afresh…": red (`startFresh` missing), then green     |
+| From Presence, the button empties free chat and keeps the old one    | implemented | `chat.test.mjs` "starts a new chat from Presence…": red (no button), then green                  |
+| Live on the work PC                                                  | not yet     | Needs the core and web redeployed                                                                |
+
+| Command                                                                                                       | Result                                             |
+| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `npx vitest run`                                                                                              | 2199 passed, 2 failed (`node-agent/files.test.ts`) |
+| `npx tsc -b`; `npx eslint` on changed packages; `npx prettier --check .`                                      | exit 0                                             |
+| `node --test apps/web/e2e/chat.test.mjs apps/web/e2e/presence.test.mjs` (`NOCTIS_E2E_BROWSER_CHANNEL=msedge`) | exit 0; 12 tests                                   |
+
+#### Known, not fixed
+
+- **`node-agent/files.test.ts` fails twice on this PC** for a reason unrelated to this change: the temp folder is the
+  8.3 short path (`MUSHAF~1.ZAR`) and the session list reports the long one.

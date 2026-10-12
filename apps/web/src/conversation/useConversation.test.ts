@@ -398,6 +398,35 @@ describe("createConversation", () => {
     store.close();
   });
 
+  it("starts free chat afresh and shows it empty until the next message", async () => {
+    const scripted = core({
+      "POST /commands/conversation.start_fresh": {
+        status: 200,
+        body: { ...thread, kind: "named" },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+
+    store.start();
+    await vi.waitFor(() => expect(store.getState().turns).toHaveLength(1));
+
+    // The old free thread is a conversation on the list now, so free chat is not started.
+    scripted.answer("GET /threads?identityId=vesper", {
+      status: 404,
+      body: { error: { code: "not_found", message: "thread not found" } },
+    });
+    await store.startFresh();
+
+    const asked = scripted.calls.find((call) => call.path === "/commands/conversation.start_fresh");
+
+    expect(asked?.body).toMatchObject({ identityId: "vesper" });
+    expect(store.getState().thread).toBeUndefined();
+    expect(store.getState().messages).toEqual([]);
+    expect(store.getState().turns).toEqual([]);
+
+    store.close();
+  });
+
   it("lists the threads agents delegated from this one, and finds a new one when it starts", async () => {
     const scripted = core();
     const store = createConversation(scripted.transport, "vesper", undefined);
