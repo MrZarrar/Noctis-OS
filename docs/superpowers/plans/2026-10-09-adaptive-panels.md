@@ -2,7 +2,73 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Read first: six owner decisions (D1 to D6) are listed in the next section.** Slice 1 (P1 to P7) waits on D1 and D2. D3 to D6 shape later tasks and have defaults the plan is written to; a different answer changes only the task named beside it.
+> **Read first: the owner's decisions of 12 October 2026 (next section) settle D1 to D6 and the open questions, and add tasks P15 to P17.** Slice 1 can start once the owner confirms answer 11.
+
+## Owner decisions, 12 October 2026
+
+These supersede the D1 to D6 recommendations below wherever they differ. Answers are numbered as the questions were
+asked in the discussion.
+
+| #   | Question                        | Decided                                                                                                                                                                                                                                                                                        |
+| --- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Where do panels show?           | **In Threads, owned by the conversation, and in Presence as pop-ups at the side.** Presence's panels are not a conversation's: a reminder that is due, or a short live brief of what an agent is doing now ("Hermes: running the nightly backup, 4 min").                                      |
+| 2   | Which pages open as panels?     | **Any page, wherever it is needed,** if that is not much extra work. If it is, Presence and Threads host panels in v1, and either can show any other page as a panel.                                                                                                                          |
+| 3   | Can the owner open a panel?     | **Yes, with a + button**, more than one at a time, to arrange and resize as the owner likes.                                                                                                                                                                                                   |
+| 4   | What opens without being asked? | **Media a turn produces.** On the phone a new panel arrives as a small button. A panel may use a large part of the phone screen, but never takes it over without a tap. **Later:** a panel popped out into its own window, always on top, movable to another monitor.                          |
+| 5   | Arranging                       | **Drag and drop is preferred but deferred.** v1 has Focus, Pin, Place, a size, and Close.                                                                                                                                                                                                      |
+| 6   | Desktop focus                   | **The conversation shrinks to the companion column.**                                                                                                                                                                                                                                          |
+| 7   | What a panel can do             | **It can offer choices** (pick, compare, "use this"), which send a message to the conversation. Writing or changing anything from inside a panel is deferred.                                                                                                                                  |
+| 8   | A panel that fails to update    | **Keeps its last good content, with "Couldn't update · Retry".** Never blank.                                                                                                                                                                                                                  |
+| 9   | Supporting panels               | **Update on their own.** The main panel never changes under the owner; it offers the new version instead.                                                                                                                                                                                      |
+| 10  | Phone                           | **Panel buttons above the message box. Tapping one opens it large; back returns to the previous view.**                                                                                                                                                                                        |
+| 11  | The old Command canvas          | **Explained, owner to confirm.** It is a hidden page from an earlier phase that shows an Objective's Surfaces with the same frame component the panels use. Restyling that frame once updates both. Proposed: once Objective threads have panels, retire the Command page rather than keep it. |
+| 12  | A model helping with layout     | **Deferred.** Layout is coded rules. The owner wants it to stay usable with no Claude usage left, which coded rules give.                                                                                                                                                                      |
+
+### How "adaptive and alive" works without a layout model (12)
+
+Two things decide what shows, and neither is a separate model call:
+
+- **What exists is decided by events.** A turn produced an image, wrote a file, or recalled Vault notes. An approval is
+  waiting, a reminder is due, an agent or a scheduled task is running. Each of these is a fact the core already records,
+  so each can become a panel by a coded rule, with a role (main, supporting, attention) and a priority.
+- **The agent doing the work proposes the rest** as part of its own turn, with `noctis_propose_surface`: a plan, a
+  draft, a shortlist, a comparison. It already knows what it is doing, so this costs no extra call. It names the kind,
+  the role and the priority, never the position.
+- **The compositor decides where.** It ranks focus, then pinned, then role, priority and recency, and fits the result
+  to the screen. Its rules are pure and tested.
+
+With no Claude usage left, the event-made panels and the arrangement keep working, and only agent-proposed ones stop.
+A local model through Hermes can propose them instead. A layout model (Haiku) can be added later, for re-ranking
+alone, on top of the same rules.
+
+### What this changes in the tasks below
+
+The step-level detail for new and changed tasks is written at the start of each slice (superpowers:writing-plans).
+
+- **P1 and P2:** a panel's owner is a conversation **or Presence**.
+- **P3:** add coded rules for the event-made panels beyond media: a running agent or scheduled task (the live brief),
+  and later a due reminder.
+- **P5:** the frame gets **a size** (small, medium, large) beside Focus, Pin, Place and Close, plus the **failed**
+  state with Retry (8), and the **"new version ready"** state for the main panel (9).
+- **P7:** a tapped panel opens as a large sheet, not the whole screen, and back closes it (4, 10).
+- **P8:** document panels stay read only. Choice actions (7) are a new small contract: a panel action carries a label
+  and the message it sends.
+- **New, Slice 1:**
+  - **P15. Presence side panels.** The pop-up column on desktop and a small button row on the phone. First kind: the
+    live brief, made from running jobs and task runs by a coded rule, not a model.
+- **New, Slice 2:**
+  - **P16. The + button and page panels.** It lists every page that can be a panel (Files, Vault, Approvals, Nodes,
+    and later Reminders and Scheduled tasks), and opens one in the current conversation or in Presence. A page panel
+    starts from its host's context: Files at the conversation's folder, Vault at its recall. It reuses the page's own
+    component, so nothing is drawn twice.
+  - **P17. Choices.** Panel actions send a message to the conversation, tested end to end with a shortlist.
+- **Later (not in this plan):**
+  - drag and drop, and free resizing on top of the same overrides;
+  - panels on every other page (2), if not done in P16;
+  - **popped-out windows.** Chrome and Edge's Document Picture-in-Picture API opens an always-on-top window that can show
+    any part of the page and be moved to another monitor, with no Tauri needed. Tauri's native windows remain the
+    fallback.
+  - retiring the Command page (11), once the owner confirms.
 
 ## Discussion update: 12 October 2026
 

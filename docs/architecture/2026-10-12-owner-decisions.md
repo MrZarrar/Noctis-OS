@@ -209,3 +209,23 @@ pair stored both ways, so they drew twice as bright. Every node also glowed addi
   longer sit inside the shell or grow into squares when zoomed.
 
 **To see it on the work PC:** deploy the core and web build, then reindex the Vault.
+
+## 6. Adaptive panels: the decisions settled
+
+**Decided (owner, 12 October 2026).** The full table is at the top of
+`docs/superpowers/plans/2026-10-09-adaptive-panels.md`. In short:
+
+- Panels show in Threads, owned by the conversation, and in **Presence as side pop-ups**: a due reminder, or a live brief
+  of what an agent is doing now.
+- Any page can open as a panel, through a **+ button**. Several panels can be open at once, with a size each.
+- **Drag and drop is preferred but deferred.**
+- Media opens by itself. On the phone, a panel arrives as a small button and opens large on a tap; back returns.
+- Focus shrinks the conversation to the companion column.
+- Panels offer choices, which send a message to the conversation. Writing from a panel is deferred.
+- A panel that fails to update keeps its last content, with Retry. Supporting panels update on their own, and the main
+  panel never changes under the owner.
+- **Layout is coded rules**, so it keeps working with no Claude usage left. A layout model is deferred.
+- **Later:** popped-out, always-on-top panel windows for another monitor. The browser's Document Picture-in-Picture
+  API can do this without Tauri.
+
+**Open:** retire the hidden Command page once Objective threads have panels (answer 11, owner to confirm).
