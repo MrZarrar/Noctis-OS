@@ -53,6 +53,18 @@ function input(prompt: string, signal = new AbortController().signal): RuntimeTu
 }
 
 describe("the fake runtime", () => {
+  it("uploads a complete tiny PNG for IMAGE turns", async () => {
+    const r = recorder();
+    let bytes: Uint8Array | undefined;
+    r.sink.upload = (upload) => {
+      bytes = upload.bytes;
+      return Promise.resolve("0199a000-0000-7000-8000-0000000000a7");
+    };
+    await createFakeRuntime().turn(input("IMAGE: a frame"), r.sink);
+    expect(bytes?.length).toBeGreaterThan(8);
+    expect(Array.from(bytes?.slice(12, 16) ?? [])).toEqual([73, 72, 68, 82]);
+    expect(r.items.some((item) => item.kind === "output")).toBe(true);
+  });
   it("probes as an available ChatGPT Codex offering one model", async () => {
     expect(await createFakeRuntime().probe()).toEqual(FAKE_PROBE);
   });

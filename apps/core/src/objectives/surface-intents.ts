@@ -6,12 +6,14 @@ import type {
   ReleaseSurfaceOverrideCommand,
   SetSurfaceOverrideCommand,
   SurfaceIntent,
+  SurfaceOwner,
   SurfaceOverride,
   UpsertSurfaceIntentCommand,
 } from "@noctis/contracts";
 import {
   CompositionPlanSchema,
   SurfaceIntentSchema,
+  SurfaceOwnerSchema,
   SurfaceOverrideSchema,
 } from "@noctis/contracts";
 import type { DisplayFacts, Result } from "@noctis/domain";
@@ -29,7 +31,9 @@ import { runCommand } from "../kernel.js";
 
 type IntentRow = {
   id: string;
-  objective_id: string;
+  objective_id: string | null;
+  thread_id: string | null;
+  presence: number | null;
   kind: string;
   role: string;
   persistence: string;
@@ -57,7 +61,9 @@ type OverrideRow = {
 
 type SnapshotRow = {
   id: string;
-  objective_id: string;
+  objective_id: string | null;
+  thread_id: string | null;
+  presence: number | null;
   layout_id: string;
   display_fingerprint: string;
   plan_json: string;
@@ -65,14 +71,14 @@ type SnapshotRow = {
   generated_at: string;
 };
 
-const INTENT_COLUMNS = `id, objective_id, kind, role, persistence, lifecycle, priority, min_size,
+const INTENT_COLUMNS = `id, objective_id, thread_id, presence, kind, role, persistence, lifecycle, priority, min_size,
                         preferred_region, source_ids_json, artifact_ids_json, payload_version,
                         payload_json, requested_at`;
 
 const OVERRIDE_COLUMNS = `id, surface_id, client_id, display_fingerprint, region, size,
                           created_at, released_at`;
 
-const SNAPSHOT_COLUMNS = `id, objective_id, layout_id, display_fingerprint, plan_json,
+const SNAPSHOT_COLUMNS = `id, objective_id, thread_id, presence, layout_id, display_fingerprint, plan_json,
                           reason_codes_json, generated_at`;
 
 /**
@@ -85,10 +91,35 @@ function sourceIdentity(sourceIds: readonly string[]): string {
   return JSON.stringify([...sourceIds].sort());
 }
 
+function ownerOf(value: {
+  objectiveId?: string | undefined;
+  threadId?: string | undefined;
+  presence?: true | undefined;
+}): SurfaceOwner {
+  const owner = SurfaceOwnerSchema.parse({
+    objectiveId: value.objectiveId,
+    threadId: value.threadId,
+    presence: value.presence,
+  });
+  if (owner.objectiveId !== undefined) return { objectiveId: owner.objectiveId };
+  if (owner.threadId !== undefined) return { threadId: owner.threadId };
+  return { presence: true };
+}
+
+function ownerQuery(owner: SurfaceOwner): { column: string; value: string | number } {
+  if (owner.objectiveId !== undefined) return { column: "objective_id", value: owner.objectiveId };
+  if (owner.threadId !== undefined) return { column: "thread_id", value: owner.threadId };
+  return { column: "presence", value: 1 };
+}
+
 function toIntent(row: IntentRow): SurfaceIntent {
   return SurfaceIntentSchema.parse({
     id: row.id,
-    objectiveId: row.objective_id,
+    ...(row.objective_id !== null
+      ? { objectiveId: row.objective_id }
+      : row.thread_id !== null
+        ? { threadId: row.thread_id }
+        : { presence: true }),
     kind: row.kind,
     role: row.role,
     persistence: row.persistence,
@@ -124,10 +155,12 @@ export function getSurfaceIntent(db: NoctisDatabase, id: string): SurfaceIntent 
   return row === undefined ? undefined : toIntent(row);
 }
 
-export function listSurfaceIntents(db: NoctisDatabase, objectiveId: string): SurfaceIntent[] {
+export function listSurfaceIntents(db: NoctisDatabase, owner: SurfaceOwner): SurfaceIntent[] {
   const rows = db
-    .prepare(`SELECT ${INTENT_COLUMNS} FROM surface_intents WHERE objective_id = ? ORDER BY id`)
-    .all(objectiveId) as IntentRow[];
+    .prepare(
+      `SELECT ${INTENT_COLUMNS} FROM surface_intents WHERE ${ownerQuery(owner).column} = ? ORDER BY id`,
+    )
+    .all(ownerQuery(owner).value) as IntentRow[];
 
   return rows.map(toIntent);
 }
@@ -135,7 +168,7 @@ export function listSurfaceIntents(db: NoctisDatabase, objectiveId: string): Sur
 /** Every override this client holds on this display, released ones included. */
 export function listSurfaceOverrides(
   db: NoctisDatabase,
-  objectiveId: string,
+  owner: SurfaceOwner,
   clientId: string,
   displayFingerprint: string,
 ): SurfaceOverride[] {
@@ -145,10 +178,10 @@ export function listSurfaceOverrides(
               o.created_at, o.released_at
          FROM surface_overrides o
          JOIN surface_intents i ON i.id = o.surface_id
-        WHERE i.objective_id = ? AND o.client_id = ? AND o.display_fingerprint = ?
+        WHERE i.${ownerQuery(owner).column} = ? AND o.client_id = ? AND o.display_fingerprint = ?
         ORDER BY o.id`,
     )
-    .all(objectiveId, clientId, displayFingerprint) as OverrideRow[];
+    .all(ownerQuery(owner).value, clientId, displayFingerprint) as OverrideRow[];
 
   return rows.map(toOverride);
 }
@@ -170,15 +203,15 @@ export function getSnapshot(db: NoctisDatabase, id: string): CompositionSnapshot
 
 export function getSnapshotForDisplay(
   db: NoctisDatabase,
-  objectiveId: string,
+  owner: SurfaceOwner,
   displayFingerprint: string,
 ): CompositionSnapshot | undefined {
   const row = db
     .prepare(
       `SELECT ${SNAPSHOT_COLUMNS} FROM composition_snapshots
-        WHERE objective_id = ? AND display_fingerprint = ?`,
+        WHERE ${ownerQuery(owner).column} = ? AND display_fingerprint = ?`,
     )
-    .get(objectiveId, displayFingerprint) as SnapshotRow | undefined;
+    .get(ownerQuery(owner).value, displayFingerprint) as SnapshotRow | undefined;
 
   return row === undefined
     ? undefined
@@ -187,16 +220,16 @@ export function getSnapshotForDisplay(
 
 function findByIdentity(
   db: NoctisDatabase,
-  objectiveId: string,
+  owner: SurfaceOwner,
   kind: string,
   identity: string,
 ): IntentRow | undefined {
   return db
     .prepare(
       `SELECT ${INTENT_COLUMNS} FROM surface_intents
-        WHERE objective_id = ? AND kind = ? AND source_ids_json = ?`,
+        WHERE ${ownerQuery(owner).column} = ? AND kind = ? AND source_ids_json = ?`,
     )
-    .get(objectiveId, kind, identity) as IntentRow | undefined;
+    .get(ownerQuery(owner).value, kind, identity) as IntentRow | undefined;
 }
 
 /**
@@ -216,12 +249,12 @@ export function upsertSurfaceIntent(
 ): Result<SurfaceIntent> {
   const now = new Date(kernel.clock.now()).toISOString();
   const identity = sourceIdentity(command.sourceIds);
-  const existing = findByIdentity(kernel.db, command.objectiveId, command.kind, identity);
+  const existing = findByIdentity(kernel.db, ownerOf(command), command.kind, identity);
   const id = existing?.id ?? kernel.ids.nextId();
 
   const record = SurfaceIntentSchema.parse({
     id,
-    objectiveId: command.objectiveId,
+    ...ownerOf(command),
     kind: command.kind,
     role: command.role,
     persistence: command.persistence,
@@ -244,10 +277,10 @@ export function upsertSurfaceIntent(
     (tx) => {
       tx.prepare(
         `INSERT INTO surface_intents
-           (id, objective_id, kind, role, persistence, lifecycle, priority, min_size,
+           (id, objective_id, thread_id, presence, kind, role, persistence, lifecycle, priority, min_size,
             preferred_region, source_ids_json, artifact_ids_json, payload_version,
             payload_json, requested_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            role = excluded.role,
            persistence = excluded.persistence,
@@ -260,7 +293,9 @@ export function upsertSurfaceIntent(
            requested_at = excluded.requested_at`,
       ).run(
         record.id,
-        record.objectiveId,
+        record.objectiveId ?? null,
+        record.threadId ?? null,
+        record.presence === true ? 1 : null,
         record.kind,
         record.role,
         record.persistence,
@@ -287,7 +322,7 @@ export function upsertSurfaceIntent(
             actorId: context.actorId,
             payloadVersion: 1,
             payload: {
-              objectiveId: record.objectiveId,
+              ...ownerOf(record),
               kind: record.kind,
               role: record.role,
               created: existing === undefined,
@@ -341,7 +376,7 @@ export function changeSurfaceLifecycle(
             actorId: context.actorId,
             payloadVersion: 1,
             payload: {
-              objectiveId: current.objectiveId,
+              ...ownerOf(current),
               from: current.lifecycle,
               to: command.lifecycle,
             },
@@ -435,7 +470,7 @@ export function setSurfaceOverride(
             actorId: context.actorId,
             payloadVersion: 1,
             payload: {
-              objectiveId: intent.objectiveId,
+              ...ownerOf(intent),
               displayFingerprint: command.displayFingerprint,
               region: command.region,
               size: command.size,
@@ -502,7 +537,7 @@ export interface Composition {
 export function planFor(
   db: NoctisDatabase,
   request: {
-    objectiveId: string;
+    owner: SurfaceOwner;
     clientId: string;
     display: DisplayFacts;
     attentionState: AttentionState;
@@ -511,11 +546,11 @@ export function planFor(
   },
 ): CompositionPlan {
   return compose({
-    objectiveId: request.objectiveId,
-    intents: listSurfaceIntents(db, request.objectiveId),
+    owner: request.owner,
+    intents: listSurfaceIntents(db, request.owner),
     overrides: listSurfaceOverrides(
       db,
-      request.objectiveId,
+      request.owner,
       request.clientId,
       request.display.fingerprint,
     ),
@@ -542,11 +577,7 @@ export function composeSurfaces(
   command: ComposeSurfacesCommand,
 ): Result<Composition> {
   const now = new Date(kernel.clock.now()).toISOString();
-  const existing = getSnapshotForDisplay(
-    kernel.db,
-    command.objectiveId,
-    command.display.fingerprint,
-  );
+  const existing = getSnapshotForDisplay(kernel.db, ownerOf(command), command.display.fingerprint);
   const id = existing?.id ?? kernel.ids.nextId();
 
   return runCommand<Composition>(
@@ -554,7 +585,7 @@ export function composeSurfaces(
     { scope: "surface.compose", key: command.idempotencyKey, resultId: id },
     (tx) => {
       const plan = planFor(tx, {
-        objectiveId: command.objectiveId,
+        owner: ownerOf(command),
         clientId: command.clientId,
         display: command.display,
         attentionState: command.attentionState,
@@ -574,9 +605,9 @@ export function composeSurfaces(
 
       tx.prepare(
         `INSERT INTO composition_snapshots
-           (id, objective_id, layout_id, display_fingerprint, plan_json, reason_codes_json,
+           (id, objective_id, thread_id, presence, layout_id, display_fingerprint, plan_json, reason_codes_json,
             generated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            layout_id = excluded.layout_id,
            plan_json = excluded.plan_json,
@@ -584,7 +615,9 @@ export function composeSurfaces(
            generated_at = excluded.generated_at`,
       ).run(
         id,
-        plan.objectiveId,
+        plan.objectiveId ?? null,
+        plan.threadId ?? null,
+        plan.presence === true ? 1 : null,
         plan.layoutId,
         plan.displayFingerprint,
         JSON.stringify(plan),
@@ -598,12 +631,13 @@ export function composeSurfaces(
           {
             id: kernel.ids.nextId(),
             streamType: "surface",
-            streamId: command.objectiveId,
+            streamId: command.objectiveId ?? command.threadId ?? id,
             type: "surface.composition_changed.v1",
             actorType: context.actorType,
             actorId: context.actorId,
             payloadVersion: 1,
             payload: {
+              ...ownerOf(command),
               layoutId: plan.layoutId,
               displayFingerprint: plan.displayFingerprint,
               reasonCodes: plan.reasonCodes,

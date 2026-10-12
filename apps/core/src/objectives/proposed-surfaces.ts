@@ -1,10 +1,11 @@
 import type { ApprovalRecord, ObjectiveRecord, OrchestrationEvent } from "@noctis/contracts";
-import { ApprovalPayloadSchema } from "@noctis/contracts";
+import { ApprovalPayloadSchema, RuntimeItemSchema } from "@noctis/contracts";
 
 import { getApproval } from "../authority/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { recallFor } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
+import { placeLiveBrief } from "./live-briefs.js";
 import { getObjective } from "./service.js";
 import { upsertSurfaceIntent } from "./surface-intents.js";
 
@@ -268,6 +269,40 @@ const NEEDS_A_PERSON: ReadonlySet<string> = new Set([
  */
 export function proposeFor(deps: ProposedSurfaceDeps, event: OrchestrationEvent): void {
   switch (event.type) {
+    case "identity.turn_item.v1": {
+      const payload = event.payload as { item?: unknown } | null;
+      const parsed = RuntimeItemSchema.safeParse(payload?.item);
+      if (!parsed.success || parsed.data.kind !== "output") return;
+      const item = parsed.data;
+      if (
+        item.status !== "completed" ||
+        item.attachmentId === undefined ||
+        !(/^(image|video|audio)\//.test(item.mediaType) || item.mediaType === "application/pdf")
+      )
+        return;
+      const title = item.path?.split(/[\\/]/).at(-1)?.trim().slice(0, 200) || "Output";
+      const upserted = upsertSurfaceIntent(deps.kernel, context(deps.kernel, event.actorId), {
+        idempotencyKey: `output:${event.streamId}:${item.attachmentId}`,
+        threadId: event.streamId,
+        kind: "media",
+        role: "primary",
+        persistence: "restorable",
+        priority: 40,
+        minSize: "compact",
+        sourceIds: [item.attachmentId],
+        artifactIds: [],
+        payloadVersion: 1,
+        payload: {
+          title,
+          mediaType: item.mediaType,
+          source: { from: "attachment", attachmentId: item.attachmentId },
+        },
+      });
+      if (!upserted.ok && upserted.conflict.kind !== "idempotent_replay") {
+        skip(deps.kernel, upserted.conflict.kind, { threadId: event.streamId, kind: "media" });
+      }
+      return;
+    }
     case "objective.activated.v1": {
       const objective = getObjective(deps.kernel.db, event.streamId);
 
@@ -297,6 +332,12 @@ export function proposeFor(deps: ProposedSurfaceDeps, event: OrchestrationEvent)
     case "authority.executed.v1":
     case "authority.declined.v1":
       placeApproval(deps, event.streamId);
+      return;
+
+    case "node.job_leased.v1":
+    case "node.job_status_changed.v1":
+    case "node.job_result.v1":
+      placeLiveBrief(deps, event.streamId);
       return;
 
     default:

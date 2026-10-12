@@ -1,3 +1,4 @@
+import type { SurfaceOwner } from "@noctis/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Readable } from "node:stream";
 
@@ -666,11 +667,18 @@ function parseLimit(raw: string | null, max: number, fallback: number): number |
  */
 function handleSurfaceRead(
   deps: ApiDeps,
-  objectiveId: string,
+  owner: SurfaceOwner,
   url: URL,
 ): { status: number; body: unknown } {
-  if (getObjective(deps.kernel.db, objectiveId) === undefined) {
+  if (
+    owner.objectiveId !== undefined &&
+    getObjective(deps.kernel.db, owner.objectiveId) === undefined
+  ) {
     return { status: 404, body: errorBody("not_found", "objective not found") };
+  }
+
+  if (owner.threadId !== undefined && getThread(deps.kernel.db, owner.threadId) === undefined) {
+    return { status: 404, body: errorBody("not_found", "thread not found") };
   }
 
   const clientId = url.searchParams.get("clientId") ?? "";
@@ -696,7 +704,7 @@ function handleSurfaceRead(
   }
 
   const request = {
-    objectiveId,
+    owner,
     clientId,
     display: display.data,
     attentionState: attentionState.data,
@@ -707,15 +715,10 @@ function handleSurfaceRead(
   return {
     status: 200,
     body: {
-      intents: listSurfaceIntents(deps.kernel.db, objectiveId),
-      overrides: listSurfaceOverrides(
-        deps.kernel.db,
-        objectiveId,
-        clientId,
-        display.data.fingerprint,
-      ),
+      intents: listSurfaceIntents(deps.kernel.db, owner),
+      overrides: listSurfaceOverrides(deps.kernel.db, owner, clientId, display.data.fingerprint),
       snapshot:
-        getSnapshotForDisplay(deps.kernel.db, objectiveId, display.data.fingerprint)?.plan ?? null,
+        getSnapshotForDisplay(deps.kernel.db, owner, display.data.fingerprint)?.plan ?? null,
       plan: planFor(deps.kernel.db, request),
     },
   };
@@ -1050,6 +1053,10 @@ function handleRead(
       : { status: 200, body: { entries } };
   }
 
+  if (collection === "presence" && id === "surfaces" && segments.length === 2) {
+    return handleSurfaceRead(deps, { presence: true }, url);
+  }
+
   if (id === undefined || !UuidSchema.safeParse(id).success) {
     return { status: 404, body: errorBody("not_found", "No such resource") };
   }
@@ -1097,8 +1104,12 @@ function handleRead(
     };
   }
 
+  if (collection === "threads" && sub === "surfaces") {
+    return handleSurfaceRead(deps, { threadId: id }, url);
+  }
+
   if (collection === "objectives" && sub === "surfaces") {
-    return handleSurfaceRead(deps, id, url);
+    return handleSurfaceRead(deps, { objectiveId: id }, url);
   }
 
   if (collection === "approvals" && sub === undefined) {

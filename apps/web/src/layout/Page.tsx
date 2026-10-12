@@ -1,6 +1,8 @@
 import { corner, elevation, material, spacing, typography } from "@noctis/ui";
 import type { ReactNode } from "react";
 
+import { useIsMobile } from "./useIsMobile.js";
+
 /**
  * The frame every v1 page sits in: a title, a line saying what the page is
  * looking at, the page's own actions, and a body that scrolls inside the shell
@@ -23,6 +25,8 @@ export function Page({
   /** How wide the content may grow on a large screen; a conversation wants less. */
   maxWidth?: number;
 }): JSX.Element {
+  const mobile = useIsMobile();
+
   return (
     <section
       aria-label={label ?? title}
@@ -41,9 +45,15 @@ export function Page({
         flexDirection: "column",
         boxSizing: "border-box",
         padding: `${String(spacing.lg)}px clamp(${String(spacing.lg)}px, 4vw, ${String(spacing.xxxl)}px)`,
-        // Room for the app's core when it waits in the corner, so the end of a
-        // long page can scroll clear of it instead of resting under it.
-        paddingBottom: `calc(${String(spacing.lg)}px + var(--noctis-core-clearance, 0px))`,
+        // Room for the app's core when it waits in the corner. On a desktop the
+        // end of a long page scrolls clear of it. A phone's controls run the
+        // full width, so whichever row happened to rest under the core would be
+        // covered: there the page stops above it instead.
+        ...(mobile
+          ? { marginBottom: "var(--noctis-core-clearance, 0px)" }
+          : {
+              paddingBottom: `calc(${String(spacing.lg)}px + var(--noctis-core-clearance, 0px))`,
+            }),
       }}
     >
       <div
@@ -122,13 +132,7 @@ export function SectionHeading({ children }: { children: ReactNode }): JSX.Eleme
   );
 }
 
-/** Glass: the one surface treatment, so cards on every page are the same material. */
-export const glass = {
-  background: `linear-gradient(180deg, ${material.fillElevated}, ${material.fill})`,
-  border: `1px solid ${material.border}`,
-  borderRadius: corner.lg,
-  boxShadow: `inset 0 1px 0 ${material.fill}, 0 12px 32px -18px ${material.shadow}`,
-} as const;
+export { glass } from "@noctis/ui";
 
 /** Every button a thumb presses: Section 5.2's 44px floor, declared rather than hoped for. */
 export const buttonStyle = {

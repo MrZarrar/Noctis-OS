@@ -1,8 +1,67 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { renderSurface } from "./renderers.js";
 
 import { REGISTRY, resolveSurface } from "./registry.js";
 
 const CONVERSATION = { messages: [{ id: "m1", author: "Vesper", text: "Ready." }] };
+
+describe("media panels", () => {
+  const payload = {
+    title: "A photo",
+    mediaType: "image/png",
+    source: { from: "attachment", attachmentId: "01941f29-7c00-7000-8000-000000000001" },
+  };
+
+  it("resolves a media payload from an attachment with its validated title", () => {
+    expect(resolveSurface("media", 1, { ...payload, title: " A photo " }, "compact")).toMatchObject(
+      { status: "ok", title: "A photo" },
+    );
+  });
+
+  it.each(["../x", "..\\x"])("refuses an escaping relative path %s", (relativePath) => {
+    expect(
+      resolveSurface(
+        "media",
+        1,
+        { ...payload, source: { from: "file", nodeId: "work", grantId: "grant", relativePath } },
+        "standard",
+      ).status,
+    ).toBe("fallback");
+  });
+
+  it("renders a media Surface with no mediaUrl as text, not a broken image", () => {
+    const resolved = resolveSurface("media", 1, payload, "standard");
+    expect(resolved.status).toBe("ok");
+    const html = renderToStaticMarkup(createElement("div", null, renderSurface(resolved)));
+    expect(html).toContain("This file opens from Threads");
+    expect(html).not.toContain("<img");
+  });
+
+  it("hands the source to mediaUrl and the compact size to the renderer", () => {
+    const resolved = resolveSurface("media", 1, payload, "compact");
+    const html = renderToStaticMarkup(
+      createElement(
+        "div",
+        null,
+        renderSurface(
+          resolved,
+          {
+            mediaUrl: (source) => {
+              expect(source).toEqual(payload.source);
+              return "/output/photo";
+            },
+          },
+          "compact",
+        ),
+      ),
+    );
+    expect(html).toContain('src="/output/photo"');
+    expect(html).toContain("max-height:96px");
+  });
+});
 
 describe("the Surface registry", () => {
   it("resolves a registered kind whose payload matches its schema", () => {
@@ -181,5 +240,38 @@ describe("the native application Surface", () => {
       resolveSurface("native_application", 1, { applications: [] }, "wide", ["window.place"])
         .status,
     ).toBe("fallback");
+  });
+});
+
+describe("live briefs", () => {
+  const brief = {
+    title: "Vesper",
+    runtime: "Codex",
+    activity: "Nightly backup",
+    status: "running",
+    startedAt: "2026-09-01T11:56:00.000Z",
+  };
+
+  it("resolves at compact size, titled by who is working", () => {
+    expect(resolveSurface("live_brief", 1, brief, "compact")).toMatchObject({
+      status: "ok",
+      title: "Vesper",
+    });
+  });
+
+  it("falls back when a brief carries anything beyond its fields", () => {
+    expect(resolveSurface("live_brief", 1, { ...brief, prompt: "x" }, "compact").status).toBe(
+      "fallback",
+    );
+  });
+
+  it("renders what is running, on what, and for how long", () => {
+    const markup = renderToStaticMarkup(
+      createElement("div", null, renderSurface(resolveSurface("live_brief", 1, brief, "compact"))),
+    );
+    expect(markup).toContain("Nightly backup");
+    expect(markup).toContain("Codex");
+    expect(markup).toContain("Running · ");
+    expect(markup).toContain('dateTime="2026-09-01T11:56:00.000Z"');
   });
 });

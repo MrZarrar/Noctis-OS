@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -29,8 +30,10 @@ const SLOW_STEP_MS = 200;
  */
 export const FAKE_ASK_COMMAND = "curl -X POST https://example.invalid/hook";
 
-/** The PNG signature and nothing else: enough for anything that sniffs the type. */
-const FAKE_PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const FAKE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPoSFv1HwAFqgKYoMUp/QAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 class Cancelled extends Error {}
 

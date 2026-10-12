@@ -1,5 +1,5 @@
 import type { RuntimeProposal } from "@noctis/contracts";
-import { SURFACE_PAYLOAD_SCHEMAS } from "@noctis/contracts";
+import { PANEL_PROPOSABLE_KINDS, SURFACE_PAYLOAD_SCHEMAS } from "@noctis/contracts";
 
 import type { CommandContext, Kernel } from "../kernel.js";
 import { createObjective, getObjective } from "../objectives/service.js";
@@ -77,6 +77,11 @@ export function applyProposal(
     return;
   }
 
+  if (!PANEL_PROPOSABLE_KINDS.has(proposal.surfaceKind)) {
+    skip("kind_not_proposable", { surfaceKind: proposal.surfaceKind });
+    return;
+  }
+
   const contract = Object.hasOwn(SURFACE_PAYLOAD_SCHEMAS, proposal.surfaceKind)
     ? SURFACE_PAYLOAD_SCHEMAS[proposal.surfaceKind]
     : undefined;
@@ -93,24 +98,23 @@ export function applyProposal(
     return;
   }
 
-  // A free-chat turn has no canvas to put a Surface on: Chat is the answer there.
-  const objectiveId = proposal.objectiveId ?? turn.objectiveId;
+  const objectiveId = proposal.objectiveId;
 
-  if (objectiveId === undefined || getObjective(kernel.db, objectiveId) === undefined) {
+  if (objectiveId !== undefined && getObjective(kernel.db, objectiveId) === undefined) {
     skip("no_objective_for_surface");
     return;
   }
 
   const upserted = upsertSurfaceIntent(kernel, context, {
     idempotencyKey,
-    objectiveId,
+    ...(objectiveId === undefined ? { threadId: turn.threadId } : { objectiveId }),
     kind: proposal.surfaceKind,
     role: proposal.role,
     persistence: proposal.persistence,
     priority: proposal.priority,
     // The runtime never says how big: the smallest size, and composition decides.
     minSize: "compact",
-    sourceIds: [],
+    sourceIds: [turn.id],
     artifactIds: [],
     payloadVersion: proposal.payloadVersion,
     payload: payload.data,

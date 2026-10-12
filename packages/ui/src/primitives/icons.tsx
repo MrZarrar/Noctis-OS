@@ -133,3 +133,24 @@ export function JesterGlyph({ size = 16 }: { size?: number }): JSX.Element {
     </svg>
   );
 }
+
+export function PanelIcon({ glyph }: { glyph: "focus" | "pin" | "close" }): JSX.Element {
+  const path =
+    glyph === "focus"
+      ? "M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5"
+      : glyph === "pin"
+        ? "M9 3h6l-1 7 4 4H6l4-4-1-7M12 14v7"
+        : "m6 6 12 12M18 6 6 18";
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d={path}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

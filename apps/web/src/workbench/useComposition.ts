@@ -2,12 +2,14 @@ import type {
   AttentionState,
   CompositionPlan,
   SurfaceIntent,
+  SurfaceOwner,
   SurfaceOverride,
   SurfaceRegion,
   SurfaceSize,
 } from "@noctis/contracts";
 import {
   CompositionPlanSchema,
+  ownerIdOf,
   SurfaceIntentSchema,
   SurfaceOverrideSchema,
 } from "@noctis/contracts";
@@ -15,6 +17,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import type { PanelUpdateState } from "@noctis/ui";
+import { reconcileIntents } from "./reconcile.js";
 import { clientId, displayFor, screenFacts } from "./display.js";
 
 /** Long enough that dragging a window edge is one recomposition, not sixty. */
@@ -42,6 +46,7 @@ function nextKey(scope: string): string {
 }
 
 export interface CompositionState {
+  updates?: Readonly<Record<string, PanelUpdateState>>;
   plan: CompositionPlan | undefined;
   intents: readonly SurfaceIntent[];
   overrides: readonly SurfaceOverride[];
@@ -73,8 +78,22 @@ export interface CompositionState {
  */
 export function useComposition(
   transport: CoreTransport | undefined,
-  objectiveId: string | undefined,
+  owner: SurfaceOwner | undefined,
 ): CompositionState {
+  const ownerKey = owner === undefined ? undefined : ownerIdOf(owner);
+  const stableOwner = useMemo<SurfaceOwner | undefined>(() => {
+    if (ownerKey === undefined) return undefined;
+    if (ownerKey === "presence") return { presence: true };
+    return ownerKey.startsWith("thread:")
+      ? { threadId: ownerKey.slice(7) }
+      : { objectiveId: ownerKey.slice(10) };
+  }, [ownerKey]);
+  const ownerRef = useRef(ownerKey);
+  const ownerGeneration = useRef(0);
+  const [dataOwner, setDataOwner] = useState(ownerKey);
+  const [pending, setPending] = useState<Record<string, SurfaceIntent>>({});
+  const [updating, setUpdating] = useState(false);
+  const intentsRef = useRef<readonly SurfaceIntent[]>([]);
   const [plan, setPlan] = useState<CompositionPlan>();
   const [intents, setIntents] = useState<readonly SurfaceIntent[]>([]);
   const [overrides, setOverrides] = useState<readonly SurfaceOverride[]>([]);
@@ -92,6 +111,7 @@ export function useComposition(
       ? "server"
       : clientId(window.localStorage, () => crypto.randomUUID());
 
+  // shortcut: viewport width drives capacity; measure the panel area if side-by-side columns stop fitting.
   const display = useMemo(
     () =>
       typeof window === "undefined"
@@ -101,7 +121,7 @@ export function useComposition(
   );
 
   const attentionState: AttentionState =
-    objectiveId === undefined
+    ownerKey === undefined
       ? "presence"
       : focusedSurfaceId === undefined
         ? "active_canvas"
@@ -129,10 +149,24 @@ export function useComposition(
     };
   }, []);
 
+  if (ownerRef.current !== ownerKey) {
+    ownerRef.current = ownerKey;
+    ownerGeneration.current += 1;
+    intentsRef.current = [];
+    setDataOwner(ownerKey);
+    setPlan(undefined);
+    setIntents([]);
+    setOverrides([]);
+    setFocusedSurfaceId(undefined);
+    setPending({});
+    setError(undefined);
+    setUpdating(false);
+  }
+
   useEffect(() => {
     const clientIdValue = client.current;
 
-    if (transport === undefined || objectiveId === undefined || clientIdValue === undefined) {
+    if (transport === undefined || stableOwner === undefined || clientIdValue === undefined) {
       setPlan(undefined);
       setIntents([]);
       setOverrides([]);
@@ -140,6 +174,10 @@ export function useComposition(
     }
 
     let cancelled = false;
+    const startedGeneration = ownerGeneration.current;
+    const current = (): boolean =>
+      !cancelled && ownerRef.current === ownerKey && ownerGeneration.current === startedGeneration;
+    setUpdating(true);
 
     const query = new URLSearchParams({
       clientId: clientIdValue,
@@ -153,15 +191,16 @@ export function useComposition(
       try {
         const read = await transport.request(
           "GET",
-          `/objectives/${objectiveId}/surfaces?${query.toString()}`,
+          `${stableOwner.objectiveId !== undefined ? `/objectives/${stableOwner.objectiveId}` : stableOwner.threadId !== undefined ? `/threads/${stableOwner.threadId}` : "/presence"}/surfaces?${query.toString()}`,
         );
 
-        if (cancelled) {
+        if (!current()) {
           return;
         }
 
         if (read.status !== 200) {
-          setError("Could not read this Objective's Surfaces");
+          setError("Could not read these panels");
+          setUpdating(false);
           return;
         }
 
@@ -169,19 +208,33 @@ export function useComposition(
 
         if (!body.success) {
           setError("The core returned a composition that does not match its contract");
+          setUpdating(false);
           return;
         }
 
-        setIntents(body.data.intents);
+        if (
+          focusedSurfaceId !== undefined &&
+          !body.data.intents.some(
+            (intent) =>
+              intent.id === focusedSurfaceId &&
+              intent.lifecycle !== "exiting" &&
+              intent.lifecycle !== "dismissed",
+          )
+        ) {
+          setFocusedSurfaceId(undefined);
+        }
+        const reconciled = reconcileIntents(intentsRef.current, body.data.intents);
+        intentsRef.current = reconciled.intents;
+        setIntents(reconciled.intents);
+        setPending(reconciled.pending);
+        setUpdating(false);
         setOverrides(body.data.overrides);
         setPlan(body.data.plan);
         setError(undefined);
 
-        // Committing after rendering, not before: Section 5.4 step 10 persists
-        // a snapshot only once the transition it describes has happened.
         const committed = await transport.request("POST", "/commands/surface.compose", {
           idempotencyKey: nextKey("compose"),
-          objectiveId,
+          ...stableOwner,
           clientId: clientIdValue,
           display,
           attentionState,
@@ -190,11 +243,14 @@ export function useComposition(
 
         const result = ComposeResultSchema.safeParse(committed.body);
 
-        if (!cancelled && committed.status === 200 && result.success) {
+        if (current() && committed.status === 200 && result.success) {
           setPlan(result.data.plan);
+        } else if (current()) {
+          setError("Could not save this composition");
         }
       } catch (failure: unknown) {
-        if (!cancelled) {
+        if (current()) {
+          setUpdating(false);
           setError(failure instanceof Error ? failure.message : "composition failed");
         }
       }
@@ -203,27 +259,33 @@ export function useComposition(
     return () => {
       cancelled = true;
     };
-  }, [transport, objectiveId, display, attentionState, focusedSurfaceId, revision]);
+  }, [transport, stableOwner, ownerKey, display, attentionState, focusedSurfaceId, revision]);
 
   const send = useCallback(
     async (name: string, body: Record<string, unknown>) => {
-      if (transport === undefined) {
-        return;
+      if (transport === undefined || ownerRef.current !== ownerKey) {
+        return false;
       }
 
+      const sentOwner = ownerRef.current;
+      const sentGeneration = ownerGeneration.current;
       const response = await transport.request("POST", `/commands/${name}`, {
         idempotencyKey: nextKey(name),
         ...body,
       });
 
+      if (ownerRef.current !== sentOwner || ownerGeneration.current !== sentGeneration)
+        return false;
       if (response.status === 200) {
         setRevision((current) => current + 1);
         setError(undefined);
+        return true;
       } else {
         setError(`${name} was refused (${String(response.status)})`);
+        return false;
       }
     },
-    [transport],
+    [transport, ownerKey],
   );
 
   const overrideScope = useCallback(
@@ -236,6 +298,30 @@ export function useComposition(
   );
 
   return {
+    updates: Object.fromEntries(
+      intents.map((intent) => [
+        intent.id,
+        {
+          updating,
+          failed: error !== undefined,
+          onRetry: () => setRevision((value) => value + 1),
+          pendingPrimary: pending[intent.id] !== undefined,
+          onUseNewVersion: () => {
+            const next = pending[intent.id];
+            if (next === undefined || dataOwner !== ownerRef.current) return;
+            intentsRef.current = intentsRef.current.map((value) =>
+              value.id === next.id ? next : value,
+            );
+            setIntents(intentsRef.current);
+            setPending((values) => {
+              const copy = { ...values };
+              delete copy[next.id];
+              return copy;
+            });
+          },
+        },
+      ]),
+    ),
     plan,
     intents,
     overrides,
@@ -267,10 +353,13 @@ export function useComposition(
         const intent = intents.find((candidate) => candidate.id === surfaceId);
 
         if (intent?.lifecycle === "active" || intent?.lifecycle === "background") {
-          await send("surface.change_lifecycle", { surfaceId, lifecycle: "exiting" });
+          if (!(await send("surface.change_lifecycle", { surfaceId, lifecycle: "exiting" })))
+            return;
         }
 
-        await send("surface.change_lifecycle", { surfaceId, lifecycle: "dismissed" });
+        if (await send("surface.change_lifecycle", { surfaceId, lifecycle: "dismissed" })) {
+          setFocusedSurfaceId((current) => (current === surfaceId ? undefined : current));
+        }
       },
       [send, intents],
     ),

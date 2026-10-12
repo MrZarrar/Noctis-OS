@@ -3,6 +3,38 @@ import { z } from "zod";
 import { SurfaceLifecycleSchema, SurfacePersistenceSchema, SurfaceRoleSchema } from "./enums.js";
 import { SchemaVersionSchema, UtcTimestampSchema, UuidSchema } from "./primitives.js";
 
+export const SurfaceOwnerSchema = z
+  .object({
+    objectiveId: UuidSchema.optional(),
+    threadId: UuidSchema.optional(),
+    presence: z.literal(true).optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      [value.objectiveId, value.threadId, value.presence].filter((field) => field !== undefined)
+        .length === 1,
+    { message: "exactly one of objectiveId, threadId and presence" },
+  );
+export type SurfaceOwner =
+  | { objectiveId: string; threadId?: never; presence?: never }
+  | { threadId: string; objectiveId?: never; presence?: never }
+  | { presence: true; objectiveId?: never; threadId?: never };
+export function ownerIdOf(value: {
+  objectiveId?: string | undefined;
+  threadId?: string | undefined;
+  presence?: boolean | undefined;
+}): string {
+  const owner = SurfaceOwnerSchema.parse({
+    objectiveId: value.objectiveId,
+    threadId: value.threadId,
+    presence: value.presence,
+  });
+  if (owner.objectiveId !== undefined) return "objective:" + owner.objectiveId;
+  if (owner.threadId !== undefined) return "thread:" + owner.threadId;
+  return "presence";
+}
+
 export const SurfaceSizeSchema = z.enum(["compact", "standard", "wide", "stage"]);
 export const SurfaceRegionSchema = z.enum(["left", "centre", "right", "bottom", "overlay"]);
 
@@ -22,7 +54,7 @@ export const SurfaceDisplaySchema = z
 export const SurfaceIntentSchema = z
   .object({
     id: UuidSchema,
-    objectiveId: UuidSchema,
+    ...SurfaceOwnerSchema.shape,
     kind: z.string().trim().min(1),
     role: SurfaceRoleSchema,
     persistence: SurfacePersistenceSchema,
@@ -36,7 +68,16 @@ export const SurfaceIntentSchema = z
     payload: z.unknown(),
     requestedAt: UtcTimestampSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      SurfaceOwnerSchema.safeParse({
+        objectiveId: value.objectiveId,
+        threadId: value.threadId,
+        presence: value.presence,
+      }).success,
+    { message: "exactly one of objectiveId, threadId and presence" },
+  );
 
 export const SurfaceOverrideSchema = z
   .object({
@@ -53,7 +94,7 @@ export const SurfaceOverrideSchema = z
 
 export const CompositionPlanSchema = z
   .object({
-    objectiveId: UuidSchema,
+    ...SurfaceOwnerSchema.shape,
     layoutId: z.string().trim().min(1),
     displayFingerprint: z.string().trim().min(1),
     slots: z.array(
@@ -71,7 +112,16 @@ export const CompositionPlanSchema = z
     reasonCodes: z.array(z.string().trim().min(1)),
     generatedAt: UtcTimestampSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      SurfaceOwnerSchema.safeParse({
+        objectiveId: value.objectiveId,
+        threadId: value.threadId,
+        presence: value.presence,
+      }).success,
+    { message: "exactly one of objectiveId, threadId and presence" },
+  );
 
 export type SurfaceSize = z.infer<typeof SurfaceSizeSchema>;
 export type SurfaceRegion = z.infer<typeof SurfaceRegionSchema>;

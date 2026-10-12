@@ -28,7 +28,12 @@ import {
 } from "./primitives.js";
 import { ModelRefSchema, RuntimeProviderIdSchema } from "./runtime.js";
 import { UnavailableSemanticsSchema } from "./source.js";
-import { SurfaceDisplaySchema, SurfaceRegionSchema, SurfaceSizeSchema } from "./surface.js";
+import {
+  SurfaceOwnerSchema,
+  SurfaceDisplaySchema,
+  SurfaceRegionSchema,
+  SurfaceSizeSchema,
+} from "./surface.js";
 
 /**
  * Every command carries an idempotency key. It is not optional: the core claims
@@ -243,7 +248,7 @@ export type SetIdentityDefaultModelCommand = z.infer<typeof SetIdentityDefaultMo
 export const UpsertSurfaceIntentCommandSchema = z
   .object({
     ...CommandBase,
-    objectiveId: UuidSchema,
+    ...SurfaceOwnerSchema.shape,
     kind: z.string().trim().min(1).max(64),
     role: SurfaceRoleSchema,
     persistence: SurfacePersistenceSchema,
@@ -255,7 +260,16 @@ export const UpsertSurfaceIntentCommandSchema = z
     payloadVersion: SchemaVersionSchema,
     payload: z.unknown(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      SurfaceOwnerSchema.safeParse({
+        objectiveId: value.objectiveId,
+        threadId: value.threadId,
+        presence: value.presence,
+      }).success,
+    { message: "exactly one of objectiveId, threadId and presence" },
+  );
 
 export const ChangeSurfaceLifecycleCommandSchema = z
   .object({ ...CommandBase, surfaceId: UuidSchema, lifecycle: SurfaceLifecycleSchema })
@@ -289,13 +303,22 @@ export const ReleaseSurfaceOverrideCommandSchema = z
 export const ComposeSurfacesCommandSchema = z
   .object({
     ...CommandBase,
-    objectiveId: UuidSchema,
+    ...SurfaceOwnerSchema.shape,
     clientId: z.string().trim().min(1).max(200),
     display: SurfaceDisplaySchema,
     attentionState: AttentionStateSchema,
     focusedSurfaceId: UuidSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      SurfaceOwnerSchema.safeParse({
+        objectiveId: value.objectiveId,
+        threadId: value.threadId,
+        presence: value.presence,
+      }).success,
+    { message: "exactly one of objectiveId, threadId and presence" },
+  );
 
 /* -------------------------------------------------------------------------- */
 /* Phase 7: Vault indexing and focused recall.                                */

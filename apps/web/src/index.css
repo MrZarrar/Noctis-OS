@@ -88,3 +88,22 @@ body {
     animation: none !important;
   }
 }
+
+.thread-panels section[data-surface-region] {
+  animation: panel-enter var(--panel-enter-duration) var(--panel-enter-easing) both;
+}
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-panels section[data-surface-region] {
+    animation: none;
+  }
+}

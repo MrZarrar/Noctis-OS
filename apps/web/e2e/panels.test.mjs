@@ -1,0 +1,665 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { chromium } from "playwright";
+
+import {
+  TOKEN,
+  coreRead,
+  coreCommand,
+  launchOptions,
+  startFakeNode,
+  startProcess,
+  stopProcess,
+  waitFor,
+  waitForHttp,
+} from "./harness.mjs";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const WEB_ROOT = join(REPO_ROOT, "apps/web");
+const AGENT_MAIN = join(REPO_ROOT, "apps/node-agent/dist/main.js");
+const CORE_PORT = 8809;
+const WEB_PORT = 4189;
+const CORE_URL = `http://127.0.0.1:${CORE_PORT}`;
+const WEB_URL = `http://localhost:${WEB_PORT}`;
+const EVIDENCE = join(REPO_ROOT, ".noctis/panels");
+let core, agent, web, browser, page, context, databaseDirectory, nodeHome, scratch;
+async function openThreads() {
+  await page.goto(WEB_URL);
+  if (await page.locator('input[type="password"]').count()) {
+    await page.getByLabel("Core token").fill(TOKEN);
+    await page.getByLabel("Core token").press("Enter");
+  }
+  await page.getByRole("button", { name: "Threads", exact: true }).click();
+  await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+  await page.getByLabel("Message Vesper").waitFor();
+}
+async function prompt(text) {
+  await page.getByLabel("Message Vesper").fill(text);
+  await page.getByLabel("Message Vesper").press("Enter");
+}
+async function captureSettled(name) {
+  const boxes = await waitFor(
+    async () =>
+      page.evaluate(() => {
+        const core = document.querySelector(".noctis-intelligence");
+        const slot = [...document.querySelectorAll('[data-core-slot="composer"]')].find((node) =>
+          node.checkVisibility(),
+        );
+        const column = document.querySelector("[data-conversation-column]");
+        if (!core || !slot || !column) return undefined;
+        const rect = (node) => {
+          const box = node.getBoundingClientRect();
+          return { x: box.x, y: box.y, width: box.width, height: box.height };
+        };
+        return { core: rect(core), slot: rect(slot), column: rect(column) };
+      }),
+    (value) =>
+      value !== undefined &&
+      ["x", "y", "width", "height"].every(
+        (key) => Math.abs(value.core[key] - value.slot[key]) <= 1,
+      ),
+    "core did not settle inside the conversation column at composer size",
+  );
+  assert.ok(
+    boxes.core.x >= boxes.column.x &&
+      boxes.core.x + boxes.core.width <= boxes.column.x + boxes.column.width,
+  );
+  process.stdout.write(`${name}: settled core ${JSON.stringify(boxes)}\n`);
+  await page.screenshot({ path: join(REPO_ROOT, `.noctis/panels/${name}.png`) });
+}
+
+describe("Threads desktop panels", () => {
+  before(async () => {
+    for (const built of ["packages/ui/dist/index.js", "apps/core/dist/main.js"]) {
+      assert.ok(
+        existsSync(join(REPO_ROOT, built)),
+        `run \`npm run build\` before the E2E suite: ${built} is missing`,
+      );
+    }
+
+    assert.ok(existsSync(AGENT_MAIN), "run `npm run build` before the E2E suite: no node agent");
+
+    databaseDirectory = mkdtempSync(join(tmpdir(), "noctis-e2e-chat-db-"));
+    nodeHome = mkdtempSync(join(tmpdir(), "noctis-e2e-chat-node-"));
+    scratch = mkdtempSync(join(tmpdir(), "noctis-e2e-chat-scratch-"));
+
+    core = startProcess(process.execPath, [join(REPO_ROOT, "apps/core/dist/main.js")], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        NOCTIS_CORE_TOKEN: TOKEN,
+        NOCTIS_CORE_PORT: String(CORE_PORT),
+        NOCTIS_DATABASE_PATH: join(databaseDirectory, "core.db"),
+        NOCTIS_ALLOWED_ORIGINS: WEB_URL,
+        NOCTIS_LOG_LEVEL: "error",
+      },
+    });
+
+    web = startProcess(
+      process.execPath,
+      [
+        join(REPO_ROOT, "node_modules/vite/bin/vite.js"),
+        "--port",
+        String(WEB_PORT),
+        "--strictPort",
+      ],
+      {
+        cwd: WEB_ROOT,
+        env: {
+          ...process.env,
+          VITE_CORE_URL: WEB_URL,
+          VITE_CORE_TOKEN: "",
+          NOCTIS_CORE_PROXY_TARGET: CORE_URL,
+        },
+      },
+    );
+
+    await waitForHttp(`${CORE_URL}/health`, "the core", core);
+    ({ agent } = await startFakeNode({
+      coreUrl: CORE_URL,
+      repoRoot: REPO_ROOT,
+      agentMain: AGENT_MAIN,
+      nodeHome,
+      scratch,
+      keyPrefix: "e2e-chat",
+    }));
+
+    await waitForHttp(WEB_URL, "the web app", web);
+
+    browser = await chromium.launch(launchOptions());
+    mkdirSync(EVIDENCE, { recursive: true });
+    context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      recordVideo: { dir: EVIDENCE },
+    });
+    page = await context.newPage();
+  });
+
+  after(async () => {
+    await page?.close();
+    await context?.close();
+    await browser?.close();
+    await stopProcess(agent);
+    await stopProcess(web);
+    await stopProcess(core);
+
+    for (const directory of [databaseDirectory, nodeHome, scratch]) {
+      if (directory !== undefined) {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("a thread with no panels retains the 880px content width", { timeout: 120000 }, async () => {
+    await openThreads();
+    await prompt("hello");
+    await page.locator('li[data-entry="message"][data-role="identity"]').waitFor();
+    assert.equal(
+      await page.locator('section[aria-label="Threads"] [data-surface-region]').count(),
+      0,
+    );
+    const width = await page
+      .locator('section[aria-label="Threads"] > div')
+      .evaluate((node) => node.getBoundingClientRect().width);
+    assert.ok(width <= 880);
+  });
+  it(
+    "THE GATE (panels): an image a turn makes opens beside the conversation without reload",
+    { timeout: 120000 },
+    async () => {
+      await openThreads();
+      await prompt("IMAGE: a frame");
+      const image = page
+        .locator('section[aria-label="Threads"] section[data-surface-region] img')
+        .first();
+      await image.waitFor({ timeout: 20000 });
+      const output = page.locator('ul[aria-label="Outputs"] img').last();
+      assert.equal(await image.getAttribute("src"), await output.getAttribute("src"));
+      await waitFor(
+        () => image.evaluate((node) => node.complete && node.naturalWidth > 0),
+        Boolean,
+        "panel image never loaded",
+      );
+      const panelBox = await image.boundingBox();
+      const conversationBox = await page
+        .getByRole("list", { name: "Conversation", exact: true })
+        .boundingBox();
+      assert.ok(panelBox.x >= conversationBox.x + conversationBox.width);
+      assert.equal(await page.locator(".noctis-intelligence").count(), 1);
+      await waitFor(
+        async () => {
+          const box = await page.locator(".noctis-intelligence").boundingBox();
+          return (
+            box.x >= conversationBox.x &&
+            box.x + box.width <= conversationBox.x + conversationBox.width
+          );
+        },
+        Boolean,
+        "the core never settled inside the conversation column",
+      );
+      await captureSettled("P6-desktop-image");
+    },
+  );
+  it(
+    "failed refresh retains content, Retry recovers and primary changes wait for acceptance",
+    { timeout: 120000 },
+    async () => {
+      const threads = await coreRead(CORE_URL, "/threads?identityId=vesper");
+      const threadId = threads.body.id;
+      const base = {
+        threadId,
+        kind: "detail",
+        persistence: "ephemeral",
+        priority: 100,
+        minSize: "compact",
+        payloadVersion: 1,
+      };
+      let sequence = 0;
+      const upsert = async (role, title) => {
+        const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+          ...base,
+          idempotencyKey: `panel-refresh-${++sequence}`,
+          role,
+          sourceIds: [
+            role === "primary"
+              ? "0199a000-0000-7000-8000-0000000000a1"
+              : "0199a000-0000-7000-8000-0000000000a2",
+          ],
+          payload: { fields: [{ label: "Version", value: title }] },
+        });
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+      };
+      await upsert("primary", "primary old");
+      await page.getByText("primary old", { exact: true }).waitFor();
+      await upsert("supporting", "support old");
+      await page.getByText("support old", { exact: true }).waitFor();
+      const route = "**/threads/*/surfaces?*";
+      await page.route(route, async (handler) => {
+        await handler.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      });
+      await upsert("supporting", "support new");
+      await page.getByRole("button", { name: "Retry", exact: true }).first().waitFor();
+      assert.equal(await page.getByText("support old", { exact: true }).count(), 1);
+      await captureSettled("P6-desktop-refresh-failed");
+      await page.unroute(route);
+      await page.getByRole("button", { name: "Retry", exact: true }).first().click();
+      await page.getByText("support new", { exact: true }).waitFor();
+      await captureSettled("P7-desktop-retry");
+      await upsert("primary", "primary new");
+      await page.getByRole("button", { name: "Use new version", exact: true }).waitFor();
+      assert.equal(await page.getByText("primary old", { exact: true }).count(), 1);
+      assert.equal(await page.getByText("primary new", { exact: true }).count(), 0);
+      await captureSettled("P6-desktop-new-version");
+      await page.getByRole("button", { name: "Use new version", exact: true }).click();
+      await page.getByText("primary new", { exact: true }).waitFor();
+    },
+  );
+
+  it(
+    "switching owner clears focus and ignores the previous owner's delayed refresh",
+    { timeout: 120000 },
+    async () => {
+      const current = await coreRead(CORE_URL, "/threads?identityId=vesper");
+      await page
+        .getByRole("button", { name: /^Focus / })
+        .first()
+        .click();
+      let release;
+      let arrived;
+      const requested = new Promise((resolve) => {
+        arrived = resolve;
+      });
+      const delayed = new Promise((resolve) => {
+        release = resolve;
+      });
+      await page.route(`**/threads/${current.body.id}/surfaces?*`, async (route) => {
+        const response = await route.fetch();
+        arrived();
+        await delayed;
+        await route.fulfill({ response });
+      });
+      await coreCommand(CORE_URL, "surface.upsert_intent", {
+        idempotencyKey: "delayed-old",
+        threadId: current.body.id,
+        kind: "detail",
+        role: "supporting",
+        persistence: "ephemeral",
+        priority: 100,
+        minSize: "compact",
+        payloadVersion: 1,
+        sourceIds: ["0199a000-0000-7000-8000-0000000000a2"],
+        payload: { fields: [{ label: "Version", value: "stale owner content" }] },
+      });
+      await requested;
+      const created = await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "owner-new-thread",
+        identityId: "vesper",
+        title: "Clean owner",
+      });
+      assert.equal(created.status, 200);
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Clean owner", exact: true }).click();
+      await page
+        .locator("section[aria-label=Threads] header")
+        .getByText(/Clean owner/)
+        .waitFor();
+      assert.equal(
+        await page.locator('section[aria-label="Threads"] [data-surface-region]').count(),
+        0,
+      );
+      release();
+      await page.waitForTimeout(250);
+      assert.equal(await page.getByText("stale owner content", { exact: true }).count(), 0);
+      assert.equal(
+        await page.locator('section[aria-label="Threads"] [data-surface-region]').count(),
+        0,
+      );
+      const width = await page
+        .locator('section[aria-label="Threads"] > div')
+        .evaluate((node) => node.getBoundingClientRect().width);
+      assert.ok(width <= 880);
+    },
+  );
+  it(
+    "two owners recover after focused close and external removal, and focus switches sources",
+    { timeout: 120000 },
+    async () => {
+      const created = await coreCommand(CORE_URL, "objective.create", {
+        idempotencyKey: "focus-objective",
+        title: "Focus recovery",
+        intent: "Keep both owners accessible",
+        status: "draft",
+        identityId: "vesper",
+      });
+      assert.equal(created.status, 200);
+      const objectiveId = created.body.id;
+      const activated = await coreCommand(CORE_URL, "objective.change_status", {
+        idempotencyKey: "focus-activate",
+        objectiveId,
+        expectedRevision: 0,
+        status: "active",
+      });
+      assert.equal(activated.status, 200);
+      await openThreads();
+      await page.getByRole("button", { name: "Back to the Objective", exact: true }).click();
+      await prompt("hello objective");
+      const thread = await waitFor(
+        () => coreRead(CORE_URL, `/threads?identityId=vesper&objectiveId=${objectiveId}`),
+        (value) => value.status === 200,
+        "Objective prompt did not create its thread",
+      );
+      assert.equal(thread.status, 200);
+      let sequence = 0;
+      const panel = async (owner, label, source) => {
+        const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+          idempotencyKey: `focus-panel-${++sequence}`,
+          ...owner,
+          kind: "detail",
+          role: "primary",
+          persistence: "ephemeral",
+          priority: 1000,
+          minSize: "compact",
+          sourceIds: [source],
+          payloadVersion: 1,
+          payload: { fields: [{ label: "Owner", value: label }] },
+        });
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+        return page.locator(`[data-surface-id="${result.body.id}"]`);
+      };
+      const objectivePanel = await panel(
+        { objectiveId },
+        "Objective owner view",
+        "0199a000-0000-7000-8000-0000000000b1",
+      );
+      const threadPanel = await panel(
+        { threadId: thread.body.id },
+        "Thread owner view",
+        "0199a000-0000-7000-8000-0000000000b2",
+      );
+      await threadPanel.waitFor();
+      await objectivePanel.waitFor();
+      await threadPanel.getByRole("button", { name: /^Focus / }).click();
+      await page.getByRole("button", { name: "Leave focus", exact: true }).waitFor();
+      assert.equal(await objectivePanel.count(), 0);
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await objectivePanel.waitFor();
+      await page.waitForTimeout(100);
+      assert.equal(
+        await page.getByLabel("Message Vesper").evaluate((node) => node === document.activeElement),
+        false,
+        "leaving desktop focus must not pull focus into the composer",
+      );
+      await objectivePanel.getByRole("button", { name: /^Focus / }).click();
+      await page.getByRole("button", { name: "Leave focus", exact: true }).waitFor();
+      assert.equal(await threadPanel.count(), 0);
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await threadPanel.waitFor();
+      await threadPanel.getByRole("button", { name: /^Focus / }).click();
+      await threadPanel.getByRole("button", { name: /^Close / }).click();
+      await objectivePanel.waitFor({ timeout: 5000 });
+      assert.equal(await page.getByRole("button", { name: "Leave focus", exact: true }).count(), 0);
+      const restored = await panel(
+        { threadId: thread.body.id },
+        "Thread restored",
+        "0199a000-0000-7000-8000-0000000000b3",
+      );
+      await restored.waitFor();
+      await objectivePanel.getByRole("button", { name: /^Focus / }).click();
+      await page.getByRole("button", { name: "Leave focus", exact: true }).waitFor();
+      const id = await objectivePanel.getAttribute("data-surface-id");
+      for (const lifecycle of ["dismissed"]) {
+        const result = await coreCommand(CORE_URL, "surface.change_lifecycle", {
+          idempotencyKey: `external-${lifecycle}`,
+          surfaceId: id,
+          lifecycle,
+        });
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+      }
+      await restored.waitFor({ timeout: 5000 });
+      assert.equal(await page.getByRole("button", { name: "Leave focus", exact: true }).count(), 0);
+    },
+  );
+  it(
+    "an old mutation refusal cannot mark owner A failed after an A to B to A switch",
+    { timeout: 120000 },
+    async () => {
+      let release;
+      let arrived;
+      const requested = new Promise((resolve) => {
+        arrived = resolve;
+      });
+      const delayed = new Promise((resolve) => {
+        release = resolve;
+      });
+      const routePattern = "**/commands/surface.set_override";
+      await page.route(routePattern, async (route) => {
+        arrived();
+        await delayed;
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      });
+      const restored = page.locator("[data-surface-id]").filter({ hasText: "Thread restored" });
+      await restored.getByRole("button", { name: /^Pin / }).click();
+      await requested;
+      await page.getByRole("button", { name: "Ask something else", exact: true }).click();
+      await page.getByRole("button", { name: "Back to the Objective", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Back to the Objective", exact: true }).click();
+      await restored.waitFor();
+      const response = page.waitForResponse(
+        (reply) => reply.url().endsWith("/commands/surface.set_override") && reply.status() === 503,
+      );
+      release();
+      await response;
+      await page.waitForTimeout(250);
+      assert.equal(await page.getByRole("button", { name: "Retry", exact: true }).count(), 0);
+      await page.unroute(routePattern);
+    },
+  );
+  it(
+    "THE GATE (panels, phone): chip opens a sheet and Back restores its trigger",
+    { timeout: 120000 },
+    async () => {
+      await page.setViewportSize({ width: 400, height: 860 });
+      await openThreads();
+      const created = await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "phone-image-thread",
+        identityId: "vesper",
+        title: "Phone image",
+      });
+      assert.equal(created.status, 200);
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Phone image", exact: true }).click();
+      await page
+        .locator('section[aria-label="Threads"] header')
+        .getByText(/Phone image/)
+        .waitFor();
+      await prompt("IMAGE: on the phone");
+      const chip = page.getByRole("button", { name: /^Open panel / }).first();
+      await chip.waitFor({ timeout: 20000 });
+      const thumbnail = chip.locator("img");
+      await waitFor(
+        () => thumbnail.evaluate((node) => node.complete && node.naturalWidth > 0),
+        Boolean,
+        "image chip did not decode",
+      );
+      assert.equal(await page.getByRole("region", { name: "Panel sheet" }).count(), 0);
+      await captureSettled("P7-phone-chip");
+      await chip.click();
+      await page.getByRole("region", { name: "Panel sheet" }).waitFor();
+      assert.equal(
+        await page.getByRole("list", { name: "Conversation", exact: true }).isVisible(),
+        false,
+      );
+      assert.equal(await page.getByLabel("Message Vesper").isVisible(), true);
+      assert.equal(await page.getByRole("button", { name: /^Place / }).count(), 0);
+      const image = page.getByRole("region", { name: "Panel sheet" }).locator("img");
+      await waitFor(
+        () => image.evaluate((node) => node.complete && node.naturalWidth > 0),
+        Boolean,
+        "sheet image did not decode",
+      );
+      assert.equal(await image.getAttribute("src"), await thumbnail.getAttribute("src"));
+      const leave = await page
+        .getByRole("button", { name: "Leave focus", exact: true })
+        .boundingBox();
+      const header = await page
+        .locator('section[aria-label="Threads"] > div > header')
+        .boundingBox();
+      assert.ok(leave.y >= header.y + header.height);
+      await captureSettled("P7-phone-sheet");
+      await page.getByLabel("Message Vesper").fill("Composer stays usable");
+      await page.getByLabel("Message Vesper").fill("");
+      await page.goBack();
+      await page.getByRole("list", { name: "Conversation", exact: true }).waitFor();
+      assert.equal(await chip.evaluate((node) => node === document.activeElement), true);
+      await captureSettled("P7-phone-back");
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        ),
+        0,
+      );
+    },
+  );
+  it(
+    "phone overflow keeps both owners available and focused close restores the composer",
+    { timeout: 120000 },
+    async () => {
+      await page.setViewportSize({ width: 400, height: 860 });
+      const objective = await coreCommand(CORE_URL, "objective.create", {
+        idempotencyKey: "phone-objective",
+        title: "Phone owners",
+        intent: "Panel isolation",
+        status: "draft",
+        identityId: "vesper",
+      });
+      assert.equal(objective.status, 200);
+      await coreCommand(CORE_URL, "objective.change_status", {
+        idempotencyKey: "phone-activate",
+        objectiveId: objective.body.id,
+        expectedRevision: 0,
+        status: "active",
+      });
+      await openThreads();
+      if (await page.getByRole("button", { name: "Back to the Objective", exact: true }).count())
+        await page.getByRole("button", { name: "Back to the Objective", exact: true }).click();
+      await prompt("phone owners");
+      const thread = await waitFor(
+        () => coreRead(CORE_URL, `/threads?identityId=vesper&objectiveId=${objective.body.id}`),
+        (value) => value.status === 200 && value.body?.id !== undefined,
+        "objective thread was not created",
+      );
+      const ids = [];
+      for (let index = 0; index < 5; index++) {
+        const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+          idempotencyKey: `phone-panel-${index}`,
+          ...(index === 0 ? { objectiveId: objective.body.id } : { threadId: thread.body.id }),
+          kind: "detail",
+          role: index === 0 ? "primary" : "supporting",
+          persistence: "ephemeral",
+          priority: index === 0 ? 1000 : 100 - index,
+          minSize: "compact",
+          payloadVersion: 1,
+          sourceIds: [`0199a000-0000-7000-8000-0000000000c${index}`],
+          payload: { fields: [{ label: "Owner", value: `phone owner ${index}` }] },
+        });
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+        ids.push(result.body.id);
+      }
+      const more = page.getByRole("button", { name: /^Show .* more panels/ });
+      await more.waitFor();
+      await more.click();
+      await page.getByRole("list", { name: "More panels" }).waitFor();
+      await captureSettled("P7-phone-overflow");
+      await page.getByRole("list", { name: "More panels" }).getByRole("button").last().click();
+      await page.getByRole("button", { name: "Leave focus", exact: true }).waitFor();
+      await more.click();
+      const objectiveChip = page.locator(`[data-panel-id="${ids[0]}"]`);
+      await objectiveChip.click();
+      await page.getByText("phone owner 0", { exact: true }).waitFor();
+      assert.equal(
+        await page
+          .getByRole("region", { name: "Panel sheet" })
+          .locator("[data-surface-id]")
+          .count(),
+        1,
+      );
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await page.getByRole("list", { name: "Conversation", exact: true }).waitFor();
+      await more.click();
+      await objectiveChip.click();
+      await page.getByRole("button", { name: "Close Detail", exact: true }).click();
+      await page.getByRole("list", { name: "Conversation", exact: true }).waitFor();
+      await waitFor(
+        () => page.getByLabel("Message Vesper").evaluate((node) => node === document.activeElement),
+        Boolean,
+        "close did not restore composer focus",
+      );
+      await captureSettled("P7-phone-close");
+    },
+  );
+  it(
+    "a refused phone close keeps the sheet and Leave focus still restores the chip",
+    { timeout: 120000 },
+    async () => {
+      const created = await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "phone-refused-close-thread",
+        identityId: "vesper",
+        title: "Refused close",
+      });
+      assert.equal(created.status, 200);
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Refused close", exact: true }).click();
+      await page
+        .locator('section[aria-label="Threads"] header')
+        .getByText(/Refused close/)
+        .waitFor();
+      const upserted = await coreCommand(CORE_URL, "surface.upsert_intent", {
+        idempotencyKey: "phone-refused-close-panel",
+        threadId: created.body.id,
+        kind: "detail",
+        role: "primary",
+        persistence: "ephemeral",
+        priority: 1000,
+        minSize: "compact",
+        payloadVersion: 1,
+        sourceIds: ["0199a000-0000-7000-8000-0000000000d1"],
+        payload: { fields: [{ label: "Owner", value: "refused close" }] },
+      });
+      assert.equal(upserted.status, 200, JSON.stringify(upserted.body));
+      const route = "**/commands/surface.change_lifecycle";
+      await page.route(
+        route,
+        (handler) => handler.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+        { times: 1 },
+      );
+      const chip = page
+        .getByRole("navigation", { name: "Panel tray" })
+        .getByRole("button", { name: /^Open panel / })
+        .first();
+      await chip.click();
+      const sheet = page.getByRole("region", { name: "Panel sheet" });
+      await sheet.waitFor();
+      const refused = page.waitForResponse(
+        (reply) =>
+          reply.url().endsWith("/commands/surface.change_lifecycle") && reply.status() === 503,
+      );
+      await sheet.getByRole("button", { name: /^Close / }).click();
+      await refused;
+      await page.waitForTimeout(250);
+      assert.equal(await sheet.isVisible(), true);
+      await page.unroute(route);
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await sheet.waitFor({ state: "detached" });
+      await waitFor(
+        () => chip.evaluate((node) => node === document.activeElement),
+        Boolean,
+        "Leave focus after a refused close did not restore the chip",
+      );
+    },
+  );
+});

@@ -48,7 +48,10 @@ export function ListSurface({ items, onChoose }: ListSurfaceProps): JSX.Element 
   return (
     <ul style={{ ...listReset, display: "flex", flexDirection: "column", gap: spacing.xs }}>
       {items.map((item) => (
-        <li key={item.id}>
+        <li
+          key={item.id}
+          style={{ borderBottom: `1px solid ${material.border}`, paddingBlock: spacing.sm }}
+        >
           {onChoose === undefined ? (
             <span>{item.label}</span>
           ) : (
@@ -58,6 +61,7 @@ export function ListSurface({ items, onChoose }: ListSurfaceProps): JSX.Element 
                 onChoose(item.id);
               }}
               style={{
+                minHeight: 44,
                 width: "100%",
                 textAlign: "left",
                 background: material.fill,
@@ -87,7 +91,14 @@ export interface DetailSurfaceProps {
 
 export function DetailSurface({ fields }: DetailSurfaceProps): JSX.Element {
   return (
-    <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: spacing.sm }}>
+    <dl
+      style={{
+        margin: 0,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)",
+        gap: spacing.sm,
+      }}
+    >
       {fields.map((field) => (
         <div key={field.label} style={{ display: "contents" }}>
           <dt style={{ color: typography.color.muted }}>{field.label}</dt>
@@ -124,7 +135,10 @@ export function EvidenceSurface({ items }: EvidenceSurfaceProps): JSX.Element {
   return (
     <ul style={{ ...listReset, display: "flex", flexDirection: "column", gap: spacing.sm }}>
       {items.map((item) => (
-        <li key={item.id}>
+        <li
+          key={item.id}
+          style={{ borderBottom: `1px solid ${material.border}`, paddingBlock: spacing.sm }}
+        >
           <p style={{ margin: 0, maxWidth: typography.measurePx }}>{item.claim}</p>
           <p
             style={{
@@ -145,7 +159,16 @@ export function EvidenceSurface({ items }: EvidenceSurfaceProps): JSX.Element {
                 background: STATUS_COLOUR[item.status],
               }}
             />
-            <span>{item.status}</span>
+            <span
+              style={{
+                border: `1px solid ${material.border}`,
+                borderRadius: corner.lg,
+                padding: "2px 8px",
+                color: STATUS_COLOUR[item.status],
+              }}
+            >
+              {item.status}
+            </span>
             <span>· {item.source}</span>
           </p>
         </li>
@@ -166,7 +189,16 @@ export function AttentionSurface({
   actions = [],
 }: AttentionSurfaceProps): JSX.Element {
   return (
-    <div role="group" aria-label={headline} style={{ display: "grid", gap: spacing.sm }}>
+    <div
+      role="group"
+      aria-label={headline}
+      style={{
+        display: "grid",
+        gap: spacing.sm,
+        borderLeft: `3px solid ${semantic.warning}`,
+        paddingLeft: spacing.md,
+      }}
+    >
       <p style={{ margin: 0, color: semantic.warning }}>{headline}</p>
       <p style={{ margin: 0, maxWidth: typography.measurePx }}>{detail}</p>
       {actions.length > 0 && (
@@ -177,6 +209,7 @@ export function AttentionSurface({
               type="button"
               onClick={action.onAct}
               style={{
+                minHeight: 44,
                 background: material.fillElevated,
                 color: "inherit",
                 border: `1px solid ${material.border}`,

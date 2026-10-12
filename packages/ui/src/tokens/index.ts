@@ -1,5 +1,5 @@
 export { depth } from "./depth.js";
-export { material } from "./material.js";
+export { material, glass } from "./material.js";
 export { identityAccent } from "./identity.js";
 export { semantic } from "./semantic.js";
 export { typography } from "./type.js";

@@ -40,6 +40,8 @@ describe("Threads timeline", () => {
   it("keeps replies, outputs and cancel visible while raw turn events start collapsed", () => {
     const conversation = {
       thread: undefined,
+      panelsRevision: 0,
+      presencePanelsRevision: 0,
       messages: [
         {
           id: "message-2",

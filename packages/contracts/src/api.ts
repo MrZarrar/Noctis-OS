@@ -46,6 +46,7 @@ export const API_SEGMENTS = [
   "nodes",
   "objectives",
   "permissions",
+  "presence",
   "push",
   "ready",
   "remote",

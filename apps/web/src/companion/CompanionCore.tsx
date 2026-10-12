@@ -90,6 +90,7 @@ export function CompanionCore({
   const [place, setPlace] = useState<Place>();
   const [moving, setMoving] = useState(false);
   const arrived = useRef<string>();
+  const remeasure = useRef<() => void>();
   const size = cornerSize(mobile);
   const gap = mobile ? spacing.md : spacing.xl;
 
@@ -108,8 +109,19 @@ export function CompanionCore({
       const slot =
         drawn(`[data-core-slot="${target}"]`) ?? drawn('[data-core-slot="corner"]') ?? null;
       if (slot !== observed) {
-        if (observed !== null) resizeObserver.unobserve(observed);
-        if (slot !== null) resizeObserver.observe(slot);
+        resizeObserver.disconnect();
+        if (slot !== null) {
+          resizeObserver.observe(slot);
+          if (target !== "corner") {
+            for (
+              let ancestor = slot.parentElement;
+              ancestor !== null && ancestor !== document.body;
+              ancestor = ancestor.parentElement
+            ) {
+              resizeObserver.observe(ancestor);
+            }
+          }
+        }
         observed = slot;
       }
       if (slot === null) return;
@@ -130,6 +142,7 @@ export function CompanionCore({
           : { at, x: box.x, y: box.y, width: box.width, height: box.height },
       );
     };
+    remeasure.current = measure;
     const resizeObserver = new ResizeObserver(measure);
     // A page can draw its slot a beat after it mounts, or take it away. The
     // corner draws its own, so it has nothing to watch for.
@@ -139,6 +152,7 @@ export function CompanionCore({
     document.addEventListener("scroll", measure, true);
     measure();
     return () => {
+      remeasure.current = undefined;
       resizeObserver.disconnect();
       mutationObserver?.disconnect();
       removeEventListener("resize", measure);
@@ -165,10 +179,11 @@ export function CompanionCore({
       CLEARANCE,
       corner ? `${String(size + gap)}px` : "0px",
     );
+    remeasure.current?.();
     return () => {
       document.documentElement.style.removeProperty(CLEARANCE);
     };
-  }, [corner, size, gap]);
+  }, [corner, size, gap, target, page]);
 
   const name =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;

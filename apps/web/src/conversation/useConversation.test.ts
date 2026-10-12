@@ -161,6 +161,31 @@ function core(overrides: Record<string, CoreResponse> = {}): Scripted {
 }
 
 describe("createConversation", () => {
+  it("bumps panelsRevision only for the current thread or its Objective", async () => {
+    const scripted = core({
+      "GET /threads?identityId=vesper": {
+        status: 200,
+        body: { ...thread, objectiveId: OBJECTIVE_ID },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+    store.start();
+    await vi.waitFor(() => expect(store.getState().thread).toBeDefined());
+    const emit = (payload: unknown) =>
+      scripted.live().onEvent(event("surface.intent_upserted.v1", "surface", THREAD_ID, payload));
+    expect(store.getState().panelsRevision).toBe(0);
+    emit({ threadId: THREAD_ID });
+    expect(store.getState().panelsRevision).toBe(1);
+    emit({ objectiveId: OBJECTIVE_ID });
+    expect(store.getState().panelsRevision).toBe(2);
+    emit({ threadId: TURN_ID });
+    expect(store.getState().presencePanelsRevision).toBe(0);
+    emit({ presence: true });
+    expect(store.getState().panelsRevision).toBe(2);
+    expect(store.getState().presencePanelsRevision).toBe(1);
+    store.close();
+  });
+
   it("reads the thread, its messages, its turns, and the model catalogue, then subscribes after the ledger's head", async () => {
     const scripted = core();
     const store = createConversation(scripted.transport, "vesper", undefined);

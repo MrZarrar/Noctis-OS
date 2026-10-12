@@ -34,15 +34,11 @@ function readCanvas() {
           ?.textContent ?? "",
       surfaces: surfaces.map((surface) => ({
         title: surface.querySelector("h2")?.textContent ?? "",
-        region: surface.querySelector("select")?.value ?? "",
+        region: surface.dataset.surfaceRegion ?? "",
       })),
-      reasonCodes: (
-        [...document.querySelectorAll("p")]
-          .map((paragraph) => paragraph.textContent ?? "")
-          .find((text) => text.includes("layout.")) ?? ""
-      )
-        .split(" ")
-        .filter((token) => token.includes(".")),
+      reasonCodes: (document.querySelector("[data-reason-codes]")?.dataset.reasonCodes ?? "").split(
+        " ",
+      ),
       objectives: [...document.querySelectorAll("li")].map(
         (item) => item.textContent?.trim() ?? "",
       ),
@@ -187,11 +183,10 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
       assert.ok(composed.reasonCodes.includes("layout.canvas.split"));
       assert.ok(composed.reasonCodes.includes("display.wide"));
 
-      // Arrange. A closed native <select> changes its value on ArrowDown and
-      // fires `change`, so this is the real keyboard interaction rather than
-      // Playwright's `selectOption`, which bypasses the keyboard entirely.
-      await tabTo(page, "Place Detail");
+      await tabTo(page, "Place Detail: Right");
+      await page.keyboard.press("Enter");
       await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
       await waitForCanvas(
         (state) =>
           state.reasonCodes.includes("override.honoured") &&
@@ -202,7 +197,7 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
       );
 
       // Dismiss.
-      await tabTo(page, "Dismiss Choices");
+      await tabTo(page, "Close Choices");
       await page.keyboard.press("Enter");
       await waitForCanvas(
         (state) =>
@@ -212,6 +207,10 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
         "dismissing Choices did not remove it from the composition",
       );
 
+      assert.ok(
+        await page.evaluate(() => document.activeElement !== document.body),
+        "Close lost keyboard focus",
+      );
       const beforeReload = await readCanvas();
 
       await page.reload();
@@ -232,6 +231,53 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
       assert.ok(
         afterReload.reasonCodes.includes("override.honoured"),
         "the user's placement did not survive the reload",
+      );
+      const response = await fetch(`${CORE_URL}/objectives`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      assert.equal(response.status, 200);
+      const { objectives } = await response.json();
+      const objective = objectives.find((entry) => entry.title === "Prove the Phase 6 slice");
+      assert.ok(objective);
+      const seeded = await fetch(`${CORE_URL}/commands/surface.upsert_intent`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: "keyboard-unplaceable",
+          objectiveId: objective.id,
+          kind: "detail",
+          role: "supporting",
+          persistence: "objective",
+          priority: 0,
+          minSize: "stage",
+          payloadVersion: 1,
+          payload: { title: "Overflow detail", fields: [] },
+        }),
+      });
+      assert.equal(seeded.status, 200);
+      await page.reload();
+      await tabTo(page, "Command");
+      await page.keyboard.press("Enter");
+      await waitForCanvas(
+        (state) => state.surfaces.length === 1,
+        "panels did not restore with overflow",
+      );
+      assert.equal(await page.locator("details:not([open])").count(), 1);
+      await tabTo(page, "Close Conversation");
+      await page.keyboard.press("Enter");
+      await waitForCanvas((state) => state.surfaces.length === 0, "last panel did not close");
+      assert.equal(
+        await page.locator("details:not([open])").count(),
+        1,
+        "overflow must stay collapsed",
+      );
+      assert.equal(await page.locator("details li").count(), 1, "overflow entry must remain");
+      assert.ok(
+        await page.evaluate(
+          () =>
+            document.activeElement !== document.body && document.activeElement?.checkVisibility(),
+        ),
+        "closing the last panel must focus a visible surviving target",
       );
     },
   );

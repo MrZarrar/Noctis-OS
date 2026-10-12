@@ -5,8 +5,8 @@
  * see `tokens.test.ts`, which checks that pairing rather than trusting it.
  */
 export const motion = {
-  durationMs: { fast: 120, base: 220, slow: 360 },
-  reducedDurationMs: { fast: 0, base: 0, slow: 0 },
+  durationMs: { fast: 120, normal: 180, base: 220, slow: 360 },
+  reducedDurationMs: { fast: 0, normal: 0, base: 0, slow: 0 },
   easing: {
     standard: "cubic-bezier(0.2, 0, 0, 1)",
     enter: "cubic-bezier(0, 0, 0.2, 1)",

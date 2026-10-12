@@ -1,4 +1,5 @@
 import { createIdFactory, fixedClock } from "@noctis/domain";
+import { FileSourceSchema, MediaPayloadSchema, PANEL_PROPOSABLE_KINDS } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { requestAuthority } from "../authority/service.js";
@@ -7,6 +8,8 @@ import { migrate } from "../db/migrate.js";
 import { createEventBroker } from "../events/broker.js";
 import type { Kernel } from "../kernel.js";
 import { createLogger } from "../logging.js";
+import { applyProposal } from "../conversation/proposals.js";
+import type { Turn } from "../conversation/service.js";
 import { MIGRATIONS_DIRECTORY } from "../server.js";
 import { proposeFor } from "./proposed-surfaces.js";
 import { changeObjectiveStatus, createObjective } from "./service.js";
@@ -33,6 +36,15 @@ function createTestKernel(): Kernel {
     broker: createEventBroker(),
     logger: createLogger({ sink: () => undefined, clock: CLOCK }),
   };
+
+  db.prepare(
+    "INSERT INTO identity_threads (id, identity_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+  ).run(
+    "0199a000-0000-7000-8000-0000000000d1",
+    "vesper",
+    "2026-09-01T12:00:00.000Z",
+    "2026-09-01T12:00:00.000Z",
+  );
 
   open = kernel;
 
@@ -101,6 +113,228 @@ function pendingApproval(kernel: Kernel, objectiveId: string): string {
 }
 
 describe("proposeFor", () => {
+  it("strictly validates media sources and keeps the model allowlist bounded", () => {
+    const file = {
+      from: "file",
+      nodeId: "node",
+      grantId: "grant",
+      relativePath: "images/test.png",
+    };
+    expect(FileSourceSchema.safeParse(file).success).toBe(true);
+    for (const relativePath of ["../secret", "images\\..\\secret"]) {
+      expect(FileSourceSchema.safeParse({ ...file, relativePath }).success).toBe(false);
+    }
+    expect(FileSourceSchema.safeParse({ ...file, extra: true }).success).toBe(false);
+    expect(
+      MediaPayloadSchema.safeParse({ title: "Image", mediaType: "image/png", source: file })
+        .success,
+    ).toBe(true);
+    expect(
+      MediaPayloadSchema.safeParse({
+        title: "Image",
+        mediaType: "image/png",
+        source: { from: "attachment", attachmentId: "invalid" },
+      }).success,
+    ).toBe(false);
+    expect(
+      MediaPayloadSchema.safeParse({ title: "x".repeat(201), mediaType: "image/png", source: file })
+        .success,
+    ).toBe(false);
+    expect([...PANEL_PROPOSABLE_KINDS]).toEqual(["list", "detail", "evidence", "attention"]);
+  });
+  const threadId = "0199a000-0000-7000-8000-0000000000d1";
+  const attachmentId = "0199a000-0000-7000-8000-0000000000a1";
+  function output(
+    kernel: Kernel,
+    extra: Record<string, unknown> = {},
+    ownerThreadId = threadId,
+  ): void {
+    proposeFor(
+      { kernel },
+      {
+        id: kernel.ids.nextId(),
+        sequence: 1,
+        streamType: "identity",
+        streamId: ownerThreadId,
+        type: "identity.turn_item.v1",
+        actorType: "identity",
+        actorId: "vesper",
+        payloadVersion: 1,
+        correlationId: context.correlationId,
+        occurredAt: CLOCK.now().toString(),
+        payload: {
+          turnId: threadId,
+          item: {
+            itemId: "out",
+            kind: "output",
+            status: "completed",
+            attachmentId,
+            mediaType: "image/png",
+            path: "folder/picture.png",
+            ...extra,
+          },
+        },
+      },
+    );
+  }
+
+  it("keeps the same attachment independent across threads and dismissed repeats stable", () => {
+    const kernel = createTestKernel();
+    const otherThreadId = "0199a000-0000-7000-8000-0000000000d2";
+    kernel.db
+      .prepare(
+        "INSERT INTO identity_threads (id, identity_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(otherThreadId, "vesper", "named", CLOCK.now().toString(), CLOCK.now().toString());
+    output(kernel);
+    output(kernel, {}, otherThreadId);
+    const first = listSurfaceIntents(kernel.db, { threadId });
+    const second = listSurfaceIntents(kernel.db, { threadId: otherThreadId });
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(second[0]?.id).not.toBe(first[0]?.id);
+    kernel.db
+      .prepare("UPDATE surface_intents SET lifecycle = 'dismissed' WHERE id = ?")
+      .run(first[0]?.id ?? "missing");
+    output(kernel);
+    output(kernel, {}, otherThreadId);
+    expect(listSurfaceIntents(kernel.db, { threadId })).toMatchObject([
+      { id: first[0]?.id, lifecycle: "dismissed" },
+    ]);
+    expect(listSurfaceIntents(kernel.db, { threadId: otherThreadId })).toMatchObject([
+      { id: second[0]?.id, lifecycle: "proposed" },
+    ]);
+  });
+
+  it.each(["image/png", "video/mp4", "audio/mpeg", "application/pdf"])(
+    "opens a %s output on its thread",
+    (mediaType) => {
+      const kernel = createTestKernel();
+      output(kernel, { mediaType });
+      expect(listSurfaceIntents(kernel.db, { threadId })).toMatchObject([
+        {
+          kind: "media",
+          role: "primary",
+          sourceIds: [attachmentId],
+          payload: {
+            title: "picture.png",
+            mediaType,
+            source: { from: "attachment", attachmentId },
+          },
+        },
+      ]);
+    },
+  );
+
+  it.each([
+    { attachmentId: undefined },
+    { status: "started" },
+    { mediaType: "application/zip" },
+    { attachmentId: "bad" },
+  ])("ignores unavailable or unsupported outputs %j", (extra) => {
+    const kernel = createTestKernel();
+    output(kernel, extra);
+    expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(0);
+  });
+
+  it("bounds output titles and keeps one dismissed output dismissed", () => {
+    const kernel = createTestKernel();
+    output(kernel, { path: "x".repeat(500) });
+    const first = listSurfaceIntents(kernel.db, { threadId })[0];
+    expect((first?.payload as { title: string }).title).toHaveLength(200);
+    kernel.db
+      .prepare("UPDATE surface_intents SET lifecycle = 'dismissed' WHERE id = ?")
+      .run(first?.id ?? "missing");
+    output(kernel, { path: "folder/" });
+    expect(listSurfaceIntents(kernel.db, { threadId })).toMatchObject([
+      { id: first?.id, lifecycle: "dismissed" },
+    ]);
+  });
+
+  it.each([undefined, "folder/", "folder/   "])("uses Output for an empty basename %s", (path) => {
+    const kernel = createTestKernel();
+    output(kernel, { path });
+    output(kernel, { path });
+    expect(listSurfaceIntents(kernel.db, { threadId })).toMatchObject([
+      { payload: { title: "Output" } },
+    ]);
+    expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(1);
+  });
+
+  const turn: Turn = {
+    id: threadId,
+    threadId,
+    identityId: "vesper",
+    userMessageId: threadId,
+    model: { providerId: "codex", model: "test" },
+    status: "completed",
+    items: [],
+    startedAt: "2026-09-01T12:00:00.000Z",
+  };
+  function listProposal(
+    kernel: Kernel,
+    activeTurn = turn,
+    surfaceKind = "list",
+    objectiveId?: string,
+  ): void {
+    applyProposal(
+      kernel,
+      context,
+      activeTurn,
+      {
+        kind: "surface",
+        surfaceKind,
+        role: "supporting",
+        persistence: "restorable",
+        priority: 20,
+        payloadVersion: 1,
+        payload: { items: [{ id: "one", label: "Plan" }] },
+        ...(objectiveId === undefined ? {} : { objectiveId }),
+      },
+      kernel.ids.nextId(),
+    );
+  }
+
+  it("accepts free chat proposals, updates one turn and preserves closed panels across turns", () => {
+    const kernel = createTestKernel();
+    listProposal(kernel);
+    listProposal(kernel);
+    const first = listSurfaceIntents(kernel.db, { threadId })[0];
+    expect(first?.sourceIds).toEqual([turn.id]);
+    kernel.db
+      .prepare("UPDATE surface_intents SET lifecycle = 'dismissed' WHERE id = ?")
+      .run(first?.id ?? "missing");
+    listProposal(kernel);
+    listProposal(kernel, { ...turn, id: kernel.ids.nextId() });
+    expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(2);
+    expect(
+      listSurfaceIntents(kernel.db, { threadId }).find((item) => item.id === first?.id)?.lifecycle,
+    ).toBe("dismissed");
+  });
+
+  it.each([
+    "approval",
+    "vault_recall",
+    "media",
+    "native_application",
+    "external_tool",
+    "conversation",
+  ])("refuses a model's %s panel", (kind) => {
+    const kernel = createTestKernel();
+    listProposal(kernel, turn, kind);
+    expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(0);
+  });
+
+  it("uses only an explicitly named valid Objective", () => {
+    const kernel = createTestKernel();
+    const objectiveId = objectiveWith(kernel);
+    listProposal(kernel, { ...turn, objectiveId });
+    expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(1);
+    listProposal(kernel, turn, "list", objectiveId);
+    expect(listSurfaceIntents(kernel.db, { objectiveId })).toHaveLength(1);
+    listProposal(kernel, turn, "list", kernel.ids.nextId());
+    expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(1);
+  });
   it("puts a decision a person still has to make on the Objective's canvas", () => {
     const kernel = createTestKernel();
     const objectiveId = objectiveWith(kernel);
@@ -123,7 +357,7 @@ describe("proposeFor", () => {
       },
     );
 
-    const intents = listSurfaceIntents(kernel.db, objectiveId);
+    const intents = listSurfaceIntents(kernel.db, { objectiveId });
 
     expect(intents).toHaveLength(1);
     expect(intents[0]?.kind).toBe("approval");
@@ -157,7 +391,7 @@ describe("proposeFor", () => {
       },
     );
 
-    expect(listSurfaceIntents(kernel.db, objectiveId)).toHaveLength(0);
+    expect(listSurfaceIntents(kernel.db, { objectiveId })).toHaveLength(0);
   });
 
   it("gives a freshly activated Objective the three Surfaces it is born with", () => {
@@ -186,7 +420,7 @@ describe("proposeFor", () => {
     );
 
     expect(
-      listSurfaceIntents(kernel.db, objectiveId)
+      listSurfaceIntents(kernel.db, { objectiveId })
         .map((intent) => intent.kind)
         .sort(),
     ).toEqual(["conversation", "detail", "list"]);

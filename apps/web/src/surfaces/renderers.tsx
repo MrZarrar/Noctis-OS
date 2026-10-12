@@ -8,14 +8,23 @@ import {
   ExternalToolSurface,
   FallbackSurface,
   ListSurface,
+  MediaSurface,
   NativeApplicationSurface,
   RecallSurface,
   SourceStateSurface,
 } from "@noctis/ui";
-import type { ExternalToolFocusPayload, NativeFocusPayload } from "@noctis/contracts";
+import type {
+  ExternalToolFocusPayload,
+  LiveBriefPayload,
+  NativeFocusPayload,
+  MediaPayload,
+  MediaSource,
+  SurfaceSize,
+} from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
+import { LiveBriefSurface } from "./LiveBrief.js";
 import type { Resolved, SurfaceKind } from "./registry.js";
 
 /**
@@ -25,6 +34,7 @@ import type { Resolved, SurfaceKind } from "./registry.js";
  * what it may do. "Open in Vault" is the one Section 7 asks for.
  */
 export interface SurfaceContext {
+  mediaUrl?: (source: MediaSource) => string | undefined;
   onOpenInVault?: (evidence: RecallEvidenceView) => void;
   /** Phase 8 handoffs. Each one crosses a boundary the Surface may not cross itself. */
   onConfirm?: (approvalId: string, typedConfirmation?: string) => void;
@@ -61,7 +71,19 @@ export interface SurfaceContext {
  * safe in exactly one direction — `resolveSurface` refuses anything its schema
  * rejected, and this table is unreachable for those.
  */
-const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) => ReactNode> = {
+const RENDERERS: Record<
+  SurfaceKind,
+  (payload: never, context: SurfaceContext, size: SurfaceSize) => ReactNode
+> = {
+  media: (payload: MediaPayload, context: SurfaceContext, size: SurfaceSize) => (
+    <MediaSurface
+      title={payload.title}
+      mediaType={payload.mediaType}
+      url={context.mediaUrl?.(payload.source)}
+      size={size}
+    />
+  ),
+  live_brief: (payload: LiveBriefPayload) => <LiveBriefSurface {...payload} />,
   conversation: (payload: Parameters<typeof ConversationSurface>[0]) => (
     <ConversationSurface {...payload} />
   ),
@@ -192,10 +214,14 @@ const RENDERERS: Record<SurfaceKind, (payload: never, context: SurfaceContext) =
   },
 };
 
-export function renderSurface(resolved: Resolved, context: SurfaceContext = {}): ReactNode {
+export function renderSurface(
+  resolved: Resolved,
+  context: SurfaceContext = {},
+  size: SurfaceSize = "standard",
+): ReactNode {
   if (resolved.status === "fallback") {
     return <FallbackSurface kind={resolved.kind} reason={resolved.reason} />;
   }
 
-  return RENDERERS[resolved.kind](resolved.payload as never, context);
+  return RENDERERS[resolved.kind](resolved.payload as never, context, size);
 }

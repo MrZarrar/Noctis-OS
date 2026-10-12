@@ -79,7 +79,10 @@ export function Command({
   const [revision, setRevision] = useState(0);
 
   const active = objectives.find((objective) => objective.id === identity.activeObjectiveId);
-  const composition = useComposition(transport, active?.id);
+  const composition = useComposition(
+    transport,
+    active === undefined ? undefined : { objectiveId: active.id },
+  );
   const { refresh } = composition;
   const shell = useShellSurfaces({ transport, active, composition });
   const { retryConfirmed } = shell;

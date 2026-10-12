@@ -1315,7 +1315,10 @@ describe("runtime frames", () => {
     const { paired, node, id } = await leaseTurn(core, directory);
 
     const before = await read(core, `/jobs/${id}`);
-    const eventsBefore = (await eventTypes(core)).length;
+    // Presence's live brief follows the job with surface events of its own.
+    const jobEvents = async () =>
+      (await eventTypes(core)).filter((type) => !type.startsWith("surface."));
+    const eventsBefore = (await jobEvents()).length;
     const deltas: unknown[] = [];
 
     core.core.runtimeFrames.subscribe({
@@ -1346,7 +1349,7 @@ describe("runtime frames", () => {
     expect(node.closed()).toBeUndefined();
 
     // Exactly one more event — leased -> running — and it is not a delta.
-    const types = await eventTypes(core);
+    const types = await jobEvents();
     expect(types.length).toBe(eventsBefore + 1);
     expect(types.at(-1)).toBe("node.job_status_changed.v1");
 

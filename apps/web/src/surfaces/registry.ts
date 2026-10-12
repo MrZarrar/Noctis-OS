@@ -1,4 +1,4 @@
-import type { SurfaceSize } from "@noctis/contracts";
+import type { LiveBriefPayload, MediaPayload, SurfaceSize } from "@noctis/contracts";
 import {
   ApprovalPayloadSchema,
   ArtifactPayloadSchema,
@@ -8,6 +8,8 @@ import {
   EvidencePayloadSchema,
   ExternalToolFocusPayloadSchema,
   ListPayloadSchema,
+  LiveBriefPayloadSchema,
+  MediaPayloadSchema,
   NativeFocusPayloadSchema,
   SourceStatePayloadSchema,
   VaultRecallPayloadSchema,
@@ -55,6 +57,18 @@ export interface SurfaceRegistryEntry {
 const ALL_SIZES: readonly SurfaceSize[] = ["compact", "standard", "wide", "stage"];
 
 export const REGISTRY = {
+  media: {
+    payloadVersion: 1,
+    schema: MediaPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Media",
+  },
+  live_brief: {
+    payloadVersion: 1,
+    schema: LiveBriefPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Live brief",
+  },
   conversation: {
     payloadVersion: 1,
     schema: ConversationPayloadSchema,
@@ -217,5 +231,13 @@ export function resolveSurface(
     return { status: "fallback", kind, reason: "the payload did not match its schema" };
   }
 
-  return { status: "ok", kind: kind as SurfaceKind, title: entry.title, payload: parsed.data };
+  return {
+    status: "ok",
+    kind: kind as SurfaceKind,
+    title:
+      kind === "media" || kind === "live_brief"
+        ? (parsed.data as MediaPayload | LiveBriefPayload).title
+        : entry.title,
+    payload: parsed.data,
+  };
 }

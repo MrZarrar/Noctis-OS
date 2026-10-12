@@ -1,5 +1,9 @@
+import { useEffect, useRef } from "react";
+import type { PanelUpdateState } from "@noctis/ui";
+import { buttonStyle } from "../layout/Page.js";
+import { PanelControls } from "./PanelControls.js";
 import type { CompositionPlan, SurfaceIntent, SurfaceRegion } from "@noctis/contracts";
-import { SurfaceFrame, corner, elevation, material, spacing, typography } from "@noctis/ui";
+import { SurfaceFrame, elevation, glass, semantic, spacing, typography } from "@noctis/ui";
 
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { renderSurface } from "../surfaces/renderers.js";
@@ -17,6 +21,7 @@ const COLUMN_WIDTH: Readonly<Record<string, string>> = {
 
 export interface WorkbenchProps {
   composition: CompositionState;
+  updates?: Readonly<Record<string, PanelUpdateState>>;
   /**
    * Every handoff a Surface renderer may be given, as one object.
    *
@@ -63,8 +68,33 @@ export function Workbench({
   composition,
   handoffs = {},
   capabilities = [],
+  updates = {},
 }: WorkbenchProps): JSX.Element {
+  const root = useRef<HTMLDivElement>(null);
+  const restoreAfterClose = useRef<HTMLElement>();
   const { plan, intents, overrides, focusedSurfaceId } = composition;
+  useEffect(() => {
+    const previous = restoreAfterClose.current;
+    if (previous !== undefined && !previous.isConnected) {
+      const visibleControl = Array.from(
+        root.current?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+      ).find((button) => !button.disabled && button.checkVisibility());
+      (visibleControl ?? root.current)?.focus();
+      restoreAfterClose.current = undefined;
+    }
+  }, [plan]);
+  const close = async (id: string): Promise<void> => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && root.current?.contains(active)) {
+      restoreAfterClose.current = active;
+    }
+    try {
+      await composition.dismiss(id);
+    } catch (error) {
+      restoreAfterClose.current = undefined;
+      throw error;
+    }
+  };
 
   if (plan === undefined) {
     return <p style={{ padding: spacing.xl }}>Composing…</p>;
@@ -98,37 +128,36 @@ export function Workbench({
         role={intent.role}
         size={slot.size}
         region={slot.region}
-        overridden={overriddenIds.has(slot.surfaceId)}
-        onMove={(region) => {
-          void composition.move(slot.surfaceId, region, slot.size);
-        }}
-        onRelease={() => {
-          void composition.release(slot.surfaceId);
-        }}
-        onDismiss={() => {
-          void composition.dismiss(slot.surfaceId);
-        }}
+        {...updates[slot.surfaceId]}
+        controls={
+          <PanelControls
+            title={resolved.status === "ok" ? resolved.title : intent.kind}
+            region={slot.region}
+            size={slot.size}
+            display={plan.reasonCodes.includes("display.compact") ? "compact" : "standard"}
+            pinned={overriddenIds.has(slot.surfaceId)}
+            focused={focusedSurfaceId === slot.surfaceId}
+            onFocus={() =>
+              composition.focus(focusedSurfaceId === slot.surfaceId ? undefined : slot.surfaceId)
+            }
+            onPin={() => {
+              void (overriddenIds.has(slot.surfaceId)
+                ? composition.release(slot.surfaceId)
+                : composition.move(slot.surfaceId, slot.region, slot.size));
+            }}
+            onPlace={(region) => {
+              void composition.move(slot.surfaceId, region, slot.size);
+            }}
+            onSize={(size) => {
+              void composition.move(slot.surfaceId, slot.region, size);
+            }}
+            onClose={() => {
+              void close(slot.surfaceId);
+            }}
+          />
+        }
       >
-        <button
-          type="button"
-          aria-pressed={focusedSurfaceId === slot.surfaceId}
-          onClick={() => {
-            composition.focus(focusedSurfaceId === slot.surfaceId ? undefined : slot.surfaceId);
-          }}
-          style={{
-            marginBottom: spacing.sm,
-            background: "transparent",
-            color: typography.color.muted,
-            border: `1px solid ${material.border}`,
-            borderRadius: corner.sm,
-            padding: `${String(spacing.xs)}px ${String(spacing.sm)}px`,
-            cursor: "pointer",
-            font: `${String(typography.scale.xs)}px ${typography.family}`,
-          }}
-        >
-          {focusedSurfaceId === slot.surfaceId ? "Leave focus" : "Focus"}
-        </button>
-        {renderSurface(resolved, handoffs)}
+        {renderSurface(resolved, handoffs, slot.size)}
       </SurfaceFrame>
     );
   };
@@ -138,7 +167,12 @@ export function Workbench({
   const overlay = slotsIn(plan, "overlay");
 
   return (
-    <div style={{ position: "relative", flex: 1, minWidth: 0, display: "grid", gap: spacing.md }}>
+    <div
+      ref={root}
+      tabIndex={-1}
+      data-reason-codes={plan.reasonCodes.join(" ")}
+      style={{ position: "relative", flex: 1, minWidth: 0, display: "grid", gap: spacing.md }}
+    >
       <div
         style={{
           display: "grid",
@@ -173,10 +207,13 @@ export function Workbench({
       {overlay.length > 0 && (
         <div
           style={{
-            position: "absolute",
+            position: plan.reasonCodes.includes("display.compact") ? "static" : "absolute",
             top: spacing.lg,
             right: spacing.lg,
-            width: 360,
+            width: plan.reasonCodes.includes("display.compact") ? "auto" : 360,
+            borderTop: plan.reasonCodes.includes("display.compact")
+              ? `2px solid ${semantic.approval}`
+              : undefined,
             display: "grid",
             gap: spacing.md,
             zIndex: elevation.overlay,
@@ -186,43 +223,25 @@ export function Workbench({
         </div>
       )}
 
-      <Overflow plan={plan} intents={byId} composition={composition} />
-
-      <p
-        style={{
-          margin: 0,
-          font: `${String(typography.scale.xs)}px ${typography.monoFamily}`,
-          color: typography.color.muted,
-        }}
-      >
-        {plan.layoutId} · {plan.reasonCodes.join(" ")}
-      </p>
+      <Overflow plan={plan} intents={byId} composition={composition} onClose={close} />
     </div>
   );
 }
 
 interface OverflowProps {
+  onClose: (id: string) => Promise<void>;
   plan: CompositionPlan;
   intents: Map<string, SurfaceIntent>;
   composition: CompositionState;
 }
 
-/**
- * The overflow stack (Section 5.4 step 7): everything the layout could not
- * place, reachable rather than hidden.
- *
- * `<details>` is the platform's disclosure widget — it is in the tab order,
- * opens on Enter or Space, and announces its state, so a keyboard-only user can
- * reach an overflowed Surface and place it back on the canvas without any of
- * that being written here.
- */
-function Overflow({ plan, intents, composition }: OverflowProps): JSX.Element | null {
+function Overflow({ plan, intents, composition, onClose }: OverflowProps): JSX.Element | null {
   if (plan.overflowSurfaceIds.length === 0) {
     return null;
   }
 
   return (
-    <details>
+    <details style={{ ...glass, padding: spacing.md }}>
       <summary
         style={{ cursor: "pointer", font: `${String(typography.scale.sm)}px ${typography.family}` }}
       >
@@ -249,32 +268,18 @@ function Overflow({ plan, intents, composition }: OverflowProps): JSX.Element | 
                 onClick={() => {
                   void composition.move(surfaceId, "centre", "wide");
                 }}
-                style={{
-                  background: material.fill,
-                  color: "inherit",
-                  border: `1px solid ${material.border}`,
-                  borderRadius: corner.sm,
-                  padding: `${String(spacing.xs)}px ${String(spacing.sm)}px`,
-                  cursor: "pointer",
-                }}
+                style={buttonStyle}
               >
-                Place in centre
+                Show
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  void composition.dismiss(surfaceId);
+                  void onClose(surfaceId);
                 }}
-                style={{
-                  background: "transparent",
-                  color: "inherit",
-                  border: `1px solid ${material.border}`,
-                  borderRadius: corner.sm,
-                  padding: `${String(spacing.xs)}px ${String(spacing.sm)}px`,
-                  cursor: "pointer",
-                }}
+                style={buttonStyle}
               >
-                Dismiss
+                Close
               </button>
             </li>
           );

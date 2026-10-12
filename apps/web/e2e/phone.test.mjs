@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 
 import {
   TOKEN,
+  coreCommand,
   launchOptions,
   startFakeNode,
   startProcess,
@@ -147,6 +148,16 @@ function readControls() {
           element.labels?.[0]?.textContent?.trim() ??
           element.textContent?.trim() ??
           element.tagName;
+        // The part a scrolling page has not clipped away: a row below the fold
+        // is not on screen, wherever its box says it is.
+        let shownTop = box.top;
+        let shownBottom = box.bottom;
+        for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
+          if (getComputedStyle(parent).overflowY === "visible") continue;
+          const clip = parent.getBoundingClientRect();
+          shownTop = Math.max(shownTop, clip.top);
+          shownBottom = Math.min(shownBottom, clip.bottom);
+        }
 
         return {
           name,
@@ -155,6 +166,8 @@ function readControls() {
           top: box.top,
           bottom: box.bottom,
           height: box.height,
+          shownTop,
+          shownBottom,
         };
       }),
   );
@@ -376,6 +389,26 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
           );
         }
 
+        // Where a row lands depends on the data (a long folder path wraps to
+        // one more line), so the page's scrolling area itself must stop above
+        // the core, or some row will rest under it at some scroll offset.
+        const strip = await page.evaluate(() => {
+          const core = document
+            .querySelector('[aria-label="Open Threads"]')
+            ?.getBoundingClientRect();
+          const scroller = [...document.querySelectorAll("main section")]
+            .find((section) => getComputedStyle(section).overflowY === "auto")
+            ?.getBoundingClientRect();
+          return core && scroller
+            ? { coreTop: core.top, scrollerBottom: scroller.bottom }
+            : undefined;
+        });
+        if (strip !== undefined)
+          assert.ok(
+            strip.scrollerBottom <= strip.coreTop + 1,
+            `${name}: the page scrolls ${String(Math.round(strip.scrollerBottom - strip.coreTop))}px under the corner core`,
+          );
+
         // The core waiting in the corner is a control too, and must not sit on
         // another one — as the page first draws, or scrolled to its very end,
         // where the last row would otherwise come to rest under it.
@@ -415,8 +448,8 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
             assert.ok(
               control.right <= companion.left ||
                 control.left >= companion.right ||
-                control.bottom <= companion.top ||
-                control.top >= companion.bottom,
+                control.shownBottom <= companion.top ||
+                control.shownTop >= companion.bottom,
               `${name}, at the ${where}: the corner core covers "${control.name}"`,
             );
           }
@@ -1164,4 +1197,56 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     assert.deepEqual(rail.labels, [...NAV_ITEMS, "Settings"]);
     assert.notEqual(rail.position, "fixed", "the tab bar is still rendered at desktop width");
   });
+  it(
+    "THE GATE (panel present): phone tray and sheet fit with usable composer",
+    { timeout: 120000 },
+    async () => {
+      await page.setViewportSize(PHONE);
+      await page.goto(WEB_URL);
+      await open("Threads");
+      const thread = await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "phone-gate-thread",
+        identityId: "vesper",
+        title: "Panel gate",
+      });
+      assert.equal(thread.status, 200);
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Panel gate", exact: true }).click();
+      await page
+        .locator('section[aria-label="Threads"] header')
+        .getByText(/Panel gate/)
+        .waitFor();
+      const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+        idempotencyKey: "phone-gate-panel",
+        threadId: thread.body.id,
+        kind: "detail",
+        role: "primary",
+        persistence: "ephemeral",
+        priority: 100,
+        minSize: "compact",
+        sourceIds: ["0199a000-0000-7000-8000-0000000000d1"],
+        payloadVersion: 1,
+        payload: { fields: [{ label: "Phone", value: "Panel present" }] },
+      });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      await page.reload();
+      await open("Threads");
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Panel gate", exact: true }).click();
+      const chip = page.getByRole("button", { name: "Open panel Detail", exact: true });
+      await chip.waitFor();
+      for (const opened of [false, true]) {
+        if (opened) await chip.click();
+        const shown = await readPage();
+        assert.ok(shown.scrollWidth <= PHONE.width);
+        assert.ok(shown.scrollHeight <= PHONE.height);
+        for (const control of await readControls()) {
+          assert.ok(control.height >= MIN_TARGET, control.name);
+          assert.ok(control.left >= 0 && control.right <= PHONE.width, control.name);
+        }
+        assert.equal(await page.getByLabel("Message Vesper").isVisible(), true);
+      }
+      await page.goBack();
+    },
+  );
 });

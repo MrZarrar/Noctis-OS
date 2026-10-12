@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UtcTimestampSchema, UuidSchema } from "./primitives.js";
 
 import { ExternalToolFocusPayloadSchema } from "./tool.js";
 import { NativeFocusPayloadSchema } from "./window.js";
@@ -51,6 +52,52 @@ export const EvidencePayloadSchema = z
 export const AttentionPayloadSchema = z
   .object({ headline: z.string().min(1), detail: z.string() })
   .strict();
+
+export const FileSourceSchema = z
+  .object({
+    from: z.literal("file"),
+    nodeId: z.string().min(1).max(64),
+    grantId: z.string().min(1).max(64),
+    relativePath: z
+      .string()
+      .min(1)
+      .max(1024)
+      .refine((path) => !path.split(/[\\/]/).includes(".."), "no parent segments"),
+  })
+  .strict();
+
+export const MediaPayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    mediaType: z.string().trim().min(1).max(128),
+    source: z.discriminatedUnion("from", [
+      z.object({ from: z.literal("attachment"), attachmentId: UuidSchema }).strict(),
+      FileSourceSchema,
+    ]),
+  })
+  .strict();
+
+export const PANEL_PROPOSABLE_KINDS: ReadonlySet<string> = new Set([
+  "list",
+  "detail",
+  "evidence",
+  "attention",
+]);
+
+/** What an agent is doing right now. Built by the core from the job, so it never carries the prompt. */
+export const LiveBriefPayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(64),
+    runtime: z.string().trim().min(1).max(128),
+    activity: z.string().trim().min(1).max(200),
+    status: z.enum(["starting", "running"]),
+    startedAt: UtcTimestampSchema,
+  })
+  .strict();
+
+export type MediaPayload = z.infer<typeof MediaPayloadSchema>;
+export type LiveBriefPayload = z.infer<typeof LiveBriefPayloadSchema>;
+export type MediaSource = MediaPayload["source"];
 
 export const ApprovalPayloadSchema = z
   .object({
@@ -127,6 +174,8 @@ export const SURFACE_PAYLOAD_SCHEMAS: Record<
   detail: { payloadVersion: 1, schema: DetailPayloadSchema },
   evidence: { payloadVersion: 1, schema: EvidencePayloadSchema },
   attention: { payloadVersion: 1, schema: AttentionPayloadSchema },
+  media: { payloadVersion: 1, schema: MediaPayloadSchema },
+  live_brief: { payloadVersion: 1, schema: LiveBriefPayloadSchema },
   approval: { payloadVersion: 1, schema: ApprovalPayloadSchema },
   artifact: { payloadVersion: 1, schema: ArtifactPayloadSchema },
   source_state: { payloadVersion: 1, schema: SourceStatePayloadSchema },

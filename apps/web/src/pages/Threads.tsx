@@ -19,6 +19,9 @@ import type {
   RuntimeRootOption,
   Turn,
 } from "../conversation/useConversation.js";
+import { useIsMobile } from "../layout/useIsMobile.js";
+import { PanelTray, PanelSheet, usePanelSheet } from "./PanelTray.js";
+import { ThreadPanels, useThreadPanels } from "./ThreadPanels.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
 import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
@@ -370,6 +373,10 @@ export function Threads({
   onOpenFile,
   transport,
 }: ThreadsProps): JSX.Element {
+  const mobile = useIsMobile();
+  const panels = useThreadPanels(transport, conversation);
+  const hasPanels = panels.hasPanels && !mobile;
+  const panelSheet = usePanelSheet(panels);
   const [listing, setListing] = useState(false);
   const list = useBackLayer("conversations", listing, () => {
     setListing(false);
@@ -441,7 +448,7 @@ export function Threads({
   return (
     <Page
       title="Threads"
-      maxWidth={880}
+      maxWidth={hasPanels ? 1680 : 880}
       subtitle={subtitle}
       actions={
         <>
@@ -496,237 +503,263 @@ export function Threads({
           onClose={list.dismiss}
         />
       ) : (
-        <>
-          {/* Where agents on this thread handed work: each one opens, and the
+        <div
+          data-thread-workspace
+          style={{
+            display: "grid",
+            gridTemplateColumns: hasPanels
+              ? "minmax(340px, 420px) minmax(0, 1fr)"
+              : "minmax(0, 1fr)",
+            gap: spacing.lg,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <div
+            data-conversation-column
+            style={{ display: "flex", flexDirection: "column", gap: spacing.lg, minWidth: 0 }}
+          >
+            {mobile && !panelSheet.open && <ThreadPanels panels={panels} mobile />}
+            {mobile && <PanelSheet panels={panels} sheet={panelSheet} />}
+            <div hidden={mobile && panelSheet.open}>
+              {/* Where agents on this thread handed work: each one opens, and the
           prompt below then continues it. */}
-          {children.length > 0 && onOpenThread !== undefined && (
-            <nav
-              aria-label="Delegated threads"
-              style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
-            >
-              {children.map((child, index) => (
-                <button
-                  key={child.id}
-                  type="button"
-                  data-thread={child.id}
-                  onClick={() => {
-                    onOpenThread(child.id);
-                  }}
-                  title={`Started ${new Date(child.createdAt).toLocaleString()}`}
-                  style={buttonStyle}
+              {children.length > 0 && onOpenThread !== undefined && (
+                <nav
+                  aria-label="Delegated threads"
+                  style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
                 >
-                  Delegated thread {String(index + 1)}
-                </button>
-              ))}
-            </nav>
-          )}
+                  {children.map((child, index) => (
+                    <button
+                      key={child.id}
+                      type="button"
+                      data-thread={child.id}
+                      onClick={() => {
+                        onOpenThread(child.id);
+                      }}
+                      title={`Started ${new Date(child.createdAt).toLocaleString()}`}
+                      style={buttonStyle}
+                    >
+                      Delegated thread {String(index + 1)}
+                    </button>
+                  ))}
+                </nav>
+              )}
 
-          {transport !== undefined &&
-            thread?.adoptedSessionRef !== undefined &&
-            thread.providerId !== undefined && (
-              <BeforeNoctis
-                transport={transport}
-                threadId={thread.id}
-                providerId={thread.providerId}
-              />
-            )}
+              {transport !== undefined &&
+                thread?.adoptedSessionRef !== undefined &&
+                thread.providerId !== undefined && (
+                  <BeforeNoctis
+                    transport={transport}
+                    threadId={thread.id}
+                    providerId={thread.providerId}
+                  />
+                )}
 
-          {messages.length === 0 &&
-            turns.length === 0 &&
-            streaming.size === 0 &&
-            thread?.adoptedSessionRef === undefined && (
-              <p
-                style={{ margin: 0, color: typography.color.muted, maxWidth: typography.measurePx }}
-              >
-                Pick an agent and a PC below, then say what you want done. Follow-ups continue the
-                same thread on the same machine.
-              </p>
-            )}
+              {messages.length === 0 &&
+                turns.length === 0 &&
+                streaming.size === 0 &&
+                thread?.adoptedSessionRef === undefined && (
+                  <p
+                    style={{
+                      margin: 0,
+                      color: typography.color.muted,
+                      maxWidth: typography.measurePx,
+                    }}
+                  >
+                    Pick an agent and a PC below, then say what you want done. Follow-ups continue
+                    the same thread on the same machine.
+                  </p>
+                )}
 
-          <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
-            {timelineOf(messages, turns, pendingApprovals).map((entry) => {
-              if (entry.kind === "message") {
-                return (
+              <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
+                {timelineOf(messages, turns, pendingApprovals).map((entry) => {
+                  if (entry.kind === "message") {
+                    return (
+                      <li
+                        key={entry.message.id}
+                        data-entry="message"
+                        data-role={entry.message.role}
+                        style={bubbleStyle(entry.message.role === "user")}
+                      >
+                        <span
+                          style={{
+                            display: "block",
+                            fontSize: typography.scale.xs,
+                            letterSpacing: typography.tracking.wide,
+                            color:
+                              entry.message.role === "user"
+                                ? typography.color.muted
+                                : identityAccent.vesper.primary,
+                            marginBottom: 2,
+                          }}
+                        >
+                          {roleLabel(entry.message.role)}
+                          <span style={spoken}>: </span>
+                        </span>
+                        <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                          {entry.message.body}
+                        </span>
+                      </li>
+                    );
+                  }
+
+                  if (entry.kind === "turn") {
+                    return (
+                      <TurnRow
+                        key={entry.turn.id}
+                        turn={entry.turn}
+                        outputUrl={outputUrl}
+                        written={writtenFiles(entry.turn, conversation.roots)}
+                        onOpenFile={onOpenFile}
+                        onCancel={() => {
+                          if (entry.turn.jobId !== undefined) {
+                            void conversation.cancel(entry.turn.jobId);
+                          }
+                        }}
+                      />
+                    );
+                  }
+
+                  const { approval } = entry;
+
+                  return (
+                    <li
+                      key={approval.id}
+                      data-entry="approval"
+                      style={{
+                        ...glass,
+                        borderLeft: `2px solid ${semantic.approval}`,
+                        padding: spacing.lg,
+                        minWidth: 0,
+                      }}
+                    >
+                      <ApprovalSurface
+                        id={approval.id}
+                        consequenceSummary={approval.consequenceSummary}
+                        operationClass={approval.operationClass}
+                        capability={approval.capability}
+                        targetType={approval.target.type}
+                        targetId={approval.target.id}
+                        reversibility={approval.reversibility}
+                        outcome={approval.outcome}
+                        reasonCodes={approval.reasonCodes}
+                        {...(approval.estimatedCostGbp === undefined
+                          ? {}
+                          : { estimatedCostGbp: approval.estimatedCostGbp })}
+                        {...(approval.confirmationPhrase === undefined
+                          ? {}
+                          : { confirmationPhrase: approval.confirmationPhrase })}
+                        onConfirm={(typedConfirmation) => {
+                          void conversation.confirm(approval.id, typedConfirmation);
+                        }}
+                        onDecline={() => {
+                          void conversation.decline(approval.id);
+                        }}
+                      />
+                    </li>
+                  );
+                })}
+
+                {/* In progress, so always last: it is the newest thing on the page. */}
+                {[...streaming.entries()].map(([itemId, text]) => (
                   <li
-                    key={entry.message.id}
-                    data-entry="message"
-                    data-role={entry.message.role}
-                    style={bubbleStyle(entry.message.role === "user")}
+                    key={`streaming-${itemId}`}
+                    data-entry="streaming"
+                    data-streaming={itemId}
+                    aria-live="polite"
+                    style={{ ...bubbleStyle(false), color: typography.color.muted }}
                   >
                     <span
                       style={{
                         display: "block",
                         fontSize: typography.scale.xs,
-                        letterSpacing: typography.tracking.wide,
-                        color:
-                          entry.message.role === "user"
-                            ? typography.color.muted
-                            : identityAccent.vesper.primary,
-                        marginBottom: 2,
+                        color: identityAccent.vesper.primary,
                       }}
                     >
-                      {roleLabel(entry.message.role)}
-                      <span style={spoken}>: </span>
+                      {displayName} (typing)<span style={spoken}>: </span>
                     </span>
-                    <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                      {entry.message.body}
-                    </span>
+                    <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</span>
                   </li>
-                );
-              }
+                ))}
+              </ul>
 
-              if (entry.kind === "turn") {
-                return (
-                  <TurnRow
-                    key={entry.turn.id}
-                    turn={entry.turn}
-                    outputUrl={outputUrl}
-                    written={writtenFiles(entry.turn, conversation.roots)}
-                    onOpenFile={onOpenFile}
-                    onCancel={() => {
-                      if (entry.turn.jobId !== undefined) {
-                        void conversation.cancel(entry.turn.jobId);
-                      }
-                    }}
-                  />
-                );
-              }
-
-              const { approval } = entry;
-
-              return (
-                <li
-                  key={approval.id}
-                  data-entry="approval"
+              {error !== undefined && (
+                <p
                   style={{
-                    ...glass,
-                    borderLeft: `2px solid ${semantic.approval}`,
-                    padding: spacing.lg,
-                    minWidth: 0,
+                    color: semantic.error,
+                    margin: 0,
+                    display: "flex",
+                    gap: spacing.sm,
+                    alignItems: "center",
                   }}
                 >
-                  <ApprovalSurface
-                    id={approval.id}
-                    consequenceSummary={approval.consequenceSummary}
-                    operationClass={approval.operationClass}
-                    capability={approval.capability}
-                    targetType={approval.target.type}
-                    targetId={approval.target.id}
-                    reversibility={approval.reversibility}
-                    outcome={approval.outcome}
-                    reasonCodes={approval.reasonCodes}
-                    {...(approval.estimatedCostGbp === undefined
-                      ? {}
-                      : { estimatedCostGbp: approval.estimatedCostGbp })}
-                    {...(approval.confirmationPhrase === undefined
-                      ? {}
-                      : { confirmationPhrase: approval.confirmationPhrase })}
-                    onConfirm={(typedConfirmation) => {
-                      void conversation.confirm(approval.id, typedConfirmation);
-                    }}
-                    onDecline={() => {
-                      void conversation.decline(approval.id);
-                    }}
-                  />
-                </li>
-              );
-            })}
-
-            {/* In progress, so always last: it is the newest thing on the page. */}
-            {[...streaming.entries()].map(([itemId, text]) => (
-              <li
-                key={`streaming-${itemId}`}
-                data-entry="streaming"
-                data-streaming={itemId}
-                aria-live="polite"
-                style={{ ...bubbleStyle(false), color: typography.color.muted }}
-              >
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: typography.scale.xs,
-                    color: identityAccent.vesper.primary,
-                  }}
-                >
-                  {displayName} (typing)<span style={spoken}>: </span>
-                </span>
-                <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</span>
-              </li>
-            ))}
-          </ul>
-
-          {error !== undefined && (
-            <p
-              style={{
-                color: semantic.error,
-                margin: 0,
-                display: "flex",
-                gap: spacing.sm,
-                alignItems: "center",
-              }}
-            >
-              <span>{error}</span>
-              {/* Task 2.6: a pinned host that is asleep refused the send before
+                  <span>{error}</span>
+                  {/* Task 2.6: a pinned host that is asleep refused the send before
               anything was written, so the offer is real — the same prompt, on
               whichever machine can take it. */}
-              {conversation.offlineRetry !== undefined && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void conversation.retryElsewhere();
-                  }}
-                  style={buttonStyle}
-                >
-                  Send it elsewhere
-                </button>
+                  {conversation.offlineRetry !== undefined && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void conversation.retryElsewhere();
+                      }}
+                      style={buttonStyle}
+                    >
+                      Send it elsewhere
+                    </button>
+                  )}
+                </p>
               )}
-            </p>
-          )}
-
-          {/* Pinned to the bottom of the scroll, so the box to type in stays under
+            </div>
+            {/* Pinned to the bottom of the scroll, so the box to type in stays under
           the thumb however long the thread gets. */}
-          <div
-            style={{
-              position: "sticky",
-              // Down over the page's bottom padding, which sticky positioning
-              // otherwise keeps clear: the thread showed through that strip.
-              bottom: -spacing.lg,
-              marginTop: "auto",
-              padding: spacing.sm,
-              borderRadius: corner.lg,
-              background: `linear-gradient(180deg, rgba(11, 10, 18, 0.72), ${depth.layers[0]})`,
-              backdropFilter: `blur(${String(material.blurPx)}px)`,
-              WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
-              border: `1px solid ${material.border}`,
-            }}
-          >
-            <PromptForm
-              identityId={identityId}
-              models={models}
-              defaultModel={defaultModel}
-              disabled={!connected}
-              canAttach={conversation.canAttach}
-              roots={conversation.roots}
-              {...(pinned === undefined ? {} : { lockedTo: pinned })}
-              {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
-              // The core beside the composer, which stays put while the thread
-              // scrolls, so its state is always in view (owner, 2026-10-09).
-              aside={
-                <div
-                  data-core-slot="composer"
-                  style={{ width: 76, height: 76, flexShrink: 0, marginBottom: -6 }}
-                />
-              }
-              onSend={(text, options) => {
-                follow.current = true;
-                void conversation.send(text, options);
+            <div
+              data-panel-composer
+              style={{
+                position: "sticky",
+                // Down over the page's bottom padding, which sticky positioning
+                // otherwise keeps clear: the thread showed through that strip.
+                bottom: -spacing.lg,
+                marginTop: "auto",
+                padding: spacing.sm,
+                borderRadius: corner.lg,
+                background: `linear-gradient(180deg, rgba(11, 10, 18, 0.72), ${depth.layers[0]})`,
+                backdropFilter: `blur(${String(material.blurPx)}px)`,
+                WebkitBackdropFilter: `blur(${String(material.blurPx)}px)`,
+                border: `1px solid ${material.border}`,
               }}
-            />
-          </div>
-          {/* After the composer, so scrolling it into view reaches the very end
+            >
+              {mobile && <PanelTray panels={panels} sheet={panelSheet} />}
+              <PromptForm
+                identityId={identityId}
+                models={models}
+                defaultModel={defaultModel}
+                disabled={!connected}
+                canAttach={conversation.canAttach}
+                roots={conversation.roots}
+                {...(pinned === undefined ? {} : { lockedTo: pinned })}
+                {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
+                // The core beside the composer, which stays put while the thread
+                // scrolls, so its state is always in view (owner, 2026-10-09).
+                aside={
+                  <div
+                    data-core-slot="composer"
+                    style={{ width: 76, height: 76, flexShrink: 0, marginBottom: -6 }}
+                  />
+                }
+                onSend={(text, options) => {
+                  follow.current = true;
+                  void conversation.send(text, options);
+                }}
+              />
+            </div>
+            {/* After the composer, so scrolling it into view reaches the very end
           rather than leaving the last entry under the sticky composer. */}
-          <div ref={end} />
-        </>
+            <div ref={end} />
+          </div>
+          {!mobile && <ThreadPanels panels={panels} mobile={false} />}
+        </div>
       )}
     </Page>
   );

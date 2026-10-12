@@ -14,6 +14,7 @@ import { WebSocket } from "ws";
 
 import type { CoreConfig } from "../config/server.js";
 import { createLogger } from "../logging.js";
+import { listSurfaceIntents, changeSurfaceLifecycle } from "../objectives/surface-intents.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
 
@@ -33,7 +34,7 @@ interface TestCore {
 const started: Array<{ core: RunningCore; directory: string }> = [];
 const openSockets: WebSocket[] = [];
 
-async function startTestCore(): Promise<TestCore> {
+async function startTestCore(logs?: string[]): Promise<TestCore> {
   const directory = mkdtempSync(join(tmpdir(), "noctis-conversation-"));
   const config: CoreConfig = {
     bindAddress: "127.0.0.1",
@@ -54,7 +55,10 @@ async function startTestCore(): Promise<TestCore> {
         return now;
       },
     },
-    logger: createLogger({ sink: () => undefined, level: "error" }),
+    logger: createLogger({
+      sink: (line) => logs?.push(line),
+      level: logs === undefined ? "error" : "warn",
+    }),
     dispatchIntervalMs: NO_AUTOMATIC_SWEEP_MS,
   });
 
@@ -334,6 +338,100 @@ const ASK: RuntimeAsk = {
 };
 
 describe("conversation service", () => {
+  it("free-chat proposals create one panel per turn and reject core-only kinds", async () => {
+    const logs: string[] = [];
+    const core = await startTestCore(logs);
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const first = await send(core, "panel-first");
+    await waitFor(() => node.jobs().length === 1, "first panel job");
+    const firstJob = lastTurnJob(node).assignment.jobId;
+    const threadId = first.body.threadId as string;
+    const proposal = {
+      kind: "surface" as const,
+      surfaceKind: "list",
+      role: "supporting" as const,
+      persistence: "restorable" as const,
+      priority: 20,
+      payloadVersion: 1,
+      payload: { items: [{ id: "plan", label: "A plan" }] },
+    };
+    node.frame({
+      kind: "stream",
+      jobId: firstJob,
+      sequence: 0,
+      item: { itemId: "plan", kind: "proposal", status: "completed", proposal },
+    });
+    await waitFor(
+      () => listSurfaceIntents(core.core.kernel.db, { threadId }).length === 1,
+      "first panel",
+    );
+    const firstPanel = listSurfaceIntents(core.core.kernel.db, { threadId })[0]!;
+    expect(firstPanel.sourceIds).toEqual([first.body.id]);
+    const closed = changeSurfaceLifecycle(
+      core.core.kernel,
+      { correlationId: core.core.kernel.ids.nextId(), actorType: "user", actorId: "local" },
+      { idempotencyKey: "close-panel", surfaceId: firstPanel.id, lifecycle: "dismissed" },
+    );
+    expect(closed.ok).toBe(true);
+    for (const [index, surfaceKind] of [
+      "approval",
+      "vault_recall",
+      "media",
+      "native_application",
+      "external_tool",
+    ].entries()) {
+      node.frame({
+        kind: "stream",
+        jobId: firstJob,
+        sequence: index + 1,
+        item: {
+          itemId: `forbidden-${index}`,
+          kind: "proposal",
+          status: "completed",
+          proposal: { ...proposal, surfaceKind },
+        },
+      });
+    }
+    await waitFor(
+      () => logs.filter((line) => line.includes("kind_not_proposable")).length === 5,
+      "forbidden kinds logged",
+    );
+    expect(listSurfaceIntents(core.core.kernel.db, { threadId })).toHaveLength(1);
+    node.frame({
+      kind: "result",
+      jobId: firstJob,
+      outcome: "succeeded",
+      evidence: {
+        model: MODEL,
+        sessionRef: "panel-session",
+        itemCount: 6,
+        stoppedReason: "completed",
+      },
+    });
+    await waitFor(
+      async () =>
+        (await read(core, `/turns/${first.body.id as string}`)).body.status === "completed",
+      "first turn completed",
+    );
+    const second = await send(core, "panel-second", { threadId });
+    await waitFor(() => node.jobs().length === 2, "second panel job");
+    node.frame({
+      kind: "stream",
+      jobId: lastTurnJob(node).assignment.jobId,
+      sequence: 0,
+      item: { itemId: "plan", kind: "proposal", status: "completed", proposal },
+    });
+    await waitFor(
+      () => listSurfaceIntents(core.core.kernel.db, { threadId }).length === 2,
+      "second panel",
+    );
+    const panels = listSurfaceIntents(core.core.kernel.db, { threadId });
+    expect(panels.find((panel) => panel.id === firstPanel.id)?.lifecycle).toBe("dismissed");
+    expect(panels.find((panel) => panel.id !== firstPanel.id)?.sourceIds).toEqual([second.body.id]);
+    rmSync(directory, { recursive: true, force: true });
+  });
   it("a free-chat prompt uses the free thread; an Objective prompt uses that Objective's thread, created once", async () => {
     const core = await startTestCore();
     const objectiveId = await activeObjective(core, "threads");
@@ -440,7 +538,10 @@ describe("conversation service", () => {
     const sent = await send(core, "turn-delta");
     await waitFor(() => node.jobs().length === 1, "a job frame");
     const { assignment } = lastTurnJob(node);
-    const before = (await eventTypes(core)).length;
+    // Presence's live brief follows the job with surface events of its own.
+    const jobEvents = async () =>
+      (await eventTypes(core)).filter((type) => !type.startsWith("surface."));
+    const before = (await jobEvents()).length;
 
     node.frame({ kind: "delta", jobId: assignment.jobId, delta: { itemId: "m1", text: "hel" } });
 
@@ -455,7 +556,7 @@ describe("conversation service", () => {
     });
 
     // Exactly one more event — leased -> running — and it is not a delta.
-    const after = await eventTypes(core);
+    const after = await jobEvents();
     expect(after.length).toBe(before + 1);
     expect(after.at(-1)).toBe("node.job_status_changed.v1");
 

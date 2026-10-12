@@ -1,174 +1,129 @@
 import type { ReactNode } from "react";
-
 import type { SurfaceRegion, SurfaceRole, SurfaceSize } from "@noctis/contracts";
+import { corner, glass, material, semantic, spacing, typography } from "../tokens/index.js";
 
-import { corner, depth, material, motion, spacing, typography } from "../tokens/index.js";
-
-const REGIONS: readonly SurfaceRegion[] = ["left", "centre", "right", "bottom", "overlay"];
-
-const REGION_LABEL: Readonly<Record<SurfaceRegion, string>> = {
-  left: "Context (left)",
-  centre: "Primary (centre)",
-  right: "Supporting (right)",
-  bottom: "Control (bottom)",
-  overlay: "Attention (overlay)",
-};
-
-export interface SurfaceFrameProps {
+export interface PanelUpdateState {
+  updating?: boolean;
+  failed?: boolean;
+  onRetry?: () => void;
+  pendingPrimary?: boolean;
+  onUseNewVersion?: () => void;
+}
+export interface SurfaceFrameProps extends PanelUpdateState {
   surfaceId: string;
   title: string;
   role: SurfaceRole;
   size: SurfaceSize;
   region: SurfaceRegion;
-  /** True when the user has placed this Surface here rather than the compositor. */
-  overridden?: boolean;
-  onMove?: (region: SurfaceRegion) => void;
-  onRelease?: () => void;
-  onDismiss?: () => void;
+  controls?: ReactNode;
   children: ReactNode;
 }
-
-/**
- * The chrome every Surface wears: what it is, where it is, and the two things a
- * user may do to it.
- *
- * Arrange is a native `<select>` and dismiss is a native `<button>`, which is
- * the whole of the keyboard story — Tab order, Enter/Space, arrow-key option
- * selection, and a visible focus ring all arrive without a key handler. A
- * hand-rolled drag affordance would have had to reimplement every one of them,
- * and would still have left a keyboard-only user unable to arrange anything.
- */
 export function SurfaceFrame({
   surfaceId,
   title,
   role,
   size,
   region,
-  overridden = false,
-  onMove,
-  onRelease,
-  onDismiss,
+  controls,
   children,
+  updating,
+  failed,
+  onRetry,
+  pendingPrimary,
+  onUseNewVersion,
 }: SurfaceFrameProps): JSX.Element {
   const labelId = `surface-${surfaceId}-title`;
-
+  const actionStyle = {
+    minWidth: 44,
+    minHeight: 44,
+    background: material.fillElevated,
+    border: `1px solid ${material.border}`,
+    color: typography.color.primary,
+    borderRadius: corner.md,
+    cursor: "pointer",
+  } as const;
   return (
     <section
       aria-labelledby={labelId}
+      aria-busy={updating}
+      data-surface-id={surfaceId}
+      data-surface-role={role}
+      data-surface-region={region}
       data-surface-size={size}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        minWidth: 0,
-        background: depth.layers[1],
-        border: `1px solid ${material.border}`,
-        borderRadius: corner.lg,
-        boxShadow: `0 ${String(spacing.sm)}px ${String(spacing.xl)}px ${material.shadow}`,
-        transition: `box-shadow ${String(motion.durationMs.fast)}ms ${motion.easing.standard}`,
-      }}
+      style={{ ...glass, display: "flex", flexDirection: "column", minWidth: 0 }}
     >
       <header
         style={{
           display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
           gap: spacing.sm,
-          padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
+          padding: spacing.md,
           borderBottom: `1px solid ${material.border}`,
         }}
       >
         <h2
           id={labelId}
           style={{
-            flex: 1,
+            flex: "1 1 120px",
             margin: 0,
-            font: `${String(typography.scale.sm)}px ${typography.family}`,
-            letterSpacing: typography.tracking.wide,
+            font: `${role === "primary" ? "600" : "500"} ${String(role === "primary" ? typography.scale.lg : typography.scale.sm)}px ${typography.family}`,
+            color: typography.color.primary,
           }}
         >
           {title}
         </h2>
-
-        {/* The role is spelled out, never carried by colour alone. */}
         <span
           style={{
-            font: `${String(typography.scale.xs)}px ${typography.family}`,
-            color: typography.color.muted,
+            position: "absolute",
+            width: 1,
+            height: 1,
+            padding: 0,
+            overflow: "hidden",
+            clipPath: "inset(50%)",
+            whiteSpace: "nowrap",
           }}
         >
           {role}
         </span>
-
-        {onMove !== undefined && (
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: spacing.xs,
-              font: `${String(typography.scale.xs)}px ${typography.family}`,
-            }}
-          >
-            <span>Place</span>
-            <select
-              aria-label={`Place ${title}`}
-              value={region}
-              onChange={(event) => {
-                onMove(event.target.value as SurfaceRegion);
-              }}
-              style={{
-                background: material.fill,
-                color: "inherit",
-                border: `1px solid ${material.border}`,
-                borderRadius: corner.sm,
-                padding: spacing.xs,
-              }}
-            >
-              {REGIONS.map((option) => (
-                <option key={option} value={option}>
-                  {REGION_LABEL[option]}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {overridden && onRelease !== undefined && (
-          <button
-            type="button"
-            onClick={onRelease}
-            style={{
-              font: `${String(typography.scale.xs)}px ${typography.family}`,
-              background: "transparent",
-              color: "inherit",
-              border: `1px solid ${material.border}`,
-              borderRadius: corner.sm,
-              padding: `${String(spacing.xs)}px ${String(spacing.sm)}px`,
-              cursor: "pointer",
-            }}
-          >
-            Release placement
-          </button>
-        )}
-
-        {onDismiss !== undefined && (
-          <button
-            type="button"
-            aria-label={`Dismiss ${title}`}
-            onClick={onDismiss}
-            style={{
-              font: `${String(typography.scale.xs)}px ${typography.family}`,
-              background: "transparent",
-              color: "inherit",
-              border: `1px solid ${material.border}`,
-              borderRadius: corner.sm,
-              padding: `${String(spacing.xs)}px ${String(spacing.sm)}px`,
-              cursor: "pointer",
-            }}
-          >
-            Dismiss
-          </button>
-        )}
+        {controls}
       </header>
-
+      {(updating || failed || pendingPrimary) && (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: spacing.sm,
+            padding: spacing.sm,
+            color: failed ? semantic.warning : typography.color.muted,
+          }}
+        >
+          {failed ? (
+            <>
+              Couldn't update
+              {onRetry && (
+                <button type="button" onClick={onRetry} style={actionStyle}>
+                  Retry
+                </button>
+              )}
+            </>
+          ) : updating ? (
+            "Updating..."
+          ) : null}
+          {pendingPrimary && (
+            <>
+              New version ready
+              {onUseNewVersion && (
+                <button type="button" onClick={onUseNewVersion} style={actionStyle}>
+                  Use new version
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: spacing.md }}>{children}</div>
     </section>
   );

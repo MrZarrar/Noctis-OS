@@ -3,6 +3,8 @@ import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
+import { CORE_PATH_PATTERN } from "@noctis/contracts";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { contentTypeFor, isApiPath, pageSecurityPolicy, serveStatic } from "./static.js";
@@ -74,6 +76,11 @@ afterAll(() => {
 });
 
 describe("isApiPath", () => {
+  it("claims Presence panels through static classification and the development proxy", () => {
+    expect(isApiPath("/presence/surfaces")).toBe(true);
+    expect(CORE_PATH_PATTERN.test("/presence/surfaces?clientId=workbench")).toBe(true);
+  });
+
   it("claims every path an API route answers, so static never shadows one", () => {
     for (const pathname of [
       "/health",

@@ -33,7 +33,7 @@ function intent(overrides: Partial<SurfaceIntent> & { id: string }): SurfaceInte
 
 function input(partial: Partial<CompositionInput> = {}): CompositionInput {
   return {
-    objectiveId: OBJECTIVE,
+    owner: { objectiveId: OBJECTIVE },
     intents: [],
     overrides: [],
     display: { fingerprint: "fp-1", widthPx: 2560 },
@@ -317,5 +317,38 @@ describe("compose", () => {
 
     expect(later.signature).toBe(noon.signature);
     expect(compositionSignature(later.plan)).toBe(noon.signature);
+  });
+});
+
+describe("composition ownership", () => {
+  const owners = [{ objectiveId: OBJECTIVE }, { threadId: OBJECTIVE }, { presence: true }] as const;
+  it.each(owners)("composes and stamps each owner: %j", (owner) => {
+    const base = { ...intent({ id: id(90) }), objectiveId: undefined };
+    const outcome = compose(input({ owner, intents: [{ ...base, ...owner }] }));
+    expect(outcome.plan).toMatchObject(owner);
+    expect(outcome.plan.slots).toHaveLength(1);
+  });
+  it("isolates all owner kinds with identical UUIDs", () => {
+    const base = { ...intent({ id: id(91) }), objectiveId: undefined };
+    expect(
+      new Set(
+        owners.map(
+          (owner) => compose(input({ owner, intents: [{ ...base, ...owner }] })).signature,
+        ),
+      ).size,
+    ).toBe(3);
+    for (const owner of owners)
+      for (const foreign of owners.filter((value) => value !== owner)) {
+        const outcome = compose(input({ owner, intents: [{ ...base, ...foreign }] }));
+        expect(outcome.plan.slots).toHaveLength(0);
+        expect(outcome.plan.reasonCodes).toContain("intent.foreign_objective");
+      }
+  });
+  it("rejects another thread", () => {
+    const base = { ...intent({ id: id(92) }), objectiveId: undefined };
+    expect(
+      compose(input({ owner: { threadId: OBJECTIVE }, intents: [{ ...base, threadId: id(93) }] }))
+        .plan.reasonCodes,
+    ).toContain("intent.foreign_objective");
   });
 });

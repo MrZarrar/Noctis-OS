@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { CompositionPlan, SurfaceIntent } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { composeSurfaces, upsertSurfaceIntent } from "./surface-intents.js";
+
 import type { CoreConfig } from "../config/server.js";
 import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
@@ -423,5 +425,152 @@ describe("the Objective and Surface vertical slice", () => {
 
     expect(names).toContain("surface.intent_upserted.v1");
     expect(names).toContain("surface.composition_changed.v1");
+  });
+});
+
+describe("thread and Presence panels", () => {
+  it("rejects ambiguous owners in direct service calls before storing anything", async () => {
+    const core = await freshCore();
+    const objectiveId = await draftObjective(core);
+    const context = {
+      actorType: "user" as const,
+      actorId: "local",
+      correlationId: "0199a000-0000-7000-8000-000000000001",
+    };
+    for (const extra of [
+      { threadId: "0199a000-0000-7000-8000-000000000002" },
+      { presence: true as const },
+    ]) {
+      expect(() =>
+        upsertSurfaceIntent(core.core.kernel, context, {
+          idempotencyKey: key("direct"),
+          objectiveId,
+          ...extra,
+          kind: "detail",
+          role: "primary",
+          persistence: "restorable",
+          priority: 1,
+          minSize: "compact",
+          payloadVersion: 1,
+          payload: {},
+          sourceIds: [],
+          artifactIds: [],
+        }),
+      ).toThrow();
+      expect(() =>
+        composeSurfaces(core.core.kernel, context, {
+          idempotencyKey: key("direct-compose"),
+          objectiveId,
+          ...extra,
+          clientId: CLIENT,
+          display: { fingerprint: FINGERPRINT, widthPx: 3440 },
+          attentionState: "active_canvas",
+        }),
+      ).toThrow();
+    }
+    expect(
+      core.core.kernel.db.prepare("SELECT COUNT(*) AS count FROM surface_intents").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      core.core.kernel.db.prepare("SELECT COUNT(*) AS count FROM composition_snapshots").get(),
+    ).toEqual({ count: 0 });
+  });
+
+  it("keeps three owners isolated and restores thread overrides and snapshots", async () => {
+    const core = await freshCore();
+    const objectiveId = await draftObjective(core);
+    const createdThread = await command(core, "conversation.create_thread", {
+      idempotencyKey: key("thread"),
+      identityId: "vesper",
+      title: "Panels",
+    });
+    expect(createdThread.status).toBe(200);
+    const threadId = createdThread.body.id as string;
+    const owners = [{ objectiveId }, { threadId }, { presence: true }];
+    const paths = [
+      surfacesPath(objectiveId),
+      surfacesPath(objectiveId).replace(`/objectives/${objectiveId}`, `/threads/${threadId}`),
+      surfacesPath(objectiveId).replace(`/objectives/${objectiveId}`, "/presence"),
+    ];
+    const intents: SurfaceIntent[] = [];
+    for (const owner of owners) {
+      const response = await command(core, "surface.upsert_intent", {
+        idempotencyKey: key("owner"),
+        ...owner,
+        kind: "detail",
+        role: "primary",
+        persistence: "restorable",
+        priority: 1,
+        minSize: "compact",
+        payloadVersion: 1,
+        payload: { title: "Panel" },
+      });
+      expect(response.status).toBe(200);
+      intents.push(response.body as unknown as SurfaceIntent);
+      const composed = await command(core, "surface.compose", {
+        idempotencyKey: key("owner-compose"),
+        ...owner,
+        clientId: CLIENT,
+        display: { fingerprint: FINGERPRINT, widthPx: 3440 },
+        attentionState: "active_canvas",
+      });
+      expect(composed.status).toBe(200);
+    }
+    expect(new Set(intents.map((intent) => intent.id)).size).toBe(3);
+    for (const [index, path] of paths.entries()) {
+      const response = await read(core, path);
+      expect(response.status).toBe(200);
+      expect((response.body.intents as SurfaceIntent[]).map((intent) => intent.id)).toEqual([
+        intents[index]!.id,
+      ]);
+      expect(response.body.snapshot).not.toBeNull();
+    }
+    const surfaceId = intents[1]!.id;
+    expect(
+      (
+        await command(core, "surface.set_override", {
+          idempotencyKey: key("override"),
+          surfaceId,
+          clientId: CLIENT,
+          displayFingerprint: FINGERPRINT,
+          region: "left",
+          size: "stage",
+        })
+      ).status,
+    ).toBe(200);
+    await core.core.close();
+    running.splice(running.indexOf(core.core), 1);
+    const restarted = await startAt(core.directory, 1000);
+    const restored = await read(restarted, paths[1]!);
+    expect((restored.body.plan as CompositionPlan).slots[0]?.region).toBe("left");
+    expect((restored.body.overrides as Array<{ surfaceId: string }>)[0]?.surfaceId).toBe(surfaceId);
+    expect(
+      (
+        await command(restarted, "surface.release_override", {
+          idempotencyKey: key("release"),
+          surfaceId,
+          clientId: CLIENT,
+          displayFingerprint: FINGERPRINT,
+        })
+      ).status,
+    ).toBe(200);
+    const released = await read(restarted, paths[1]!);
+    expect(
+      (released.body.overrides as Array<{ releasedAt?: string }>)[0]?.releasedAt,
+    ).toBeDefined();
+    expect(
+      (await read(restarted, paths[1]!.replace(threadId, "0199a000-0000-7000-8000-000000000001")))
+        .status,
+    ).toBe(404);
+    const events = (await read(restarted, "/events?after=0")).body.events as Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }>;
+    expect(
+      events.some(
+        (event) =>
+          event.type === "surface.intent_upserted.v1" && event.payload.threadId === threadId,
+      ),
+    ).toBe(true);
   });
 });

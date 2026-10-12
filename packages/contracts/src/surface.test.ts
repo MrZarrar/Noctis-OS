@@ -1,6 +1,12 @@
+import { ComposeSurfacesCommandSchema, UpsertSurfaceIntentCommandSchema } from "./command.js";
 import { describe, expect, it } from "vitest";
 
-import { SurfaceIntentSchema } from "./surface.js";
+import {
+  CompositionPlanSchema,
+  SurfaceIntentSchema,
+  SurfaceOwnerSchema,
+  ownerIdOf,
+} from "./surface.js";
 
 const valid = {
   id: "01941f29-7c00-7000-8000-000000000003",
@@ -53,4 +59,67 @@ describe("SurfaceIntentSchema", () => {
 
     expect(SurfaceIntentSchema.safeParse(withoutVersion).success).toBe(false);
   });
+});
+
+describe("surface ownership", () => {
+  const owners = [
+    { objectiveId: valid.objectiveId },
+    { threadId: valid.objectiveId },
+    { presence: true },
+  ];
+  const invalidOwners = [
+    {},
+    { presence: false },
+    { objectiveId: valid.objectiveId, threadId: valid.objectiveId },
+    { objectiveId: valid.objectiveId, presence: true },
+    { threadId: valid.objectiveId, presence: true },
+    { objectiveId: valid.objectiveId, threadId: valid.objectiveId, presence: true },
+  ];
+  const base = { ...valid, objectiveId: undefined };
+  const plan = {
+    layoutId: "test",
+    displayFingerprint: "test",
+    slots: [],
+    overflowSurfaceIds: [],
+    reasonCodes: [],
+    generatedAt: valid.requestedAt,
+  };
+  for (const [name, schema, value] of [
+    ["owner", SurfaceOwnerSchema, {}],
+    ["intent", SurfaceIntentSchema, base],
+    ["plan", CompositionPlanSchema, plan],
+    [
+      "upsert command",
+      UpsertSurfaceIntentCommandSchema,
+      {
+        idempotencyKey: "ownership-test",
+        kind: "document",
+        role: "primary",
+        persistence: "ephemeral",
+        priority: 0,
+        minSize: "compact",
+        payloadVersion: 1,
+        payload: {},
+      },
+    ],
+    [
+      "compose command",
+      ComposeSurfacesCommandSchema,
+      {
+        idempotencyKey: "ownership-test",
+        clientId: "client",
+        display: { fingerprint: "display", widthPx: 1200 },
+        attentionState: "presence",
+      },
+    ],
+  ] as const) {
+    it.each(owners)("accepts a single " + name + " owner: %j", (owner) =>
+      expect(schema.safeParse({ ...value, ...owner }).success).toBe(true),
+    );
+    it.each(invalidOwners)("rejects invalid " + name + " ownership: %j", (owner) =>
+      expect(schema.safeParse({ ...value, ...owner }).success).toBe(false),
+    );
+  }
+  it("distinguishes every owner kind", () =>
+    expect(new Set(owners.map((owner) => ownerIdOf(owner))).size).toBe(3));
 });

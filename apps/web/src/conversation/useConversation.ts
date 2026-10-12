@@ -108,6 +108,9 @@ const PENDING_OUTCOMES: ReadonlySet<string> = new Set([
 ]);
 
 export interface ConversationSnapshot {
+  panelsRevision: number;
+  /** Presence's panels belong to no thread, so they refresh on a signal of their own. */
+  presencePanelsRevision: number;
   thread: ConversationThread | undefined;
   messages: readonly Message[];
   turns: readonly Turn[];
@@ -172,6 +175,8 @@ export interface ConversationStore extends ConversationActions {
 }
 
 const EMPTY: ConversationSnapshot = {
+  panelsRevision: 0,
+  presencePanelsRevision: 0,
   thread: undefined,
   messages: [],
   turns: [],
@@ -493,6 +498,27 @@ export function createConversation(
         }
 
         return;
+      case "surface.intent_upserted.v1":
+      case "surface.lifecycle_changed.v1": {
+        const payload = z
+          .object({
+            threadId: z.string().optional(),
+            objectiveId: z.string().optional(),
+            presence: z.literal(true).optional(),
+          })
+          .safeParse(event.payload);
+        if (payload.success && payload.data.presence === true) {
+          set({ presencePanelsRevision: state.presencePanelsRevision + 1 });
+        } else if (
+          payload.success &&
+          ((threadId !== undefined && payload.data.threadId === threadId) ||
+            (state.thread?.objectiveId !== undefined &&
+              payload.data.objectiveId === state.thread.objectiveId))
+        ) {
+          set({ panelsRevision: state.panelsRevision + 1 });
+        }
+        return;
+      }
       default:
         return;
     }

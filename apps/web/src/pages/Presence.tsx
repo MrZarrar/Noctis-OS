@@ -11,6 +11,8 @@ import { useIsMobile } from "../layout/useIsMobile.js";
 import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ExchangeOutputs } from "./ExchangeOutputs.js";
+import { PanelSheet, PanelTray, usePanelSheet } from "./PanelTray.js";
+import { PresenceSideColumn, usePresencePanels } from "./PresencePanels.js";
 import { clockText, greetingFor, msToNextMinute } from "./clock.js";
 import type { DigestView } from "./digest-view.js";
 import { DigestSchema, localMidnight, todayLine } from "./digest-view.js";
@@ -30,6 +32,7 @@ export interface PresenceProps {
         | "error"
         | "outputUrl"
         | "startFresh"
+        | "presencePanelsRevision"
       >
     >;
   /** Whether a composer has the focus; the app's core reads the same signal. */
@@ -63,6 +66,8 @@ export function Presence({
   // history, which Threads keeps, not something to greet the owner with.
   const [sent, setSent] = useState(false);
   const mobile = useIsMobile();
+  const panels = usePresencePanels(transport, conversation.presencePanelsRevision ?? 0);
+  const sheet = usePanelSheet(panels);
   const identityId = identity.activeIdentityId ?? "vesper";
   const state = intelligenceState(
     {
@@ -126,8 +131,7 @@ export function Presence({
         overflowY: "auto",
         position: "relative",
         display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
+        gap: 24,
         padding: mobile ? "8px 16px 16px" : "20px 32px 28px",
         boxSizing: "border-box",
       }}
@@ -144,172 +148,240 @@ export function Presence({
       >
         Presence
       </h1>
+      {/* Always wrapped, so a side panel arriving never remounts the composer. */}
       <div
         style={{
-          alignSelf: "stretch",
+          flex: 1,
+          minWidth: 0,
           display: "flex",
-          // On a phone the marker has a line of its own, so the clock below it
-          // is centred and a long date cannot push the marker around.
-          flexDirection: mobile ? "column" : "row",
-          alignItems: mobile ? "stretch" : "flex-start",
-          justifyContent: "space-between",
-          gap: mobile ? 6 : 0,
-        }}
-      >
-        {identityId === "jester" && (
-          // The mockups' marker: which identity is listening, in its own colour.
-          <p
-            style={{
-              alignSelf: "flex-start",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              margin: 0,
-              color: accent,
-              fontFamily: typography.monoFamily,
-              fontSize: 12,
-              letterSpacing: "0.14em",
-            }}
-          >
-            <JesterGlyph size={16} />
-            JESTER · ACTIVE
-          </p>
-        )}
-        <time
-          dateTime={now.toISOString()}
-          aria-label={`${clock.time}, ${clock.day}`}
-          style={{
-            display: "grid",
-            justifyItems: mobile ? "center" : "end",
-            marginLeft: "auto",
-            marginRight: mobile ? "auto" : 0,
-          }}
-        >
-          <span
-            style={{
-              font: `200 ${String(mobile ? 40 : 56)}px/1 ${typography.family}`,
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "0.02em",
-              color: typography.color.primary,
-            }}
-          >
-            {clock.time}
-          </span>
-          <span
-            style={{
-              fontSize: typography.scale.sm,
-              color: typography.color.muted,
-              letterSpacing: "0.08em",
-            }}
-          >
-            {clock.day}
-          </span>
-          {today !== undefined && (
-            <span
-              data-presence-digest
-              style={{ fontSize: typography.scale.xs, color: typography.color.muted, marginTop: 6 }}
-            >
-              {today}
-            </span>
-          )}
-        </time>
-      </div>
-      {/* The app's one core flies into this box; it is drawn above the page. */}
-      <div
-        data-core-slot="hero"
-        style={{
-          flex: "1 1 320px",
-          width: "100%",
-          maxWidth: 690,
-          minHeight: mobile ? 200 : 280,
-          maxHeight: mobile ? 430 : 530,
-          position: "relative",
+          flexDirection: "column",
+          alignItems: "center",
         }}
       >
         <div
-          aria-hidden="true"
           style={{
-            position: "absolute",
-            bottom: "2%",
-            left: "25%",
-            right: "25%",
-            height: 22,
-            background:
-              identityId === "jester"
-                ? "radial-gradient(ellipse, rgba(139,124,246,.3), rgba(182,255,59,.08) 45%, transparent 70%)"
-                : "radial-gradient(ellipse, rgba(139,124,246,.38), transparent 70%)",
-            filter: "blur(5px)",
-            pointerEvents: "none",
-          }}
-        />
-      </div>
-      <div style={{ width: "100%", maxWidth: 560, flexShrink: 0 }}>
-        <p
-          role="status"
-          aria-live="polite"
-          data-presence-state={state}
-          style={{
-            textAlign: "center",
-            margin: "0 0 14px",
-            color: state === "waiting_for_approval" ? semantic.approval : typography.color.muted,
-            fontSize: 13,
+            alignSelf: "stretch",
+            display: "flex",
+            // On a phone the marker has a line of its own, so the clock below it
+            // is centred and a long date cannot push the marker around.
+            flexDirection: mobile ? "column" : "row",
+            alignItems: mobile ? "stretch" : "flex-start",
+            justifyContent: "space-between",
+            gap: mobile ? 6 : 0,
           }}
         >
-          {STATE_WORDS[state]}
-        </p>
-        {exchange === undefined ? (
-          <p
-            style={{
-              margin: "0 0 16px",
-              fontSize: mobile ? 20 : 23,
-              fontWeight: 400,
-              textAlign: "center",
-            }}
-          >
-            <span aria-hidden="true" style={{ color: accent, marginRight: 12 }}>
-              ✦
-            </span>
-            {greeting}
-          </p>
-        ) : (
-          <div style={{ margin: "0 0 16px" }}>
-            <div
-              aria-live="polite"
+          {identityId === "jester" && (
+            // The mockups' marker: which identity is listening, in its own colour.
+            <p
               style={{
-                display: "grid",
+                alignSelf: "flex-start",
+                display: "flex",
+                alignItems: "center",
                 gap: 10,
-                maxHeight: mobile ? "26vh" : "30vh",
-                overflowY: "auto",
-                fontSize: mobile ? 15 : 16,
-                lineHeight: 1.5,
+                margin: 0,
+                color: accent,
+                fontFamily: typography.monoFamily,
+                fontSize: 12,
+                letterSpacing: "0.14em",
               }}
             >
-              <p style={{ margin: 0, display: "flex", gap: 12 }}>
-                <span aria-hidden="true" style={{ color: identityAccent.vesper.primary }}>
-                  ✦
-                </span>
-                <span>{exchange.you}</span>
-              </p>
-              {exchange.reply !== "" && (
-                <p style={{ margin: 0, display: "flex", gap: 12, whiteSpace: "pre-wrap" }}>
-                  <span aria-hidden="true" style={{ color: accent }}>
+              <JesterGlyph size={16} />
+              JESTER · ACTIVE
+            </p>
+          )}
+          <time
+            dateTime={now.toISOString()}
+            aria-label={`${clock.time}, ${clock.day}`}
+            style={{
+              display: "grid",
+              justifyItems: mobile ? "center" : "end",
+              marginLeft: "auto",
+              marginRight: mobile ? "auto" : 0,
+            }}
+          >
+            <span
+              style={{
+                font: `200 ${String(mobile ? 40 : 56)}px/1 ${typography.family}`,
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: "0.02em",
+                color: typography.color.primary,
+              }}
+            >
+              {clock.time}
+            </span>
+            <span
+              style={{
+                fontSize: typography.scale.sm,
+                color: typography.color.muted,
+                letterSpacing: "0.08em",
+              }}
+            >
+              {clock.day}
+            </span>
+            {today !== undefined && (
+              <span
+                data-presence-digest
+                style={{
+                  fontSize: typography.scale.xs,
+                  color: typography.color.muted,
+                  marginTop: 6,
+                }}
+              >
+                {today}
+              </span>
+            )}
+          </time>
+        </div>
+        {/* The app's one core flies into this box; it is drawn above the page. */}
+        <div
+          data-core-slot="hero"
+          style={{
+            flex: "1 1 320px",
+            width: "100%",
+            maxWidth: 690,
+            minHeight: mobile ? 200 : 280,
+            maxHeight: mobile ? 430 : 530,
+            position: "relative",
+          }}
+        >
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              bottom: "2%",
+              left: "25%",
+              right: "25%",
+              height: 22,
+              background:
+                identityId === "jester"
+                  ? "radial-gradient(ellipse, rgba(139,124,246,.3), rgba(182,255,59,.08) 45%, transparent 70%)"
+                  : "radial-gradient(ellipse, rgba(139,124,246,.38), transparent 70%)",
+              filter: "blur(5px)",
+              pointerEvents: "none",
+            }}
+          />
+        </div>
+        <div style={{ width: "100%", maxWidth: 560, flexShrink: 0 }}>
+          <p
+            role="status"
+            aria-live="polite"
+            data-presence-state={state}
+            style={{
+              textAlign: "center",
+              margin: "0 0 14px",
+              color: state === "waiting_for_approval" ? semantic.approval : typography.color.muted,
+              fontSize: 13,
+            }}
+          >
+            {STATE_WORDS[state]}
+          </p>
+          {exchange === undefined ? (
+            <p
+              style={{
+                margin: "0 0 16px",
+                fontSize: mobile ? 20 : 23,
+                fontWeight: 400,
+                textAlign: "center",
+              }}
+            >
+              <span aria-hidden="true" style={{ color: accent, marginRight: 12 }}>
+                ✦
+              </span>
+              {greeting}
+            </p>
+          ) : (
+            <div style={{ margin: "0 0 16px" }}>
+              <div
+                aria-live="polite"
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  maxHeight: mobile ? "26vh" : "30vh",
+                  overflowY: "auto",
+                  fontSize: mobile ? 15 : 16,
+                  lineHeight: 1.5,
+                }}
+              >
+                <p style={{ margin: 0, display: "flex", gap: 12 }}>
+                  <span aria-hidden="true" style={{ color: identityAccent.vesper.primary }}>
                     ✦
                   </span>
-                  <span>{exchange.reply}</span>
+                  <span>{exchange.you}</span>
                 </p>
+                {exchange.reply !== "" && (
+                  <p style={{ margin: 0, display: "flex", gap: 12, whiteSpace: "pre-wrap" }}>
+                    <span aria-hidden="true" style={{ color: accent }}>
+                      ✦
+                    </span>
+                    <span>{exchange.reply}</span>
+                  </p>
+                )}
+                <ExchangeOutputs
+                  outputs={exchange.outputs}
+                  outputUrl={conversation.outputUrl}
+                  mobile={mobile}
+                />
+              </div>
+              {onOpenThread !== undefined && (
+                <button
+                  type="button"
+                  onClick={onOpenThread}
+                  style={{
+                    marginTop: 8,
+                    minHeight: 44,
+                    background: "transparent",
+                    border: "none",
+                    color: typography.color.muted,
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Open in Threads →
+                </button>
               )}
-              <ExchangeOutputs
-                outputs={exchange.outputs}
-                outputUrl={conversation.outputUrl}
-                mobile={mobile}
-              />
             </div>
-            {onOpenThread !== undefined && (
+          )}
+          {state === "waiting_for_approval" && onReview !== undefined && (
+            <button
+              type="button"
+              onClick={onReview}
+              style={{ ...buttonStyle, width: "100%", marginBottom: 12 }}
+            >
+              Review approval
+            </button>
+          )}
+          {mobile && (
+            <>
+              <PanelSheet panels={panels} sheet={sheet} />
+              <PanelTray panels={panels} sheet={sheet} />
+            </>
+          )}
+          <PromptForm
+            identityId={identityId}
+            models={conversation.models}
+            defaultModel={conversation.defaultModel}
+            disabled={transport === undefined}
+            canAttach={conversation.canAttach}
+            roots={conversation.roots}
+            onSend={(text, options) => {
+              setSent(true);
+              onSend(text, options);
+            }}
+            {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
+          />
+          {/* Not mid-turn: the turn would carry on in a thread Presence had just let go of. */}
+          {conversation.thread !== undefined &&
+            conversation.startFresh !== undefined &&
+            (state === "idle" || state === "listening") && (
               <button
                 type="button"
-                onClick={onOpenThread}
+                onClick={() => {
+                  setSent(false);
+                  void conversation.startFresh?.();
+                }}
                 style={{
-                  marginTop: 8,
+                  display: "block",
+                  margin: "8px auto 0",
                   minHeight: 44,
                   background: "transparent",
                   border: "none",
@@ -318,68 +390,22 @@ export function Presence({
                   fontSize: 13,
                 }}
               >
-                Open in Threads →
+                New chat
               </button>
             )}
-          </div>
-        )}
-        {state === "waiting_for_approval" && onReview !== undefined && (
-          <button
-            type="button"
-            onClick={onReview}
-            style={{ ...buttonStyle, width: "100%", marginBottom: 12 }}
-          >
-            Review approval
-          </button>
-        )}
-        <PromptForm
-          identityId={identityId}
-          models={conversation.models}
-          defaultModel={conversation.defaultModel}
-          disabled={transport === undefined}
-          canAttach={conversation.canAttach}
-          roots={conversation.roots}
-          onSend={(text, options) => {
-            setSent(true);
-            onSend(text, options);
-          }}
-          {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
-        />
-        {/* Not mid-turn: the turn would carry on in a thread Presence had just let go of. */}
-        {conversation.thread !== undefined &&
-          conversation.startFresh !== undefined &&
-          (state === "idle" || state === "listening") && (
-            <button
-              type="button"
-              onClick={() => {
-                setSent(false);
-                void conversation.startFresh?.();
-              }}
-              style={{
-                display: "block",
-                margin: "8px auto 0",
-                minHeight: 44,
-                background: "transparent",
-                border: "none",
-                color: typography.color.muted,
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              New chat
-            </button>
+          {error !== undefined && (
+            <p role="alert" style={{ color: semantic.error }}>
+              {error}
+            </p>
           )}
-        {error !== undefined && (
-          <p role="alert" style={{ color: semantic.error }}>
-            {error}
-          </p>
-        )}
-        {transport === undefined && (
-          <p style={{ color: typography.color.muted, textAlign: "center", fontSize: 13 }}>
-            Connect to Noctis to start a thread.
-          </p>
-        )}
+          {transport === undefined && (
+            <p style={{ color: typography.color.muted, textAlign: "center", fontSize: 13 }}>
+              Connect to Noctis to start a thread.
+            </p>
+          )}
+        </div>
       </div>
+      {!mobile && <PresenceSideColumn panels={panels} />}
     </section>
   );
 }

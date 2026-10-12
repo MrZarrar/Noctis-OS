@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -103,6 +103,74 @@ describe("migrate", () => {
     db.close();
   });
 
+  it("THE GATE (panels): preserves intents, overrides and snapshots across the owner migration", () => {
+    const files = Object.fromEntries(
+      readdirSync("apps/core/migrations")
+        .filter((name) => Number(name.slice(0, 4)) < 16)
+        .map((name) => [name, readFileSync(join("apps/core/migrations", name), "utf8")]),
+    );
+    const db = openDatabase(":memory:");
+    migrate(db, { directory: makeMigrations(files), clock });
+    db.exec(
+      "INSERT INTO objectives (id,title,intent,status,identity_id,created_at,updated_at) VALUES ('o','title','intent','draft','vesper','now','now')",
+    );
+    db.exec(
+      "INSERT INTO surface_intents VALUES ('s','o','detail','primary','objective','proposed',1,'compact',NULL,'[]','[]',1,'{}','now'), ('s2','o','detail','supporting','objective','proposed',2,'compact',NULL,'[\"source\"]','[]',1,'{}','now')",
+    );
+    db.exec(
+      "INSERT INTO surface_overrides VALUES ('v','s','client','display','main','compact','now',NULL), ('v2','s2','client','display','main','compact','now','later')",
+    );
+    db.exec(
+      "INSERT INTO composition_snapshots VALUES ('c','o','layout','display','{}','[]','now')",
+    );
+    const before = ["surface_intents", "surface_overrides", "composition_snapshots"].map((table) =>
+      db.prepare(`SELECT * FROM ${table} ORDER BY id`).all(),
+    );
+    expect(migrate(db, { directory: "apps/core/migrations", clock }).appliedVersions).toContain(16);
+    for (const [index, table] of [
+      "surface_intents",
+      "surface_overrides",
+      "composition_snapshots",
+    ].entries()) {
+      const rows = db
+        .prepare(`SELECT * FROM ${table} ORDER BY id`)
+        .all()
+        .map((row) => {
+          return Object.fromEntries(
+            Object.entries(row as Record<string, unknown>).filter(
+              ([name]) => name !== "thread_id" && name !== "presence",
+            ),
+          );
+        });
+      expect(rows).toEqual(before[index]);
+    }
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    for (const owners of [
+      [null, null, null],
+      ["o", null, 1],
+      ["o", "missing", null],
+      ["o", "missing", 1],
+      [null, "missing", 1],
+      [null, null, 0],
+    ]) {
+      expect(() =>
+        db
+          .prepare(
+            "INSERT INTO surface_intents (id,objective_id,thread_id,presence,kind,role,persistence,lifecycle,priority,min_size,payload_version,payload_json,requested_at) VALUES ('bad',?,?,?,'detail','primary','objective','proposed',1,'compact',1,'{}','now')",
+          )
+          .run(...owners),
+      ).toThrow();
+      expect(() =>
+        db
+          .prepare(
+            "INSERT INTO composition_snapshots (id,objective_id,thread_id,presence,layout_id,display_fingerprint,plan_json,generated_at) VALUES ('bad',?,?,?,'layout','display','{}','now')",
+          )
+          .run(...owners),
+      ).toThrow();
+    }
+    db.close();
+  });
+
   it("applies every migration and creates all 45 tables", () => {
     const db = openDatabase(":memory:");
 
@@ -182,7 +250,7 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(15);
+    expect(version.v).toBe(16);
     expect(vaultItems).toContain("sensitive");
   });
 });

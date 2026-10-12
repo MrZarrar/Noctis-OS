@@ -70,8 +70,7 @@ export function RecallSurface({
             <li
               key={`${item.itemId}-${item.quote}-${item.path}`}
               style={{
-                border: `1px solid ${material.border}`,
-                borderRadius: corner.sm,
+                borderBottom: `1px solid ${material.border}`,
                 padding: spacing.sm,
                 display: "grid",
                 gap: spacing.xs,
@@ -104,6 +103,7 @@ export function RecallSurface({
                     }}
                     style={{
                       font: `${String(typography.scale.xs)}px ${typography.family}`,
+                      minHeight: 44,
                       background: material.fill,
                       color: "inherit",
                       border: `1px solid ${material.border}`,
@@ -135,6 +135,9 @@ function Freshness({
     <span
       style={{
         display: "inline-flex",
+        border: `1px solid ${material.border}`,
+        borderRadius: corner.lg,
+        padding: "2px 8px",
         alignItems: "center",
         gap: spacing.xs,
         color: typography.color.muted,
