@@ -45,13 +45,13 @@ import {
  *    makes every client's sphere identical, which a per-client solver could
  *    not promise.
  * 2. `SphereFx` is gone — engine scan/spark/birth flashes and hot edges are
- *    donor coupling with no Noctis event behind them. So is the crystal core
- *    and its rays, which read as a separate object rather than as the Vault.
- * 3. The sphere is quiet until something is focused. Every note is a soft grey
- *    orb with a hint of its type, the far side fades back, and colour, glow,
- *    pulses, and labels are spent only on the focused note and its links.
- *    With all of it on at once, a Vault of a few hundred densely linked notes
- *    was a white smear.
+ *    donor coupling with no Noctis event behind them. So are the core's rays
+ *    out to every note, which at Vault scale were a sunburst over the notes.
+ * 3. The overview is a map: each lobe is named, only the short links holding a
+ *    topic together are drawn, and the far side fades back. Full colour, the
+ *    long links, pulses, and note names are spent on the focused note and its
+ *    neighbours. With all of it on at once, a Vault of a few hundred densely
+ *    linked notes was a white smear.
  * 4. Everything the canvas can do, the keyboard can do. The donor component has
  *    no `tabIndex`, `role`, or `aria-*` at all; the list below the globe is the
  *    same graph as a focusable tree, and the canvas is `aria-hidden` because it
@@ -83,14 +83,16 @@ export interface VaultSphereProps {
   heightPx?: number;
 }
 
+// One hue per lobe, so no two read alike. The tokens cover five; references
+// and notes would otherwise be a second violet and a grey that looked unlit.
 const TYPE_COLOUR: Readonly<Record<VaultEntityType, string>> = {
   person: identityAccent.vesper.primary,
   project: semantic.success,
-  reference: semantic.approval,
+  reference: "#4FC3F7",
   daily: semantic.warning,
   capture: identityAccent.jester.primary,
   agent: identityAccent.noir.structure,
-  note: typography.color.muted,
+  note: "#F28DB2",
 };
 
 const TYPE_ORDER = ["capture", "project", "person", "reference", "daily", "agent", "note"] as const;
@@ -99,20 +101,53 @@ const PALETTE: readonly THREE.Color[] = TYPE_ORDER.map(
   (type) => new THREE.Color(TYPE_COLOUR[type]),
 );
 
-/** A note at rest: mostly grey, with just enough of its type to tell clusters apart. */
+/** A note at rest: its type's colour, softened so the lit ones still stand out. */
 const REST_PALETTE: readonly THREE.Color[] = PALETTE.map((colour) =>
-  new THREE.Color(0.6, 0.62, 0.72).lerp(colour, 0.3),
+  new THREE.Color(0.66, 0.68, 0.78).lerp(colour, 0.6),
 );
+
+/** A lobe's name is a lighter tint of its colour, so it reads over its own orbs. */
+const LOBE_LABEL = Object.fromEntries(
+  TYPE_ORDER.map((type) => [
+    type,
+    `#${new THREE.Color(TYPE_COLOUR[type]).lerp(new THREE.Color(1, 1, 1), 0.45).getHexString()}`,
+  ]),
+) as Readonly<Record<VaultEntityType, string>>;
+
+/** What a lobe is called on the globe and on its button. */
+export const LOBE_NAME: Readonly<Record<VaultEntityType, string>> = {
+  person: "People",
+  project: "Projects",
+  reference: "References",
+  daily: "Daily",
+  capture: "Captures",
+  agent: "Agents",
+  note: "Notes",
+};
 
 const SHELL_OPACITY = 0.04;
 const PULSE_OPACITY = 0.5;
 const PULSE_SIZE = 1.9;
 
 // Edge colours are added to the scene, so these are brightness, not tint.
-const REST_EDGE = new THREE.Color(0.014, 0.018, 0.028);
+const REST_EDGE = new THREE.Color(0.035, 0.045, 0.07);
 const LIT_EDGE = new THREE.Color(0.36, 0.44, 0.68);
+/**
+ * At rest only links this short are drawn: the ones holding a topic together.
+ * The long ones between lobes are the spiderweb, and appear on focus.
+ */
+const REST_EDGE_REACH = 32;
 /** A focused hub names this many of its links; the rest stay unlabelled dots. */
 const LABELLED_LINKS = 12;
+/** Camera distance from what it looks at: the whole globe, a lobe, a focused note. */
+const OVERVIEW_DISTANCE = 262;
+const LOBE_DISTANCE = 130;
+const FOCUS_DISTANCE = 110;
+/**
+ * How far above straight-on a lobe or note is viewed. Straight on, the
+ * core sits directly behind it and the two glows merge into one.
+ */
+const OFF_AXIS = 0.8;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -238,6 +273,13 @@ const ORB_STOPS: ReadonlyArray<[number, string]> = [
   [1, "rgba(255,255,255,0)"],
 ];
 
+const CORE_STOPS: ReadonlyArray<[number, string]> = [
+  [0, "rgba(255, 235, 240, 1)"],
+  [0.25, "rgba(255, 190, 205, 0.55)"],
+  [0.6, "rgba(200, 120, 160, 0.14)"],
+  [1, "rgba(0, 0, 0, 0)"],
+];
+
 /** Shared by the orbs and their glow: a world-sized point that shrinks with distance. */
 const POINT_VERTEX = `
   attribute float size;
@@ -288,13 +330,21 @@ interface DrawNode {
 interface DrawEdge {
   a: DrawNode;
   b: DrawNode;
-  /** Survived thinning, so it is drawn faintly even when nothing is focused. */
+  /** Short and survived thinning, so it is drawn faintly even when nothing is focused. */
   resting: boolean;
 }
 
 interface Scene {
   rebuild: (nodes: readonly VaultSphereNode[], edges: readonly VaultSphereEdge[]) => void;
+  /** Turn to a type's lobe and move in, or with no type back out to the whole globe. */
+  aim: (type: VaultEntityType | undefined) => void;
   dispose: () => void;
+}
+
+interface Lobe {
+  type: VaultEntityType;
+  count: number;
+  centre: THREE.Vector3;
 }
 
 interface SceneCallbacks {
@@ -348,7 +398,7 @@ function createScene(
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
-  camera.position.set(0, 55, 255);
+  camera.position.set(0, 55, 256);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -364,11 +414,45 @@ function createScene(
   scene.add(buildStars());
 
   const orbTexture = radialTexture(64, ORB_STOPS);
+  const coreTexture = radialTexture(128, CORE_STOPS);
+
+  // Donor core: a glow, a crystal, and a counter-rotating cage, in the space
+  // the layout keeps empty for it. Its rays out to every note are gone; at
+  // Vault scale they were a sunburst over the notes rather than light.
+  const coreGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: coreTexture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.85,
+    }),
+  );
+  coreGlow.scale.setScalar(44);
+  world.add(coreGlow);
+
+  const crystal = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(5.2, 0),
+    new THREE.MeshBasicMaterial({ color: 0xffd9e2, transparent: true, opacity: 0.9 }),
+  );
+  world.add(crystal);
+
+  const cage = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(8, 0)),
+    new THREE.LineBasicMaterial({
+      color: 0xffc7d8,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+    }),
+  );
+  world.add(cage);
 
   let drawNodes: DrawNode[] = [];
   let drawEdges: DrawEdge[] = [];
   let byId = new Map<string, DrawNode>();
   let neighbours = new Map<string, Set<string>>();
+  let lobes: Lobe[] = [];
 
   let orbs: THREE.Points | null = null;
   let glows: THREE.Points | null = null;
@@ -453,7 +537,29 @@ function createScene(
     drawEdges = present.map((edge) => ({
       a: byId.get(edge.source) as DrawNode,
       b: byId.get(edge.target) as DrawNode,
-      resting: resting.has(edge.id),
+      resting:
+        resting.has(edge.id) &&
+        (byId.get(edge.source) as DrawNode).position.distanceTo(
+          (byId.get(edge.target) as DrawNode).position,
+        ) < REST_EDGE_REACH,
+    }));
+
+    const gathered = new Map<VaultEntityType, Lobe>();
+
+    for (const node of drawNodes) {
+      const lobe = gathered.get(node.type) ?? {
+        type: node.type,
+        count: 0,
+        centre: new THREE.Vector3(),
+      };
+      lobe.count += 1;
+      lobe.centre.add(node.position);
+      gathered.set(node.type, lobe);
+    }
+
+    lobes = [...gathered.values()].map((lobe) => ({
+      ...lobe,
+      centre: lobe.centre.divideScalar(lobe.count),
     }));
     edgesLitFor = undefined;
     labelledFor = null;
@@ -666,13 +772,21 @@ function createScene(
   renderer.domElement.addEventListener("pointerup", onPointerUp);
   renderer.domElement.addEventListener("dblclick", onDoubleClick);
 
-  let flownTo: string | undefined;
-  let flying = false;
+  /**
+   * Where the camera is heading: a point in the globe to orbit, how far from
+   * it, and how far round from straight-on to view it.
+   */
+  let heading: {
+    look: () => THREE.Vector3 | undefined;
+    distance: number;
+    offAxis: number;
+  } | null = null;
+  let headedFor: string | undefined;
   let userBusyUntil = 0;
   controls.addEventListener("start", () => {
     userBusyUntil = Infinity;
     // Grabbing the globe mid-turn hands it to the user.
-    flying = false;
+    heading = null;
   });
   controls.addEventListener("end", () => {
     userBusyUntil = performance.now() + 2500;
@@ -685,6 +799,13 @@ function createScene(
   const toCamera = new THREE.Vector3();
   const toNode = new THREE.Vector3();
   const turn = new THREE.Quaternion();
+  const lookAt = new THREE.Vector3();
+  const relative = new THREE.Vector3();
+  const wanted = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
+  const ACROSS = new THREE.Vector3(1, 0, 0);
+  const tilt = new THREE.Vector3();
+  const ORIGIN = new THREE.Vector3();
   const step = new THREE.Quaternion();
   /** Front of the globe, as each node was last drawn: 1 facing the camera, 0 behind. */
   const front = new Map<string, number>();
@@ -706,9 +827,23 @@ function createScene(
 
     const focusId = callbacks.focusId();
 
-    if (!reduceMotion && now > userBusyUntil && focusId === undefined) {
+    // Only spins around its own centre; once the camera orbits a lobe or a
+    // note, spinning the globe would carry it out of view.
+    if (
+      !reduceMotion &&
+      now > userBusyUntil &&
+      focusId === undefined &&
+      controls.target.lengthSq() < 1
+    ) {
       world.rotation.y += delta * 0.00005;
     }
+
+    const corePulse = reduceMotion ? 1 : 1 + 0.06 * Math.sin(now / 900);
+    coreGlow.scale.setScalar(44 * corePulse);
+    crystal.scale.setScalar(corePulse);
+    crystal.rotation.y += delta * 0.0004;
+    crystal.rotation.x += delta * 0.00013;
+    cage.rotation.y -= delta * 0.00025;
 
     world.updateMatrixWorld();
     toCamera.copy(camera.position).normalize();
@@ -760,9 +895,9 @@ function createScene(
           .copy(REST_PALETTE[slot] ?? white)
           .lerp(typeColour, lit * 0.8)
           .lerp(white, key * 0.6)
-          .multiplyScalar(0.55 + 0.45 * facing);
+          .multiplyScalar(0.6 + 0.4 * facing);
 
-        const resting = (0.15 + 0.7 * facing) * (node.written ? 1 : 0.55);
+        const resting = (0.45 + 0.5 * facing) * (node.written ? 1 : 0.6);
         const alpha = (resting + (0.65 + 0.35 * facing - resting) * lit) * presence;
 
         let radius = radiusFor(node.degree) * (1 + 0.25 * key);
@@ -780,8 +915,13 @@ function createScene(
         colour.copy(typeColour).lerp(white, key * 0.4);
         glowPosition.setXYZ(index, x, y, z);
         glowColour.setXYZ(index, colour.r, colour.g, colour.b);
-        glowSize.setX(index, radius * (2.5 + 2.5 * key));
-        glowAlpha.setX(index, lit * (0.35 * fan + 0.65 * key) * (0.5 + 0.5 * facing));
+        glowSize.setX(index, radius * (2.6 + 2.4 * key));
+        // Every note gives off a little light; the lit ones a lot more.
+        glowAlpha.setX(
+          index,
+          Math.max((0.2 * (presence - 0.3)) / 0.7, lit * (0.35 * fan + 0.65 * key)) *
+            (0.4 + 0.6 * facing),
+        );
       }
 
       for (const changed of [
@@ -816,7 +956,7 @@ function createScene(
           const end = focusId === edge.a.id || focusId === edge.b.id ? focusId : hover?.id;
           edgeColour.copy(LIT_EDGE).multiplyScalar(share(end));
         } else if (edge.resting) {
-          edgeColour.copy(REST_EDGE).multiplyScalar(focusId === undefined ? 1 : 0.35);
+          edgeColour.copy(REST_EDGE).multiplyScalar(focusId === undefined ? 1 : 0.15);
         } else {
           edgeColour.setRGB(0, 0, 0);
         }
@@ -859,24 +999,65 @@ function createScene(
       colours.needsUpdate = true;
     }
 
-    if (focusId !== flownTo) {
-      flownTo = focusId;
-      flying = focusId !== undefined;
+    if (focusId !== headedFor) {
+      headedFor = focusId;
+
+      if (focusId === undefined) {
+        heading = { look: () => ORIGIN, distance: OVERVIEW_DISTANCE, offAxis: 0 };
+      } else {
+        const id = focusId;
+        heading = {
+          look: () => byId.get(id)?.position,
+          distance: FOCUS_DISTANCE,
+          offAxis: OFF_AXIS,
+        };
+      }
     }
 
-    // Turn the globe to face the focused note, at whatever zoom the user chose.
-    // Diving inside the sphere to reach it hid the very context it sits in.
-    const selected = flying && flownTo !== undefined ? byId.get(flownTo) : undefined;
+    // Ease the orbit's centre to what was asked for, swing round to view it
+    // from outside the globe, and move in or out to its distance.
+    if (heading !== null) {
+      const ease = reduceMotion ? 1 : 0.07;
+      const local = heading.look();
 
-    if (selected !== undefined) {
-      toNode.copy(selected.position).applyMatrix4(world.matrixWorld).normalize();
-
-      if (toCamera.angleTo(toNode) < 0.01) {
-        flying = false;
+      if (local === undefined) {
+        heading = null;
       } else {
-        turn.setFromUnitVectors(toCamera, toNode);
-        step.identity().slerp(turn, reduceMotion ? 1 : 0.07);
-        camera.position.applyQuaternion(step);
+        lookAt.copy(local).applyMatrix4(world.matrixWorld);
+        controls.target.lerp(lookAt, ease);
+        relative.copy(camera.position).sub(controls.target);
+        let turned = true;
+
+        if (lookAt.lengthSq() > 1) {
+          // Tilt up past it, about the axis across the view. Turning about the
+          // vertical instead does nothing for a note near either pole.
+          wanted.copy(lookAt).normalize();
+          tilt.crossVectors(wanted, UP);
+          if (tilt.lengthSq() < 0.09) {
+            tilt.crossVectors(wanted, ACROSS);
+          }
+          wanted.applyAxisAngle(tilt.normalize(), -heading.offAxis);
+          toNode.copy(relative).normalize();
+          turned = toNode.angleTo(wanted) < 0.01;
+
+          if (!turned) {
+            turn.setFromUnitVectors(toNode, wanted);
+            step.identity().slerp(turn, ease);
+            relative.applyQuaternion(step);
+          }
+        }
+
+        const length = relative.length();
+        relative.setLength(length + (heading.distance - length) * ease);
+        camera.position.copy(controls.target).add(relative);
+
+        if (
+          turned &&
+          Math.abs(length - heading.distance) < 0.5 &&
+          controls.target.distanceTo(lookAt) < 0.5
+        ) {
+          heading = null;
+        }
       }
     }
 
@@ -902,8 +1083,47 @@ function createScene(
       const halfHeight = rect.height / 2;
       const tanFov = Math.tan((camera.fov * Math.PI) / 360);
       const candidates: Array<
-        LabelBox & { rank: number; size: number; opacity: number; text: string; key: boolean }
+        LabelBox & {
+          rank: number;
+          size: number;
+          opacity: number;
+          text: string;
+          font: string;
+          fill: string;
+        }
       > = [];
+      const lobeFont = `600 11px ${typography.family}`;
+
+      // Each lobe's name, just outside it. They lead at the overview, where
+      // they are the map, and step back once a note is focused.
+      for (const lobe of lobes) {
+        scratch.copy(lobe.centre).multiplyScalar(1.25).applyMatrix4(world.matrixWorld);
+        const facing = (scratch.dot(toCamera) / (CONTENT_R * 1.25) + 1) / 2;
+        scratch.project(camera);
+
+        if (scratch.z > 1 || facing < 0.3) {
+          continue;
+        }
+
+        const rect = renderer.domElement.getBoundingClientRect();
+        const text = `${LOBE_NAME[lobe.type].toUpperCase()} · ${String(lobe.count)}`;
+        labelContext.font = lobeFont;
+        const width = labelContext.measureText(text).width;
+
+        candidates.push({
+          id: `lobe:${lobe.type}`,
+          x: ((scratch.x + 1) / 2) * rect.width - width / 2,
+          y: ((1 - scratch.y) / 2) * rect.height - 8,
+          width,
+          height: 16,
+          rank: focusId === undefined ? -1 : 3,
+          size: lobe.count,
+          opacity: (focusId === undefined ? 0.95 : 0.35) * (0.4 + 0.6 * facing),
+          text,
+          font: lobeFont,
+          fill: LOBE_LABEL[lobe.type],
+        });
+      }
 
       for (const node of drawNodes) {
         const screen = project(node);
@@ -921,16 +1141,20 @@ function createScene(
           .applyMatrix4(world.matrixWorld)
           .distanceTo(camera.position);
         const onScreenRadius = (radiusFor(node.degree) * halfHeight) / (distance * tanFov);
+        // While a note is focused, only it and its named links speak.
         const opacity = isLinked
           ? 0.8
-          : labelOpacity(onScreenRadius, isKey) * (focusId !== undefined && !isKey ? 0.4 : 1);
+          : focusId !== undefined && !isKey
+            ? 0
+            : labelOpacity(onScreenRadius, isKey);
 
         if (opacity === 0) {
           continue;
         }
 
         const text = node.name.length > 32 ? `${node.name.slice(0, 31)}…` : node.name;
-        labelContext.font = isKey ? `600 13px ${typography.family}` : `12px ${typography.family}`;
+        const font = isKey ? `600 13px ${typography.family}` : `12px ${typography.family}`;
+        labelContext.font = font;
 
         candidates.push({
           id: node.id,
@@ -942,7 +1166,8 @@ function createScene(
           size: onScreenRadius,
           opacity: opacity * (0.5 + 0.5 * facing),
           text,
-          key: isKey,
+          font,
+          fill: isKey ? "rgb(244, 240, 255)" : "rgb(206, 214, 236)",
         });
       }
 
@@ -958,15 +1183,13 @@ function createScene(
           continue;
         }
 
-        labelContext.font = label.key
-          ? `600 13px ${typography.family}`
-          : `12px ${typography.family}`;
-        labelContext.fillStyle = label.key
-          ? `rgba(244, 240, 255, ${String(label.opacity)})`
-          : `rgba(200, 210, 232, ${String(label.opacity)})`;
+        labelContext.font = label.font;
+        labelContext.fillStyle = label.fill;
+        labelContext.globalAlpha = label.opacity;
         labelContext.fillText(label.text, label.x, label.y + label.height / 2);
       }
 
+      labelContext.globalAlpha = 1;
       labelContext.shadowBlur = 0;
     }
   };
@@ -975,6 +1198,19 @@ function createScene(
 
   return {
     rebuild,
+    aim(type) {
+      if (type === undefined) {
+        heading = { look: () => ORIGIN, distance: OVERVIEW_DISTANCE, offAxis: 0 };
+        userBusyUntil = 0;
+        return;
+      }
+
+      heading = {
+        look: () => lobes.find((lobe) => lobe.type === type)?.centre,
+        distance: LOBE_DISTANCE,
+        offAxis: OFF_AXIS,
+      };
+    },
     dispose() {
       cancelAnimationFrame(frame);
       observer?.disconnect();
@@ -985,6 +1221,7 @@ function createScene(
       controls.dispose();
       disposeGraph();
       orbTexture.dispose();
+      coreTexture.dispose();
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
         mesh.geometry?.dispose();
@@ -1080,14 +1317,42 @@ export function VaultSphere({
 
   const degree = useMemo(() => degreeOf(shownEdges), [shownEdges]);
   const focused = nodes.find((node) => node.id === focusId);
+  const lobeCounts = useMemo(() => {
+    const counts = new Map<VaultEntityType, number>();
+
+    for (const node of shownNodes) {
+      counts.set(node.type, (counts.get(node.type) ?? 0) + 1);
+    }
+
+    return TYPE_ORDER.filter((type) => counts.has(type)).map((type) => ({
+      type,
+      count: counts.get(type) ?? 0,
+    }));
+  }, [shownNodes]);
 
   return (
     <div style={{ display: "grid", gap: spacing.sm, minWidth: 0 }}>
       <div
         role="group"
         aria-label="Vault view controls"
-        style={{ display: "flex", gap: spacing.xs }}
+        style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
       >
+        {lobeCounts.map(({ type, count }) => (
+          <Control
+            key={type}
+            label={`${LOBE_NAME[type]} ${String(count)}`}
+            dot={TYPE_COLOUR[type]}
+            onAct={() => {
+              sceneRef.current?.aim(type);
+            }}
+          />
+        ))}
+        <Control
+          label="Whole Vault"
+          onAct={() => {
+            sceneRef.current?.aim(undefined);
+          }}
+        />
         <Control
           label={isolated === undefined ? "Isolate the focused note" : "Show the whole Vault"}
           disabled={isolated === undefined && focusId === undefined}
@@ -1215,9 +1480,11 @@ interface ControlProps {
   label: string;
   onAct: () => void;
   disabled?: boolean;
+  /** A colour swatch before the label; decoration, since the label names it. */
+  dot?: string;
 }
 
-function Control({ label, onAct, disabled = false }: ControlProps): JSX.Element {
+function Control({ label, onAct, disabled = false, dot }: ControlProps): JSX.Element {
   return (
     <button
       type="button"
@@ -1235,6 +1502,11 @@ function Control({ label, onAct, disabled = false }: ControlProps): JSX.Element 
         opacity: disabled ? 0.5 : 1,
       }}
     >
+      {dot !== undefined && (
+        <span aria-hidden="true" style={{ color: dot }}>
+          ●{" "}
+        </span>
+      )}
       {label}
     </button>
   );

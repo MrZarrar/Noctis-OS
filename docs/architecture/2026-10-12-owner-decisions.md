@@ -235,3 +235,27 @@ pair stored both ways, so they drew twice as bright. Every node also glowed addi
   active, such as a reminder falling due; coded rules cover those better.
 - **Drag, resize and pop-out windows are in the plan** (P19 to P21), after the panels themselves work.
 - **Plan only for now:** nothing is implemented until the owner says so.
+
+**Owner's follow-up, same day:** after the deploy, "the animations are nice but the center core is gone and the graph
+is difficult to navigate with so many spiderweb looking connections and the nodes themselves are too faint", and
+"everything lives around the edge of the sphere and nothing inside". Asked to compare with the Jarvis dashboard and do
+better, focusing on readability, grouping, aesthetics and navigation.
+
+**Decided:** group by **type lobes with topic sub-groups** (the owner chose this over type-only or topic-only).
+
+**Built (layout version 3, applied by the next reindex):**
+
+- Each type has a lobe inside the sphere, as in the Jarvis dashboard, with the centre kept clear for the core and
+  nothing on the shell. Within a lobe, notes gather by topic: groups found from who links to whom, with a hub's links
+  down-weighted so one note linked to everything cannot merge them. A topic's clump sits on the side of its lobe facing
+  the other lobes it links to; topics that stay in one type are spread evenly across their lobe. On the work PC's
+  graph: 45 topics (largest 31, 24, 23, 19, 16, 13, 12), every note nearer its own lobe than any other, and notes in
+  one topic about 40% closer together than notes in different topics of the same type.
+- The core is back (glow, crystal, cage), without the rays to every note.
+- Notes are brighter, each lobe has its own colour (references and notes moved off violet and grey), and every note
+  gives off a little light.
+- At rest only short links inside a topic are drawn; the long ones between lobes appear when a note is focused. Short
+  links no longer loop.
+- Navigation: each lobe is named on the globe ("PEOPLE · 46"), a row of type buttons flies to a lobe, **Whole Vault**
+  flies back out, and focusing a note orbits it from above so the core sits clear of it. While a note is focused, only
+  it and its named links are labelled.

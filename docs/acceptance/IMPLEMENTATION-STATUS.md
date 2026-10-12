@@ -3687,3 +3687,21 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 | `npx vitest run apps/core/src/vault packages/*/src/vault`                  | all passed                                                                                      |
 | `npx tsc -b`; `npx eslint packages/ui/src/vault packages/domain/src/vault` | exit 0                                                                                          |
 | `node --test apps/web/e2e/vault.keyboard.test.mjs` (chrome)                | exit 0; 1 test                                                                                  |
+
+### 2026-10-12 The Vault sphere: lobes by type, topics within, the core restored
+
+| Clause                                                                | State       | Evidence                                                                                                      |
+| --------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| Notes fill the sphere's depth, clear of the core and inside the shell | implemented | `layout.test.ts` "keeps every settled node inside the sphere…", "fills the sphere's depth…": red, then green  |
+| Each type gathers into its own lobe                                   | implemented | `layout.test.ts` "gathers each type into its own lobe": red, then green                                       |
+| Topics found from links; a hub does not merge them                    | implemented | `layout.test.ts` "topic communities" (3): red (no function), then green                                       |
+| A type's separate topics clump apart inside its lobe                  | implemented | `layout.test.ts` "clumps a type's separate topics apart…": red (hashed sides collided), then green            |
+| Short links do not loop                                               | implemented | `sphere.test.ts` "barely bends a short link…": red (7.2 off the midpoint), then green                         |
+| Placement gates unchanged                                             | implemented | `layout.test.ts` pinned, fixed-point, deterministic, order-independent and bounded tests green                |
+| Rendered against the work PC's graph shape                            | implemented | Throwaway preview in Chrome: overview, a lobe via its button, a small focus, a 59-link focus; preview removed |
+
+| Command                                                                    | Result                                                       |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `npx vitest run`                                                           | 2227 passed, 2 failed (the known `node-agent/files.test.ts`) |
+| `npx tsc -b`; `npx eslint apps packages scripts`; `npx prettier --check .` | exit 0                                                       |
+| `node --test apps/web/e2e/vault.keyboard.test.mjs` (chrome)                | exit 0; 1 test                                               |

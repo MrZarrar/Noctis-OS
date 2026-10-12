@@ -91,6 +91,17 @@ describe("edgeControl", () => {
     expect(Math.hypot(control.x, control.y, control.z)).toBeGreaterThan(Math.hypot(20, 20, 0));
   });
 
+  it("barely bends a short link, so a topic's links do not loop", () => {
+    const a = { x: 50, y: 0, z: 0 };
+    const b = { x: 50, y: 6, z: 0 };
+    const control = edgeControl(a, b);
+    const midpoint = { x: 50, y: 3, z: 0 };
+
+    expect(
+      Math.hypot(control.x - midpoint.x, control.y - midpoint.y, control.z - midpoint.z),
+    ).toBeLessThan(2);
+  });
+
   it("never lets a bowed edge leave the globe", () => {
     const a = { x: CONTENT_R, y: 0, z: 0 };
     const b = { x: -CONTENT_R * 0.2, y: CONTENT_R * 0.9, z: 0 };

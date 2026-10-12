@@ -1,10 +1,13 @@
+import type { VaultEntityType } from "@noctis/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { Coordinate, SettleNode } from "./layout.js";
 import {
+  CORE_RADIUS,
   LAYOUT_VERSION,
   SHELL_RADIUS,
   anchorFor,
+  communities,
   distance,
   seedCoordinate,
   settle,
@@ -16,6 +19,70 @@ function node(entityId: string, over: Partial<SettleNode> = {}): SettleNode {
 
 const ORIGIN: Coordinate = { x: 0, y: 0, z: 0 };
 
+/** Symmetric neighbour lists, as the indexer builds them. */
+function graph(
+  types: ReadonlyMap<string, VaultEntityType>,
+  pairs: ReadonlyArray<readonly [string, string]>,
+): SettleNode[] {
+  const links = new Map<string, Set<string>>();
+
+  for (const [a, b] of pairs) {
+    links.set(a, (links.get(a) ?? new Set()).add(b));
+    links.set(b, (links.get(b) ?? new Set()).add(a));
+  }
+
+  return [...types].map(([id, type]) =>
+    node(id, { type, neighbourIds: [...(links.get(id) ?? [])] }),
+  );
+}
+
+function clique(ids: readonly string[]): Array<[string, string]> {
+  return ids.flatMap((a, index) => ids.slice(index + 1).map((b): [string, string] => [a, b]));
+}
+
+function centroid(points: readonly Coordinate[]): Coordinate {
+  return points.reduce(
+    (total, point) => ({
+      x: total.x + point.x / points.length,
+      y: total.y + point.y / points.length,
+      z: total.z + point.z / points.length,
+    }),
+    ORIGIN,
+  );
+}
+
+function meanDistance(a: readonly Coordinate[], b: readonly Coordinate[]): number {
+  const gaps = a.flatMap((p) => b.filter((q) => q !== p).map((q) => distance(p, q)));
+
+  return gaps.reduce((total, gap) => total + gap, 0) / gaps.length;
+}
+
+/** Shaped like a real personal Vault: a dozen links per note, and one hub linked to nearly everything. */
+function denseVault(count: number): SettleNode[] {
+  const types = ["capture", "project", "person", "reference", "note", "daily"] as const;
+  const pairs: Array<[string, string]> = [];
+
+  for (let index = 1; index < count; index += 1) {
+    pairs.push(["n0", `n${String(index)}`]);
+    for (let step = 1; step <= 6; step += 1) {
+      const other = (index * 7 + step * 13) % count;
+      if (other !== index) {
+        pairs.push([`n${String(index)}`, `n${String(other)}`]);
+      }
+    }
+  }
+
+  return graph(
+    new Map(
+      Array.from({ length: count }, (_unused, index) => [
+        `n${String(index)}`,
+        types[index % types.length] ?? "note",
+      ]),
+    ),
+    pairs,
+  );
+}
+
 describe("seeded coordinates", () => {
   it("depends only on the key and type", () => {
     expect(seedCoordinate("alex-kerr", "person")).toEqual(seedCoordinate("alex-kerr", "person"));
@@ -25,22 +92,25 @@ describe("seeded coordinates", () => {
     expect(seedCoordinate("alex-kerr", "person")).not.toEqual(seedCoordinate("acme", "person"));
   });
 
-  it("places every node on the shell", () => {
+  it("puts every seed inside the sphere and clear of the core", () => {
     for (const key of ["a", "bb", "ccc", "a-much-longer-key", "üñî"]) {
-      expect(distance(seedCoordinate(key, "note"), ORIGIN)).toBeCloseTo(SHELL_RADIUS, 6);
+      const radius = distance(seedCoordinate(key, "note"), ORIGIN);
+
+      expect(radius).toBeGreaterThanOrEqual(CORE_RADIUS);
+      expect(radius).toBeLessThanOrEqual(SHELL_RADIUS);
     }
   });
 
-  it("clusters a type around its own anchor", () => {
+  it("seeds a type in its own lobe", () => {
     const anchor = anchorFor("person");
 
     for (const key of ["alex", "sam", "kim", "jo"]) {
       const seeded = seedCoordinate(key, "person");
       const cosine =
-        (seeded.x * anchor.x + seeded.y * anchor.y + seeded.z * anchor.z) / SHELL_RADIUS;
+        (seeded.x * anchor.x + seeded.y * anchor.y + seeded.z * anchor.z) /
+        distance(seeded, ORIGIN);
 
-      // Inside the cluster cap rather than anywhere on the sphere.
-      expect(cosine).toBeGreaterThan(0.5);
+      expect(cosine).toBeGreaterThan(0.8);
     }
   });
 
@@ -50,6 +120,36 @@ describe("seeded coordinates", () => {
     ).map((type) => JSON.stringify(anchorFor(type)));
 
     expect(new Set(anchors).size).toBe(anchors.length);
+  });
+});
+
+describe("topic communities", () => {
+  it("finds two groups joined by one link", () => {
+    const pairs = [...clique(["a1", "a2", "a3", "a4"]), ...clique(["b1", "b2", "b3", "b4"])];
+    pairs.push(["a1", "b1"]);
+    const nodes = graph(new Map([...pairs.flat()].map((id) => [id, "note"])), pairs);
+    const found = communities(nodes);
+
+    expect(new Set(["a1", "a2", "a3", "a4"].map((id) => found.get(id))).size).toBe(1);
+    expect(new Set(["b1", "b2", "b3", "b4"].map((id) => found.get(id))).size).toBe(1);
+    expect(found.get("a2")).not.toBe(found.get("b2"));
+  });
+
+  it("is not merged into one group by a hub linked to everything", () => {
+    const pairs = [...clique(["a1", "a2", "a3", "a4"]), ...clique(["b1", "b2", "b3", "b4"])];
+    for (const id of ["a1", "a2", "a3", "a4", "b1", "b2", "b3", "b4"]) {
+      pairs.push(["hub", id]);
+    }
+    const nodes = graph(new Map([...pairs.flat()].map((id) => [id, "note"])), pairs);
+    const found = communities(nodes);
+
+    expect(found.get("a2")).not.toBe(found.get("b2"));
+  });
+
+  it("does not depend on the order the notes arrive in", () => {
+    const nodes = denseVault(60);
+
+    expect(communities([...nodes].reverse())).toEqual(communities(nodes));
   });
 });
 
@@ -97,11 +197,7 @@ describe("bounded settlement", () => {
   });
 
   it("does not depend on the order the new nodes arrive in", () => {
-    const incoming = [
-      node("a", { type: "person", neighbourIds: ["b"] }),
-      node("b", { type: "project", neighbourIds: ["a"] }),
-      node("c", { type: "daily" }),
-    ];
+    const incoming = denseVault(40);
 
     expect(settle({ placed: new Map(), incoming: [...incoming].reverse() }).placed).toEqual(
       settle({ placed: new Map(), incoming }).placed,
@@ -120,13 +216,7 @@ describe("bounded settlement", () => {
   });
 
   it("pulls a new node toward the neighbour it links to", () => {
-    const anchor = anchorFor("agent");
-    const target: Coordinate = {
-      x: anchor.x * SHELL_RADIUS,
-      y: anchor.y * SHELL_RADIUS,
-      z: anchor.z * SHELL_RADIUS,
-    };
-
+    const target = seedCoordinate("far", "agent");
     const seeded = seedCoordinate("lonely", "person");
     const result = settle({
       placed: new Map([["far", target]]),
@@ -139,19 +229,25 @@ describe("bounded settlement", () => {
     expect(distance(settled as Coordinate, target)).toBeLessThan(distance(seeded, target));
   });
 
-  it("keeps every settled node on the shell and finite", () => {
-    const result = settle({
-      placed: new Map(),
-      incoming: [
-        node("a", { type: "person", neighbourIds: ["b"] }),
-        node("b", { type: "capture", neighbourIds: ["a"] }),
-      ],
-    });
+  it("keeps every settled node inside the sphere, clear of the core, and finite", () => {
+    const result = settle({ placed: new Map(), incoming: denseVault(120) });
 
     for (const coordinate of result.placed.values()) {
+      const radius = distance(coordinate, ORIGIN);
+
       expect(Number.isFinite(coordinate.x)).toBe(true);
-      expect(distance(coordinate, ORIGIN)).toBeCloseTo(SHELL_RADIUS, 6);
+      expect(radius).toBeGreaterThanOrEqual(CORE_RADIUS - 1e-9);
+      expect(radius).toBeLessThanOrEqual(SHELL_RADIUS + 1e-9);
     }
+  });
+
+  it("fills the sphere's depth instead of lining the shell", () => {
+    const radii = [...settle({ placed: new Map(), incoming: denseVault(120) }).placed.values()]
+      .map((coordinate) => distance(coordinate, ORIGIN))
+      .sort((a, b) => a - b);
+
+    expect(radii[Math.floor(radii.length / 2)]).toBeLessThan(SHELL_RADIUS * 0.9);
+    expect((radii.at(-1) ?? 0) - (radii[0] ?? 0)).toBeGreaterThan(SHELL_RADIUS * 0.2);
   });
 
   it("separates two nodes that would otherwise land on top of each other", () => {
@@ -172,73 +268,53 @@ describe("bounded settlement", () => {
     expect(distance(a, b)).toBeGreaterThan(0.1);
   });
 
-  it("spreads a densely linked Vault over the sphere instead of piling it into a blob", () => {
-    // Shaped like a real personal Vault: a dozen links per note, and one hub
-    // that links to nearly everything.
-    const count = 150;
-    const types = ["capture", "project", "person", "reference", "note", "daily"] as const;
-    const links = new Map<string, Set<string>>();
-    const link = (a: number, b: number): void => {
-      if (a === b) {
-        return;
-      }
-      const [x, y] = [`n${String(a)}`, `n${String(b)}`];
-      links.set(x, (links.get(x) ?? new Set()).add(y));
-      links.set(y, (links.get(y) ?? new Set()).add(x));
-    };
+  it("never stacks notes on one another in a dense Vault", () => {
+    const points = [...settle({ placed: new Map(), incoming: denseVault(150) }).placed.values()];
+    const nearest = points.map((point) =>
+      Math.min(...points.filter((other) => other !== point).map((other) => distance(point, other))),
+    );
 
-    for (let index = 0; index < count; index += 1) {
-      link(0, index);
-      for (let step = 1; step <= 6; step += 1) {
-        link(index, (index * 7 + step * 13) % count);
-      }
+    expect(Math.min(...nearest)).toBeGreaterThan(0.5);
+  });
+
+  it("gathers each type into its own lobe", () => {
+    const incoming = denseVault(150);
+    const placed = settle({ placed: new Map(), incoming }).placed;
+    const byType = new Map<VaultEntityType, Coordinate[]>();
+
+    for (const entry of incoming) {
+      byType.set(entry.type, [
+        ...(byType.get(entry.type) ?? []),
+        placed.get(entry.entityId) as Coordinate,
+      ]);
     }
 
-    const incoming = Array.from({ length: count }, (_unused, index) =>
-      node(`n${String(index)}`, {
-        type: types[index % types.length] ?? "note",
-        neighbourIds: [...(links.get(`n${String(index)}`) ?? [])],
-      }),
-    );
+    const centres = new Map([...byType].map(([type, points]) => [type, centroid(points)]));
+    const home = incoming.filter((entry) => {
+      const point = placed.get(entry.entityId) as Coordinate;
+      const own = distance(point, centres.get(entry.type) as Coordinate);
 
-    const placed = settle({ placed: new Map(), incoming }).placed;
-    const points = [...placed.values()];
-    const nearest = points
-      .map((point) =>
-        Math.min(
-          ...points.filter((other) => other !== point).map((other) => distance(point, other)),
-        ),
-      )
-      .sort((a, b) => a - b);
-    const ideal = Math.sqrt((4 * Math.PI * SHELL_RADIUS ** 2) / count);
-    const centroid = points.reduce(
-      (total, point) => ({
-        x: total.x + point.x / (SHELL_RADIUS * count),
-        y: total.y + point.y / (SHELL_RADIUS * count),
-        z: total.z + point.z / (SHELL_RADIUS * count),
-      }),
-      ORIGIN,
-    );
+      return [...centres.values()].every((centre) => distance(point, centre) >= own);
+    });
 
-    expect(nearest[0]).toBeGreaterThan(ideal * 0.3);
-    expect(nearest[Math.floor(count / 2)]).toBeGreaterThan(ideal * 0.6);
-    // Balanced over the whole shell, not crowded onto one side of it.
-    expect(distance(centroid, ORIGIN)).toBeLessThan(0.25);
+    expect(home.length / incoming.length).toBeGreaterThan(0.85);
+  });
 
-    // Spreading out must not throw away the point of a graph: linked notes
-    // still sit nearer each other than two notes picked at random (4R/3 apart
-    // on average).
-    const edgeLengths = [...links].flatMap(([id, others]) =>
-      [...others].map((other) =>
-        distance(placed.get(id) as Coordinate, placed.get(other) as Coordinate),
-      ),
-    );
-    const meanEdge = edgeLengths.reduce((total, length) => total + length, 0) / edgeLengths.length;
+  it("clumps a type's separate topics apart inside its lobe", () => {
+    const left = ["l1", "l2", "l3", "l4", "l5", "l6"];
+    const right = ["r1", "r2", "r3", "r4", "r5", "r6"];
+    const pairs = [...clique(left), ...clique(right)];
+    const types = new Map<string, VaultEntityType>([...left, ...right].map((id) => [id, "person"]));
+    const placed = settle({ placed: new Map(), incoming: graph(types, pairs) }).placed;
+    const at = (ids: readonly string[]): Coordinate[] =>
+      ids.map((id) => placed.get(id) as Coordinate);
 
-    expect(meanEdge).toBeLessThan((4 * SHELL_RADIUS) / 3);
+    const within = (meanDistance(at(left), at(left)) + meanDistance(at(right), at(right))) / 2;
+
+    expect(within).toBeLessThan(meanDistance(at(left), at(right)) * 0.7);
   });
 
   it("declares a layout version so old coordinates can be recognised", () => {
-    expect(LAYOUT_VERSION).toBeGreaterThan(0);
+    expect(LAYOUT_VERSION).toBeGreaterThan(2);
   });
 });

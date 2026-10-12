@@ -163,7 +163,9 @@ function clampLength(point: Point3, max: number): Point3 {
 export function edgeControl(a: Point3, b: Point3): Point3 {
   const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 };
   const separation = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-  const bow = 0.12 + Math.min(0.22, separation / 260);
+  // The bow grows with the link's length: a long link arcs round the core,
+  // a short one inside a topic stays nearly straight instead of looping.
+  const bow = (separation * 0.2) / Math.max(1, length(midpoint));
 
   const bowed = clampLength(
     { x: midpoint.x * (1 + bow), y: midpoint.y * (1 + bow), z: midpoint.z * (1 + bow) },
