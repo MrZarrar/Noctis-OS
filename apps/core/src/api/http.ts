@@ -24,6 +24,7 @@ import {
   ExecuteAuthorityCommandSchema,
   GrantStandingPermissionCommandSchema,
   GrantNodeCapabilityCommandSchema,
+  UnshareNodeFolderCommandSchema,
   ImportArtifactCommandSchema,
   IssueNodePairingCodeCommandSchema,
   ObserveSourceCommandSchema,
@@ -120,6 +121,7 @@ import {
   getNode,
   getPairingCode,
   grantCapability,
+  unshareFolder,
   issuePairingCode,
   listGrants,
   listNodes,
@@ -577,6 +579,9 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     GrantNodeCapabilityCommandSchema,
     grantCapability,
     (db, id) => getGrant(db, id),
+  ),
+  "node.unshare_folder": defineCommand(UnshareNodeFolderCommandSchema, unshareFolder, (db, id) =>
+    getNode(db, id),
   ),
   "node.job_enqueue": defineCommand(EnqueueNodeJobCommandSchema, enqueueJob, (db, id) =>
     getJob(db, id),
@@ -2413,11 +2418,11 @@ export async function handleRequest(
           // could still answer for work it already holds.
           deps.dispatcher.disconnect(revoked.data.nodeId, 1008, "node revoked");
         }
-      } else if (name === "node.grant_capability") {
-        const granted = GrantNodeCapabilityCommandSchema.safeParse(body);
+      } else if (name === "node.grant_capability" || name === "node.unshare_folder") {
+        const changed = z.object({ nodeId: z.string() }).safeParse(body);
 
-        if (granted.success) {
-          deps.dispatcher.sendGrants(granted.data.nodeId);
+        if (changed.success) {
+          deps.dispatcher.sendGrants(changed.data.nodeId);
         }
       } else if (name === "node.job_cancel") {
         const cancelled = CancelNodeJobCommandSchema.safeParse(body);

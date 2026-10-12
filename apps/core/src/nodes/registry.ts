@@ -8,6 +8,7 @@ import type {
   RuntimeProbe,
   RuntimeProviderId,
   RuntimeRoot,
+  UnshareNodeFolderCommand,
 } from "@noctis/contracts";
 import {
   CAPABILITY_OPERATION_CLASS,
@@ -21,6 +22,7 @@ import type { Result } from "@noctis/domain";
 import { conflict, ok } from "@noctis/domain";
 
 import type { NoctisDatabase } from "../db/connection.js";
+import type { EventDraft } from "../db/events.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
 import { deriveCredential, hashPairingCode, newPairingCode } from "./credentials.js";
@@ -824,6 +826,105 @@ export function grantCapability(
           },
         ],
       });
+    },
+  );
+}
+
+/**
+ * A folder stops being shared. Grants are never edited in place, so a grant
+ * that also named other folders is revoked and granted again without this one:
+ * the ledger keeps what was allowed when, and the rest stay shared.
+ */
+export function unshareFolder(
+  kernel: Kernel,
+  context: CommandContext,
+  command: UnshareNodeFolderCommand,
+): Result<NodeDescriptor> {
+  const nowIso = new Date(kernel.clock.now()).toISOString();
+
+  return runCommand<NodeDescriptor>(
+    kernel,
+    { scope: "node.unshare_folder", key: command.idempotencyKey, resultId: command.nodeId },
+    (tx) => {
+      const node = getNode(tx, command.nodeId);
+      const naming = listGrants(tx, command.nodeId).flatMap((grant) => {
+        if (
+          grant.capability !== "runtime.turn" ||
+          grant.revokedAt !== undefined ||
+          (grant.expiresAt !== undefined && Date.parse(grant.expiresAt) <= kernel.clock.now())
+        ) {
+          return [];
+        }
+
+        const constraints = RuntimeGrantConstraintsSchema.parse(grant.constraints);
+
+        return constraints.roots.some((root) => root.grantId === command.rootGrantId)
+          ? [{ grant, constraints }]
+          : [];
+      });
+
+      if (node === undefined || naming.length === 0) {
+        return conflict({ kind: "not_found", entity: "folder", id: command.rootGrantId });
+      }
+
+      const events: EventDraft[] = [];
+      const draft = (type: EventDraft["type"], payload: unknown): EventDraft => ({
+        id: kernel.ids.nextId(),
+        streamType: "node",
+        streamId: command.nodeId,
+        type,
+        actorType: context.actorType,
+        actorId: context.actorId,
+        payloadVersion: 1,
+        payload,
+        correlationId: context.correlationId,
+        occurredAt: nowIso,
+      });
+
+      for (const { grant, constraints } of naming) {
+        tx.prepare("UPDATE node_capabilities SET revoked_at = ? WHERE id = ?").run(
+          nowIso,
+          grant.id,
+        );
+        events.push(
+          draft("node.capability_revoked.v1", {
+            grantId: grant.id,
+            capability: grant.capability,
+            rootGrantId: command.rootGrantId,
+          }),
+        );
+
+        const roots = constraints.roots.filter((root) => root.grantId !== command.rootGrantId);
+
+        if (roots.length > 0) {
+          const id = kernel.ids.nextId();
+
+          tx.prepare(
+            `INSERT INTO node_capabilities
+               (id, node_id, capability, operation_class, constraints_version, constraints_json,
+                granted_at, expires_at)
+             VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+          ).run(
+            id,
+            command.nodeId,
+            grant.capability,
+            grant.operationClass,
+            JSON.stringify({ ...constraints, roots }),
+            nowIso,
+            grant.expiresAt ?? null,
+          );
+          events.push(
+            draft("node.capability_granted.v1", {
+              grantId: id,
+              capability: grant.capability,
+              operationClass: grant.operationClass,
+              ...(grant.expiresAt === undefined ? {} : { expiresAt: grant.expiresAt }),
+            }),
+          );
+        }
+      }
+
+      return ok({ value: node, events });
     },
   );
 }

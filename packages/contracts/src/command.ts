@@ -532,6 +532,14 @@ export const GrantNodeCapabilityCommandSchema = z
   })
   .strict();
 
+/**
+ * Stops sharing one folder. Every live grant naming it is revoked, and a grant
+ * that named other folders too is granted again without it, so the rest stay.
+ */
+export const UnshareNodeFolderCommandSchema = z
+  .object({ ...CommandBase, nodeId: UuidSchema, rootGrantId: z.string().trim().min(1).max(128) })
+  .strict();
+
 export const EnqueueNodeJobCommandSchema = z
   .object({
     ...CommandBase,
@@ -546,6 +554,7 @@ export const CancelNodeJobCommandSchema = z.object({ ...CommandBase, jobId: Uuid
 export type IssueNodePairingCodeCommand = z.infer<typeof IssueNodePairingCodeCommandSchema>;
 export type RevokeNodeCommand = z.infer<typeof RevokeNodeCommandSchema>;
 export type GrantNodeCapabilityCommand = z.infer<typeof GrantNodeCapabilityCommandSchema>;
+export type UnshareNodeFolderCommand = z.infer<typeof UnshareNodeFolderCommandSchema>;
 export type EnqueueNodeJobCommand = z.infer<typeof EnqueueNodeJobCommandSchema>;
 export type CancelNodeJobCommand = z.infer<typeof CancelNodeJobCommandSchema>;
 

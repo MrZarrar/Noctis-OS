@@ -747,5 +747,18 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       ),
       JSON.stringify(models.body.roots),
     );
+
+    // Stopping asks first, because a thread pinned to the folder can no longer run there.
+    page.once("dialog", (dialog) => void dialog.accept());
+    await shared.getByRole("button", { name: `Stop sharing ${folder}` }).click();
+    await shared.getByText(folder, { exact: true }).waitFor({ state: "detached" });
+
+    const after = await coreRead(CORE_URL, "/models");
+
+    assert.ok(
+      !after.body.roots.some((root) => root.grantId === "shared-project"),
+      JSON.stringify(after.body.roots),
+    );
+    assert.ok(after.body.roots.some((root) => root.grantId === "scratch"));
   });
 });

@@ -72,6 +72,8 @@ export const EVENT_NAMES = [
    * names the host, destination and expiry, never the token (ADR-0035).
    */
   "remote.session_opened.v1",
+  /** A grant ended before its expiry: the owner stopped sharing a folder it named. */
+  "node.capability_revoked.v1",
 ] as const;
 
 export const EventNameSchema = z.enum(EVENT_NAMES);

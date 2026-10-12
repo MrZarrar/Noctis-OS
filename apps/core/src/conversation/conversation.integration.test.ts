@@ -775,6 +775,53 @@ describe("conversation service", () => {
     rmSync(later, { recursive: true, force: true });
   });
 
+  it("stops sharing one folder, keeping the others in its grant, and tells the node at once", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const fake = await connectFake(core, directory);
+    const unshare = (key: string, rootGrantId: string) =>
+      command(core, "node.unshare_folder", {
+        idempotencyKey: key,
+        nodeId: fake.nodeId,
+        rootGrantId,
+      });
+    const offered = async () =>
+      ((await read(core, "/models")).body.roots as Body[]).map((root) => root.grantId).sort();
+
+    await command(core, "node.grant_capability", {
+      idempotencyKey: "share-two",
+      nodeId: fake.nodeId,
+      capability: "runtime.turn",
+      constraints: {
+        providers: ["codex"],
+        roots: [
+          { grantId: "keep", path: directory, mode: "read" },
+          { grantId: "drop", path: directory, mode: "write" },
+        ],
+      },
+    });
+    expect(await offered()).toEqual(["d", "drop", "keep"]);
+
+    const dropped = await unshare("unshare-drop", "drop");
+    expect(dropped.status).toBe(200);
+    expect(await offered()).toEqual(["d", "keep"]);
+
+    // The node's own copy of its grants is replaced, so it stops at once rather than at reconnect.
+    await waitFor(() => {
+      const welcomes = fake.frames.filter((frame) => frame.kind === "welcome");
+      const roots = JSON.stringify(welcomes.at(-1));
+
+      return welcomes.length > 1 && roots.includes('"keep"') && !roots.includes('"drop"');
+    }, "the node was not sent its new grants");
+
+    expect((await unshare("unshare-d", "d")).status).toBe(200);
+    expect(await offered()).toEqual(["keep"]);
+    expect((await unshare("unshare-again", "drop")).status).toBe(404);
+    expect(await eventTypes(core)).toContain("node.capability_revoked.v1");
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("a prompt nobody can run is an honest failed turn, not an error", async () => {
     const core = await startTestCore();
 

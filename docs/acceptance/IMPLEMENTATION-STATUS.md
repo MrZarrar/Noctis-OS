@@ -3632,8 +3632,21 @@ on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
 | `npx tsc -b`; `npx eslint apps packages scripts`; `npx prettier --check .`     | exit 0                                             |
 | `node --test apps/web/e2e/chat.test.mjs apps/web/e2e/mirror.test.mjs` (msedge) | exit 0; 11 tests                                   |
 
+- **Stop sharing a folder.** `node.unshare_folder` revokes every live grant naming the folder, grants the other folders
+  again in a new grant, records `node.capability_revoked.v1`, and sends the PC its grants at once.
+
+| Clause                                                           | State       | Evidence                                                                                  |
+| ---------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
+| One folder stops; the others in its grant stay; the node is told | implemented | `conversation.integration.test.ts` "stops sharing one folder…": red (404), then green     |
+| Stop sharing from Nodes, after a confirmation                    | implemented | `chat.test.mjs` "shares a folder with the agents from Nodes": red (no button), then green |
+
+| Command                                                                    | Result                                             |
+| -------------------------------------------------------------------------- | -------------------------------------------------- |
+| `npx vitest run`                                                           | 2205 passed, 2 failed (`node-agent/files.test.ts`) |
+| `npx tsc -b`; `npx eslint apps packages scripts`; `npx prettier --check .` | exit 0                                             |
+| `node --test apps/web/e2e/chat.test.mjs` (msedge)                          | exit 0; 10 tests                                   |
+
 #### Known, not fixed
 
-- **No way to remove a shared folder from the UI** yet.
 - **`npx eslint .` fails on this PC** because it walks the ignored `.superpowers/` scratch folder, which holds a Hermes
   checkout with its own ESLint config. Linting the tracked folders passes.

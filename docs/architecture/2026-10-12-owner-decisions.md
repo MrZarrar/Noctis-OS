@@ -28,7 +28,9 @@ Two fixes came with it:
 - A shared folder that is missing on the PC (a typo, an unplugged drive) no longer stops every turn on that PC; only a
   turn started in that folder is refused.
 
-**Open:** removing a shared folder from the UI. It needs a command to revoke one grant, which does not exist yet.
+**Built:** **Stop sharing** beside each folder, after a confirmation (`node.unshare_folder`). Every live grant naming
+the folder is revoked, a grant that named other folders is granted again without it, and the PC is sent its new
+grants at once. A conversation pinned to the folder can no longer run there.
 
 ## 2. VS Code, the Codex app and Remote Control
 
@@ -79,6 +81,26 @@ costs are elsewhere:
   PC; a Noctis bug or slow answer can hold an approval until it times out to the native prompt; a hook that can approve
   is a strong permission and needs the core token and default-off; transcript formats are undocumented and change
   between versions; the Codex desktop app is unverified.
+
+**Decided (owner, 12 October 2026):**
+
+- Typing into a session from the phone, without the Claude or Codex app, is a core requirement. So free chat, threads
+  and adopting a session (the copy) all stay as they are.
+- The bridge adds a **Live sessions** section in Threads. Only sessions there are read-only from the phone: watched
+  live, with their approvals answerable. Claude Remote Control, Codex Remote, and copying the session into Noctis
+  stay as the fallbacks for typing into one.
+
+**Approvals and auto mode (the owner's question):** the bridge's approval hook does not make auto mode stricter.
+
+- Claude Code's `PermissionRequest` hook fires only when Claude Code is about to show you a permission dialog. In auto
+  mode the classifier decides most calls itself, so the hook rarely fires. When it does, it is a prompt you would have
+  had at the desk anyway, which you can now also answer from the phone. If nobody answers, the normal prompt stays.
+- A call the auto-mode classifier refuses is not a prompt, so the hook cannot approve it. Claude is told no and works
+  around it or stops. The bridge can show that a session was blocked; it cannot overrule the classifier.
+- Codex is the same. Its `PermissionRequest` hook fires at the approvals its own policy raises (sandbox escapes,
+  network access), which happen more often than in Claude's auto mode.
+- What would make it stricter is a `PreToolUse` gate that stops consequential calls (push, send, publish) until you
+  confirm in Noctis. That is how Noctis gates its own sessions. For bridged sessions it is **not** proposed by default.
 
 ## 3. Vesper's identity does not survive on old sessions
 

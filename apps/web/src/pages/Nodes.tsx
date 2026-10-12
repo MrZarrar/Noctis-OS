@@ -505,6 +505,39 @@ function Folders({
     }
   };
 
+  const unshare = async (folder: SharedFolder): Promise<void> => {
+    if (
+      transport === undefined ||
+      node === undefined ||
+      !window.confirm(
+        `Stop sharing ${folder.path}? Agents on ${node.hostId} lose access to it, and a conversation pinned to it can no longer run there.`,
+      )
+    ) {
+      return;
+    }
+
+    setProblem(undefined);
+    setSharing(true);
+
+    try {
+      const response = await transport.request("POST", "/commands/node.unshare_folder", {
+        idempotencyKey: nextKey("node.unshare_folder"),
+        nodeId: node.id,
+        rootGrantId: folder.grantId,
+      });
+
+      if (response.status === 200) {
+        setRevision((current) => current + 1);
+      } else {
+        setProblem(`The core refused (HTTP ${String(response.status)}).`);
+      }
+    } catch {
+      setProblem("Noctis could not reach the core.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   return (
     <div style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
       <p style={{ margin: 0, color: typography.color.muted, fontSize: typography.scale.sm }}>
@@ -543,6 +576,25 @@ function Folders({
               <span style={chipStyle}>
                 {folder.mode === "write" ? "read and write" : "read only"}
               </span>
+              <button
+                type="button"
+                aria-label={`Stop sharing ${folder.path}`}
+                disabled={sharing}
+                onClick={() => {
+                  void unshare(folder);
+                }}
+                style={{
+                  marginLeft: "auto",
+                  minHeight: 44,
+                  background: "transparent",
+                  border: "none",
+                  color: typography.color.muted,
+                  cursor: "pointer",
+                  fontSize: typography.scale.sm,
+                }}
+              >
+                Stop sharing
+              </button>
             </li>
           ))}
         </ul>
