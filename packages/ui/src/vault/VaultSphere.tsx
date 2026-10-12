@@ -1,5 +1,5 @@
 import type { VaultEntityType } from "@noctis/contracts";
-import { focusSubgraph } from "@noctis/domain";
+import { focusSubgraph, shellRadiusFor } from "@noctis/domain";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -28,6 +28,7 @@ import {
   thinEdges,
   toWorld,
   uniqueLinks,
+  viewDistanceFor,
 } from "./sphere.js";
 
 /**
@@ -140,7 +141,6 @@ const REST_EDGE_REACH = 32;
 /** A focused hub names this many of its links; the rest stay unlabelled dots. */
 const LABELLED_LINKS = 12;
 /** Camera distance from what it looks at: the whole globe, a lobe, a focused note. */
-const OVERVIEW_DISTANCE = 262;
 const LOBE_DISTANCE = 130;
 const FOCUS_DISTANCE = 110;
 /**
@@ -335,7 +335,11 @@ interface DrawEdge {
 }
 
 interface Scene {
-  rebuild: (nodes: readonly VaultSphereNode[], edges: readonly VaultSphereEdge[]) => void;
+  rebuild: (
+    nodes: readonly VaultSphereNode[],
+    edges: readonly VaultSphereEdge[],
+    total: number,
+  ) => void;
   /** Turn to a type's lobe and move in, or with no type back out to the whole globe. */
   aim: (type: VaultEntityType | undefined) => void;
   dispose: () => void;
@@ -345,6 +349,7 @@ interface Lobe {
   type: VaultEntityType;
   count: number;
   centre: THREE.Vector3;
+  radius: number;
 }
 
 interface SceneCallbacks {
@@ -410,8 +415,14 @@ function createScene(
 
   const world = new THREE.Group();
   scene.add(world);
-  world.add(buildShell());
-  scene.add(buildStars());
+  const shell = buildShell();
+  world.add(shell);
+  const stars = buildStars();
+  scene.add(stars);
+  let contentRadius = CONTENT_R;
+  const overviewDistance = (): number => viewDistanceFor(contentRadius / 0.88, camera.aspect);
+  let framedAspect = camera.aspect;
+  let viewedType: VaultEntityType | undefined;
 
   const orbTexture = radialTexture(64, ORB_STOPS);
   const coreTexture = radialTexture(128, CORE_STOPS);
@@ -487,7 +498,17 @@ function createScene(
   const rebuild = (
     nextNodes: readonly VaultSphereNode[],
     nextEdges: readonly VaultSphereEdge[],
+    total: number,
   ): void => {
+    contentRadius = toWorld({ x: shellRadiusFor(total), y: 0, z: 0 }).x;
+    shell.scale.setScalar(contentRadius / CONTENT_R);
+    stars.scale.setScalar(contentRadius / CONTENT_R);
+    controls.maxDistance = overviewDistance() * 3;
+    camera.far = Math.max(2000, controls.maxDistance * 2);
+    camera.updateProjectionMatrix();
+    if (callbacks.focusId() === undefined) {
+      heading = { look: () => ORIGIN, distance: overviewDistance(), offAxis: 0 };
+    }
     const degree = degreeOf(uniqueLinks(nextEdges));
 
     byId = new Map();
@@ -551,6 +572,7 @@ function createScene(
         type: node.type,
         count: 0,
         centre: new THREE.Vector3(),
+        radius: 0,
       };
       lobe.count += 1;
       lobe.centre.add(node.position);
@@ -561,6 +583,14 @@ function createScene(
       ...lobe,
       centre: lobe.centre.divideScalar(lobe.count),
     }));
+    for (const lobe of lobes) {
+      lobe.radius =
+        Math.max(
+          ...drawNodes
+            .filter((node) => node.type === lobe.type)
+            .map((node) => node.position.distanceTo(lobe.centre)),
+        ) + 6;
+    }
     edgesLitFor = undefined;
     labelledFor = null;
 
@@ -610,7 +640,7 @@ function createScene(
     let vertex = 0;
 
     for (const edge of drawEdges) {
-      const control = edgeControl(edge.a.position, edge.b.position);
+      const control = edgeControl(edge.a.position, edge.b.position, contentRadius);
 
       for (let segment = 0; segment < EDGE_SEGS; segment += 1) {
         for (const t of [segment / EDGE_SEGS, (segment + 1) / EDGE_SEGS]) {
@@ -827,6 +857,24 @@ function createScene(
 
     const focusId = callbacks.focusId();
 
+    if (framedAspect !== camera.aspect) {
+      framedAspect = camera.aspect;
+      controls.maxDistance = overviewDistance() * 3;
+      camera.far = Math.max(2000, controls.maxDistance * 2);
+      camera.updateProjectionMatrix();
+      if (focusId === undefined) {
+        const lobe = lobes.find((entry) => entry.type === viewedType);
+        heading = {
+          look: () => lobe?.centre ?? ORIGIN,
+          distance:
+            lobe === undefined
+              ? overviewDistance()
+              : Math.max(LOBE_DISTANCE, viewDistanceFor(lobe.radius, camera.aspect)),
+          offAxis: lobe === undefined ? 0 : OFF_AXIS,
+        };
+      }
+    }
+
     // Only spins around its own centre; once the camera orbits a lobe or a
     // note, spinning the globe would carry it out of view.
     if (
@@ -885,7 +933,7 @@ function createScene(
         const presence = 0.3 + 0.7 * THREE.MathUtils.clamp((eased - 0.15) / 0.35, 0, 1);
 
         toNode.copy(node.position).applyMatrix4(world.matrixWorld);
-        const facing = (toNode.dot(toCamera) / CONTENT_R + 1) / 2;
+        const facing = (toNode.dot(toCamera) / contentRadius + 1) / 2;
         front.set(node.id, facing);
 
         const slot = slotFor(node.type) - 1;
@@ -984,7 +1032,7 @@ function createScene(
         const t = (now / 4200 + index * 0.618) % 1;
         const point = bezier(
           edge.a.position,
-          edgeControl(edge.a.position, edge.b.position),
+          edgeControl(edge.a.position, edge.b.position, contentRadius),
           edge.b.position,
           t,
         );
@@ -1001,9 +1049,10 @@ function createScene(
 
     if (focusId !== headedFor) {
       headedFor = focusId;
+      viewedType = undefined;
 
       if (focusId === undefined) {
-        heading = { look: () => ORIGIN, distance: OVERVIEW_DISTANCE, offAxis: 0 };
+        heading = { look: () => ORIGIN, distance: overviewDistance(), offAxis: 0 };
       } else {
         const id = focusId;
         heading = {
@@ -1098,7 +1147,7 @@ function createScene(
       // they are the map, and step back once a note is focused.
       for (const lobe of lobes) {
         scratch.copy(lobe.centre).multiplyScalar(1.25).applyMatrix4(world.matrixWorld);
-        const facing = (scratch.dot(toCamera) / (CONTENT_R * 1.25) + 1) / 2;
+        const facing = (scratch.dot(toCamera) / (contentRadius * 1.25) + 1) / 2;
         scratch.project(camera);
 
         if (scratch.z > 1 || facing < 0.3) {
@@ -1199,15 +1248,19 @@ function createScene(
   return {
     rebuild,
     aim(type) {
+      viewedType = type;
       if (type === undefined) {
-        heading = { look: () => ORIGIN, distance: OVERVIEW_DISTANCE, offAxis: 0 };
+        heading = { look: () => ORIGIN, distance: overviewDistance(), offAxis: 0 };
         userBusyUntil = 0;
         return;
       }
 
       heading = {
         look: () => lobes.find((lobe) => lobe.type === type)?.centre,
-        distance: LOBE_DISTANCE,
+        distance: Math.max(
+          LOBE_DISTANCE,
+          viewDistanceFor(lobes.find((lobe) => lobe.type === type)?.radius ?? 0, camera.aspect),
+        ),
         offAxis: OFF_AXIS,
       };
     },
@@ -1312,8 +1365,8 @@ export function VaultSphere({
   }, []);
 
   useEffect(() => {
-    sceneRef.current?.rebuild(shownNodes, shownEdges);
-  }, [shownNodes, shownEdges]);
+    sceneRef.current?.rebuild(shownNodes, shownEdges, nodes.length);
+  }, [shownNodes, shownEdges, nodes.length]);
 
   const degree = useMemo(() => degreeOf(shownEdges), [shownEdges]);
   const focused = nodes.find((node) => node.id === focusId);

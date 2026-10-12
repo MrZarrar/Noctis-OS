@@ -4,7 +4,7 @@ import { join, posix, relative, sep } from "node:path";
 
 import type { VaultEntityType, VaultItem } from "@noctis/contracts";
 import { VaultItemSchema } from "@noctis/contracts";
-import type { Coordinate, ParsedNote, Result, SettleNode } from "@noctis/domain";
+import type { ParsedNote, Result, SettleNode } from "@noctis/domain";
 import {
   LAYOUT_VERSION,
   isGeneratedNote,
@@ -500,21 +500,9 @@ export function indexVault(
 }
 
 /**
- * Gives every unplaced entity a coordinate, and leaves every placed one alone.
- *
- * The pinning is in `settle`, not here: this function loads what is already
- * persisted, asks for placements for the rest, and writes only the new rows.
- * An entity therefore keeps its position for as long as its row exists.
+ * Rebalances the graph when indexed; unchanged content gets the same positions.
  */
 function placeLayout(tx: NoctisDatabase, now: string): void {
-  const placed = new Map<string, Coordinate>(
-    (
-      tx
-        .prepare(`SELECT entity_id, x, y, z FROM vault_layout WHERE version = ?`)
-        .all(LAYOUT_VERSION) as Array<{ entity_id: string; x: number; y: number; z: number }>
-    ).map((row) => [row.entity_id, { x: row.x, y: row.y, z: row.z }]),
-  );
-
   const entities = tx.prepare(`SELECT id, key, type FROM vault_entities`).all() as Array<{
     id: string;
     key: string;
@@ -539,20 +527,18 @@ function placeLayout(tx: NoctisDatabase, now: string): void {
     ]);
   }
 
-  const incoming: SettleNode[] = entities
-    .filter((entity) => !placed.has(entity.id))
-    .map((entity) => ({
-      entityId: entity.id,
-      key: entity.key,
-      type: entity.type,
-      neighbourIds: neighbours.get(entity.id) ?? [],
-    }));
+  const incoming: SettleNode[] = entities.map((entity) => ({
+    entityId: entity.id,
+    key: entity.key,
+    type: entity.type,
+    neighbourIds: neighbours.get(entity.id) ?? [],
+  }));
 
   if (incoming.length === 0) {
     return;
   }
 
-  const settled = settle({ placed, incoming });
+  const settled = settle({ placed: new Map(), incoming });
   const insert = tx.prepare(
     `INSERT INTO vault_layout (entity_id, version, x, y, z, settled_at) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (entity_id) DO UPDATE SET version = excluded.version, x = excluded.x,

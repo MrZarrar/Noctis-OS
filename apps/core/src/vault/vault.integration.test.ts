@@ -262,7 +262,7 @@ describe("indexing a test Vault", () => {
     expect(daily.count).toBe(3);
   });
 
-  it("keeps a note's coordinate when other notes are added", () => {
+  it("rebalances existing notes when content is added", () => {
     const kernel = makeKernel();
     const root = vaultRoot();
 
@@ -285,7 +285,7 @@ describe("indexing a test Vault", () => {
              (SELECT id FROM vault_entities WHERE key = 'alex-kerr')`,
         )
         .get(),
-    ).toEqual(before);
+    ).not.toEqual(before);
   });
 
   it("resolves a link written through an alias", () => {

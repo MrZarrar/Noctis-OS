@@ -33,10 +33,7 @@ export interface Point3 {
 }
 
 /**
- * Layout coordinates live on a shell of radius `SHELL_RADIUS`; the donor's
- * scene is a hundred times larger. One multiply is the whole conversion, and
- * keeping it in one named place is what stops the two coordinate systems from
- * being confused at a call site.
+ * Keep a fixed world scale so growing the layout gives notes more room.
  */
 export function toWorld(point: Point3): Point3 {
   const scale = CONTENT_R / SHELL_RADIUS;
@@ -44,10 +41,14 @@ export function toWorld(point: Point3): Point3 {
   return { x: point.x * scale, y: point.y * scale, z: point.z * scale };
 }
 
+export function viewDistanceFor(radius: number, aspect: number): number {
+  const halfFov = Math.atan(Math.tan((25 * Math.PI) / 180) * Math.min(1, aspect));
+  return (radius / Math.sin(halfFov)) * 1.12;
+}
+
 /**
  * The donor's eight cluster slots, keyed by Noctis's seven entity types. The
- * slot decides the node's colour here; its direction is already baked into the
- * persisted coordinate by `anchorFor` in `@noctis/domain`.
+ * slot decides the node's colour, independently of its position.
  */
 const TYPE_SLOT: Readonly<Record<VaultEntityType, number>> = {
   capture: 1,
@@ -160,7 +161,7 @@ function clampLength(point: Point3, max: number): Point3 {
  * Donor `setEdgeControl`: the quadratic-bezier control point that bows an edge
  * outward without letting the curve break the globe's silhouette.
  */
-export function edgeControl(a: Point3, b: Point3): Point3 {
+export function edgeControl(a: Point3, b: Point3, contentRadius = CONTENT_R): Point3 {
   const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 };
   const separation = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   // The bow grows with the link's length: a long link arcs round the core,
@@ -169,7 +170,7 @@ export function edgeControl(a: Point3, b: Point3): Point3 {
 
   const bowed = clampLength(
     { x: midpoint.x * (1 + bow), y: midpoint.y * (1 + bow), z: midpoint.z * (1 + bow) },
-    CONTENT_R,
+    contentRadius,
   );
 
   // Two antipodal nodes have a midpoint at the origin, which the bow cannot

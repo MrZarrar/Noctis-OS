@@ -3,23 +3,10 @@ import type { VaultEntityType } from "@noctis/contracts";
 /**
  * Deterministic Vault sphere placement.
  *
- * The Fibonacci-sphere type anchor is ported from `Jarvis-Sub-Agent-Dashboard`
- * at commit `ee7b4527`, `client/src/components/VaultSphere.tsx` (`anchorFor`),
- * including its `2.399963` golden-angle increment, and so is the shape: a lobe
- * per note type, filling the sphere's depth, with the core kept clear. MIT
- * licence, Copyright (c) 2026 - Now, Son Nguyen. See
- * `docs/architecture/DONOR-PORT-LEDGER.md`.
- *
- * What changed, and why it is the point of this module: the donor derived a
- * node's position from its index in a list and its degree, so every note moved
- * whenever any other note was added, removed, or linked. Here a node's seed
- * comes from a hash of its own key, and settlement only ever moves nodes that
- * have never been placed. Section 7's "node coordinates are stable and
- * persisted" is therefore a property of the algorithm rather than a promise
- * about how it is called.
- *
- * Inside each lobe, notes gather by topic: groups found from who links to whom,
- * each sitting on the side of its lobe that faces the other lobes it links to.
+ * Types divide the occupied volume, and topics divide each type's region.
+ * Reindexing can rebalance those regions; rendering never moves the notes.
+ * Golden-angle placement retains MIT-licensed work by Son Nguyen,
+ * Copyright (c) 2026 - Now.
  */
 
 export interface Coordinate {
@@ -31,63 +18,30 @@ export interface Coordinate {
 /**
  * Bumped when placement changes, so persisted coordinates can be recognised as old.
  *
- * 2: version 1 pulled each note onto the average of its neighbours, which in a
- * Vault averaging a dozen links per note collapsed everything into one blob.
- * 3: version 2 spread notes evenly over the shell, which read as a web with
- * nothing inside it. Notes now fill lobes by type, grouped by topic within.
+ * Version 4 shares the whole volume among populated types and grows with content.
  */
-export const LAYOUT_VERSION = 3;
+export const LAYOUT_VERSION = 4;
 
-/** The outer bound of every coordinate. */
+/** Reference radius for conversion to renderer units. */
 export const SHELL_RADIUS = 10;
 /** Nothing is placed nearer the centre than this; the renderer draws its core there. */
 export const CORE_RADIUS = 3.6;
 
-/** How far a type's lobe sits from the centre. */
-const LOBE_DISTANCE = 6.6;
-/** How far a topic's clump sits from its lobe's centre. */
-const TOPIC_OFFSET = 2.4;
-/** Scatter of a seed around its topic, before settlement spreads it. */
-const SEED_JITTER = 0.9;
-
-// The three forces, tuned as a set: repulsion gives every note room, the
-// topic pull holds a clump together, and links lean notes toward each other
-// without dragging them out of their lobe.
 const SPACING = 0.85;
 const REPULSION_REACH = SPACING * 4;
-const TOPIC_PULL = 0.8;
-const LINK_PULL = 0.12;
+const SLOT_PULL = 0.8;
+const LINK_PULL = 0.06;
 
-// ponytail: every pass is all-pairs, so a few thousand notes take seconds to
-// place. A spatial grid for the repulsion is the upgrade if the Vault gets there.
-const DEFAULT_ITERATIONS = 300;
+// shortcut: repulsion checks every pair, use a spatial grid if large Vaults reindex too slowly.
+const DEFAULT_ITERATIONS = 80;
 /** Below this much total movement the graph is at rest and settlement stops. */
 const REST_EPSILON = 1e-4;
 /** The furthest a note may move in the first pass; it cools to nothing by the last. */
 const START_TEMPERATURE = 1.5;
 const COMMUNITY_PASSES = 30;
 
-/** The donor's eight fixed cluster directions, one slot per note type. */
-const TYPE_SLOT: Readonly<Record<VaultEntityType, number>> = {
-  capture: 1,
-  project: 2,
-  person: 3,
-  reference: 4,
-  daily: 5,
-  agent: 6,
-  note: 7,
-};
-
-/** FNV-1a. A spreading function, not a security primitive. */
-function hash(value: string, salt: number): number {
-  let result = 0x811c9dc5 ^ salt;
-
-  for (let index = 0; index < value.length; index += 1) {
-    result ^= value.charCodeAt(index);
-    result = Math.imul(result, 0x01000193);
-  }
-
-  return (result >>> 0) / 0x100000000;
+export function shellRadiusFor(count: number): number {
+  return Math.max(CORE_RADIUS * 1.6, Math.cbrt(CORE_RADIUS ** 3 + Math.max(0, count) * 4.5));
 }
 
 function normalize(point: Coordinate): Coordinate {
@@ -123,79 +77,54 @@ function contain(point: Coordinate, inner = CORE_RADIUS, outer = SHELL_RADIUS): 
   return scaled(normalize(point), Math.min(outer, Math.max(inner, length)));
 }
 
-/** Donor `anchorFor`: the Fibonacci direction for a type's slot, as a unit vector. */
-export function anchorFor(type: VaultEntityType): Coordinate {
-  const index = TYPE_SLOT[type] - 1;
-  const y = 1 - (2 * (index + 0.5)) / 8;
-  const radius = Math.sqrt(Math.max(0, 1 - y * y));
-  const theta = index * 2.399963;
+function volumePoints(count: number, radius: number): Coordinate[] {
+  return Array.from({ length: count }, (_, index) => {
+    const y = 1 - (2 * (index + 0.5)) / count;
+    const ring = Math.sqrt(1 - y * y);
+    const angle = index * 2.399963;
+    const depth = (0.5 + index * 0.754877666) % 1;
+    const reach = Math.cbrt(CORE_RADIUS ** 3 + depth * (radius ** 3 - CORE_RADIUS ** 3));
 
-  return { x: radius * Math.cos(theta), y, z: radius * Math.sin(theta) };
+    return { x: reach * ring * Math.cos(angle), y: reach * y, z: reach * ring * Math.sin(angle) };
+  });
 }
 
-/** A unit direction chosen by hashing, uniform over the sphere. */
-function hashedDirection(key: string, salt: number): Coordinate {
-  const y = 1 - 2 * hash(key, salt);
-  const ring = Math.sqrt(Math.max(0, 1 - y * y));
-  const phi = 2 * Math.PI * hash(key, salt ^ 0x5bd1e995);
+function partition(
+  points: Coordinate[],
+  groups: Array<readonly [string, number]>,
+): Map<string, Coordinate[]> {
+  const regions = new Map<string, Coordinate[]>();
+  const divide = (space: Coordinate[], entries: Array<readonly [string, number]>): void => {
+    if (entries.length === 1) {
+      regions.set(entries[0]![0], space);
+      return;
+    }
+    if (entries.length === 0) {
+      return;
+    }
 
-  return { x: ring * Math.cos(phi), y, z: ring * Math.sin(phi) };
-}
-
-function cross(a: Coordinate, b: Coordinate): Coordinate {
-  return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
-}
-
-/** Two unit vectors at right angles to each other and to `axis`. */
-function tangentBasis(axis: Coordinate): [Coordinate, Coordinate] {
-  const reference = Math.abs(axis.y) < 0.9 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
-  const right = normalize(cross(axis, reference));
-
-  return [right, normalize(cross(axis, right))];
-}
-
-/**
- * The i-th of n spots on a sunflower disc across a type's lobe, as an offset
- * of up to one unit. Evenly spaced however many there are, largest first at
- * the middle.
- */
-function discSpot(type: VaultEntityType, index: number, count: number): Coordinate {
-  const [right, up] = tangentBasis(anchorFor(type));
-  const reach = Math.sqrt((index + 1) / count);
-  const angle = index * 2.399963;
-
-  return add(scaled(right, Math.cos(angle) * reach), up, Math.sin(angle) * reach);
-}
-
-function lobeCentre(type: VaultEntityType): Coordinate {
-  return scaled(anchorFor(type), LOBE_DISTANCE);
-}
-
-/**
- * A topic's clump: across its lobe, never deeper or shallower, so that topics
- * spread sideways where they can be seen from outside the globe, and keeping
- * them off the core or the shell cannot squeeze two of them together.
- */
-function topicAnchor(type: VaultEntityType, offset: Coordinate): Coordinate {
-  const axis = anchorFor(type);
-  const along = offset.x * axis.x + offset.y * axis.y + offset.z * axis.z;
-
-  return add(lobeCentre(type), add(offset, axis, -along), TOPIC_OFFSET);
-}
-
-function jittered(anchor: Coordinate, key: string): Coordinate {
-  const reach = SEED_JITTER * Math.cbrt(hash(key, 0x27d4eb2d));
-
-  return contain(add(anchor, hashedDirection(key, 0x9e3779b9), reach));
-}
-
-/**
- * A node's position before anything is known about its links: a point in its
- * type's lobe, chosen by hashing the key, so the same note lands in the same
- * place in an empty Vault and in a Vault of ten thousand notes.
- */
-export function seedCoordinate(key: string, type: VaultEntityType): Coordinate {
-  return jittered(topicAnchor(type, hashedDirection(key, 0x85ebca6b)), key);
+    // Split the longest dimension so a large group gets a broad region, not a thin strip.
+    const axes = ["x", "y", "z"] as const;
+    const spread = (axis: (typeof axes)[number]): number =>
+      Math.max(...space.map((point) => point[axis])) -
+      Math.min(...space.map((point) => point[axis]));
+    const axis = [...axes].sort((a, b) => spread(b) - spread(a))[0]!;
+    space.sort((a, b) => a[axis] - b[axis] || a.x - b.x || a.y - b.y || a.z - b.z);
+    let cut = 1;
+    let size = entries[0]![1];
+    let total = size;
+    for (let index = 1; index < entries.length - 1; index += 1) {
+      total += entries[index]![1];
+      if (Math.abs(total - space.length / 2) < Math.abs(size - space.length / 2)) {
+        cut = index + 1;
+        size = total;
+      }
+    }
+    divide(space.slice(0, size), entries.slice(0, cut));
+    divide(space.slice(size), entries.slice(cut));
+  };
+  divide(points, groups);
+  return regions;
 }
 
 export interface SettleNode {
@@ -279,7 +208,7 @@ export function communities(nodes: readonly SettleNode[]): Map<string, string> {
 }
 
 export interface SettleInput {
-  /** Already-placed nodes. Pinned: settlement reads them and never writes them. */
+  /** Coordinates outside the supplied graph are left alone. */
   placed: ReadonlyMap<string, Coordinate>;
   incoming: readonly SettleNode[];
   iterations?: number;
@@ -292,12 +221,9 @@ export interface SettleResult {
 }
 
 /**
- * Places new nodes, and only new nodes.
- *
- * Each new note is held near its topic's clump in its type's lobe, pushed off
- * every note near it, and leaned toward the notes it links to. A link's pull
- * is divided by the root of both ends' link counts, for the same reason as in
- * `communities`. Every position is kept between the core and the shell.
+ * Rebalances the supplied graph into type regions and smaller topic regions.
+ * Each region receives one volume slot per note, so its size follows its content.
+ * Repulsion gives neighbouring notes breathing room without collapsing the volume.
  *
  * Bounded by construction: a fixed iteration ceiling, a step limit that cools
  * linearly to zero over it, an early stop once total movement falls under
@@ -310,83 +236,55 @@ export function settle(input: SettleInput): SettleResult {
   const placed = new Map(input.placed);
   // Sorted so the result cannot depend on the order the caller happened to
   // read rows in.
-  const pending = [...input.incoming]
-    .filter((candidate) => !placed.has(candidate.entityId))
-    .sort((a, b) => byId(a.entityId, b.entityId));
+  const pending = [...input.incoming].sort(
+    (a, b) => byId(a.key, b.key) || byId(a.entityId, b.entityId),
+  );
 
   if (pending.length === 0) {
     return { placed, iterations: 0 };
   }
 
   const topic = communities(pending);
-
-  // A topic's clump sits on the side of its lobe facing the other lobes the
-  // topic reaches into, which keeps the links between lobes short. A topic
-  // that stays inside one type has nowhere to face; see below.
-  const facing = new Map<string, Coordinate>();
-  const sameType = new Map<string, number>();
-  const groupKey = (type: VaultEntityType, group: string): string => `${type}|${group}`;
-
+  const radius = shellRadiusFor(pending.length);
+  const byType = new Map<VaultEntityType, SettleNode[]>();
   for (const entry of pending) {
-    const group = topic.get(entry.entityId) ?? entry.entityId;
-    facing.set(group, add(facing.get(group) ?? { x: 0, y: 0, z: 0 }, anchorFor(entry.type)));
-    sameType.set(groupKey(entry.type, group), (sameType.get(groupKey(entry.type, group)) ?? 0) + 1);
+    byType.set(entry.type, [...(byType.get(entry.type) ?? []), entry]);
   }
-
-  // Topics that stay inside one type have no other lobe to face, so they are
-  // spread evenly around their own, largest first. Hashed sides could land two
-  // of them on the same spot.
-  const inward = new Map<string, Coordinate>();
-  const inwardByType = new Map<VaultEntityType, string[]>();
-
-  for (const [key, count] of sameType) {
-    const cut = key.indexOf("|");
-    const type = key.slice(0, cut) as VaultEntityType;
-    const group = key.slice(cut + 1);
-    const total = facing.get(group) ?? { x: 0, y: 0, z: 0 };
-    const own = anchorFor(type);
-
-    if (
-      Math.hypot(total.x - own.x * count, total.y - own.y * count, total.z - own.z * count) <= 1e-6
-    ) {
-      inwardByType.set(type, [...(inwardByType.get(type) ?? []), key]);
+  const types = [...byType].sort(([a], [b]) => byId(a, b));
+  const regions = partition(
+    volumePoints(pending.length, radius),
+    types.map(([type, entries]) => [type, entries.length]),
+  );
+  const anchors = new Map<string, Coordinate>();
+  for (const [type, entries] of types) {
+    const groups = new Map<string, SettleNode[]>();
+    for (const entry of entries) {
+      const group = topic.get(entry.entityId) ?? entry.entityId;
+      groups.set(group, [...(groups.get(group) ?? []), entry]);
     }
-  }
-
-  for (const [type, keys] of inwardByType) {
-    keys
-      .sort((a, b) => (sameType.get(b) ?? 0) - (sameType.get(a) ?? 0) || byId(a, b))
-      .forEach((key, index) => {
-        inward.set(key, discSpot(type, index, keys.length));
+    const ordered = [...groups].sort(([a], [b]) => byId(a, b));
+    const topics = partition(
+      regions.get(type) ?? [],
+      ordered.map(([group, members]) => [group, members.length]),
+    );
+    for (const [group, members] of ordered) {
+      const slots = topics.get(group) ?? [];
+      const centre = slots.reduce((sum, point) => add(sum, point, 1 / slots.length), {
+        x: 0,
+        y: 0,
+        z: 0,
       });
-  }
-
-  const anchorCache = new Map<string, Coordinate>();
-  const anchorOf = (entry: SettleNode): Coordinate => {
-    const group = topic.get(entry.entityId) ?? entry.entityId;
-    const cacheKey = groupKey(entry.type, group);
-    const cached = anchorCache.get(cacheKey);
-
-    if (cached !== undefined) {
-      return cached;
+      members.forEach((entry, index) => {
+        // Leave small gaps between topics without shrinking a type that has just one topic.
+        const anchor = contain(
+          add(centre, add(slots[index]!, centre, -1), ordered.length > 1 ? 0.7 : 1),
+          CORE_RADIUS,
+          radius,
+        );
+        anchors.set(entry.entityId, anchor);
+        placed.set(entry.entityId, anchor);
+      });
     }
-
-    const own = anchorFor(entry.type);
-    const sum = facing.get(group) ?? { x: 0, y: 0, z: 0 };
-    const outward = add(sum, own, -(sameType.get(cacheKey) ?? 0));
-    const towards =
-      Math.hypot(outward.x, outward.y, outward.z) > 1e-6
-        ? normalize(outward)
-        : (inward.get(cacheKey) ?? hashedDirection(group, 0x85ebca6b));
-    const anchor = topicAnchor(entry.type, towards);
-
-    anchorCache.set(cacheKey, anchor);
-
-    return anchor;
-  };
-
-  for (const candidate of pending) {
-    placed.set(candidate.entityId, jittered(anchorOf(candidate), candidate.key));
   }
 
   const linkCount = new Map<string, number>();
@@ -412,8 +310,8 @@ export function settle(input: SettleInput): SettleResult {
         continue;
       }
 
-      const anchor = anchorOf(candidate);
-      let force = scaled(add(anchor, current, -1), TOPIC_PULL);
+      const anchor = anchors.get(candidate.entityId)!;
+      let force = scaled(add(anchor, current, -1), SLOT_PULL);
 
       for (const [otherId, other] of placed) {
         if (otherId === candidate.entityId) {
@@ -446,7 +344,7 @@ export function settle(input: SettleInput): SettleResult {
 
       const strength = Math.hypot(force.x, force.y, force.z);
       const step = strength > temperature ? temperature / strength : 1;
-      const next = contain(add(current, force, step));
+      const next = contain(add(current, force, step), CORE_RADIUS, radius);
 
       movement += distance(current, next);
       placed.set(candidate.entityId, next);

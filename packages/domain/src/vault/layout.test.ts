@@ -6,10 +6,9 @@ import {
   CORE_RADIUS,
   LAYOUT_VERSION,
   SHELL_RADIUS,
-  anchorFor,
   communities,
   distance,
-  seedCoordinate,
+  shellRadiusFor,
   settle,
 } from "./layout.js";
 
@@ -83,43 +82,15 @@ function denseVault(count: number): SettleNode[] {
   );
 }
 
-describe("seeded coordinates", () => {
-  it("depends only on the key and type", () => {
-    expect(seedCoordinate("alex-kerr", "person")).toEqual(seedCoordinate("alex-kerr", "person"));
-    expect(seedCoordinate("alex-kerr", "person")).not.toEqual(
-      seedCoordinate("alex-kerr", "project"),
-    );
-    expect(seedCoordinate("alex-kerr", "person")).not.toEqual(seedCoordinate("acme", "person"));
+describe("sphere size", () => {
+  it("keeps room for the core in empty and tiny Vaults", () => {
+    expect(shellRadiusFor(0)).toBeGreaterThan(CORE_RADIUS);
+    expect(shellRadiusFor(1)).toBeGreaterThan(CORE_RADIUS);
   });
 
-  it("puts every seed inside the sphere and clear of the core", () => {
-    for (const key of ["a", "bb", "ccc", "a-much-longer-key", "üñî"]) {
-      const radius = distance(seedCoordinate(key, "note"), ORIGIN);
-
-      expect(radius).toBeGreaterThanOrEqual(CORE_RADIUS);
-      expect(radius).toBeLessThanOrEqual(SHELL_RADIUS);
-    }
-  });
-
-  it("seeds a type in its own lobe", () => {
-    const anchor = anchorFor("person");
-
-    for (const key of ["alex", "sam", "kim", "jo"]) {
-      const seeded = seedCoordinate(key, "person");
-      const cosine =
-        (seeded.x * anchor.x + seeded.y * anchor.y + seeded.z * anchor.z) /
-        distance(seeded, ORIGIN);
-
-      expect(cosine).toBeGreaterThan(0.8);
-    }
-  });
-
-  it("gives different types different anchors", () => {
-    const anchors = (
-      ["capture", "project", "person", "reference", "daily", "agent", "note"] as const
-    ).map((type) => JSON.stringify(anchorFor(type)));
-
-    expect(new Set(anchors).size).toBe(anchors.length);
+  it("grows usable volume in proportion to content", () => {
+    const volume = (count: number): number => shellRadiusFor(count) ** 3 - CORE_RADIUS ** 3;
+    expect(volume(800) / volume(100)).toBeCloseTo(8);
   });
 });
 
@@ -154,7 +125,47 @@ describe("topic communities", () => {
 });
 
 describe("bounded settlement", () => {
-  it("THE GATE: never moves a node that is already placed", () => {
+  it("uses the whole volume when only four types are present", () => {
+    const types = ["capture", "person", "reference", "note"] as const;
+    const incoming = Array.from({ length: 200 }, (_, index) =>
+      node(`n${String(index)}`, { type: types[index % types.length]! }),
+    );
+    const points = [...settle({ placed: new Map(), incoming }).placed.values()];
+    const octants = new Set(points.map((point) => `${point.x > 0}:${point.y > 0}:${point.z > 0}`));
+
+    expect(octants.size).toBe(8);
+    for (const axis of ["x", "y", "z"] as const) {
+      expect(Math.min(...points.map((point) => point[axis]))).toBeLessThan(-6);
+      expect(Math.max(...points.map((point) => point[axis]))).toBeGreaterThan(6);
+    }
+  });
+
+  it("lets a single populated type fill the sphere", () => {
+    const incoming = Array.from({ length: 160 }, (_, index) => node(`n${String(index)}`));
+    const points = [...settle({ placed: new Map(), incoming }).placed.values()];
+
+    expect(distance(centroid(points), ORIGIN)).toBeLessThan(1);
+    expect(
+      new Set(points.map((point) => `${point.x > 0}:${point.y > 0}:${point.z > 0}`)).size,
+    ).toBe(8);
+  });
+
+  it("expands the sphere as content grows instead of compressing notes", () => {
+    const extent = (count: number): number =>
+      Math.max(
+        ...[
+          ...settle({
+            placed: new Map(),
+            incoming: denseVault(count),
+            iterations: 0,
+          }).placed.values(),
+        ].map((point) => distance(point, ORIGIN)),
+      );
+
+    expect(extent(640)).toBeGreaterThan(extent(80) * 1.7);
+  });
+
+  it("leaves coordinates outside the supplied graph alone", () => {
     const placed = new Map<string, Coordinate>([["existing", { x: 1, y: 2, z: 3 }]]);
     const result = settle({
       placed,
@@ -215,18 +226,12 @@ describe("bounded settlement", () => {
     expect(result.placed.size).toBe(40);
   });
 
-  it("pulls a new node toward the neighbour it links to", () => {
-    const target = seedCoordinate("far", "agent");
-    const seeded = seedCoordinate("lonely", "person");
-    const result = settle({
-      placed: new Map([["far", target]]),
-      incoming: [node("lonely", { type: "person", neighbourIds: ["far"] })],
-    });
+  it("rebalances supplied nodes regardless of their old coordinates", () => {
+    const incoming = denseVault(40);
+    const expected = settle({ placed: new Map(), incoming }).placed;
+    const old = new Map([...expected].map(([id]) => [id, { x: 0, y: 0, z: 0 }]));
 
-    const settled = result.placed.get("lonely");
-
-    expect(settled).toBeDefined();
-    expect(distance(settled as Coordinate, target)).toBeLessThan(distance(seeded, target));
+    expect(settle({ placed: old, incoming }).placed).toEqual(expected);
   });
 
   it("keeps every settled node inside the sphere, clear of the core, and finite", () => {
@@ -237,7 +242,7 @@ describe("bounded settlement", () => {
 
       expect(Number.isFinite(coordinate.x)).toBe(true);
       expect(radius).toBeGreaterThanOrEqual(CORE_RADIUS - 1e-9);
-      expect(radius).toBeLessThanOrEqual(SHELL_RADIUS + 1e-9);
+      expect(radius).toBeLessThanOrEqual(shellRadiusFor(120) + 1e-9);
     }
   });
 
@@ -315,6 +320,6 @@ describe("bounded settlement", () => {
   });
 
   it("declares a layout version so old coordinates can be recognised", () => {
-    expect(LAYOUT_VERSION).toBeGreaterThan(2);
+    expect(LAYOUT_VERSION).toBeGreaterThan(3);
   });
 });

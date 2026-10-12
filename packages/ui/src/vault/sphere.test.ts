@@ -13,11 +13,28 @@ import {
   thinEdges,
   toWorld,
   uniqueLinks,
+  viewDistanceFor,
 } from "./sphere.js";
 
 function edge(id: string, source: string, target: string): SphereEdge {
   return { id, source, target, lifecycle: "resolved" };
 }
+
+describe("view framing", () => {
+  it("fits the full sphere in a narrow portrait viewport", () => {
+    const radius = 100;
+    const aspect = 358 / 560;
+    const distance = viewDistanceFor(radius, aspect);
+    const horizontalHalfFov = Math.atan(Math.tan((25 * Math.PI) / 180) * aspect);
+
+    expect(distance).toBeGreaterThan(radius / Math.sin(horizontalHalfFov));
+    expect(distance).toBeGreaterThan(viewDistanceFor(radius, 2));
+  });
+
+  it("fits a larger sphere without shrinking its world coordinates", () => {
+    expect(viewDistanceFor(200, 1)).toBeCloseTo(viewDistanceFor(100, 1) * 2);
+  });
+});
 
 describe("toWorld", () => {
   it("puts a settled coordinate inside the shell rather than on it", () => {
@@ -83,6 +100,13 @@ describe("thinEdges", () => {
 });
 
 describe("edgeControl", () => {
+  it("keeps links in an expanded sphere at their actual scale", () => {
+    const control = edgeControl({ x: 160, y: 0, z: 0 }, { x: 0, y: 160, z: 0 }, 176);
+
+    expect(Math.hypot(control.x, control.y, control.z)).toBeGreaterThan(CONTENT_R);
+    expect(Math.hypot(control.x, control.y, control.z)).toBeLessThanOrEqual(176);
+  });
+
   it("bows the curve outward from the midpoint", () => {
     const a = { x: 40, y: 0, z: 0 };
     const b = { x: 0, y: 40, z: 0 };
