@@ -218,14 +218,20 @@ pair stored both ways, so they drew twice as bright. Every node also glowed addi
 - Panels show in Threads, owned by the conversation, and in **Presence as side pop-ups**: a due reminder, or a live brief
   of what an agent is doing now.
 - Any page can open as a panel, through a **+ button**. Several panels can be open at once, with a size each.
-- **Drag and drop is preferred but deferred.**
+- Drag and resize come after the panels work, with the buttons kept as the keyboard way.
 - Media opens by itself. On the phone, a panel arrives as a small button and opens large on a tap; back returns.
 - Focus shrinks the conversation to the companion column.
 - Panels offer choices, which send a message to the conversation. Writing from a panel is deferred.
 - A panel that fails to update keeps its last content, with Retry. Supporting panels update on their own, and the main
   panel never changes under the owner.
 - **Layout is coded rules**, so it keeps working with no Claude usage left. A layout model is deferred.
-- **Later:** popped-out, always-on-top panel windows for another monitor. The browser's Document Picture-in-Picture
-  API can do this without Tauri.
+- Popped-out, always-on-top panel windows for another monitor, through the browser's Document Picture-in-Picture
+  API rather than Tauri.
 
-**Open:** retire the hidden Command page once Objective threads have panels (answer 11, owner to confirm).
+**Decided, later the same day:**
+
+- **Retire the hidden Command page** once Objective threads have panels.
+- **A layout model is deferred, and added only if needed.** The owner wanted one for things that happen with no agent
+  active, such as a reminder falling due; coded rules cover those better.
+- **Drag, resize and pop-out windows are in the plan** (P19 to P21), after the panels themselves work.
+- **Plan only for now:** nothing is implemented until the owner says so.

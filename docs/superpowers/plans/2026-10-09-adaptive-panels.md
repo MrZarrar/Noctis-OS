@@ -2,27 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Read first: the owner's decisions of 12 October 2026 (next section) settle D1 to D6 and the open questions, and add tasks P15 to P17.** Slice 1 can start once the owner confirms answer 11.
+> **Read first: the owner's decisions of 12 October 2026 (next section) settle D1 to D6 and the open questions, and add tasks P15 to P21.** Nothing is to be built until the owner says so (12 October 2026: plan only).
 
 ## Owner decisions, 12 October 2026
 
 These supersede the D1 to D6 recommendations below wherever they differ. Answers are numbered as the questions were
 asked in the discussion.
 
-| #   | Question                        | Decided                                                                                                                                                                                                                                                                                        |
-| --- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Where do panels show?           | **In Threads, owned by the conversation, and in Presence as pop-ups at the side.** Presence's panels are not a conversation's: a reminder that is due, or a short live brief of what an agent is doing now ("Hermes: running the nightly backup, 4 min").                                      |
-| 2   | Which pages open as panels?     | **Any page, wherever it is needed,** if that is not much extra work. If it is, Presence and Threads host panels in v1, and either can show any other page as a panel.                                                                                                                          |
-| 3   | Can the owner open a panel?     | **Yes, with a + button**, more than one at a time, to arrange and resize as the owner likes.                                                                                                                                                                                                   |
-| 4   | What opens without being asked? | **Media a turn produces.** On the phone a new panel arrives as a small button. A panel may use a large part of the phone screen, but never takes it over without a tap. **Later:** a panel popped out into its own window, always on top, movable to another monitor.                          |
-| 5   | Arranging                       | **Drag and drop is preferred but deferred.** v1 has Focus, Pin, Place, a size, and Close.                                                                                                                                                                                                      |
-| 6   | Desktop focus                   | **The conversation shrinks to the companion column.**                                                                                                                                                                                                                                          |
-| 7   | What a panel can do             | **It can offer choices** (pick, compare, "use this"), which send a message to the conversation. Writing or changing anything from inside a panel is deferred.                                                                                                                                  |
-| 8   | A panel that fails to update    | **Keeps its last good content, with "Couldn't update · Retry".** Never blank.                                                                                                                                                                                                                  |
-| 9   | Supporting panels               | **Update on their own.** The main panel never changes under the owner; it offers the new version instead.                                                                                                                                                                                      |
-| 10  | Phone                           | **Panel buttons above the message box. Tapping one opens it large; back returns to the previous view.**                                                                                                                                                                                        |
-| 11  | The old Command canvas          | **Explained, owner to confirm.** It is a hidden page from an earlier phase that shows an Objective's Surfaces with the same frame component the panels use. Restyling that frame once updates both. Proposed: once Objective threads have panels, retire the Command page rather than keep it. |
-| 12  | A model helping with layout     | **Deferred.** Layout is coded rules. The owner wants it to stay usable with no Claude usage left, which coded rules give.                                                                                                                                                                      |
+| #   | Question                        | Decided                                                                                                                                                                                                                                                        |
+| --- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Where do panels show?           | **In Threads, owned by the conversation, and in Presence as pop-ups at the side.** Presence's panels are not a conversation's: a reminder that is due, or a short live brief of what an agent is doing now ("Hermes: running the nightly backup, 4 min").      |
+| 2   | Which pages open as panels?     | **Any page, wherever it is needed,** if that is not much extra work. If it is, Presence and Threads host panels in v1, and either can show any other page as a panel.                                                                                          |
+| 3   | Can the owner open a panel?     | **Yes, with a + button**, more than one at a time, to arrange and resize as the owner likes.                                                                                                                                                                   |
+| 4   | What opens without being asked? | **Media a turn produces.** On the phone a new panel arrives as a small button. A panel may use a large part of the phone screen, but never takes it over without a tap. **Pop-out windows** (always on top, movable to another monitor) are in the plan (P21). |
+| 5   | Arranging                       | **Drag and resize are in the plan** (P19, P20), after the panels themselves work. Focus, Pin, Place, a size and Close come first and stay as the keyboard way to do the same.                                                                                  |
+| 6   | Desktop focus                   | **The conversation shrinks to the companion column.**                                                                                                                                                                                                          |
+| 7   | What a panel can do             | **It can offer choices** (pick, compare, "use this"), which send a message to the conversation. Writing or changing anything from inside a panel is deferred.                                                                                                  |
+| 8   | A panel that fails to update    | **Keeps its last good content, with "Couldn't update · Retry".** Never blank.                                                                                                                                                                                  |
+| 9   | Supporting panels               | **Update on their own.** The main panel never changes under the owner; it offers the new version instead.                                                                                                                                                      |
+| 10  | Phone                           | **Panel buttons above the message box. Tapping one opens it large; back returns to the previous view.**                                                                                                                                                        |
+| 11  | The old Command canvas          | **Retire it.** It is a hidden page from an earlier phase that shows an Objective's Surfaces with the frame the panels use. Once Objective threads have panels, the page goes (P18); the frame and compositor stay, restyled.                                   |
+| 12  | A model helping with layout     | **Deferred, added only if needed.** The owner's reason for it was things that happen with no agent active, such as a reminder falling due. Coded rules cover those better, and keep working with no Claude usage left.                                         |
 
 ### How "adaptive and alive" works without a layout model (12)
 
@@ -62,13 +62,48 @@ The step-level detail for new and changed tasks is written at the start of each 
     starts from its host's context: Files at the conversation's folder, Vault at its recall. It reuses the page's own
     component, so nothing is drawn twice.
   - **P17. Choices.** Panel actions send a message to the conversation, tested end to end with a shortlist.
-- **Later (not in this plan):**
-  - drag and drop, and free resizing on top of the same overrides;
-  - panels on every other page (2), if not done in P16;
-  - **popped-out windows.** Chrome and Edge's Document Picture-in-Picture API opens an always-on-top window that can show
-    any part of the page and be moved to another monitor, with no Tauri needed. Tauri's native windows remain the
-    fallback.
-  - retiring the Command page (11), once the owner confirms.
+- **New, Slice 4: arranging by hand, and leaving the page.** These come after Slices 1 to 3.
+  - **P18. Retire the Command page (11).**
+    - Objective threads already show their panels in Threads (P1 to P6), so the page has no job left.
+    - Remove the page and its rail entry behind `VITE_NOCTIS_ALL_PAGES`. Move what `workbench.keyboard.test.mjs` still
+      proves onto the Threads panels.
+    - Keep the compositor, `Workbench` and `SurfaceFrame`, which the panels use.
+  - **P19. Drag.**
+    - A panel's title bar drags it with pointer events. There is no library and no new dependency.
+    - While dragging, the regions the current layout offers (left, centre, right, bottom) light up. Dropping snaps the
+      panel into one, as the same override **Place** sets, so drag and the keyboard stay one feature.
+    - Dropping on another panel swaps the two. Dropping on the overflow list sends the panel there.
+    - Desktop only. On the phone, the button row can be reordered with a long press later; that is not in this task.
+    - Tests: the snap and swap rules are pure functions with unit tests, and an e2e drags a panel between regions and
+      reloads to see it stay.
+  - **P20. Resize.**
+    - The edges between columns, and between the main area and the bottom row, are handles that drag to resize. A
+      double click resets.
+    - Sizes are stored with the other overrides, per device and screen size, so a laptop and a big monitor each keep
+      their own.
+    - The compositor gets a minimum width per kind, so a panel can't be made too small to read.
+    - With the keyboard, the size setting from P5 does the same in steps.
+    - Tests: clamping to the minimum and the stored sizes are pure; an e2e resizes and reloads.
+  - **P21. Pop-out windows (4).**
+    - **How:** Chrome and Edge's Document Picture-in-Picture API (`documentPictureInPicture.requestWindow`) opens a
+      small window that **stays on top of every other window** and can be moved to another monitor. React renders the
+      panel into it with a portal, and the page's styles are copied in. No Tauri is needed.
+    - **Its limits, which shape the design:**
+      - It allows **one** such window per Noctis tab. Several popped-out panels therefore share that one window as
+        tabs, or as a stack.
+      - It needs a tap or click to open, and it closes when the Noctis tab closes.
+      - It works on desktop Chrome and Edge only, not on the phone or Safari, so the button shows only where it works.
+      - It needs a secure page, which `localhost` and the tailnet's HTTPS address both are.
+    - **The window is still the same panel:** live, with its controls, and choices still send to the conversation.
+      Closing it returns the panel to where it was.
+    - **Fallback:** where the API is missing, a plain browser window (`window.open`) with the panel, which can be moved
+      but not kept on top. Several always-on-top windows at once remain a reason to revive Tauri later; this task does
+      not.
+    - Tests: the pop-out state (which panels are out, and restoring on close) is pure. The window itself is checked in
+      Edge by an e2e where the browser allows it, and otherwise by hand, recorded in the evidence.
+- **Still later (not in this plan):**
+  - panels on every other page (2), if P16 does not already cover it;
+  - a layout model, only if coded rules turn out not to be enough (12).
 
 ## Discussion update: 12 October 2026
 
