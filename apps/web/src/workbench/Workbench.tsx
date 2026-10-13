@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { usePopouts } from "./PopoutProvider.js";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { PanelUpdateState } from "@noctis/ui";
 import { buttonStyle } from "../layout/Page.js";
@@ -98,6 +100,34 @@ export function Workbench({
   const stage = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLDivElement>(null);
   const mobile = useIsMobile();
+  const owner = useId();
+  const { coordinator, state: popouts } = usePopouts();
+  const ownPopouts = popouts.entries.filter((entry) => entry.owner === owner);
+  const poppedIds = new Set(ownPopouts.map((entry) => entry.surfaceId));
+  const lastSlots = useRef(new Map<string, CompositionPlan["slots"][number]>());
+  const previousPopouts = useRef<readonly string[]>([]);
+  useEffect(() => {
+    const returned = previousPopouts.current.find((id) => !poppedIds.has(id));
+    previousPopouts.current = ownPopouts.map((entry) => entry.surfaceId);
+    if (returned !== undefined) {
+      const frame = root.current?.querySelector(`[data-surface-id="${returned}"]`);
+      (
+        frame?.querySelector<HTMLButtonElement>('[aria-label^="Pop out "]') ??
+        root.current?.querySelector<HTMLElement>("summary")
+      )?.focus({ preventScroll: true });
+    }
+  }, [popouts, composition.plan]);
+  useEffect(() => () => coordinator?.releaseOwner(owner), [coordinator, owner]);
+  useEffect(() => {
+    coordinator?.retain(
+      owner,
+      mobile
+        ? []
+        : composition.intents
+            .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+            .map((intent) => intent.id),
+    );
+  }, [coordinator, owner, composition.intents, mobile]);
   const scope = composition.geometryScope;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
@@ -179,17 +209,23 @@ export function Workbench({
   useEffect(() => {
     const previous = restoreAfterClose.current;
     if (previous !== undefined && !previous.isConnected) {
+      const target =
+        previous.ownerDocument.defaultView?.closed === false && previous.ownerDocument !== document
+          ? previous.ownerDocument.body
+          : root.current;
       const visibleControl = Array.from(
-        root.current?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+        target?.querySelectorAll<HTMLButtonElement>("button") ?? [],
       ).find((button) => !button.disabled && button.checkVisibility());
       (visibleControl ?? root.current)?.focus();
       restoreAfterClose.current = undefined;
     }
-  }, [plan]);
+  }, [plan, popouts]);
   const close = async (id: string): Promise<void> => {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && root.current?.contains(active)) {
-      restoreAfterClose.current = active;
+    const ownerDocument =
+      ownPopouts.find((entry) => entry.surfaceId === id)?.container.ownerDocument ?? document;
+    const active = ownerDocument.activeElement;
+    if (active !== null && (ownerDocument !== document || root.current?.contains(active))) {
+      restoreAfterClose.current = active as HTMLElement;
     }
     try {
       await composition.dismiss(id);
@@ -204,16 +240,21 @@ export function Workbench({
   }
 
   const byId = new Map<string, SurfaceIntent>(intents.map((intent) => [intent.id, intent]));
+  for (const slot of plan.slots) lastSlots.current.set(slot.surfaceId, slot);
+  const canvasPlan = {
+    ...plan,
+    slots: plan.slots.filter((slot) => !poppedIds.has(slot.surfaceId)),
+  };
   const display: DisplayClass = plan.reasonCodes.includes("display.wide")
     ? "wide"
     : plan.reasonCodes.includes("display.compact")
       ? "compact"
       : "standard";
   const regions = supportedRegions(plan.layoutId, display);
-  const occupied = COLUMNS.filter((region) => slotsIn(plan, region).length > 0);
+  const occupied = COLUMNS.filter((region) => slotsIn(canvasPlan, region).length > 0);
   const minimums = occupied.map((region) =>
     Math.max(
-      ...slotsIn(plan, region).map(
+      ...slotsIn(canvasPlan, region).map(
         (slot) => PANEL_MIN_WIDTH[byId.get(slot.surfaceId)?.kind ?? ""] ?? 240,
       ),
     ),
@@ -230,8 +271,8 @@ export function Workbench({
     minimums,
     availableWidth,
   );
-  const bottom = slotsIn(plan, "bottom");
-  const overlay = slotsIn(plan, "overlay");
+  const bottom = slotsIn(canvasPlan, "bottom");
+  const overlay = slotsIn(canvasPlan, "overlay");
   const rowShares = clampShares(
     [1 - geometry.bottom, geometry.bottom],
     [240, 180],
@@ -395,10 +436,17 @@ export function Workbench({
     overrides.filter((entry) => entry.releasedAt === undefined).map((entry) => entry.surfaceId),
   );
 
-  const frameFor = (slot: CompositionPlan["slots"][number]): JSX.Element | undefined => {
+  const frameFor = (
+    slot: CompositionPlan["slots"][number],
+    popped = false,
+  ): JSX.Element | undefined => {
     const intent = byId.get(slot.surfaceId);
 
-    if (intent === undefined) {
+    if (
+      intent === undefined ||
+      intent.lifecycle === "dismissed" ||
+      intent.lifecycle === "exiting"
+    ) {
       return undefined;
     }
 
@@ -419,7 +467,7 @@ export function Workbench({
         size={slot.size}
         region={slot.region}
         titleProps={
-          mobile
+          mobile || popped
             ? undefined
             : {
                 onPointerDown: (event) => start(event, slot.surfaceId),
@@ -437,6 +485,15 @@ export function Workbench({
             pinned={overriddenIds.has(slot.surfaceId)}
             focused={focusedSurfaceId === slot.surfaceId}
             regions={regions}
+            popped={popped}
+            onPopout={
+              mobile || coordinator === undefined
+                ? undefined
+                : () => {
+                    if (popped) coordinator.returnPanel(owner, slot.surfaceId);
+                    else void coordinator.open(owner, slot.surfaceId);
+                  }
+            }
             onFocus={() =>
               composition.focus(focusedSurfaceId === slot.surfaceId ? undefined : slot.surfaceId)
             }
@@ -569,14 +626,14 @@ export function Workbench({
               style={{
                 position: "relative",
                 display: "grid",
-                gridTemplateRows: `repeat(${slotsIn(plan, region).length}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${slotsIn(canvasPlan, region).length}, minmax(0, 1fr))`,
                 gap: spacing.md,
                 minWidth: 0,
                 minHeight: 0,
                 outline: drag?.region === region ? `2px solid ${semantic.approval}` : undefined,
               }}
             >
-              {slotsIn(plan, region).map(frameFor)}
+              {slotsIn(canvasPlan, region).map((slot) => frameFor(slot))}
               {!stacked && index < occupied.length - 1 && separatorFor(index)}
             </div>
           ))}
@@ -597,7 +654,7 @@ export function Workbench({
               minHeight: 0,
             }}
           >
-            {bottom.map(frameFor)}
+            {bottom.map((slot) => frameFor(slot))}
           </div>
         )}
       </div>
@@ -617,17 +674,26 @@ export function Workbench({
             zIndex: elevation.overlay,
           }}
         >
-          {overlay.map(frameFor)}
+          {overlay.map((slot) => frameFor(slot))}
         </div>
       )}
 
       <Overflow
-        plan={plan}
+        plan={{
+          ...plan,
+          overflowSurfaceIds: plan.overflowSurfaceIds.filter((id) => !poppedIds.has(id)),
+        }}
         intents={byId}
         composition={composition}
         onClose={close}
         desktop={!mobile}
       />
+      {ownPopouts.map((entry) => {
+        const slot = lastSlots.current.get(entry.surfaceId);
+        return slot === undefined
+          ? null
+          : createPortal(frameFor(slot, true), entry.container, entry.surfaceId);
+      })}
     </div>
   );
 }

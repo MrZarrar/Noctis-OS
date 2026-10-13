@@ -22,6 +22,8 @@ export interface PanelControlsProps {
   onPlace: (region: SurfacePlacementRegion) => void;
   onSize: (size: SurfaceSize) => void;
   onClose: () => void;
+  onPopout?: (() => void) | undefined;
+  popped?: boolean;
 }
 
 export function PanelControls({
@@ -37,6 +39,8 @@ export function PanelControls({
   onPlace,
   onSize,
   onClose,
+  onPopout,
+  popped = false,
 }: PanelControlsProps): JSX.Element {
   const iconStyle = {
     ...buttonStyle,
@@ -92,6 +96,16 @@ export function PanelControls({
       <button type="button" aria-label={`Close ${title}`} onClick={onClose} style={iconStyle}>
         <PanelIcon glyph="close" />
       </button>
+      {onPopout !== undefined && (
+        <button
+          type="button"
+          aria-label={`${popped ? "Return" : "Pop out"} ${title}`}
+          onClick={onPopout}
+          style={buttonStyle}
+        >
+          {popped ? "Return" : "Pop out"}
+        </button>
+      )}
     </div>
   );
 }

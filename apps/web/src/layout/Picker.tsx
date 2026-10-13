@@ -76,26 +76,31 @@ export function Picker<T extends string>({
   const entry = current ?? options.find((option) => option.disabled !== true);
 
   useEffect(() => {
+    const ownerDocument = dialog.current?.ownerDocument;
+    const ownerWindow = ownerDocument?.defaultView;
+    if (ownerWindow == null) return;
     const closeOnMove = (event: Event): void => {
       const sheet = dialog.current;
       if (sheet?.open !== true) return;
       if (event.type === "scroll") {
-        const target = event.target === document ? document.scrollingElement : event.target;
-        if (!(target instanceof Element)) return;
-        const before = scrollPositions.current.get(target);
+        const target =
+          event.target === ownerDocument ? ownerDocument.scrollingElement : event.target;
+        if (target === null || !("scrollLeft" in target)) return;
+        const element = target as Element;
+        const before = scrollPositions.current.get(element);
         if (
           before === undefined ||
-          (before.left === target.scrollLeft && before.top === target.scrollTop)
+          (before.left === element.scrollLeft && before.top === element.scrollTop)
         )
           return;
       }
       sheet.close();
     };
-    window.addEventListener("resize", closeOnMove);
-    window.addEventListener("scroll", closeOnMove, true);
+    ownerWindow.addEventListener("resize", closeOnMove);
+    ownerWindow.addEventListener("scroll", closeOnMove, true);
     return () => {
-      window.removeEventListener("resize", closeOnMove);
-      window.removeEventListener("scroll", closeOnMove, true);
+      ownerWindow.removeEventListener("resize", closeOnMove);
+      ownerWindow.removeEventListener("scroll", closeOnMove, true);
     };
   }, []);
 
@@ -106,6 +111,8 @@ export function Picker<T extends string>({
     if (sheet === null || anchor === undefined) {
       return;
     }
+    const ownerWindow = sheet.ownerDocument.defaultView;
+    if (ownerWindow === null) return;
 
     sheet.showModal();
     setOpen(true);
@@ -115,12 +122,12 @@ export function Picker<T extends string>({
       sheet.style.removeProperty("top");
       sheet.style.removeProperty("left");
     } else {
-      const below = window.innerHeight - anchor.bottom - spacing.xs - EDGE;
+      const below = ownerWindow.innerHeight - anchor.bottom - spacing.xs - EDGE;
       const above = anchor.top - spacing.xs - EDGE;
-      const width = Math.min(Math.max(anchor.width, 240), window.innerWidth - 2 * EDGE);
+      const width = Math.min(Math.max(anchor.width, 240), ownerWindow.innerWidth - 2 * EDGE);
 
       sheet.style.width = `${String(width)}px`;
-      sheet.style.left = `${String(Math.max(EDGE, Math.min(anchor.left, window.innerWidth - EDGE - width)))}px`;
+      sheet.style.left = `${String(Math.max(EDGE, Math.min(anchor.left, ownerWindow.innerWidth - EDGE - width)))}px`;
       sheet.style.maxHeight = `${String(Math.min(420, Math.max(below, above)))}px`;
 
       // Measured once it is open and sized, so "is there room below" is
@@ -163,7 +170,7 @@ export function Picker<T extends string>({
         '[role="option"]:not([aria-disabled="true"])',
       ),
     ];
-    const at = rows.indexOf(document.activeElement as HTMLElement);
+    const at = rows.indexOf(event.currentTarget.ownerDocument.activeElement as HTMLElement);
     const next = {
       ArrowDown: at + 1 >= rows.length ? 0 : at + 1,
       ArrowUp: at <= 0 ? rows.length - 1 : at - 1,

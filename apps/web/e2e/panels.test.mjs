@@ -250,6 +250,308 @@ describe("Threads desktop panels", () => {
       .waitFor();
     return created.body.id;
   }
+  for (const mode of ["fallback", "pip"]) {
+    it(
+      `THE GATE (pop-out ${mode}): live owner actions, one window, restoration and page cleanup`,
+      { timeout: 120000 },
+      async () => {
+        const previous = page;
+        const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+        if (mode === "fallback")
+          await isolated.addInitScript(() => {
+            Object.defineProperty(document.defaultView, "documentPictureInPicture", {
+              value: undefined,
+            });
+          });
+        page = await isolated.newPage();
+        try {
+          const threadId = await namedThread(`Popout ${mode}`);
+          if (mode === "pip")
+            assert.equal(
+              await page.evaluate(() => !!document.defaultView.documentPictureInPicture),
+              true,
+              "real browser PiP API required for this gate",
+            );
+          await prompt("CHOICE: Alpha | Beta");
+          const frame = page
+            .locator("[data-surface-id]")
+            .filter({ has: page.getByRole("heading", { name: "Choices", exact: true }) });
+          await frame.waitFor();
+          const id = await frame.getAttribute("data-surface-id");
+          const region = await frame.getAttribute("data-surface-region");
+          await frame
+            .getByRole("button", { name: "Pop out Choices", exact: true })
+            .waitFor({ timeout: 3000 });
+          const popupEvent = isolated.waitForEvent("page", { timeout: 15000 });
+          await frame
+            .getByRole("button", { name: "Pop out Choices", exact: true })
+            .click({ timeout: 3000 });
+          const popup = await popupEvent;
+          await popup.getByRole("heading", { name: "Choices", exact: true }).waitFor();
+          assert.equal(await page.locator(`[data-surface-id="${id}"]`).count(), 0);
+          await popup
+            .getByText(
+              mode === "pip" ? "Always-on-top panels" : "Separate window (not always on top)",
+              { exact: true },
+            )
+            .waitFor();
+          await popup.getByRole("button", { name: "Use Alpha", exact: true }).click();
+          await waitFor(
+            async () => (await coreRead(CORE_URL, `/threads/${threadId}/messages`)).body.messages,
+            (messages) =>
+              messages.some((message) => message.role === "user" && message.body === "Use Alpha"),
+            "child action missed its owner",
+          );
+          let revision = 0;
+          const update = async (value) => {
+            const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+              idempotencyKey: `popout-${mode}-update-${++revision}`,
+              threadId,
+              kind: "detail",
+              role: "supporting",
+              persistence: "ephemeral",
+              priority: 90,
+              minSize: "compact",
+              payloadVersion: 1,
+              sourceIds: ["0199a000-0000-7000-8000-0000000000d1"],
+              payload: { fields: [{ label: "Live value", value }] },
+            });
+            assert.equal(result.status, 200);
+          };
+          await update("Before update");
+          await page.getByRole("button", { name: "Pop out Detail", exact: true }).click();
+          await popup.getByText("Before update", { exact: true }).waitFor();
+          await update("After update");
+          await popup.getByText("After update", { exact: true }).waitFor();
+          await popup.getByRole("button", { name: "Return Detail", exact: true }).click();
+          await page.getByText("After update", { exact: true }).waitFor();
+          assert.equal(
+            await page
+              .getByRole("button", { name: "Pop out Detail", exact: true })
+              .evaluate((node) => node === node.ownerDocument.activeElement),
+            true,
+            "Return must restore keyboard focus to the parent panel",
+          );
+          await page.getByRole("button", { name: "Add panel", exact: true }).click();
+          await page.getByRole("button", { name: "Open Settings panel", exact: true }).click();
+          await page.getByRole("button", { name: "Pop out Settings", exact: true }).click();
+          await popup.getByRole("heading", { name: "Settings", exact: true, level: 1 }).waitFor();
+          assert.equal(isolated.pages().length, 2, "each panel must share one child window");
+          await popup.getByRole("button", { name: /^Size Choices:/ }).click();
+          await popup.getByRole("option", { name: "Large", exact: true }).focus();
+          await popup.getByRole("option", { name: "Large", exact: true }).press("ArrowUp");
+          assert.equal(
+            await popup
+              .getByRole("option", { name: "Medium", exact: true })
+              .evaluate((node) => node === node.ownerDocument.activeElement),
+            true,
+          );
+          await popup.getByRole("option", { name: "Medium", exact: true }).press("Enter");
+          await popup.getByRole("button", { name: "Pin Choices", exact: true }).click();
+          await popup.getByRole("button", { name: "Unpin Choices", exact: true }).waitFor();
+          await popup.getByRole("button", { name: "Close Settings", exact: true }).click();
+          await waitFor(
+            () => popup.getByRole("heading", { name: "Settings", level: 1, exact: true }).count(),
+            (count) => count === 0,
+            "Close must dismiss the panel",
+          );
+          assert.equal(popup.isClosed(), false, "another popped panel still owns the child");
+          await popup.screenshot({ path: join(EVIDENCE, `P21-${mode}.png`) });
+          await popup.close();
+          const restored = page.locator(`[data-surface-id="${id}"]`);
+          await restored.waitFor();
+          assert.equal(await restored.getAttribute("data-surface-region"), region);
+          const nextPopup = isolated.waitForEvent("page");
+          await restored.getByRole("button", { name: "Pop out Choices", exact: true }).click();
+          const child = await nextPopup;
+          await child.getByRole("heading", { name: "Choices", exact: true }).waitFor();
+          await page.getByRole("button", { name: "Presence", exact: true }).click();
+          await waitFor(() => child.isClosed(), Boolean, "page unmount leaked the child");
+          await page.getByRole("button", { name: "Threads", exact: true }).click();
+          await page.getByRole("button", { name: "Conversations", exact: true }).click();
+          await page.getByRole("button", { name: `Popout ${mode}`, exact: true }).click();
+          await restored.waitFor();
+          await page.setViewportSize({ width: 400, height: 860 });
+          await waitFor(
+            () => page.getByRole("button", { name: /^Pop out / }).count(),
+            (count) => count === 0,
+            "phone retained desktop pop-out controls",
+          );
+        } finally {
+          page = previous;
+          await isolated.close();
+        }
+      },
+    );
+  }
+  it(
+    "THE GATE (pop-out overflow): unpinned returned panels stay accessible through Show",
+    { timeout: 120000 },
+    async () => {
+      const previous = page;
+      const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await isolated.addInitScript(() =>
+        Object.defineProperty(document.defaultView, "documentPictureInPicture", {
+          value: undefined,
+        }),
+      );
+      page = await isolated.newPage();
+      try {
+        const threadId = await namedThread("Popout overflow");
+        await prompt("CHOICE: One | Two");
+        const choices = page
+          .locator("[data-surface-id]")
+          .filter({ has: page.getByRole("heading", { name: "Choices", exact: true }) });
+        await choices.waitFor();
+        await choices.getByRole("button", { name: "Pop out Choices", exact: true }).waitFor();
+        const opened = isolated.waitForEvent("page");
+        await choices.getByRole("button", { name: "Pop out Choices", exact: true }).click();
+        const popup = await opened;
+        await popup.getByRole("heading", { name: "Choices", exact: true }).waitFor();
+        const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+          idempotencyKey: "popout-overflow-detail",
+          threadId,
+          kind: "detail",
+          role: "supporting",
+          persistence: "ephemeral",
+          priority: 100,
+          minSize: "compact",
+          payloadVersion: 1,
+          sourceIds: ["0199a000-0000-7000-8000-0000000000f1"],
+          payload: { fields: [{ label: "Priority", value: "Higher" }] },
+        });
+        assert.equal(result.status, 200);
+        await page.getByText("Higher", { exact: true }).waitFor();
+        await popup.close();
+        const overflow = page.locator('details[data-drop-region="overflow"]');
+        await overflow.getByText("Overflow: 1 panel", { exact: true }).waitFor();
+        await overflow.locator("summary").click();
+        await overflow
+          .locator("li")
+          .filter({ hasText: "list" })
+          .getByRole("button", { name: "Show", exact: true })
+          .click();
+        await choices.waitFor();
+        assert.equal(await choices.getAttribute("data-surface-region"), "centre");
+      } finally {
+        page = previous;
+        await isolated.close();
+      }
+    },
+  );
+  it(
+    "THE GATE (pop-out owners): thread, Objective and Presence use the tab coordinator",
+    { timeout: 120000 },
+    async () => {
+      const previous = page;
+      const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await isolated.addInitScript(() =>
+        Object.defineProperty(document.defaultView, "documentPictureInPicture", {
+          value: undefined,
+        }),
+      );
+      page = await isolated.newPage();
+      let objectiveId;
+      try {
+        const created = await coreCommand(CORE_URL, "objective.create", {
+          idempotencyKey: "popout-objective",
+          title: "Popout owners",
+          intent: "Shared browser window",
+          status: "draft",
+          identityId: "vesper",
+        });
+        assert.equal(created.status, 200);
+        objectiveId = created.body.id;
+        assert.equal(
+          (
+            await coreCommand(CORE_URL, "objective.change_status", {
+              idempotencyKey: "popout-objective-active",
+              objectiveId,
+              expectedRevision: 0,
+              status: "active",
+            })
+          ).status,
+          200,
+        );
+        await openThreads();
+        await page.getByRole("button", { name: "Back to the Objective", exact: true }).click();
+        await prompt("popout owner thread");
+        const thread = await waitFor(
+          () => coreRead(CORE_URL, `/threads?identityId=vesper&objectiveId=${objectiveId}`),
+          (value) => value.status === 200,
+          "Objective thread not created",
+        );
+        const ids = [];
+        for (const [index, owner] of [{ objectiveId }, { threadId: thread.body.id }].entries()) {
+          const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+            idempotencyKey: `popout-owner-${index}`,
+            ...owner,
+            kind: "detail",
+            role: "primary",
+            persistence: "ephemeral",
+            priority: 1000,
+            minSize: "compact",
+            payloadVersion: 1,
+            sourceIds: [`0199a000-0000-7000-8000-0000000000e${index}`],
+            payload: { fields: [{ label: "Owner", value: `Popout owner ${index}` }] },
+          });
+          assert.equal(result.status, 200);
+          ids.push(result.body.id);
+          await page.locator(`[data-surface-id="${result.body.id}"]`).waitFor();
+        }
+        const popupEvent = isolated.waitForEvent("page");
+        await page
+          .locator(`[data-surface-id="${ids[0]}"]`)
+          .getByRole("button", { name: "Pop out Detail", exact: true })
+          .click();
+        const popup = await popupEvent;
+        await page
+          .locator(`[data-surface-id="${ids[1]}"]`)
+          .getByRole("button", { name: "Pop out Detail", exact: true })
+          .click();
+        await popup.getByText("Popout owner 0", { exact: true }).waitFor();
+        await popup.getByText("Popout owner 1", { exact: true }).waitFor();
+        assert.equal(isolated.pages().length, 2);
+        for (const lifecycle of ["entering", "active", "exiting"]) {
+          const changed = await coreCommand(CORE_URL, "surface.change_lifecycle", {
+            idempotencyKey: `popout-objective-${lifecycle}`,
+            surfaceId: ids[0],
+            lifecycle,
+          });
+          assert.equal(changed.status, 200, JSON.stringify(changed.body));
+        }
+        await waitFor(
+          () => popup.locator(`[data-surface-id="${ids[0]}"]`).count(),
+          (count) => count === 0,
+          "an exiting Objective panel remained registered",
+        );
+        assert.equal(popup.isClosed(), false);
+        await popup.getByText("Popout owner 1", { exact: true }).waitFor();
+        await page.getByRole("button", { name: "Presence", exact: true }).click();
+        await waitFor(() => popup.isClosed(), Boolean, "thread owner leaked into Presence");
+        await page.getByRole("button", { name: "Add panel", exact: true }).click();
+        await page.getByRole("button", { name: "Open Approvals panel", exact: true }).click();
+        const presenceEvent = isolated.waitForEvent("page");
+        await page.getByRole("button", { name: "Pop out Approvals", exact: true }).click();
+        const presenceWindow = await presenceEvent;
+        await presenceWindow
+          .getByRole("heading", { name: "Approvals", level: 1, exact: true })
+          .waitFor();
+        await page.close();
+        await waitFor(() => presenceWindow.isClosed(), Boolean, "normal popup outlived its parent");
+      } finally {
+        page = previous;
+        await isolated.close();
+        if (objectiveId !== undefined)
+          await coreCommand(CORE_URL, "objective.change_status", {
+            idempotencyKey: "popout-objective-paused",
+            objectiveId,
+            expectedRevision: 1,
+            status: "paused",
+          });
+      }
+    },
+  );
   it(
     "utility page controls stay in the phone sheet keyboard loop on Threads and Presence",
     { timeout: 120000 },

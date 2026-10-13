@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App.js";
+import { PopoutProvider } from "./workbench/PopoutProvider.js";
 
 import "./index.css";
 
@@ -13,6 +14,8 @@ if (container === null) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <PopoutProvider>
+      <App />
+    </PopoutProvider>
   </StrictMode>,
 );
