@@ -286,7 +286,7 @@ export interface RuntimeRootOption {
  * means, and answering "that machine is offline" is more useful than quietly
  * omitting the only root they were looking for.
  *
- * Deduplicated by grant id. One grant is one root; two probes on the same node
+ * Deduplicated by node and grant id. Two probes on the same node
  * both carry it, and listing it twice would make the page show it twice.
  */
 export function listRuntimeRoots(
@@ -298,8 +298,9 @@ export function listRuntimeRoots(
 
   for (const candidate of listRuntimeCandidates(db, isConnected, [], now)) {
     for (const root of candidate.roots) {
-      if (!seen.has(root.grantId)) {
-        seen.set(root.grantId, {
+      const key = JSON.stringify([candidate.nodeId, root.grantId]);
+      if (!seen.has(key)) {
+        seen.set(key, {
           grantId: root.grantId,
           path: root.path,
           mode: root.mode,

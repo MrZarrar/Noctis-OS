@@ -8,7 +8,12 @@ import { ServerFrameSchema } from "@noctis/contracts";
  * never see (Section 9.2).
  */
 export interface CoreTransport {
-  request: (method: CoreMethod, path: string, body?: unknown) => Promise<CoreResponse>;
+  request: (
+    method: CoreMethod,
+    path: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal },
+  ) => Promise<CoreResponse>;
   subscribe: (options: SubscribeOptions) => Promise<Subscription>;
   /**
    * Uploads one file to `POST /attachments`. Raw bytes with the file's own

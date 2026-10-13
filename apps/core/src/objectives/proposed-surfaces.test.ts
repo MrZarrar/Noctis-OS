@@ -140,7 +140,15 @@ describe("proposeFor", () => {
       MediaPayloadSchema.safeParse({ title: "x".repeat(201), mediaType: "image/png", source: file })
         .success,
     ).toBe(false);
-    expect([...PANEL_PROPOSABLE_KINDS]).toEqual(["list", "detail", "evidence", "attention"]);
+    expect([...PANEL_PROPOSABLE_KINDS]).toEqual([
+      "document",
+      "timeline",
+      "verification",
+      "list",
+      "detail",
+      "evidence",
+      "attention",
+    ]);
   });
   const threadId = "0199a000-0000-7000-8000-0000000000d1";
   const attachmentId = "0199a000-0000-7000-8000-0000000000a1";
@@ -330,7 +338,7 @@ describe("proposeFor", () => {
     const objectiveId = objectiveWith(kernel);
     listProposal(kernel, { ...turn, objectiveId });
     expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(1);
-    listProposal(kernel, turn, "list", objectiveId);
+    listProposal(kernel, { ...turn, objectiveId }, "list", objectiveId);
     expect(listSurfaceIntents(kernel.db, { objectiveId })).toHaveLength(1);
     listProposal(kernel, turn, "list", kernel.ids.nextId());
     expect(listSurfaceIntents(kernel.db, { threadId })).toHaveLength(1);

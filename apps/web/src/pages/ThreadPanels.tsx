@@ -7,6 +7,8 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { Workbench } from "../workbench/Workbench.js";
 import { useComposition, type CompositionState } from "../workbench/useComposition.js";
+import { filesQuery, type FileTarget } from "./files-view.js";
+import type { RuntimeRootOption } from "../conversation/useConversation.js";
 export interface ThreadPanelSource {
   owner: "thread" | "objective" | "presence";
   composition: CompositionState;
@@ -58,6 +60,8 @@ export function panelsForOwner(
 export function useThreadPanels(
   transport: CoreTransport | undefined,
   conversation: ConversationState,
+  onOpenInVault?: (entityId: string) => void,
+  onOpenFile?: (target: FileTarget<RuntimeRootOption>) => void,
 ): ThreadPanelsState {
   const thread = useComposition(
     transport,
@@ -107,13 +111,31 @@ export function useThreadPanels(
         0,
     ),
     handoffs: {
+      ...(transport === undefined ? {} : { fileTransport: transport }),
+      ...(onOpenInVault === undefined
+        ? {}
+        : { onOpenInVault: (evidence) => onOpenInVault(evidence.entityId) }),
+      ...(onOpenFile === undefined
+        ? {}
+        : {
+            onOpenFile: (source) => {
+              const root = conversation.roots.find(
+                (root) => root.nodeId === source.nodeId && root.grantId === source.grantId,
+              );
+              if (root !== undefined) onOpenFile({ root, relativePath: source.relativePath });
+            },
+          }),
       panelActionsDisabled: conversation.turns.some(
         (turn) => turn.status === "queued" || turn.status === "running",
       ),
       ...(conversation.error === undefined ? {} : { panelActionsError: conversation.error }),
       onPanelAction: (message, owner) => sendPanelChoice(conversation, message, owner),
-      mediaUrl: (source) =>
-        source.from === "attachment" ? conversation.outputUrl?.(source.attachmentId) : undefined,
+      mediaUrl: (source, revision) =>
+        source.from === "attachment"
+          ? conversation.outputUrl?.(source.attachmentId)
+          : transport?.contentUrl?.(
+              `/files/content?${filesQuery(source, source.relativePath)}&revision=${encodeURIComponent(revision ?? "")}`,
+            ),
       onConfirm: (id, typed) => {
         void conversation.confirm(id, typed);
       },

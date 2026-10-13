@@ -234,7 +234,7 @@ export function compose(input: CompositionInput): CompositionOutcome {
         // whatever role proposed it.
         role: focused ? "primary" : intent.role,
         focused,
-        pinned: intent.persistence === "pinned",
+        pinned: intent.persistence === "pinned" || overrides.has(intent.id),
       };
     })
     .sort(compareRanked);

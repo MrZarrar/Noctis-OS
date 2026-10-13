@@ -63,10 +63,16 @@ export class BrowserTransport implements CoreTransport {
         }));
   }
 
-  async request(method: CoreMethod, path: string, body?: unknown): Promise<CoreResponse> {
+  async request(
+    method: CoreMethod,
+    path: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal },
+  ): Promise<CoreResponse> {
     const url = resolveCoreUrl(this.#baseUrl, path);
     const response = await this.#fetch(url.href, {
       method,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
       headers:
         body === undefined
           ? { authorization: `Bearer ${this.#token}` }

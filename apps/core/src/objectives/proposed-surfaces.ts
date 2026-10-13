@@ -1,5 +1,16 @@
-import type { ApprovalRecord, ObjectiveRecord, OrchestrationEvent } from "@noctis/contracts";
+import type {
+  ApprovalRecord,
+  ObjectiveRecord,
+  OrchestrationEvent,
+  VaultRecallEvidence,
+} from "@noctis/contracts";
 import { ApprovalPayloadSchema, RuntimeItemSchema } from "@noctis/contracts";
+import { locateInRoots, viewerKind } from "@noctis/domain";
+import { createHash } from "node:crypto";
+import { getTurn } from "../conversation/service.js";
+import { recallForPrompt } from "../conversation/recall-context.js";
+import { listRuntimeRoots } from "../nodes/registry.js";
+import { fileMediaType } from "../files/gateway.js";
 
 import { getApproval } from "../authority/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
@@ -43,6 +54,16 @@ export interface ProposedSurfaceDeps {
 
 /** How many recall quotes a Surface carries. Section 7: focused, not a graph. */
 const RECALL_LIMIT = 6;
+
+function recallEvidence(evidence: readonly VaultRecallEvidence[]) {
+  return evidence.map(({ itemId, entityId, path, quote, freshness }) => ({
+    itemId,
+    entityId,
+    path,
+    quote,
+    freshness,
+  }));
+}
 
 function context(kernel: Kernel, actorId: string): CommandContext {
   return { correlationId: kernel.ids.nextId(), actorType: "identity", actorId };
@@ -167,7 +188,7 @@ function placeRecall(deps: ProposedSurfaceDeps, objective: ObjectiveRecord): voi
     payload: {
       query: objective.title,
       freshness: found.freshness,
-      evidence: found.evidence,
+      evidence: recallEvidence(found.evidence),
     },
   });
 
@@ -261,6 +282,66 @@ const NEEDS_A_PERSON: ReadonlySet<string> = new Set([
   "require_typed_confirmation",
 ]);
 
+function fileSourceId(threadId: string, nodeId: string, grantId: string, path: string): string {
+  const bytes = createHash("sha256")
+    .update(JSON.stringify([threadId, nodeId, grantId, path]))
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 15) | 128;
+  bytes[8] = (bytes[8]! & 63) | 128;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function placeWrittenFiles(
+  deps: ProposedSurfaceDeps,
+  event: OrchestrationEvent,
+  turnId: string,
+  paths: string[],
+): void {
+  const turn = getTurn(deps.kernel.db, turnId);
+  if (turn?.nodeId === undefined || turn.threadId !== event.streamId) return;
+  const roots = listRuntimeRoots(deps.kernel.db, () => true, deps.kernel.clock.now());
+  for (const path of paths.slice(0, 4)) {
+    const located = locateInRoots(path, turn.nodeId, roots);
+    if (located === undefined || located.relativePath.split(/[\\/]/).includes("..")) continue;
+    const title = located.relativePath.split("/").at(-1)?.trim().slice(0, 200);
+    if (!title) continue;
+    const kind = viewerKind(title, 0);
+    if (kind === "download") continue;
+    const source = {
+      from: "file",
+      nodeId: turn.nodeId,
+      grantId: located.root.grantId,
+      relativePath: located.relativePath,
+    };
+    const sourceId = fileSourceId(turn.threadId, turn.nodeId, source.grantId, source.relativePath);
+    const upserted = upsertSurfaceIntent(deps.kernel, context(deps.kernel, event.actorId), {
+      idempotencyKey: `file:${sourceId}:${turn.id}:${event.id}`,
+      threadId: turn.threadId,
+      kind: kind === "text" ? "document" : "media",
+      role: "primary",
+      persistence: "restorable",
+      priority: 40,
+      minSize: "compact",
+      sourceIds: [sourceId],
+      artifactIds: [],
+      payloadVersion: 1,
+      payload:
+        kind === "text"
+          ? {
+              title,
+              format: /\.md$/i.test(title) ? "markdown" : "text",
+              content: source,
+              actions: [],
+            }
+          : { title, mediaType: fileMediaType(title), source },
+    });
+    if (!upserted.ok && upserted.conflict.kind !== "idempotent_replay")
+      skip(deps.kernel, upserted.conflict.kind, { threadId: turn.threadId, kind });
+  }
+}
+
 /**
  * One committed event in, zero or more Surfaces out.
  *
@@ -269,10 +350,55 @@ const NEEDS_A_PERSON: ReadonlySet<string> = new Set([
  */
 export function proposeFor(deps: ProposedSurfaceDeps, event: OrchestrationEvent): void {
   switch (event.type) {
+    case "identity.turn_started.v1": {
+      if (deps.vaultRoot === undefined) return;
+      const turnId = (event.payload as { turnId?: unknown } | null)?.turnId;
+      if (typeof turnId !== "string") return;
+      const turn = getTurn(deps.kernel.db, turnId);
+      if (turn === undefined || turn.threadId !== event.streamId) return;
+      const message = deps.kernel.db
+        .prepare("SELECT body FROM identity_message_content WHERE message_id = ?")
+        .get(turn.userMessageId) as { body: string } | undefined;
+      if (message === undefined) return;
+      const evidence = recallForPrompt(deps.kernel.db, message.body, { vaultRoot: deps.vaultRoot });
+      if (evidence.length === 0) return;
+      const upserted = upsertSurfaceIntent(deps.kernel, context(deps.kernel, event.actorId), {
+        idempotencyKey: `recall:${turn.id}`,
+        threadId: turn.threadId,
+        kind: "vault_recall",
+        role: "context",
+        persistence: "restorable",
+        priority: 30,
+        minSize: "compact",
+        sourceIds: [turn.id],
+        artifactIds: [],
+        payloadVersion: 1,
+        payload: {
+          query: message.body.slice(0, 120),
+          freshness: evidence.some((item) => item.freshness === "stale") ? "stale" : "current",
+          evidence: recallEvidence(evidence),
+        },
+      });
+      if (!upserted.ok && upserted.conflict.kind !== "idempotent_replay")
+        skip(deps.kernel, upserted.conflict.kind, {
+          threadId: turn.threadId,
+          kind: "vault_recall",
+        });
+      return;
+    }
     case "identity.turn_item.v1": {
-      const payload = event.payload as { item?: unknown } | null;
+      const payload = event.payload as { item?: unknown; turnId?: unknown } | null;
       const parsed = RuntimeItemSchema.safeParse(payload?.item);
-      if (!parsed.success || parsed.data.kind !== "output") return;
+      if (!parsed.success) return;
+      if (
+        parsed.data.kind === "file_change" &&
+        parsed.data.status === "completed" &&
+        typeof payload?.turnId === "string"
+      ) {
+        placeWrittenFiles(deps, event, payload.turnId, parsed.data.paths);
+        return;
+      }
+      if (parsed.data.kind !== "output") return;
       const item = parsed.data;
       if (
         item.status !== "completed" ||

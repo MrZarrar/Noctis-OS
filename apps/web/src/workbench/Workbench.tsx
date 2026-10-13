@@ -161,6 +161,7 @@ export function Workbench({
           resolved,
           {
             ...handoffs,
+            contentRevision: intent.requestedAt,
             panelOwner:
               intent.threadId !== undefined
                 ? { threadId: intent.threadId }

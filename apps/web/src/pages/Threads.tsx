@@ -47,6 +47,7 @@ function scrollerOf(element: HTMLElement | null): HTMLElement | undefined {
 }
 
 export interface ThreadsProps {
+  onOpenInVault?: (entityId: string) => void;
   identityId: ConversationalIdentityId;
   conversation: ConversationState;
   /** Absent in a browser with no core configured; the prompt is then disabled. */
@@ -372,10 +373,11 @@ export function Threads({
   onSwitchIdentity,
   onOpenThread,
   onOpenFile,
+  onOpenInVault,
   transport,
 }: ThreadsProps): JSX.Element {
   const mobile = useIsMobile();
-  const panels = useThreadPanels(transport, conversation);
+  const panels = useThreadPanels(transport, conversation, onOpenInVault, onOpenFile);
   const hasPanels = panels.hasPanels && !mobile;
   const panelSheet = usePanelSheet(panels);
   const [listing, setListing] = useState(false);

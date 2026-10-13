@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
+import { Buffer } from "node:buffer";
 
 import { chromium } from "playwright";
+import { createTestVault } from "@noctis/test-kit";
 
 import {
   TOKEN,
@@ -92,6 +94,14 @@ describe("Threads desktop panels", () => {
     databaseDirectory = mkdtempSync(join(tmpdir(), "noctis-e2e-chat-db-"));
     nodeHome = mkdtempSync(join(tmpdir(), "noctis-e2e-chat-node-"));
     scratch = mkdtempSync(join(tmpdir(), "noctis-e2e-chat-scratch-"));
+    createTestVault(join(databaseDirectory, "vault"));
+    writeFileSync(
+      join(scratch, "frame.png"),
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
 
     core = startProcess(process.execPath, [join(REPO_ROOT, "apps/core/dist/main.js")], {
       cwd: REPO_ROOT,
@@ -102,6 +112,7 @@ describe("Threads desktop panels", () => {
         NOCTIS_DATABASE_PATH: join(databaseDirectory, "core.db"),
         NOCTIS_ALLOWED_ORIGINS: WEB_URL,
         NOCTIS_LOG_LEVEL: "error",
+        NOCTIS_VAULT_ROOT: join(databaseDirectory, "vault"),
       },
     });
 
@@ -112,6 +123,7 @@ describe("Threads desktop panels", () => {
         "--port",
         String(WEB_PORT),
         "--strictPort",
+        "--force",
       ],
       {
         cwd: WEB_ROOT,
@@ -125,6 +137,10 @@ describe("Threads desktop panels", () => {
     );
 
     await waitForHttp(`${CORE_URL}/health`, "the core", core);
+    const indexed = await coreCommand(CORE_URL, "vault.reindex", {
+      idempotencyKey: "panel-vault-index",
+    });
+    assert.equal(indexed.status, 200);
     ({ agent } = await startFakeNode({
       coreUrl: CORE_URL,
       repoRoot: REPO_ROOT,
@@ -173,6 +189,311 @@ describe("Threads desktop panels", () => {
       .evaluate((node) => node.getBoundingClientRect().width);
     assert.ok(width <= 880);
   });
+  async function namedThread(title) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openThreads();
+    const created = await coreCommand(CORE_URL, "conversation.create_thread", {
+      idempotencyKey: title,
+      identityId: "vesper",
+      title,
+    });
+    assert.equal(created.status, 200);
+    await page.getByRole("button", { name: "Conversations", exact: true }).click();
+    await page.getByRole("button", { name: title, exact: true }).click();
+    await page
+      .locator('section[aria-label="Threads"] header')
+      .getByText(new RegExp(title))
+      .waitFor();
+    return created.body.id;
+  }
+  it(
+    "THE GATE (panels, restore): placed and pinned stay; closed stays closed after reload",
+    { timeout: 120000 },
+    async () => {
+      const threadId = await namedThread("Pinned restore");
+      await prompt("IMAGE: first");
+      const panels = page.getByRole("complementary", { name: "Thread panels" });
+      const first = panels.locator("[data-surface-id]").first();
+      await first.locator("img").waitFor({ timeout: 20000 });
+      const firstId = await first.getAttribute("data-surface-id");
+      await first.getByRole("button", { name: /^Pin / }).click();
+      await first.getByRole("button", { name: /^Unpin / }).waitFor();
+      await prompt("IMAGE: second");
+      await panels.locator("details summary").waitFor();
+      const surfaces = await coreRead(
+        CORE_URL,
+        `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+      );
+      const secondId = surfaces.body.intents.find(
+        (intent) => intent.kind === "media" && intent.id !== firstId,
+      ).id;
+      await panels.locator("details summary").click();
+      await panels
+        .locator("details")
+        .getByRole("button", { name: "Close", exact: true })
+        .first()
+        .click();
+      await waitFor(
+        () => panels.locator("details").count(),
+        (count) => count === 0,
+        "closed panel still in overflow",
+      );
+      await prompt("PANEL: # Restore plan");
+      await waitFor(
+        async () =>
+          (
+            await coreRead(
+              CORE_URL,
+              `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+            )
+          ).body.intents.some((intent) => intent.kind === "document"),
+        Boolean,
+        "plan panel never arrived",
+      );
+      await prompt("IMAGE: fourth");
+      await waitFor(
+        async () =>
+          (
+            await coreRead(
+              CORE_URL,
+              `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+            )
+          ).body.intents.filter((intent) => intent.kind === "media").length,
+        (count) => count === 3,
+        "fourth image never arrived",
+      );
+      await panels.locator(`[data-surface-id="${firstId}"]`).waitFor();
+      const read = () =>
+        panels
+          .locator("[data-surface-id]")
+          .evaluateAll((nodes) =>
+            nodes.map((node) => [node.dataset.surfaceId, node.dataset.surfaceRegion]).sort(),
+          );
+      const before = await read();
+      await page.reload();
+      await openThreads();
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Pinned restore", exact: true }).click();
+      await page.getByLabel("Message Vesper").waitFor();
+      await waitFor(
+        read,
+        (value) => JSON.stringify(value) === JSON.stringify(before),
+        "panel regions failed to restore",
+      );
+      assert.equal(await panels.locator(`[data-surface-id="${secondId}"]`).count(), 0);
+      await page.screenshot({ path: join(EVIDENCE, "P9-restored.png") });
+    },
+  );
+  it(
+    "THE GATE (written file): bounded text, retry, accepted updates and phone cookie file media",
+    { timeout: 120000 },
+    async () => {
+      const threadId = await namedThread("Written file");
+      await page.route("**/files/content?**preview=1", (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "Fixture PC offline" } }),
+        }),
+      );
+      await prompt("WRITE: first version");
+      const panel = page
+        .locator("[data-surface-id]")
+        .filter({ has: page.getByRole("heading", { name: "written.md", exact: true }) });
+      await panel
+        .getByRole("alert")
+        .getByText(/Fixture PC offline/)
+        .waitFor({ timeout: 20000 });
+      await page.unroute("**/files/content?**preview=1");
+      await panel.getByRole("button", { name: "Retry file" }).click();
+      await panel.getByRole("heading", { name: "Written by the fake" }).waitFor();
+      const id = await panel.getAttribute("data-surface-id");
+      await prompt("WRITE: second version");
+      await panel.getByRole("button", { name: "Use new version" }).waitFor({ timeout: 20000 });
+      assert.ok((await panel.innerText()).includes("WRITE: first version"));
+      assert.ok(!(await panel.innerText()).includes("WRITE: second version"));
+      await panel.getByRole("button", { name: "Use new version" }).click();
+      await waitFor(
+        () => panel.innerText(),
+        (text) => text.includes("WRITE: second version"),
+        "accepted written file did not refresh",
+      );
+      assert.equal(await panel.getAttribute("data-surface-id"), id);
+      const intents = await coreRead(
+        CORE_URL,
+        `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+      );
+      const document = intents.body.intents.find((intent) => intent.id === id);
+      assert.equal(document.payload.content.from, "file");
+      // Reuse the same granted file path for a media URL; its bytes are a harmless image fixture.
+      const media = await coreCommand(CORE_URL, "surface.upsert_intent", {
+        idempotencyKey: "file-media-cookie",
+        threadId,
+        kind: "media",
+        role: "supporting",
+        persistence: "restorable",
+        priority: 100,
+        minSize: "compact",
+        sourceIds: ["0199a000-0000-7000-8000-0000000000af"],
+        payloadVersion: 1,
+        payload: {
+          title: "File image",
+          mediaType: "image/png",
+          source: { ...document.payload.content, relativePath: "frame.png" },
+        },
+      });
+      assert.equal(media.status, 200);
+      await page.setViewportSize({ width: 400, height: 860 });
+      await page.getByRole("button", { name: "Open panel written.md", exact: true }).click();
+      const sheet = page.getByRole("region", { name: "Panel sheet" });
+      await waitFor(
+        () => sheet.innerText(),
+        (text) => text.includes("WRITE: second version"),
+        "phone document did not load",
+      );
+      const downloadBox = await sheet
+        .getByRole("link", { name: "Download full file" })
+        .boundingBox();
+      assert.ok(
+        downloadBox.width >= 44 && downloadBox.height >= 44,
+        "phone download touch target below 44px",
+      );
+      await page.screenshot({ path: join(EVIDENCE, "P11-phone-file.png") });
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await page.getByRole("button", { name: /^Show .* more panels/ }).click();
+      await page
+        .getByRole("list", { name: "More panels" })
+        .getByRole("button", { name: "Open panel File image", exact: true })
+        .click();
+      const image = sheet.locator("img");
+      await image.waitFor();
+      assert.match(
+        await image.getAttribute("src"),
+        /\/files\/content\?node=.*root=.*path=frame.png/,
+      );
+      assert.equal(await image.evaluate((img) => new URL(img.src).origin), WEB_URL);
+      await waitFor(
+        () => image.evaluate((img) => img.complete && img.naturalWidth === 1),
+        Boolean,
+        "phone file image did not load with cookie",
+      );
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await page.setViewportSize({ width: 1440, height: 900 });
+    },
+  );
+  it(
+    "file text keeps last good content, updates supporting files and discards old-owner responses",
+    { timeout: 120000 },
+    async () => {
+      const threadId = await namedThread("File race original");
+      await prompt("WRITE: original owner");
+      const panel = page
+        .locator("[data-surface-id]")
+        .filter({ has: page.getByRole("heading", { name: "written.md", exact: true }) });
+      await panel.getByRole("heading", { name: "Written by the fake" }).waitFor({ timeout: 20000 });
+      await panel.getByRole("button", { name: "Pin written.md", exact: true }).click();
+      await panel.getByRole("button", { name: "Unpin written.md", exact: true }).waitFor();
+      const read = await coreRead(
+        CORE_URL,
+        `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+      );
+      const original = read.body.intents.find((intent) => intent.kind === "document");
+      writeFileSync(join(scratch, "notes", "written.md"), "# Supporting new bytes\n");
+      const update = (key) =>
+        coreCommand(CORE_URL, "surface.upsert_intent", {
+          idempotencyKey: key,
+          threadId,
+          kind: original.kind,
+          role: "supporting",
+          persistence: original.persistence,
+          priority: original.priority,
+          minSize: original.minSize,
+          sourceIds: original.sourceIds,
+          payloadVersion: original.payloadVersion,
+          payload: original.payload,
+        });
+      await update("supporting-file-revision");
+      await panel.getByRole("heading", { name: "Supporting new bytes" }).waitFor();
+      const pattern = "**/files/content?**preview=1";
+      await page.route(pattern, (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "Temporary read failure" } }),
+        }),
+      );
+      await update("supporting-file-error");
+      await panel
+        .getByRole("alert")
+        .getByText(/Temporary read failure/)
+        .waitFor();
+      assert.equal(
+        await panel.getByRole("heading", { name: "Supporting new bytes" }).isVisible(),
+        true,
+      );
+      await page.unroute(pattern);
+      let release;
+      let arrived;
+      const held = new Promise((resolve) => {
+        release = resolve;
+      });
+      const requested = new Promise((resolve) => {
+        arrived = resolve;
+      });
+      const handler = async (route) => {
+        arrived();
+        await held;
+        await route
+          .fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ text: "Previous owner text", truncated: false }),
+          })
+          .catch(() => {});
+      };
+      await page.route(pattern, handler);
+      await panel.getByRole("button", { name: "Retry file" }).click();
+      await requested;
+      await page.unroute(pattern, handler);
+      try {
+        await namedThread("File race next");
+        await prompt("WRITE: next owner");
+        await panel
+          .getByRole("heading", { name: "Written by the fake" })
+          .waitFor({ timeout: 20000 });
+        release();
+        await waitFor(
+          () => panel.innerText(),
+          (text) => text.includes("WRITE: next owner"),
+          "next owner file did not load",
+        );
+        assert.ok(!(await page.locator("body").innerText()).includes("Previous owner text"));
+      } finally {
+        release();
+        await page.unroute(pattern);
+      }
+    },
+  );
+  it(
+    "THE GATE (recall): Open in Vault lands on the recalled entity",
+    { timeout: 120000 },
+    async () => {
+      await namedThread("Recall panel");
+      await prompt("Tell me about Alex Kerr");
+      const panels = page.getByRole("complementary", { name: "Thread panels" });
+      await panels.locator("details summary").waitFor();
+      await panels.locator("details summary").click();
+      await panels.locator("details").getByRole("button", { name: "Show", exact: true }).click();
+      await panels
+        .getByRole("button", { name: "Open in Vault" })
+        .first()
+        .waitFor({ timeout: 20000 });
+      await panels.getByRole("button", { name: "Open in Vault" }).first().click();
+      await page.getByRole("heading", { name: "Vault", exact: true }).waitFor();
+      await page.getByRole("region", { name: "Note: Alex Kerr", exact: true }).waitFor();
+      await page.screenshot({ path: join(EVIDENCE, "P10-open-vault.png") });
+    },
+  );
   it(
     "THE GATE (work panels): a document and shortlist choices reach their conversation on desktop and phone",
     { timeout: 120000 },

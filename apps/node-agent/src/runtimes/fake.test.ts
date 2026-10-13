@@ -53,6 +53,17 @@ function input(prompt: string, signal = new AbortController().signal): RuntimeTu
 }
 
 describe("the fake runtime", () => {
+  it("distinct IMAGE prompts yield distinct fixture bytes so attachment dedupe does not collapse panels", async () => {
+    const bytes: Uint8Array[] = [];
+    const r = recorder();
+    r.sink.upload = (upload) => {
+      bytes.push(upload.bytes);
+      return Promise.resolve("0199a000-0000-7000-8000-0000000000a5");
+    };
+    await createFakeRuntime().turn(input("IMAGE: one"), r.sink);
+    await createFakeRuntime().turn(input("IMAGE: two"), r.sink);
+    expect(bytes[0]).not.toEqual(bytes[1]);
+  });
   it.each(["PANEL: # Plan\n- [ ] first step", "CHOICE: Alpha | Beta"])(
     "proposes one work panel for %s",
     async (prompt) => {

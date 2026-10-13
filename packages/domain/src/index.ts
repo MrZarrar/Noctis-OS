@@ -18,3 +18,4 @@ export * from "./vault/view.js";
 export * from "./tools/route.js";
 export * from "./runtime/route.js";
 export * from "./runtime/classify.js";
+export * from "./files/locate.js";

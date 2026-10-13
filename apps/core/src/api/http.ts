@@ -51,6 +51,7 @@ import {
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
+import { MAX_TEXT_PREVIEW_BYTES, viewerKind } from "@noctis/domain";
 import { z } from "zod";
 
 import {
@@ -1608,7 +1609,26 @@ async function handleFiles(
     return;
   }
 
-  const range = parseRange(headerValue(req.headers.range));
+  const previewValues = url.searchParams.getAll("preview");
+  const preview = previewValues.length === 1 && previewValues[0] === "1";
+  if (
+    previewValues.length > 0 &&
+    (!preview ||
+      viewerKind(at.relativePath, 0) !== "text" ||
+      url.searchParams.has("download") ||
+      req.headers.range !== undefined)
+  ) {
+    send(
+      res,
+      400,
+      errorBody("invalid_request", "preview=1 requires a text file without download or Range"),
+      correlationId,
+    );
+    return;
+  }
+  const range = preview
+    ? { offset: 0, length: MAX_TEXT_PREVIEW_BYTES }
+    : parseRange(headerValue(req.headers.range));
   let file;
 
   try {
@@ -1619,6 +1639,31 @@ async function handleFiles(
     });
   } catch (error) {
     sendUnavailable(res, error, correlationId);
+    return;
+  }
+
+  if (preview) {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    res.once("close", () => file.body.destroy());
+    try {
+      for await (const chunk of file.body) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        const available = Math.min(buffer.length, MAX_TEXT_PREVIEW_BYTES - bytes);
+        chunks.push(buffer.subarray(0, available));
+        bytes += available;
+        if (bytes === MAX_TEXT_PREVIEW_BYTES) break;
+      }
+      res.setHeader("cache-control", "no-store");
+      send(
+        res,
+        200,
+        { text: Buffer.concat(chunks, bytes).toString("utf8"), truncated: file.sizeBytes > bytes },
+        correlationId,
+      );
+    } catch (error) {
+      sendUnavailable(res, error, correlationId);
+    }
     return;
   }
 

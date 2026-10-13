@@ -8,6 +8,20 @@ const intent = (
   threadId = "0199a000-0000-7000-8000-0000000000f1",
 ) => ({ id, role, payload, payloadVersion: 1, kind: "detail", threadId }) as SurfaceIntent;
 describe("reconcileIntents", () => {
+  it("holds a primary file's accepted revision while supporting files update automatically", () => {
+    const old = {
+      ...intent("a", "primary", { content: { from: "file" } }),
+      kind: "document",
+      requestedAt: "2026-09-01T00:00:00.000Z",
+    };
+    const next = { ...old, requestedAt: "2026-09-01T00:00:01.000Z" };
+    const result = reconcileIntents([old], [next]);
+    expect(result.intents[0]?.requestedAt).toBe(old.requestedAt);
+    expect(result.pending.a).toEqual(next);
+    expect(
+      reconcileIntents([{ ...old, role: "supporting" }], [{ ...next, role: "supporting" }]).pending,
+    ).toEqual({});
+  });
   it("holds an existing primary payload, updates supporting and admits new panels", () => {
     const old = intent("a", "primary", { title: "old" });
     const changed = intent("a", "primary", { title: "new" });

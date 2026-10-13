@@ -377,6 +377,7 @@ function Workbench({
 
         {active === "Threads" && (
           <Threads
+            onOpenInVault={openInVault}
             identityId={identityId}
             conversation={conversation}
             connected={transport !== undefined}

@@ -247,6 +247,33 @@ describe("compose", () => {
     expect(outcome.plan.reasonCodes).toContain("overflow.size_unsupported");
   });
 
+  it("a user-placed Surface outranks a newer rival for the last slot", () => {
+    const placed = intent({ id: id(1), sourceIds: [id(11)], priority: 1 });
+    const rival = intent({ id: id(2), sourceIds: [id(12)], priority: 100 });
+    const override: SurfaceOverride = {
+      id: id(20),
+      surfaceId: placed.id,
+      clientId: "client",
+      displayFingerprint: "fp-1",
+      region: "centre",
+      size: "wide",
+      createdAt: AT,
+    };
+    const candidate = input({
+      intents: [placed, rival],
+      overrides: [override],
+      display: { fingerprint: "fp-1", widthPx: 1440 },
+    });
+    const outcome = compose(candidate);
+    expect(outcome.plan.slots.map((slot) => slot.surfaceId)).toContain(placed.id);
+    expect(outcome.plan.overflowSurfaceIds).toContain(rival.id);
+    expect(
+      compose({ ...candidate, overrides: [{ ...override, releasedAt: AT }] }).plan.slots.map(
+        (slot) => slot.surfaceId,
+      ),
+    ).toContain(rival.id);
+  });
+
   it("keeps a pinned Surface placed when an unpinned rival outranks it", () => {
     const outcome = compose(
       input({

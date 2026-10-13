@@ -161,7 +161,7 @@ export function createFakeRuntime(): Runtime {
           const attachmentId = await sink.upload({
             filename: "frame.png",
             mediaType: "image/png",
-            bytes: FAKE_PNG,
+            bytes: Buffer.concat([FAKE_PNG, Buffer.from(payload.prompt)]),
           });
 
           item({

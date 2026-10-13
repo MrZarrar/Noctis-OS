@@ -224,6 +224,7 @@ export function useComposition(
           setFocusedSurfaceId(undefined);
         }
         const reconciled = reconcileIntents(intentsRef.current, body.data.intents);
+        setDataOwner(ownerKey);
         intentsRef.current = reconciled.intents;
         setIntents(reconciled.intents);
         setPending(reconciled.pending);

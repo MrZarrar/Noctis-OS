@@ -3,6 +3,9 @@ import { z } from "zod";
 import { SurfaceLifecycleSchema, SurfacePersistenceSchema, SurfaceRoleSchema } from "./enums.js";
 import { SchemaVersionSchema, UtcTimestampSchema, UuidSchema } from "./primitives.js";
 
+/** Stored entity IDs are v7; deterministic file source identities are v8. */
+export const SurfaceSourceIdSchema = z.union([UuidSchema, z.uuid({ version: "v8" })]);
+
 export const SurfaceOwnerSchema = z
   .object({
     objectiveId: UuidSchema.optional(),
@@ -62,7 +65,7 @@ export const SurfaceIntentSchema = z
     priority: z.int(),
     minSize: SurfaceSizeSchema,
     preferredRegion: SurfaceRegionSchema.optional(),
-    sourceIds: z.array(UuidSchema),
+    sourceIds: z.array(SurfaceSourceIdSchema),
     artifactIds: z.array(UuidSchema),
     payloadVersion: SchemaVersionSchema,
     payload: z.unknown(),

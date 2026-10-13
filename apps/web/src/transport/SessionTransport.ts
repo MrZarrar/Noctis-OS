@@ -61,7 +61,12 @@ export class SessionTransport implements CoreTransport {
     this.#EventSourceImpl = options.EventSourceImpl;
   }
 
-  async request(method: CoreMethod, path: string, body?: unknown): Promise<CoreResponse> {
+  async request(
+    method: CoreMethod,
+    path: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal },
+  ): Promise<CoreResponse> {
     // `resolveCoreUrl` refuses a path that could name another host, so no
     // caller can talk the session cookie into leaving the core's origin.
     const url = resolveCoreUrl(this.#baseUrl, path);
@@ -79,6 +84,7 @@ export class SessionTransport implements CoreTransport {
 
     const response = await this.#fetch(url.href, {
       method,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
       credentials: "include",
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),

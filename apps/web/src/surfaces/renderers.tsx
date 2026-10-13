@@ -33,6 +33,8 @@ import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
 import { LiveBriefSurface } from "./LiveBrief.js";
+import { FileDocument } from "./FileDocument.js";
+import type { CoreTransport } from "../transport/CoreTransport.js";
 import { Markdown } from "../conversation/Markdown.js";
 import type { Resolved, SurfaceKind } from "./registry.js";
 
@@ -43,11 +45,14 @@ import type { Resolved, SurfaceKind } from "./registry.js";
  * what it may do. "Open in Vault" is the one Section 7 asks for.
  */
 export interface SurfaceContext {
+  fileTransport?: CoreTransport;
+  contentRevision?: string;
+  onOpenFile?: (source: Extract<MediaSource, { from: "file" }>) => void;
   panelOwner?: SurfaceOwner;
   onPanelAction?: (message: string, owner: SurfaceOwner) => void | Promise<void>;
   panelActionsDisabled?: boolean;
   panelActionsError?: string;
-  mediaUrl?: (source: MediaSource) => string | undefined;
+  mediaUrl?: (source: MediaSource, revision?: string) => string | undefined;
   onOpenInVault?: (evidence: RecallEvidenceView) => void;
   /** Phase 8 handoffs. Each one crosses a boundary the Surface may not cross itself. */
   onConfirm?: (approvalId: string, typedConfirmation?: string) => void;
@@ -88,13 +93,15 @@ const RENDERERS: Record<
   SurfaceKind,
   (payload: never, context: SurfaceContext, size: SurfaceSize) => ReactNode
 > = {
-  document: (payload: DocumentPayload) => (
+  document: (payload: DocumentPayload, context: SurfaceContext) => (
     <div className="document-panel">
       <DocumentSurface
         {...payload}
-        {...(payload.content.from === "inline" && payload.format === "markdown"
-          ? { body: <Markdown text={payload.content.text} readOnlyTasks /> }
-          : {})}
+        {...(payload.content.from === "file"
+          ? { body: <FileDocument payload={payload} context={context} /> }
+          : payload.format === "markdown"
+            ? { body: <Markdown text={payload.content.text} readOnlyTasks /> }
+            : {})}
       />
     </div>
   ),
@@ -106,7 +113,7 @@ const RENDERERS: Record<
     <MediaSurface
       title={payload.title}
       mediaType={payload.mediaType}
-      url={context.mediaUrl?.(payload.source)}
+      url={context.mediaUrl?.(payload.source, context.contentRevision)}
       size={size}
     />
   ),

@@ -33,6 +33,7 @@ import {
   SurfaceDisplaySchema,
   SurfaceRegionSchema,
   SurfaceSizeSchema,
+  SurfaceSourceIdSchema,
 } from "./surface.js";
 
 /**
@@ -255,7 +256,7 @@ export const UpsertSurfaceIntentCommandSchema = z
     priority: z.int().min(-1000).max(1000),
     minSize: SurfaceSizeSchema,
     preferredRegion: SurfaceRegionSchema.optional(),
-    sourceIds: z.array(UuidSchema).max(50).default([]),
+    sourceIds: z.array(SurfaceSourceIdSchema).max(50).default([]),
     artifactIds: z.array(UuidSchema).max(50).default([]),
     payloadVersion: SchemaVersionSchema,
     payload: z.unknown(),

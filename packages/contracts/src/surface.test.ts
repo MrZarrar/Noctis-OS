@@ -25,6 +25,25 @@ const valid = {
 };
 
 describe("SurfaceIntentSchema", () => {
+  it("accepts deterministic v8 source identities without accepting v8 entity IDs", () => {
+    const source = "12345678-1234-8123-8123-123456789012";
+    expect(SurfaceIntentSchema.safeParse({ ...valid, sourceIds: [source] }).success).toBe(true);
+    expect(
+      UpsertSurfaceIntentCommandSchema.safeParse({
+        objectiveId: valid.objectiveId,
+        kind: valid.kind,
+        role: valid.role,
+        persistence: valid.persistence,
+        priority: valid.priority,
+        minSize: valid.minSize,
+        payloadVersion: 1,
+        payload: {},
+        idempotencyKey: "file",
+        sourceIds: [source],
+      }).success,
+    ).toBe(true);
+    expect(SurfaceIntentSchema.safeParse({ ...valid, id: source }).success).toBe(false);
+  });
   it("accepts a well-formed intent", () => {
     expect(SurfaceIntentSchema.safeParse(valid).success).toBe(true);
   });

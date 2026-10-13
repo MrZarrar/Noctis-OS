@@ -10,6 +10,7 @@ import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { FileTarget } from "./files-view.js";
 import { childPath, filesQuery, parentPath, viewerKind } from "./files-view.js";
+import { useFileText } from "./useFileText.js";
 
 /**
  * Files: what the agents made, on whichever PC made it (v1 S4).
@@ -468,44 +469,7 @@ function Viewer({
   const kind = viewerKind(file.name, file.sizeBytes);
   const contentPath = `/files/content?${filesQuery(place, file.path)}`;
   const url = transport.contentUrl?.(contentPath);
-  const [text, setText] = useState<{ path: string; value: string }>();
-
-  useEffect(() => {
-    if (kind !== "text") {
-      return;
-    }
-
-    let live = true;
-
-    void transport
-      .request("GET", contentPath)
-      .then((response) => {
-        if (live) {
-          setText({
-            path: contentPath,
-            value:
-              response.status !== 200
-                ? reasonOf(response)
-                : typeof response.body === "string"
-                  ? response.body
-                  : // A JSON file comes back parsed; show it as the text it was.
-                    JSON.stringify(response.body, null, 2),
-          });
-        }
-      })
-      .catch((error: unknown) => {
-        if (live) {
-          setText({
-            path: contentPath,
-            value: error instanceof Error ? error.message : "the core did not answer",
-          });
-        }
-      });
-
-    return () => {
-      live = false;
-    };
-  }, [transport, kind, contentPath]);
+  const text = useFileText(transport, kind === "text" ? contentPath : undefined, file.modifiedAt);
 
   const unreachable = (
     <p style={{ margin: 0, color: typography.color.muted, maxWidth: 380, textAlign: "center" }}>
@@ -561,21 +525,32 @@ function Viewer({
           padding: spacing.md,
         }}
       >
-        {kind === "text" &&
-          (text?.path === contentPath ? (
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                font: `${String(typography.scale.sm)}px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
-              }}
-            >
-              {text.value}
-            </pre>
-          ) : (
-            <p style={{ margin: 0, color: typography.color.muted }}>Opening…</p>
-          ))}
+        {kind === "text" && (
+          <div>
+            {text.loading && <p role="status">Opening?</p>}
+            {text.error !== undefined && (
+              <p role="alert">
+                {text.error}{" "}
+                <button type="button" style={buttonStyle} onClick={text.retry}>
+                  Retry file
+                </button>
+              </p>
+            )}
+            {text.truncated && <p>Preview limited to 2 MiB. Download for the full file.</p>}
+            {text.text !== undefined && (
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  font: `${String(typography.scale.sm)}px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
+                }}
+              >
+                {text.text}
+              </pre>
+            )}
+          </div>
+        )}
         {kind === "image" &&
           (url === undefined ? (
             unreachable
