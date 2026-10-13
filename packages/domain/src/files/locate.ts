@@ -41,6 +41,10 @@ export interface FileTarget<Root = { nodeId: string; grantId: string; path: stri
   relativePath: string;
 }
 
+export function isWindowsPath(path: string): boolean {
+  return /^(?:[A-Za-z]:\/|\/\/)/.test(path.replaceAll("\\", "/"));
+}
+
 /**
  * The shared folder a path an agent reported is in, on the PC that reported
  * it, and the path inside it — or undefined, so a file outside every shared
@@ -59,7 +63,7 @@ export function locateInRoots<Root extends { nodeId: string; grantId: string; pa
       continue;
     }
 
-    const windows = /^[A-Za-z]:\//.test(root.path.replaceAll("\\", "/"));
+    const windows = isWindowsPath(root.path);
     const prefix = `${root.path.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
     const fold = (value: string): string => (windows ? value.toLowerCase() : value);
 

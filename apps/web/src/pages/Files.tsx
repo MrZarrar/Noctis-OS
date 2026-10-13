@@ -527,7 +527,7 @@ function Viewer({
       >
         {kind === "text" && (
           <div>
-            {text.loading && <p role="status">Opening?</p>}
+            {text.loading && <p role="status">Opening...</p>}
             {text.error !== undefined && (
               <p role="alert">
                 {text.error}{" "}

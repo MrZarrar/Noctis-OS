@@ -5,7 +5,7 @@ import type {
   VaultRecallEvidence,
 } from "@noctis/contracts";
 import { ApprovalPayloadSchema, RuntimeItemSchema } from "@noctis/contracts";
-import { locateInRoots, viewerKind } from "@noctis/domain";
+import { isWindowsPath, locateInRoots, viewerKind } from "@noctis/domain";
 import { createHash } from "node:crypto";
 import { getTurn } from "../conversation/service.js";
 import { recallForPrompt } from "../conversation/recall-context.js";
@@ -315,7 +315,12 @@ function placeWrittenFiles(
       grantId: located.root.grantId,
       relativePath: located.relativePath,
     };
-    const sourceId = fileSourceId(turn.threadId, turn.nodeId, source.grantId, source.relativePath);
+    const sourceId = fileSourceId(
+      turn.threadId,
+      turn.nodeId,
+      source.grantId,
+      isWindowsPath(located.root.path) ? source.relativePath.toLowerCase() : source.relativePath,
+    );
     const upserted = upsertSurfaceIntent(deps.kernel, context(deps.kernel, event.actorId), {
       idempotencyKey: `file:${sourceId}:${turn.id}:${event.id}`,
       threadId: turn.threadId,

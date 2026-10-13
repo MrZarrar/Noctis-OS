@@ -23,6 +23,23 @@ describe("locateInRoots", () => {
     });
   });
 
+  it("matches UNC roots without case but preserves the reported file spelling", () => {
+    const root = { nodeId: "work", grantId: "share", path: "\\\\server\\share" };
+    expect(locateInRoots("//SERVER/SHARE/NOTE.md", "work", [root])).toEqual({
+      root,
+      relativePath: "NOTE.md",
+    });
+  });
+
+  it("matches Linux root paths case sensitively", () => {
+    const root = { nodeId: "linux", grantId: "share", path: "/shared" };
+    expect(locateInRoots("/SHARED/note.md", "linux", [root])).toBeUndefined();
+    expect(locateInRoots("/shared/NOTE.md", "linux", [root])).toEqual({
+      root,
+      relativePath: "NOTE.md",
+    });
+  });
+
   it("finds nothing outside a shared folder, or on another PC", () => {
     expect(locateInRoots("C:\\Users\\mmush\\Downloads\\channel-old\\x.md", "home", roots)).toBe(
       undefined,

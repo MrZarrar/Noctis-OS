@@ -18,6 +18,8 @@ import { listSurfaceIntents } from "./surface-intents.js";
 const roots = vi.hoisted(() => [
   { nodeId: "node-a", grantId: "same", path: "C:/shared" },
   { nodeId: "node-b", grantId: "same", path: "C:/shared" },
+  { nodeId: "node-unc", grantId: "same", path: "\\\\server\\share" },
+  { nodeId: "node-linux", grantId: "same", path: "/shared" },
 ]);
 const turns = vi.hoisted(
   () => new Map<string, { id: string; threadId: string; nodeId: string; userMessageId: string }>(),
@@ -77,6 +79,39 @@ function event(
   };
 }
 describe("files and recall proposed on threads", () => {
+  it.each([
+    ["node-a", "C:/shared/note.md", "c:/SHARED/NOTE.md"],
+    ["node-unc", "\\\\server\\share\\note.md", "//SERVER/SHARE/NOTE.md"],
+  ])(
+    "keeps dismissed Windows file identity across case changes on %s",
+    (nodeId, firstPath, nextPath) => {
+      fixture();
+      proposeFor({ kernel }, event(THREAD, nodeId, [firstPath]));
+      const first = listSurfaceIntents(kernel.db, { threadId: THREAD })[0]!;
+      kernel.db
+        .prepare("UPDATE surface_intents SET lifecycle = 'dismissed' WHERE id = ?")
+        .run(first.id);
+      proposeFor({ kernel }, event(THREAD, nodeId, [nextPath]));
+      expect(listSurfaceIntents(kernel.db, { threadId: THREAD })).toMatchObject([
+        { id: first.id, lifecycle: "dismissed", payload: { content: { relativePath: "NOTE.md" } } },
+      ]);
+      expect(listSurfaceIntents(kernel.db, { threadId: THREAD })).toHaveLength(1);
+    },
+  );
+  it("keeps differently cased Linux files distinct", () => {
+    fixture();
+    proposeFor({ kernel }, event(THREAD, "node-linux", ["/shared/note.md", "/shared/NOTE.md"]));
+    const panels = listSurfaceIntents(kernel.db, { threadId: THREAD });
+    expect(panels).toHaveLength(2);
+    expect(new Set(panels.flatMap((panel) => panel.sourceIds)).size).toBe(2);
+    expect(
+      panels
+        .map(
+          (panel) => (panel.payload as { content: { relativePath: string } }).content.relativePath,
+        )
+        .sort(),
+    ).toEqual(["NOTE.md", "note.md"]);
+  });
   it("makes separate document/media panels for at most four files, including offline nodes", () => {
     fixture();
     proposeFor(
