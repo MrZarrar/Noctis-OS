@@ -252,9 +252,100 @@ describe("Threads desktop panels", () => {
         "phone choice was not sent to owning thread",
       );
       await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      const shortAction = await coreCommand(CORE_URL, "surface.upsert_intent", {
+        idempotencyKey: "short-panel-action",
+        threadId: created.body.id,
+        kind: "detail",
+        role: "primary",
+        persistence: "ephemeral",
+        priority: 1000,
+        minSize: "compact",
+        payloadVersion: 1,
+        sourceIds: ["0199a000-0000-7000-8000-0000000000a9"],
+        payload: { fields: [], actions: [{ label: ".", message: "Continue" }] },
+      });
+      assert.equal(shortAction.status, 200);
+      await page.getByRole("button", { name: "Open panel Detail", exact: true }).click();
+      const shortButton = page
+        .getByRole("region", { name: "Panel sheet" })
+        .getByRole("button", { name: ".", exact: true });
+      await shortButton.waitFor();
+      const shortBox = await shortButton.boundingBox();
+      assert.ok(
+        shortBox.width >= 44 && shortBox.height >= 44,
+        `short choice must meet 44px touch floor: ${JSON.stringify(shortBox)}`,
+      );
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.getByRole("button", { name: "Conversations", exact: true }).click();
       await page.getByRole("button", { name: "New conversation", exact: true }).click();
+    },
+  );
+  it(
+    "THE GATE (work panels): a delayed free-chat choice keeps its thread after another client starts fresh",
+    { timeout: 120000 },
+    async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await openThreads();
+      await prompt("CHOICE: Original | Other");
+      const choice = page
+        .getByRole("complementary", { name: "Thread panels" })
+        .getByRole("button", { name: "Use Original", exact: true });
+      await choice.waitFor({ timeout: 20000 });
+      await waitFor(() => choice.isEnabled(), Boolean, "free-thread choice remains disabled");
+      const original = await coreRead(CORE_URL, "/threads?identityId=vesper");
+      assert.equal(original.status, 200);
+      let release;
+      let arrived;
+      let choiceBody;
+      const held = new Promise((resolve) => {
+        release = resolve;
+      });
+      const requested = new Promise((resolve) => {
+        arrived = resolve;
+      });
+      const route = "**/commands/conversation.send";
+      await page.route(
+        route,
+        async (handler) => {
+          choiceBody = handler.request().postDataJSON();
+          arrived();
+          await held;
+          await handler.continue();
+        },
+        { times: 1 },
+      );
+      try {
+        await choice.click();
+        await requested;
+        const fresh = await coreCommand(CORE_URL, "conversation.start_fresh", {
+          idempotencyKey: "choice-race-fresh",
+          identityId: "vesper",
+        });
+        assert.equal(fresh.status, 200);
+        const sent = page.waitForResponse((response) =>
+          response.url().endsWith("/commands/conversation.send"),
+        );
+        release();
+        const response = await sent;
+        assert.equal(response.status(), 200);
+        assert.equal(
+          choiceBody.threadId,
+          original.body.id,
+          "the delayed choice must explicitly name its original thread",
+        );
+        const oldMessages = await coreRead(CORE_URL, `/threads/${original.body.id}/messages`);
+        assert.ok(
+          oldMessages.body.messages.some(
+            (message) => message.role === "user" && message.body === "Use Original",
+          ),
+        );
+        const newFree = await coreRead(CORE_URL, "/threads?identityId=vesper");
+        assert.equal(newFree.status, 404, "the old choice must not create a new free conversation");
+      } finally {
+        release();
+        await page.unroute(route);
+      }
     },
   );
   it(

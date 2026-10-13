@@ -157,6 +157,8 @@ export interface ConversationActions {
 }
 
 export interface SendOptions {
+  /** A panel choice stays on the checked thread even if the default free thread changes. */
+  threadId?: string;
   /** Present only when the selector overrides the identity's default. */
   model?: ModelRef;
   files?: readonly File[];
@@ -672,11 +674,12 @@ export function createConversation(
         return;
       }
 
+      const sendThreadId = options?.threadId ?? openThreadId;
       const body = await command("conversation.send", {
         identityId,
         text,
-        ...(openThreadId !== undefined
-          ? { threadId: openThreadId }
+        ...(sendThreadId !== undefined
+          ? { threadId: sendThreadId }
           : objectiveId === undefined
             ? {}
             : { objectiveId }),
@@ -730,6 +733,7 @@ export function createConversation(
       // are already uploaded and their ids still resolve, so `send` re-uploads
       // nothing: it only re-runs the command.
       const unpinned: SendOptions = {
+        ...(pending.options.threadId === undefined ? {} : { threadId: pending.options.threadId }),
         ...(pending.options.model === undefined ? {} : { model: pending.options.model }),
         ...(pending.options.files === undefined ? {} : { files: pending.options.files }),
       };

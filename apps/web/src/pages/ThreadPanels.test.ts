@@ -21,7 +21,10 @@ describe("panelsForOwner", () => {
     } as unknown as ConversationState;
     await sendPanelChoice(conversation, "Use Alpha", { threadId: "owning-thread" });
     await sendPanelChoice(conversation, "Compare", { objectiveId: "owning-objective" });
-    expect(send.mock.calls).toEqual([["Use Alpha"], ["Compare"]]);
+    expect(send.mock.calls).toEqual([
+      ["Use Alpha", { threadId: "owning-thread" }],
+      ["Compare", { threadId: "owning-thread" }],
+    ]);
     for (const owner of [
       { threadId: "foreign-thread" },
       { objectiveId: "foreign-objective" },

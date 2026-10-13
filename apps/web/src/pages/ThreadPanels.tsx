@@ -31,7 +31,7 @@ export async function sendPanelChoice(
   ) {
     throw new Error("Open the panel's conversation to send this choice.");
   }
-  await conversation.send(message);
+  await conversation.send(message, { threadId: current.id });
 }
 export function panelsForOwner(
   source: CompositionState,

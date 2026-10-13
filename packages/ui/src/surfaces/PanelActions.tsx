@@ -48,6 +48,7 @@ export function PanelActions({
             }}
             style={{
               minHeight: 44,
+              minWidth: 44,
               maxWidth: "100%",
               overflowWrap: "anywhere",
               padding: spacing.sm,

@@ -2,7 +2,8 @@ import type { OrchestrationEvent, ServerFrame } from "@noctis/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CoreResponse, CoreTransport, SubscribeOptions } from "../transport/CoreTransport.js";
-import { createConversation } from "./useConversation.js";
+import { createConversation, type ConversationState } from "./useConversation.js";
+import { sendPanelChoice } from "../pages/ThreadPanels.js";
 
 const THREAD_ID = "0199a000-0000-7000-8000-0000000000f1";
 const OBJECTIVE_ID = "0199a000-0000-7000-8000-0000000000e1";
@@ -161,6 +162,105 @@ function core(overrides: Record<string, CoreResponse> = {}): Scripted {
 }
 
 describe("createConversation", () => {
+  it("pins a delayed default free-chat choice to its original thread after another client starts fresh", async () => {
+    const scripted = core({
+      "POST /commands/conversation.start_fresh": {
+        status: 200,
+        body: { ...thread, kind: "named" },
+      },
+    });
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let choiceBody: { threadId?: string } | undefined;
+    let currentFreeThread = THREAD_ID;
+    const messages = new Map<string, string[]>();
+    const transport: CoreTransport = {
+      ...scripted.transport,
+      request: async (method, path, body) => {
+        if (path === "/commands/conversation.send") {
+          choiceBody = body as { threadId?: string };
+          await held;
+          const routedThread = choiceBody.threadId ?? currentFreeThread;
+          messages.set(routedThread, ["Use Alpha"]);
+          return {
+            status: 200,
+            body: { ...runningTurn, threadId: routedThread, status: "queued" },
+          };
+        }
+        return scripted.transport.request(method, path, body);
+      },
+    };
+    const original = createConversation(transport, "vesper", undefined);
+    const otherClient = createConversation(scripted.transport, "vesper", undefined);
+    original.start();
+    await vi.waitFor(() => expect(original.getState().thread?.id).toBe(THREAD_ID));
+    const captured = { ...original.getState(), ...original } as ConversationState;
+    const pending = sendPanelChoice(captured, "Use Alpha", { threadId: THREAD_ID });
+    await vi.waitFor(() => expect(choiceBody).toBeDefined());
+    currentFreeThread = "0199a000-0000-7000-8000-0000000000f2";
+    scripted.answer("GET /threads?identityId=vesper", {
+      status: 200,
+      body: { ...thread, id: currentFreeThread },
+    });
+    scripted.answer(`GET /threads/${currentFreeThread}/messages`, {
+      status: 200,
+      body: { messages: [] },
+    });
+    scripted.answer(`GET /threads/${currentFreeThread}/turns`, {
+      status: 200,
+      body: { turns: [] },
+    });
+    await otherClient.startFresh();
+    expect(otherClient.getState().thread?.id).toBe(currentFreeThread);
+    release();
+    await pending;
+    expect(choiceBody).toMatchObject({ threadId: THREAD_ID });
+    expect(messages.get(THREAD_ID)).toEqual(["Use Alpha"]);
+    expect(messages.get(currentFreeThread)).toBeUndefined();
+    original.close();
+    otherClient.close();
+  });
+  it("honors an explicit send thread even when opened on another named thread", async () => {
+    const scripted = core({
+      "POST /commands/conversation.send": { status: 200, body: runningTurn },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined, "opened-thread");
+    await store.send("Use Alpha", { threadId: THREAD_ID });
+    expect(
+      scripted.calls.find((call) => call.path === "/commands/conversation.send")?.body,
+    ).toMatchObject({ threadId: THREAD_ID });
+    store.close();
+  });
+  it("keeps a panel's thread and model when retrying without an offline folder pin", async () => {
+    const scripted = core({
+      "POST /commands/conversation.send": {
+        status: 409,
+        body: { error: { details: { reason: "node_offline" } } },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+    store.start();
+    await vi.waitFor(() => expect(store.getState().thread?.id).toBe(THREAD_ID));
+    await store.send("Use Alpha", {
+      threadId: THREAD_ID,
+      model: MODEL,
+      rootGrantId: "offline-folder",
+    });
+    scripted.answer("POST /commands/conversation.send", { status: 200, body: runningTurn });
+    await store.retryElsewhere();
+    const sends = scripted.calls.filter((call) => call.path === "/commands/conversation.send");
+    expect(sends).toHaveLength(2);
+    expect(sends[0]?.body).toMatchObject({
+      threadId: THREAD_ID,
+      model: MODEL,
+      rootGrantId: "offline-folder",
+    });
+    expect(sends[1]?.body).toMatchObject({ threadId: THREAD_ID, model: MODEL });
+    expect(sends[1]?.body).not.toHaveProperty("rootGrantId");
+    store.close();
+  });
   it("bumps panelsRevision only for the current thread or its Objective", async () => {
     const scripted = core({
       "GET /threads?identityId=vesper": {
