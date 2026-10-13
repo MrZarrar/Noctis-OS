@@ -549,6 +549,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       runtime: "claude",
       model: payload.model.model,
       env: input.env,
+      readable: roots.readable,
     });
     const sdkOptions: Options = {
       cwd: roots.cwd,

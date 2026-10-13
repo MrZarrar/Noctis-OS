@@ -829,6 +829,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             runtime: "codex",
             model: payload.model.model,
             env: input.env,
+            readable: roots.readable,
           });
           // developerInstructions adds to Codex's own prompt; baseInstructions would replace it.
           const thread = {

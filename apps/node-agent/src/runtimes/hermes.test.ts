@@ -1,5 +1,13 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -473,6 +481,22 @@ describe("the Hermes runtime (ACP)", () => {
 
     expect((await turn).stoppedReason).toBe("cancelled");
     expect(spawned[0]?.notes).toContainEqual(["session/cancel", { sessionId: "hs-1" }]);
+  });
+
+  it("tells Jester where the shared MindVault is", async () => {
+    const { runtime: hermes } = runtime();
+    const vault = join(scratch, "MindVault");
+    mkdirSync(join(vault, "agent"), { recursive: true });
+    writeFileSync(join(vault, "agent", "brain.md"), "# Agent Brain\n");
+
+    await hermes.turn(
+      { ...input({ identityId: "jester" }), roots: { ...ROOTS, readable: [vault] } },
+      recorder().sink,
+    );
+
+    expect(readFileSync(join(scratch, "hermes-jester", "SOUL.md"), "utf8")).toContain(
+      `shared with you, read only, at ${vault}`,
+    );
   });
 
   it("speaks as Jester on Jester's own Hermes home, and keeps Vesper's soul on Vesper's", async () => {

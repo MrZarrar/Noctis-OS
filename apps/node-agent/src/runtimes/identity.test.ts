@@ -1,6 +1,10 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { identityCard } from "./identity.js";
+import { identityCard, mindVaultIn } from "./identity.js";
 
 describe("identityCard", () => {
   it.each([
@@ -71,5 +75,42 @@ describe("identityCard", () => {
         env: { NOCTIS_IDENTITY_CARDS: "0" },
       }),
     ).toBe(undefined);
+  });
+});
+
+describe("the MindVault among a turn's folders", () => {
+  function sharedVault(): string {
+    const vault = mkdtempSync(join(tmpdir(), "noctis-mindvault-"));
+    mkdirSync(join(vault, "agent"));
+    writeFileSync(join(vault, "agent", "brain.md"), "# Agent Brain\n");
+    return vault;
+  }
+
+  it("tells the agent where the shared MindVault is, and to use it without being asked", () => {
+    const vault = sharedVault();
+    const card = identityCard({
+      identityId: "vesper",
+      runtime: "claude",
+      model: "sonnet",
+      env: {},
+      readable: [mkdtempSync(join(tmpdir(), "noctis-other-")), vault],
+    });
+
+    expect(card).toContain(`shared with you, read only, at ${vault}`);
+    expect(card).toContain("without waiting to be asked");
+    expect(mindVaultIn([vault])).toBe(vault);
+  });
+
+  it("says nothing about a path when no shared folder is the MindVault", () => {
+    const card = identityCard({
+      identityId: "vesper",
+      runtime: "claude",
+      model: "sonnet",
+      env: {},
+      readable: [mkdtempSync(join(tmpdir(), "noctis-other-"))],
+    });
+
+    expect(card).toContain("MindVault");
+    expect(card).not.toContain("shared with you, read only");
   });
 });

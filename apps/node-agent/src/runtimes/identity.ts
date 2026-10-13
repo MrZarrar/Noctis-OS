@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import type { ConversationalIdentityId } from "@noctis/contracts";
 import { ModelRefSchema } from "@noctis/contracts";
 
@@ -10,6 +13,26 @@ export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 export const MINDVAULT_NOTE = `The owner's MindVault is their own Obsidian notes about the people, projects and work in their
 life. Noctis looks up what each message names there and puts what it finds above the message, under a line saying so:
 that is your memory of the owner, and they did not type it. It is not a password or browser vault.`;
+
+/** The MindVault among a turn's read-only folders: the one holding the Agent Brain. */
+export function mindVaultIn(readable: readonly string[] = []): string | undefined {
+  return readable.find((root) => existsSync(join(root, "agent", "brain.md")));
+}
+
+/**
+ * What an agent is told about the MindVault. Shared with it, the Vault is the
+ * agent's to search on its own: the owner set it up so every agent knows what
+ * they know without being asked.
+ */
+export function mindVaultNote(readable?: readonly string[]): string {
+  const vault = mindVaultIn(readable);
+
+  return vault === undefined
+    ? MINDVAULT_NOTE
+    : `${MINDVAULT_NOTE}
+It is shared with you, read only, at ${vault}. Search and read it yourself whenever the owner's people, projects,
+history or preferences could matter, without waiting to be asked. Start with agent/brain.md there.`;
+}
 
 const RUNTIME_NAMES: Record<IdentityRuntime, string> = {
   claude: "Claude Code",
@@ -28,6 +51,8 @@ export function identityCard(input: {
   runtime: IdentityRuntime;
   model: string;
   env: NodeJS.ProcessEnv;
+  /** The turn's read-only folders; the MindVault among them is named in the card. */
+  readable?: readonly string[];
 }): string | undefined {
   if (input.env.NOCTIS_IDENTITY_CARDS === "0" || input.identityId !== "vesper") {
     return undefined;
@@ -45,5 +70,5 @@ phone and desktop. Right now you are running as ${runtimeName} on ${model.data},
 this conversation, shows the owner what you produce, and asks them before anything consequential; an approval is how
 anything that leaves this PC happens, and a refusal is final. Be calm, precise and brief, and lead with the answer.
 If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.
-${MINDVAULT_NOTE}`;
+${mindVaultNote(input.readable)}`;
 }

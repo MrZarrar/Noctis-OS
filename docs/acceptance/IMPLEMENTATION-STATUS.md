@@ -3823,3 +3823,25 @@ pasted, and read "vault" as Hermes's own browser vault. "Tell me about my family
 
 Deploy: work-PC core (migration 0017), then **Reindex** on the Vault page so tags fill in; then restart the home node so
 Jester's SOUL.md is rewritten. Known edge: a word that is also a technical tag pulls those notes in ("from the vault").
+
+### 2026-10-13 Agents read the shared MindVault on their own
+
+The owner's rule: every agent should have the whole Vault to hand without being asked. Recall by name cannot do that, so
+the agents read it themselves. Sharing the MindVault read only from the Nodes page already hands it to every turn on that
+PC (each live `runtime.turn` root reaches every turn's sandbox). What was missing is telling them: when a turn's readable
+folders include one holding `agent/brain.md`, Vesper's identity card and Jester's SOUL.md give its path and tell the agent
+to search it whenever the owner's people, projects, history or preferences could matter, starting with
+`agent/brain.md`. The `local` runtime has no file tools and keeps per-turn recall only.
+
+| Clause                                                                               | State       | Evidence                                                                       |
+| ------------------------------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------ |
+| A shared MindVault is named, with its path, in Vesper's card (Claude, Codex, Hermes) | implemented | `identity.test.ts` (2): red, then green                                        |
+| Jester's soul names it too                                                           | implemented | `hermes.test.ts` "tells Jester where the shared MindVault is": red, then green |
+
+| Command                                                       | Result                                                                  |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `npx vitest run apps packages`                                | exit 0; 2425 tests (another session's uncommitted work in the tree too) |
+| `npm run typecheck`; ESLint and Prettier on the changed files | exit 0                                                                  |
+
+Owner step: on each PC, share its MindVault read only with every agent from the Nodes page. Known edge: an agent reading
+the folder sees sensitive notes too; the passcode hides them in Noctis only.

@@ -13,7 +13,7 @@ import type { ProposalChannel } from "../proposals-file.js";
 import { createProposalChannel } from "../proposals-file.js";
 import type { CodexSpawn } from "./codex.js";
 import { childEnvironment } from "./env.js";
-import { MINDVAULT_NOTE, identityCard } from "./identity.js";
+import { identityCard, mindVaultNote } from "./identity.js";
 import type { ModelHost } from "./lmstudio.js";
 import { ensureModel } from "./local.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
@@ -62,13 +62,15 @@ const KILL_AFTER_CANCEL_MS = 5_000;
 /** Refused by Hermes whatever anyone answers: these leave the PC and cannot be called back. */
 const DENIED = ["*git push*", "*npm publish*", "*pnpm publish*", "*yarn publish*", "*gh release*"];
 /** Who Jester is: Hermes's SOUL.md on Jester's home. */
-const JESTER_SOUL = `You are Jester, one of the two identities in Noctis, running on the owner's own PC on a local model. Vesper is the calm one; you are the contrarian.
+const jesterSoul = (
+  readable: readonly string[],
+): string => `You are Jester, one of the two identities in Noctis, running on the owner's own PC on a local model. Vesper is the calm one; you are the contrarian.
 
 Your job is to make the owner's ideas better by attacking them. Find the premise doing the most work and test it. Name the part they are pretending will solve itself. Ask the one uncomfortable question that matters. Be specific, brief and a little irreverent: wit, never contempt. You are on the owner's side. When an idea survives, say so plainly and propose the cheapest real test of it.
 
 You prepare; you do not commit. Draft the offer, the message, the list, the plan, for the owner to review. You never send, publish, spend money or change anything outside this PC. Noctis asks the owner before anything consequential, and a refusal is final.
 
-${MINDVAULT_NOTE}
+${mindVaultNote(readable)}
 `;
 /** Hermes's own scheduler stays off until scheduling runs through Noctis, where the owner can see and stop it. */
 const NO_SCHEDULER = ["cronjob"];
@@ -227,12 +229,13 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     writeFileSync(join(home, "config.yaml"), hermesConfig(input.payload.model.model));
 
     const soul = jester
-      ? JESTER_SOUL
+      ? jesterSoul(input.roots.readable)
       : identityCard({
           identityId: input.payload.identityId,
           runtime: "hermes",
           model: input.payload.model.model,
           env: input.env,
+          readable: input.roots.readable,
         });
 
     if (soul === undefined) {
