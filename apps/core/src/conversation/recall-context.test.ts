@@ -34,6 +34,14 @@ describe("promptWithRecall", () => {
     expect(composed.endsWith("what is the plan")).toBe(true);
   });
 
+  it("keeps a whole paragraph, so a quote says something rather than just a name", () => {
+    const paragraph = `Tolga ${"runs the Istanbul office and ".repeat(15)}`.trim();
+    const composed = promptWithRecall("who is tolga", [evidence({ quote: paragraph })]);
+
+    expect(paragraph.length).toBeGreaterThan(400);
+    expect(composed).toContain(paragraph);
+  });
+
   it("collapses a quote's own line breaks so one quote stays one line", () => {
     const composed = promptWithRecall("what is the plan", [
       evidence({ quote: "first line\n\nsecond line" }),

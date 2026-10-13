@@ -4,6 +4,7 @@ import type { RecallEvidenceView } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
+import { Markdown } from "../conversation/Markdown.js";
 import { Page, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
@@ -66,6 +67,15 @@ const RecallSchema = z.object({
   freshness: z.enum(["current", "stale", "unavailable", "unknown"]),
 });
 
+const NoteSchema = z.object({ path: z.string(), title: z.string(), text: z.string() });
+
+/** The opened node's note: being read, read, or a name nobody has written a note for. */
+export type NoteState =
+  | { kind: "reading" }
+  | { kind: "note"; path: string; text: string }
+  | { kind: "none" }
+  | { kind: "failed" };
+
 let keySequence = 0;
 
 function nextKey(): string {
@@ -103,6 +113,7 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
   const [error, setError] = useState<string>();
   const [truncated, setTruncated] = useState<{ shown: number; total: number }>();
   const [revision, setRevision] = useState(0);
+  const [note, setNote] = useState<NoteState>();
 
   useEffect(() => {
     setFocus(focusId);
@@ -164,6 +175,43 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
       cancelled = true;
     };
   }, [transport, revision]);
+
+  // The note is read from disk by the core each time a node opens, so the page
+  // always shows the file as it is now, and nothing of it is stored.
+  useEffect(() => {
+    if (transport === undefined || focus === undefined) {
+      setNote(undefined);
+      return;
+    }
+
+    let cancelled = false;
+
+    setNote({ kind: "reading" });
+    void transport
+      .request("GET", `/vault/notes/${encodeURIComponent(focus)}`)
+      .then((response) => {
+        const parsed = NoteSchema.safeParse(response.body);
+
+        if (!cancelled) {
+          setNote(
+            response.status === 200 && parsed.success
+              ? { kind: "note", path: parsed.data.path, text: parsed.data.text }
+              : { kind: response.status === 404 ? "none" : "failed" },
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNote({ kind: "failed" });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, focus, revision]);
+
+  const focusName = nodes.find((node) => node.id === focus)?.name;
 
   const reindex = useCallback(async () => {
     if (transport === undefined) {
@@ -288,8 +336,40 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
         onFocus={setFocus}
       />
 
+      {note !== undefined && focusName !== undefined && <VaultNote name={focusName} state={note} />}
+
       {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
     </Page>
+  );
+}
+
+/** What the opened node's own note says, under the sphere. */
+export function VaultNote({ name, state }: { name: string; state: NoteState }): JSX.Element {
+  return (
+    <section aria-label={`Note: ${name}`} style={{ ...glass, padding: spacing.lg, minWidth: 0 }}>
+      <h2 style={{ margin: 0, fontSize: typography.scale.md }}>{name}</h2>
+      {state.kind === "note" && (
+        <>
+          <p style={{ margin: `2px 0 ${String(spacing.sm)}px`, color: typography.color.muted }}>
+            {state.path}
+          </p>
+          <div style={{ maxWidth: typography.measurePx, lineHeight: 1.55 }}>
+            <Markdown text={state.text} />
+          </div>
+        </>
+      )}
+      {state.kind === "reading" && (
+        <p style={{ margin: 0, color: typography.color.muted }}>Reading the note…</p>
+      )}
+      {state.kind === "none" && (
+        <p style={{ margin: 0, color: typography.color.muted }}>
+          No note has been written for {name} yet. Other notes link to it.
+        </p>
+      )}
+      {state.kind === "failed" && (
+        <p style={{ margin: 0, color: semantic.error }}>The core could not read this note.</p>
+      )}
+    </section>
   );
 }
 

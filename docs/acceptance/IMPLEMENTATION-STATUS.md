@@ -3768,3 +3768,32 @@ backticks, `1.` lists run together). One `Markdown` component (`apps/web/src/con
 
 Not run: the browser suites. File previews and tool output stay raw text on purpose. The `ConversationSurface` primitive
 in `packages/ui` still shows plain text.
+
+### 2026-10-13 The Vault says what a note says
+
+The index keeps links, not note text, and every recall quote was the link itself (`[[Tolga]]`). The per-turn recall also
+searched for the whole message as one name, so "what do you know about tolga" matched nothing; Jester answered that the
+note did not exist. The owner chose to read note text on demand: nothing new is stored, and sensitive notes stay behind
+the passcode.
+
+- Recall quotes the paragraph a link sits in, and leads with the opening of the name's own note, read from disk when
+  the index still matches the file. A changed note falls back to the indexed link. Quotes stay verbatim at their spans.
+- A turn's recall finds names in the message: every run of one to three words is tried as a key or alias, and a single
+  word as one part of a person's name ("huda" → `kasha-huda-amer`).
+- `GET /vault/notes/:entityId` returns a note's text without its frontmatter; the Vault page shows it, as Markdown,
+  under the sphere for the opened node.
+
+| Clause                                                               | State       | Evidence                                                                                        |
+| -------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| Recall quotes paragraphs and opens with the name's own note          | implemented | `vault.integration.test.ts` (2): red, then green; the verbatim-span test still green            |
+| THE GATE: a turn asking about a name carries what its note says      | implemented | `vault.integration.test.ts` "recall from what the owner typed" (5): red, then green             |
+| Sensitive notes stay out of named recall and note reads while locked | implemented | `vault.integration.test.ts` "sensitive notes" extended: red, then green                         |
+| The Vault page shows the opened node's note, or says none is written | implemented | `headless.integration.test.ts` "reads a node's note" and `Vault.test.ts` (2): red, then green   |
+| Against the real MindVault (read only, throwaway database)           | checked     | "tolga" → `people/tolga.md` + 5 mentions; "who is huda" → `kasha-huda-amer.md`; "hey" → nothing |
+
+| Command                                                       | Result             |
+| ------------------------------------------------------------- | ------------------ |
+| `npx vitest run apps/core apps/web/src packages`              | exit 0; 2082 tests |
+| `npm run typecheck`; ESLint and Prettier on the changed files | exit 0             |
+
+Needs the work-PC core and web redeployed; no migration and no reindex. Not run: browser suites.

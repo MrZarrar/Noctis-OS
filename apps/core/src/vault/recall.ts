@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import type {
@@ -10,12 +10,13 @@ import type {
 } from "@noctis/contracts";
 import { VaultRecallSchema } from "@noctis/contracts";
 import type { Result } from "@noctis/domain";
-import { normalizeKey, ok } from "@noctis/domain";
+import { normalizeKey, ok, parseNote } from "@noctis/domain";
 
 import type { NoctisDatabase } from "../db/connection.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { runCommand } from "../kernel.js";
 import type { VaultRoot } from "./root.js";
+import { isInsideRoot } from "./root.js";
 
 /** How many notes a focused recall may open. Section 7: not a miniature full Vault. */
 const DEFAULT_LIMIT = 8;
@@ -140,15 +141,179 @@ export function recallFor(
     )
     .all(pattern, `%${query.trim().toLowerCase()}%`, key, limit) as Array<{ id: string }>;
 
-  const entityIds = entities.map((entity) => entity.id);
+  return recallOf(
+    db,
+    entities.map((entity) => entity.id),
+    options,
+  );
+}
 
+/** Shorter words name nothing worth recalling and match too much: "ok", "u", "hi". */
+const MIN_TERM = 3;
+
+/**
+ * Recall for a sentence, by the names written in it.
+ *
+ * `recallFor` treats its query as one name, so a whole message — "what do you
+ * know about tolga" — matches nothing. Every run of one to three words is
+ * tried instead as a note's key or alias, the same vocabulary a wikilink uses.
+ */
+export function recallNamedIn(
+  db: NoctisDatabase,
+  text: string,
+  options: RecallOptions,
+): { entityIds: string[]; evidence: VaultRecallEvidence[]; freshness: VaultFreshness } {
+  const words = text
+    .toLowerCase()
+    .replaceAll(/['’]s\b/g, "")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word !== "");
+  const terms = new Set<string>();
+
+  for (let start = 0; start < words.length; start += 1) {
+    for (let size = 1; size <= 3 && start + size <= words.length; size += 1) {
+      const term = words.slice(start, start + size).join("-");
+
+      if (term.length >= MIN_TERM) {
+        terms.add(term);
+      }
+    }
+  }
+
+  if (terms.size === 0) {
+    return recallOf(db, [], options);
+  }
+
+  const entities = db
+    .prepare(
+      `SELECT DISTINCT e.id, e.key, e.item_id FROM vault_entities e, json_each(?) t
+        WHERE (e.key = t.value OR instr(e.keys_index, '|' || t.value || '|') > 0
+               -- A person is called by one of their names: "huda" for kasha-huda-amer.
+               OR (e.type = 'person' AND instr('-' || e.key || '-', '-' || t.value || '-') > 0))
+          ${options.includeSensitive === true ? "" : `AND ${VISIBLE_ENTITY}`}
+        ORDER BY (e.item_id IS NOT NULL) DESC,
+                 (e.key = t.value OR instr(e.keys_index, '|' || t.value || '|') > 0) DESC,
+                 length(e.key) DESC
+        LIMIT ?`,
+    )
+    .all(JSON.stringify([...terms]), options.limit ?? DEFAULT_LIMIT) as Array<{ id: string }>;
+
+  return recallOf(
+    db,
+    entities.map((entity) => entity.id),
+    options,
+  );
+}
+
+/** How much of a name's own note recall opens with: its opening, not the note. */
+const OPENING_MAX = 600;
+
+/** A paragraph past this is cut to a window around the link. */
+const PARAGRAPH_MAX = 800;
+
+const BLANK_LINE = /\r?\n[ \t]*\r?\n/g;
+
+/** Trims whitespace off both ends of a span, so a quote never opens on a blank line. */
+function tight(raw: string, start: number, end: number): { start: number; end: number } {
+  let from = start;
+  let to = end;
+
+  while (from < to && /\s/.test(raw[from] ?? "")) from += 1;
+  while (to > from && /\s/.test(raw[to - 1] ?? "")) to -= 1;
+
+  return { start: from, end: to };
+}
+
+/** The paragraph a link sits in, never reaching back into the frontmatter. */
+function paragraphAround(
+  raw: string,
+  span: { start: number; end: number },
+): { start: number; end: number } {
+  let start = parseNote(raw).bodyOffset;
+  let end = raw.length;
+
+  for (const blank of raw.matchAll(BLANK_LINE)) {
+    const blankEnd = blank.index + blank[0].length;
+
+    if (blankEnd <= span.start) {
+      start = Math.max(start, blankEnd);
+    } else if (blank.index >= span.end) {
+      end = blank.index;
+      break;
+    }
+  }
+
+  if (end - start > PARAGRAPH_MAX) {
+    start = Math.max(start, span.start - PARAGRAPH_MAX / 2);
+    end = Math.min(end, span.end + PARAGRAPH_MAX / 2);
+  }
+
+  return tight(raw, start, end);
+}
+
+/** A note's opening after its frontmatter and title heading. */
+function openingOf(raw: string): { start: number; end: number } {
+  const note = parseNote(raw);
+  const body = tight(raw, note.bodyOffset, raw.length);
+  const heading = /^#\s[^\n]*\n?/.exec(raw.slice(body.start));
+  const start = body.start + (heading?.[0].length ?? 0);
+
+  return tight(raw, start, Math.min(raw.length, start + OPENING_MAX));
+}
+
+/**
+ * The file as it is now, for a note whose index still matches it. A changed
+ * note's indexed spans point at the wrong bytes, so it gets no fresh quote.
+ */
+function readCurrent(root: VaultRoot | undefined, path: string, hash: string): string | undefined {
+  if (root === undefined) {
+    return undefined;
+  }
+
+  try {
+    const raw = readFileSync(join(root.path, path));
+
+    return createHash("sha256").update(raw).digest("hex") === hash
+      ? raw.toString("utf8")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The evidence for a set of names: each name's own note first, by its opening,
+ * then every note that links it, by the paragraph the link sits in. Quotes are
+ * verbatim slices of the file at their spans; a note that changed since it was
+ * indexed falls back to the link the index recorded.
+ */
+function recallOf(
+  db: NoctisDatabase,
+  entityIds: readonly string[],
+  options: RecallOptions,
+): { entityIds: string[]; evidence: VaultRecallEvidence[]; freshness: VaultFreshness } {
   if (entityIds.length === 0) {
     // Nobody looked at anything, because nothing matched. That is `unknown`,
     // not `current`: an empty recall is not evidence of absence.
     return { entityIds: [], evidence: [], freshness: "unknown" };
   }
 
+  const limit = options.limit ?? DEFAULT_LIMIT;
+  const open = options.includeSensitive === true;
   const placeholders = entityIds.map(() => "?").join(", ");
+  const owned = db
+    .prepare(
+      `SELECT e.id AS entity_id, i.id AS item_id, i.path, i.content_hash
+         FROM vault_entities e
+         JOIN vault_items i ON i.id = e.item_id
+        WHERE e.id IN (${placeholders})${open ? "" : " AND i.sensitive = 0"}`,
+    )
+    .all(...entityIds) as Array<{
+    entity_id: string;
+    item_id: string;
+    path: string;
+    content_hash: string;
+  }>;
   const rows = db
     .prepare(
       `SELECT m.id AS mention_id, m.entity_id, m.item_id, m.span_start, m.span_end, m.quote,
@@ -161,20 +326,101 @@ export function recallFor(
     )
     .all(...entityIds, limit * 4) as unknown as MentionRow[];
 
-  const evidence: VaultRecallEvidence[] = rows.map((row) => ({
-    itemId: row.item_id,
-    entityId: row.entity_id,
-    path: row.item_path,
-    span: { start: row.span_start, end: row.span_end },
-    quote: row.quote,
-    freshness: freshnessFor(options.root, row.item_path, row.mention_hash),
-  }));
+  const openings: VaultRecallEvidence[] = entityIds.flatMap((entityId) => {
+    const own = owned.find((row) => row.entity_id === entityId);
+    const raw =
+      own === undefined ? undefined : readCurrent(options.root, own.path, own.content_hash);
+
+    if (own === undefined || raw === undefined) {
+      return [];
+    }
+
+    const span = openingOf(raw);
+
+    return span.end > span.start
+      ? [
+          {
+            itemId: own.item_id,
+            entityId,
+            path: own.path,
+            span,
+            quote: raw.slice(span.start, span.end),
+            freshness: "current" as const,
+          },
+        ]
+      : [];
+  });
+
+  const mentions: VaultRecallEvidence[] = rows.map((row) => {
+    const raw = readCurrent(options.root, row.item_path, row.mention_hash);
+    const span =
+      raw === undefined
+        ? { start: row.span_start, end: row.span_end }
+        : paragraphAround(raw, { start: row.span_start, end: row.span_end });
+
+    return {
+      itemId: row.item_id,
+      entityId: row.entity_id,
+      path: row.item_path,
+      span,
+      quote: raw === undefined ? row.quote : raw.slice(span.start, span.end),
+      freshness:
+        raw === undefined ? freshnessFor(options.root, row.item_path, row.mention_hash) : "current",
+    };
+  });
+
+  const evidence = [...openings, ...mentions];
 
   return {
-    entityIds,
+    entityIds: [...entityIds],
     evidence,
     freshness: evidence.length === 0 ? "unknown" : weakest(evidence.map((item) => item.freshness)),
   };
+}
+
+/** A note page long enough for any real note, short enough not to ship a dump. */
+const NOTE_MAX = 20_000;
+
+/**
+ * The text of a name's own note, for the Vault page: read from disk when
+ * asked, never stored. A sensitive note needs an unlock; a name nobody has
+ * written a note for has nothing to read.
+ */
+export function readNoteFor(
+  db: NoctisDatabase,
+  root: VaultRoot | undefined,
+  entityId: string,
+  options: { includeSensitive?: boolean } = {},
+): { path: string; title: string; text: string } | undefined {
+  const row = db
+    .prepare(
+      `SELECT i.path, i.title, i.sensitive FROM vault_entities e
+         JOIN vault_items i ON i.id = e.item_id WHERE e.id = ?`,
+    )
+    .get(entityId) as { path: string; title: string; sensitive: number } | undefined;
+
+  if (root === undefined || row === undefined) {
+    return undefined;
+  }
+
+  if (row.sensitive === 1 && options.includeSensitive !== true) {
+    return undefined;
+  }
+
+  try {
+    const file = realpathSync(join(root.path, row.path));
+
+    if (!isInsideRoot(realpathSync(root.path), file)) {
+      return undefined;
+    }
+
+    const raw = readFileSync(file, "utf8");
+    const body = raw.slice(parseNote(raw).bodyOffset).trim();
+
+    return { path: row.path, title: row.title, text: body.slice(0, NOTE_MAX) };
+  } catch {
+    return undefined;
+  }
 }
 
 export function getRecall(db: NoctisDatabase, id: string): VaultRecall | undefined {

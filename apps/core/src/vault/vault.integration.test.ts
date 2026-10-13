@@ -21,8 +21,9 @@ import { createEventBroker } from "../events/broker.js";
 import { createLogger } from "../logging.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { readGraph } from "../api/http.js";
+import { promptWithRecall, recallForPrompt } from "../conversation/recall-context.js";
 import { indexVault, listVaultItems } from "./indexer.js";
-import { recallFor, recordRecall } from "./recall.js";
+import { readNoteFor, recallFor, recallNamedIn, recordRecall } from "./recall.js";
 import type { VaultRoot } from "./root.js";
 import { resolveVaultRoot } from "./root.js";
 import { VaultConflict, VaultWriteRefused, writeNoteAtomically } from "./writes.js";
@@ -395,6 +396,33 @@ describe("focused recall", () => {
     }
   });
 
+  it("quotes the paragraph a link sits in, so recall says something about the name", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+
+    indexVault(kernel, context, root, key());
+
+    const quotes = recallFor(kernel.db, "Alex Kerr", { root }).evidence.map((item) => item.quote);
+
+    expect(quotes).toContain(
+      "Kicked off with [[Alex Kerr]] in early 2026. The client is [[Acme Travel]].",
+    );
+  });
+
+  it("leads with the opening of the name's own note, without its frontmatter", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+
+    indexVault(kernel, context, root, key());
+
+    const [first] = recallFor(kernel.db, "Alex Kerr", { root }).evidence;
+
+    expect(first?.path).toBe("people/alex-kerr.md");
+    expect(first?.quote).toContain("Prefers async updates.");
+    expect(first?.quote).not.toContain("aliases:");
+    expect(first?.freshness).toBe("current");
+  });
+
   it("THE GATE: opens a subgraph, not the whole Vault", () => {
     const kernel = makeKernel();
     const root = vaultRoot();
@@ -473,6 +501,102 @@ describe("focused recall", () => {
     ).toBe(1);
   });
 });
+
+describe("recall from what the owner typed", () => {
+  function indexed(): { db: NoctisDatabase; root: VaultRoot } {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+
+    indexVault(kernel, context, root, key());
+    return { db: kernel.db, root };
+  }
+
+  it("finds a name anywhere in a sentence, through an alias too", () => {
+    const { db, root } = indexed();
+
+    const found = recallNamedIn(db, "ok what do u know about alex", { root });
+
+    expect(found.evidence[0]?.path).toBe("people/alex-kerr.md");
+    expect(found.evidence[0]?.quote).toContain("Prefers async updates.");
+  });
+
+  it("finds a person by one of their names", () => {
+    const { db, root } = indexed();
+
+    const found = recallNamedIn(db, "what do you know about sam", { root });
+
+    expect(found.evidence[0]?.path).toBe("people/sam-oyelaran.md");
+  });
+
+  it("finds a name two words long", () => {
+    const { db, root } = indexed();
+
+    const paths = recallNamedIn(db, "tell me about the Jarvis Project", { root }).evidence.map(
+      (item) => item.path,
+    );
+
+    expect(paths).toContain("projects/jarvis-project.md");
+  });
+
+  it("THE GATE: a turn asking about a name carries what that name's note says", () => {
+    const { db, root } = indexed();
+
+    const prompt = promptWithRecall(
+      "what do you know about alex",
+      recallForPrompt(db, "what do you know about alex", { vaultRoot: root }),
+    );
+
+    expect(prompt).toContain("people/alex-kerr.md (current): Engineer on [[Jarvis Project]]");
+    expect(prompt.endsWith("what do you know about alex")).toBe(true);
+  });
+
+  it("finds nothing in small talk", () => {
+    const { db, root } = indexed();
+
+    expect(recallNamedIn(db, "hey how are you", { root })).toEqual({
+      entityIds: [],
+      evidence: [],
+      freshness: "unknown",
+    });
+  });
+});
+
+describe("reading a note", () => {
+  it("returns a note's text without its frontmatter", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+
+    indexVault(kernel, context, root, key());
+
+    const note = readNoteFor(kernel.db, root, entityKeyed(kernel.db, "alex-kerr"));
+
+    expect(note?.path).toBe("people/alex-kerr.md");
+    expect(note?.text).toContain("Engineer on [[Jarvis Project]]. Prefers async updates.");
+    expect(note?.text).not.toContain("aliases:");
+  });
+
+  it("has nothing for a name nobody has written a note for", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+
+    indexVault(kernel, context, root, key());
+
+    expect(
+      readNoteFor(kernel.db, root, entityKeyed(kernel.db, "future-retrospective")),
+    ).toBeUndefined();
+  });
+});
+
+function entityKeyed(db: NoctisDatabase, entityKey: string): string {
+  const row = db.prepare("SELECT id FROM vault_entities WHERE key = ?").get(entityKey) as
+    { id: string } | undefined;
+
+  if (row === undefined) {
+    throw new Error(`no entity ${entityKey}`);
+  }
+
+  return row.id;
+}
 
 describe("Vault writes", () => {
   it("THE GATE: are disabled by default", () => {
@@ -569,6 +693,13 @@ describe("sensitive notes", () => {
     expect(recalled("Hidden Contact", false).entityIds).toEqual([]);
     // Agents' recall passes no option, so it is always the locked view.
     expect(recallFor(db, "Hidden Contact", { root }).entityIds).toEqual([]);
+    expect(recallNamedIn(db, "who is hidden contact", { root }).entityIds).toEqual([]);
+
+    const secret = entityKeyed(db, "secret-person");
+    expect(readNoteFor(db, root, secret)).toBeUndefined();
+    expect(readNoteFor(db, root, secret, { includeSensitive: true })?.text).toContain(
+      "Met [[Hidden Contact]]",
+    );
   });
 
   it("a note indexed before sensitivity was read learns it on the next reindex", () => {

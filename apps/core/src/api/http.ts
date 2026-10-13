@@ -163,7 +163,13 @@ import {
 import { listRemoteHosts, openRemoteDesktop } from "../remote/service.js";
 import { readDigest } from "../notify/digest.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
-import { VISIBLE_ENTITY, getRecall, recallFor, recordRecall } from "../vault/recall.js";
+import {
+  VISIBLE_ENTITY,
+  getRecall,
+  readNoteFor,
+  recallFor,
+  recordRecall,
+} from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
 import {
   isUnlocked,
@@ -877,6 +883,17 @@ function handleRead(
 
   if (isGraph) {
     return { status: 200, body: readGraph(deps.kernel.db, limit, unlocked()) };
+  }
+
+  // A node's own note, read from disk when the Vault page opens it.
+  if (segments.length === 3 && segments[0] === "vault" && segments[1] === "notes") {
+    const note = readNoteFor(deps.kernel.db, deps.vaultRoot, segments[2] ?? "", {
+      includeSensitive: unlocked(),
+    });
+
+    return note === undefined
+      ? { status: 404, body: errorBody("not_found", "note not found") }
+      : { status: 200, body: note };
   }
 
   if (segments.length === 2 && segments[0] === "vault" && segments[1] === "recall") {

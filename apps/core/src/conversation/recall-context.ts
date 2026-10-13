@@ -1,7 +1,7 @@
 import type { VaultRecallEvidence } from "@noctis/contracts";
 
 import type { NoctisDatabase } from "../db/connection.js";
-import { recallFor } from "../vault/recall.js";
+import { recallNamedIn } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
 
 /**
@@ -18,8 +18,8 @@ import type { VaultRoot } from "../vault/root.js";
 /** How many quotes a prompt may carry. A prompt is not a context dump. */
 const MAX_LINES = 6;
 
-/** A quote long enough to be evidence and short enough not to become the prompt. */
-const MAX_QUOTE = 240;
+/** A paragraph is evidence; a whole note would become the prompt. */
+const MAX_QUOTE = 800;
 
 const PREAMBLE =
   "From the owner's Vault, which may be out of date — each line names its note and how fresh it is:";
@@ -43,12 +43,10 @@ export interface RecallContextDeps {
  * `vault_recalls` is the audit table for a recall the owner asked for, and one
  * of these happens on every single turn.
  *
- * ponytail: the whole prompt is the query, matched with `recallFor`'s `LIKE`
- * over entity names and keys. A long prompt therefore matches nothing, because
- * no entity key contains a paragraph. The ceiling is real and the upgrade path
- * is term extraction (or FTS5, which `recall.ts` already names) — deliberately
- * not guessed at here, because which terms matter is the kind of thing the
- * live evidence should decide rather than this function.
+ * The names are found in the prompt by `recallNamedIn`: every run of one to
+ * three words is tried as a note's key or alias. ponytail: a name the owner
+ * misspells, or a topic no note is named after, still finds nothing; FTS5 over
+ * note text is the upgrade if live use shows that matters.
  */
 export function recallForPrompt(
   db: NoctisDatabase,
@@ -59,7 +57,7 @@ export function recallForPrompt(
     return [];
   }
 
-  const found = recallFor(db, prompt, { root: deps.vaultRoot });
+  const found = recallNamedIn(db, prompt, { root: deps.vaultRoot });
 
   return found.evidence.filter((item) => CARRIED.has(item.freshness)).slice(0, MAX_LINES);
 }

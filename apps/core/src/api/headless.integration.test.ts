@@ -891,6 +891,23 @@ describe("the Vault graph read", () => {
     expect(nodes.filter((node) => node.x === null)).toHaveLength(0);
   });
 
+  it("reads a node's note when it is opened, and has nothing for an unwritten name", async () => {
+    const core = await indexedCore();
+    const nodes = (await read(core, "/vault/graph")).body.nodes as Array<{
+      id: string;
+      name: string;
+    }>;
+    const idOf = (name: string): string => nodes.find((node) => node.name === name)?.id ?? "";
+
+    const note = await read(core, `/vault/notes/${idOf("Alex Kerr")}`);
+
+    expect(note.status).toBe(200);
+    expect(note.body.path).toBe("people/alex-kerr.md");
+    expect(note.body.text).toContain("Prefers async updates.");
+
+    expect((await read(core, `/vault/notes/${idOf("Future Retrospective")}`)).status).toBe(404);
+  });
+
   it("leaves the agents' own brain out of the owner's sphere", async () => {
     const graph = await read(await indexedCore(), "/vault/graph");
     const nodes = graph.body.nodes as Array<{ type: string }>;
