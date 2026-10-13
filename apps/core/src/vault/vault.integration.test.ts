@@ -550,6 +550,34 @@ describe("recall from what the owner typed", () => {
     expect(prompt.endsWith("what do you know about alex")).toBe(true);
   });
 
+  it("finds the notes a word is a tag of, so 'my family' finds the family", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+    writeFileSync(
+      join(root.path, "people/mikaeel.md"),
+      "---\ntags: [people, family, sibling]\n---\n\nMy younger brother.\n",
+    );
+    indexVault(kernel, context, root, key());
+
+    const found = recallNamedIn(kernel.db, "tell me about my family", { root });
+
+    expect(found.evidence[0]?.path).toBe("people/mikaeel.md");
+    expect(found.evidence[0]?.quote).toBe("My younger brother.");
+  });
+
+  it("a note indexed before tags were kept learns them on the next reindex", () => {
+    const kernel = makeKernel();
+    const root = vaultRoot();
+    indexVault(kernel, context, root, key());
+    kernel.db.prepare("UPDATE vault_items SET tags = ''").run();
+
+    indexVault(kernel, context, root, key());
+
+    expect(recallNamedIn(kernel.db, "any project news", { root }).evidence[0]?.path).toBe(
+      "projects/jarvis-project.md",
+    );
+  });
+
   it("finds nothing in small talk", () => {
     const { db, root } = indexed();
 

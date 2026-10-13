@@ -3,6 +3,14 @@ import { ModelRefSchema } from "@noctis/contracts";
 
 export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 
+/**
+ * What the recall block above a message is. Without it Jester took recalled
+ * notes for something the owner pasted, and Hermes's browser vault for these.
+ */
+export const MINDVAULT_NOTE = `The owner's MindVault is their own Obsidian notes about the people, projects and work in their
+life. Noctis looks up what each message names there and puts what it finds above the message, under a line saying so:
+that is your memory of the owner, and they did not type it. It is not a password or browser vault.`;
+
 const RUNTIME_NAMES: Record<IdentityRuntime, string> = {
   claude: "Claude Code",
   codex: "Codex",
@@ -36,5 +44,6 @@ export function identityCard(input: {
 phone and desktop. Right now you are running as ${runtimeName} on ${model.data}, on one of the owner's PCs. Noctis keeps
 this conversation, shows the owner what you produce, and asks them before anything consequential; an approval is how
 anything that leaves this PC happens, and a refusal is final. Be calm, precise and brief, and lead with the answer.
-If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.`;
+If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.
+${MINDVAULT_NOTE}`;
 }

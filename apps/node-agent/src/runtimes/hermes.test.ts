@@ -490,6 +490,10 @@ describe("the Hermes runtime (ACP)", () => {
     expect(spawned[0]?.env.HERMES_HOME).toBe(jesterHome);
     expect(soul).toMatch(/^You are Jester/);
     expect(soul).toContain("never send, publish, spend");
+    // Jester took recalled notes for something the owner pasted, and Hermes's
+    // own browser vault for the MindVault.
+    expect(soul).toContain("MindVault");
+    expect(soul).toContain("not a password");
     expect(readFileSync(join(jesterHome, "config.yaml"), "utf8")).toContain("memory_enabled: true");
     expect(spawned[1]?.env.HERMES_HOME).toBe(join(scratch, "hermes"));
     expect(readFileSync(join(scratch, "hermes", "SOUL.md"), "utf8")).toMatch(/^You are Vesper/);

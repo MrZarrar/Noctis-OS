@@ -250,7 +250,8 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(16);
+    expect(version.v).toBe(17);
     expect(vaultItems).toContain("sensitive");
+    expect(vaultItems).toContain("tags");
   });
 });

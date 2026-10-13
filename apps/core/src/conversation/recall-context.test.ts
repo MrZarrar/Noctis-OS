@@ -28,6 +28,13 @@ describe("promptWithRecall", () => {
     expect(composed).toContain("projects/noctis.md (stale): The work PC runs the core");
   });
 
+  it("says Noctis looked it up, so the model never takes it for something the owner pasted", () => {
+    const composed = promptWithRecall("tell me about my family", [evidence()]);
+
+    expect(composed).toMatch(/^Noctis looked these up in the owner's MindVault/);
+    expect(composed).toContain("the owner did not type them");
+  });
+
   it("puts the owner's words last, so context never displaces the instruction", () => {
     const composed = promptWithRecall("what is the plan", [evidence()]);
 

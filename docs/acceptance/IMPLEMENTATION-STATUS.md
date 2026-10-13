@@ -3797,3 +3797,29 @@ the passcode.
 | `npm run typecheck`; ESLint and Prettier on the changed files | exit 0             |
 
 Needs the work-PC core and web redeployed; no migration and no reindex. Not run: browser suites.
+
+### 2026-10-13 Family by tag, and agents told what the recall block is
+
+Live after the previous entry: recall reached Jester, but Jester took the recalled lines for something the owner had
+pasted, and read "vault" as Hermes's own browser vault. "Tell me about my family" found nothing, because it names nobody.
+
+- The recall block now opens "Noctis looked these up in the owner's MindVault … the owner did not type them".
+- Vesper's identity card and Jester's SOUL.md both say what the MindVault is and that it is not a password vault.
+- Migration `0017_vault_tags.sql` adds `vault_items.tags` (`|people|family|`). A reindex fills it, unchanged notes too,
+  the same way `sensitive` was backfilled. A word in a message that is a note's tag finds that note. `tagsOf` is shared
+  with the generated-note check, which now also catches a `#graphify/` tag.
+
+| Clause                                                     | State       | Evidence                                                                                        |
+| ---------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| "my family" finds the notes tagged family                  | implemented | `vault.integration.test.ts` (2, incl. backfill on reindex): red (no column), then green         |
+| The recall block says Noctis put it there                  | implemented | `recall-context.test.ts`: red, then green                                                       |
+| Vesper and Jester know what the MindVault is               | implemented | `identity.test.ts`, `hermes.test.ts`: red, then green                                           |
+| Against the real MindVault (read only, throwaway database) | checked     | "tell me about my family" → six family notes incl. Mikaeel and Kasha Huda Amer; "hey" → nothing |
+
+| Command                                                       | Result                                                                                        |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `npx vitest run apps packages`                                | exit 0; 2422 tests (the working tree also held another session's uncommitted file-panel work) |
+| `npm run typecheck`; ESLint and Prettier on the changed files | exit 0                                                                                        |
+
+Deploy: work-PC core (migration 0017), then **Reindex** on the Vault page so tags fill in; then restart the home node so
+Jester's SOUL.md is rewritten. Known edge: a word that is also a technical tag pulls those notes in ("from the vault").

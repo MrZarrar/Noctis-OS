@@ -9,6 +9,7 @@ import {
   LAYOUT_VERSION,
   isGeneratedNote,
   isSensitiveNote,
+  tagsOf,
   keysFor,
   normalizeKey,
   ok,
@@ -338,13 +339,16 @@ export function indexVault(
 
         const title = titleFor(file.path, file.note);
         const sensitive = isSensitiveNote(file.note) ? 1 : 0;
+        const tags = keysIndex([
+          ...new Set(tagsOf(file.note).map((tag) => tag.toLowerCase().replace(/[\s_]+/g, "-"))),
+        ]);
 
         if (existing === undefined) {
           const itemId = kernel.ids.nextId();
 
           tx.prepare(
-            `INSERT INTO vault_items (id, path, title, content_hash, byte_length, modified_at, indexed_at, sensitive)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO vault_items (id, path, title, content_hash, byte_length, modified_at, indexed_at, sensitive, tags)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             itemId,
             file.path,
@@ -354,6 +358,7 @@ export function indexVault(
             file.modifiedAt,
             now,
             sensitive,
+            tags,
           );
 
           result.added += 1;
@@ -362,21 +367,29 @@ export function indexVault(
         }
 
         if (existing.content_hash === file.hash) {
-          // Rows indexed before migration 0014 learn their flag without a rewrite.
-          tx.prepare(`UPDATE vault_items SET sensitive = ? WHERE id = ? AND sensitive <> ?`).run(
-            sensitive,
-            existing.id,
-            sensitive,
-          );
+          // Rows indexed before migrations 0014 and 0017 learn their flag and
+          // tags without a rewrite.
+          tx.prepare(
+            `UPDATE vault_items SET sensitive = ?, tags = ? WHERE id = ? AND (sensitive <> ? OR tags <> ?)`,
+          ).run(sensitive, tags, existing.id, sensitive, tags);
           result.unchanged += 1;
           continue;
         }
 
         tx.prepare(
           `UPDATE vault_items SET title = ?, content_hash = ?, byte_length = ?, modified_at = ?, indexed_at = ?,
-                  sensitive = ?
+                  sensitive = ?, tags = ?
             WHERE id = ?`,
-        ).run(title, file.hash, file.byteLength, file.modifiedAt, now, sensitive, existing.id);
+        ).run(
+          title,
+          file.hash,
+          file.byteLength,
+          file.modifiedAt,
+          now,
+          sensitive,
+          tags,
+          existing.id,
+        );
 
         // Only this note's derivations are dropped. Every other note's edges and
         // mentions are untouched by a change here.

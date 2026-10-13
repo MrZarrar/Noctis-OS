@@ -37,6 +37,8 @@ describe("identityCard", () => {
     expect(card).toMatch(/^You are Vesper/);
     expect(card).toContain("running as Claude Code on sonnet");
     expect(card).toContain("say you are Vesper, running on sonnet through Noctis");
+    expect(card).toContain("MindVault");
+    expect(card).toContain("not a password");
   });
 
   it.each([

@@ -189,7 +189,10 @@ export function recallNamedIn(
       `SELECT DISTINCT e.id, e.key, e.item_id FROM vault_entities e, json_each(?) t
         WHERE (e.key = t.value OR instr(e.keys_index, '|' || t.value || '|') > 0
                -- A person is called by one of their names: "huda" for kasha-huda-amer.
-               OR (e.type = 'person' AND instr('-' || e.key || '-', '-' || t.value || '-') > 0))
+               OR (e.type = 'person' AND instr('-' || e.key || '-', '-' || t.value || '-') > 0)
+               -- A word a note is tagged with: "my family" finds the family.
+               OR EXISTS (SELECT 1 FROM vault_items ti
+                           WHERE ti.id = e.item_id AND instr(ti.tags, '|' || t.value || '|') > 0))
           ${options.includeSensitive === true ? "" : `AND ${VISIBLE_ENTITY}`}
         ORDER BY (e.item_id IS NOT NULL) DESC,
                  (e.key = t.value OR instr(e.keys_index, '|' || t.value || '|') > 0) DESC,

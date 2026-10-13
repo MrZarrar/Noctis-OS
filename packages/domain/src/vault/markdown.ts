@@ -255,16 +255,15 @@ export function keysFor(path: string, note: ParsedNote): string[] {
 }
 
 /**
- * Notes a tool wrote about code, not notes the owner wrote. graphify drops
- * thousands of them into a Vault at once, and they drown the second brain.
- * Only the `tags` field is read, so prose or other fields that mention
- * graphify keep their note.
+ * A note's frontmatter tags, as written (`tags: [a, b]` or a `- a` list),
+ * unquoted and without a leading `#`. Prose that mentions a tag is not one.
  */
-export function isGeneratedNote(note: ParsedNote): boolean {
+export function tagsOf(note: ParsedNote): string[] {
   if (note.frontmatter === undefined) {
-    return false;
+    return [];
   }
 
+  const tags: string[] = [];
   let inTags = false;
 
   for (const line of note.frontmatter.raw.split(/\r?\n/)) {
@@ -278,12 +277,18 @@ export function isGeneratedNote(note: ParsedNote): boolean {
       values = inTags ? [line.replace(/^\s*-\s*/, "")] : [];
     }
 
-    if (values.some((value) => unquote(value).startsWith("graphify/"))) {
-      return true;
-    }
+    tags.push(...values.map((value) => unquote(value).replace(/^#/, "")).filter(Boolean));
   }
 
-  return false;
+  return tags;
+}
+
+/**
+ * Notes a tool wrote about code, not notes the owner wrote. graphify drops
+ * thousands of them into a Vault at once, and they drown the second brain.
+ */
+export function isGeneratedNote(note: ParsedNote): boolean {
+  return tagsOf(note).some((tag) => tag.startsWith("graphify/"));
 }
 
 /**

@@ -21,8 +21,12 @@ const MAX_LINES = 6;
 /** A paragraph is evidence; a whole note would become the prompt. */
 const MAX_QUOTE = 800;
 
+/**
+ * Says who put this here. Without it Jester took recalled notes for something
+ * the owner had pasted, and the word "Vault" for Hermes's own password vault.
+ */
 const PREAMBLE =
-  "From the owner's Vault, which may be out of date — each line names its note and how fresh it is:";
+  "Noctis looked these up in the owner's MindVault, their own Obsidian notes, for this message; the owner did not type them. Each line names its note and how fresh it is:";
 
 /** Freshness a line is not worth carrying: nobody looked, or the note is gone. */
 const CARRIED: ReadonlySet<string> = new Set(["current", "stale"]);
