@@ -8,13 +8,15 @@
 
 **Tech Stack:** TypeScript, Node 22.23.2, `node:sqlite`, zod 4, vitest 4, React 18. No new dependencies.
 
+**Depends on:** [Settings in the UI](2026-10-13-settings-in-the-ui.md), built first: the promoter's time is the `promoterAt` setting and Vault writes are the `vaultWrites` setting, both on the Settings page.
+
 **Spec:** The owner's decisions in conversation on 2026-10-13: (1) every agent has the whole MindVault to hand without being asked (commit `cf85612`); (2) promotion auto-applies add-only edits and shows them in the digest with Undo; (3) anything that would change or remove existing text goes to Approvals. Background: Jarvis's entity engine (`server/lib/vault-engine.js`, not ported — `DONOR-PORT-LEDGER.md`) last promoted on 2026-08-14; `inbox/` holds 59 unpromoted notes.
 
 ## Global Constraints
 
 - Node.js 22.23.2 and the exact package lock; no new packages.
 - Failing test first for every behaviour; record red and green.
-- Default-off: nothing runs unless `NOCTIS_PROMOTER_AT` names a local time (`"03:00"`) or the owner presses **Promote now**. Writes still need `NOCTIS_VAULT_ALLOW_WRITES=true`.
+- Default-off: nothing runs unless the **File the inbox nightly** setting has a time or the owner presses **Promote now**. Writes need the **Let Noctis write to the Vault** setting. Both are set on the Settings page, never by editing code or the environment.
 - Never rewrite or delete text the owner wrote. Auto-applied edits only insert inside a Noctis-owned block or create a note that does not exist.
 - Every write goes through `writeNoteAtomically` (`apps/core/src/vault/writes.ts`), so a note edited in Obsidian since it was read refuses the write.
 - Paths are Vault-relative; facts and new notes only under `people/`, `reference/`, `projects/`.
@@ -37,7 +39,7 @@
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `packages/contracts/src/runtime.ts`                                       | Three new `RuntimeProposal` kinds                                                                            |
 | `apps/node-agent/src/noctis-mcp.ts`                                       | Three new tools that record those proposals                                                                  |
-| `apps/core/migrations/0018_vault_edits.sql`                               | `vault_edits`, `vault_promotions`, `vault_promoter` tables                                                   |
+| `apps/core/migrations/0019_vault_edits.sql`                               | `vault_edits`, `vault_promotions`, `vault_promoter` tables                                                   |
 | `apps/core/src/vault/promote.ts` (new)                                    | Apply, undo, approve, decline Vault edits; the only writer for promotion                                     |
 | `apps/core/src/vault/promoter.ts` (new)                                   | Pick the inbox batch, build the prompt, start the run                                                        |
 | `apps/core/src/conversation/proposals.ts`                                 | Route the new proposal kinds to `promote.ts`                                                                 |
@@ -223,10 +225,10 @@ server.registerTool(
 
 **Files:**
 
-- Create: `apps/core/migrations/0018_vault_edits.sql`
+- Create: `apps/core/migrations/0019_vault_edits.sql`
 - Create: `apps/core/src/vault/promote.ts`
 - Test: `apps/core/src/vault/promote.test.ts`
-- Modify: `apps/core/src/db/migrate.test.ts` (version 18), `apps/core/src/api/headless.integration.test.ts:333` (schemaVersion 18)
+- Modify: `apps/core/src/db/migrate.test.ts` (version 19), `apps/core/src/api/headless.integration.test.ts:333` (schemaVersion 19)
 
 **Interfaces:**
 
@@ -279,10 +281,10 @@ export const FACTS_OPEN = "<!-- noctis:facts -->";
 export const FACTS_CLOSE = "<!-- /noctis:facts -->";
 ```
 
-- [ ] **Step 1: The migration** (`0018_vault_edits.sql`)
+- [ ] **Step 1: The migration** (`0019_vault_edits.sql`)
 
 ```sql
--- apps/core/migrations/0018_vault_edits.sql
+-- apps/core/migrations/0019_vault_edits.sql
 -- Every edit the promoter made or proposed, so each can be listed, undone or
 -- approved. `before_contents` is the whole note before an applied edit (NULL for
 -- a note the edit created); `after_hash` is what undo expects to find.
@@ -874,7 +876,7 @@ export function undoEdit(deps: PromoteDeps, id: string): VaultEdit {
 
 - [ ] **Step 5: Say so in `writes.ts`.** Its header comment and its refusal message name the inbox grant and the Agent Brain as the only writers. Add the promoter: "…the inbox grant a runtime writes through, the Agent Brain append in vault/brain.ts, and the promoter's add-only edits in vault/promote.ts." Update any test that matches the old message text (`grep -rn "opens exactly two things" apps`).
 
-- [ ] **Step 6: Run the tests to see them pass**; bump `migrate.test.ts` to `toBe(18)` and assert `vault_edits` exists; bump `headless.integration.test.ts:333` to `18`. Run `npx vitest run apps/core/src/vault apps/core/src/db apps/core/src/api`.
+- [ ] **Step 6: Run the tests to see them pass**; bump `migrate.test.ts` to `toBe(19)` and assert `vault_edits` exists; bump `headless.integration.test.ts:333` to `18`. Run `npx vitest run apps/core/src/vault apps/core/src/db apps/core/src/api`.
 
 - [ ] **Step 7: Commit** — `feat(vault): apply, undo and approve promoted edits`
 
@@ -1100,7 +1102,7 @@ Register in `http.ts` beside `vault.recall`:
 
 (`ApiDeps.conversation` is the `ConversationService`; copy `vault.reindex`'s replay argument).
 
-In `server.ts`, beside `scheduleDigest`, a `schedulePromoter` that uses `msUntilNext(new Date(clock.now()), env.NOCTIS_PROMOTER_AT ?? "")`, calls `promoteNow` with `idempotencyKey: \`promoter-${new Date(clock.now()).toISOString().slice(0, 10)}\`` and a system context (`actorType: "system", actorId: "promoter"`), logs the outcome, and reschedules. Clear the timer where `digestTimer` is cleared.
+In `server.ts`, a second `createDailyTimer` (from the settings plan, Task 2) with `at: () => readSetting(db, env, "promoterAt")`, restarted by `onSettingChange` for `promoterAt`, whose `run` calls `promoteNow` with `idempotencyKey: \`promoter-${new Date(clock.now()).toISOString().slice(0, 10)}\`` and a system context (`actorType: "system", actorId: "promoter"`), and logs the outcome. Stop it where the digest timer is stopped.
 
 - [ ] **Step 4: Pass**, plus `npx vitest run apps/core packages/contracts`.
 
@@ -1268,5 +1270,5 @@ them into the Vault.`;
 ### Task 7: Record, deploy notes
 
 - [ ] Append a `2026-10-1x Vault promoter` entry to `docs/acceptance/IMPLEMENTATION-STATUS.md` with the clause table and commands, in the format of the entries above it.
-- [ ] Owner steps in the entry: deploy the work-PC core (migration 0018); set `NOCTIS_VAULT_ALLOW_WRITES=true` and `NOCTIS_PROMOTER_AT=03:00` in the work core's environment; share `MindVault\inbox` with **write** for every agent on each PC; press **Promote now** on the Vault page once and read what it filed.
+- [ ] Owner steps in the entry: deploy the work-PC core (migration 0019); on the Settings page turn on **Let Noctis write to the Vault** and set **File the inbox nightly** to a time; share `MindVault\inbox` with **write** for every agent on each PC; press **Promote now** on the Vault page once and read what it filed.
 - [ ] Commit and push — `docs: record the Vault promoter`.
