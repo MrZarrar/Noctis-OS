@@ -458,19 +458,22 @@ export function Workbench({
               const next =
                 slot.region === "bottom"
                   ? { ...geometry, bottom: proportion[size] }
-                  : {
-                      ...geometry,
-                      columns: {
-                        ...Object.fromEntries(
-                          occupied.map((region, index) => [region, shares[index]]),
-                        ),
-                        [slot.region]: proportion[size],
-                      },
-                      bottom: bottom.length > 0 ? 1 - proportion[size] : geometry.bottom,
-                    };
+                  : COLUMNS.includes(slot.region)
+                    ? {
+                        ...geometry,
+                        columns: {
+                          ...Object.fromEntries(
+                            occupied.map((region, index) => [region, shares[index]]),
+                          ),
+                          [slot.region]: proportion[size],
+                        },
+                        bottom: bottom.length > 0 ? 1 - proportion[size] : geometry.bottom,
+                      }
+                    : undefined;
               const sentScope = scope;
               void composition.move(slot.surfaceId, slot.region, size).then((saved) => {
-                if (saved && sentScope === scopeRef.current) saveGeometry(next);
+                if (saved && next !== undefined && sentScope === scopeRef.current)
+                  saveGeometry(next);
               });
             }}
             onClose={() => {

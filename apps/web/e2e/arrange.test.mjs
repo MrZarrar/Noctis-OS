@@ -60,7 +60,7 @@ after(async () => {
   await stopProcess(core);
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
-async function open() {
+async function open(title = "Arrange gate") {
   await page.goto(WEB_URL);
   await page
     .getByRole("button", { name: "Threads", exact: true })
@@ -73,7 +73,7 @@ async function open() {
   }
   await page.getByRole("button", { name: "Threads", exact: true }).click();
   await page.getByRole("button", { name: "Conversations", exact: true }).click();
-  await page.getByRole("button", { name: "Arrange gate", exact: true }).click();
+  await page.getByRole("button", { name: title, exact: true }).click();
 }
 const frames = () => page.locator('[aria-label="Thread panels"] [data-surface-id]');
 const panel = (id) => page.locator(`[data-surface-id="${id}"]`);
@@ -308,5 +308,66 @@ it(
       await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
       false,
     );
+  },
+);
+
+it(
+  "overlay size choices persist semantically on desktop and phone without saving column geometry",
+  { timeout: 60000 },
+  async () => {
+    const title = "Overlay size gate";
+    const thread = await coreCommand(CORE_URL, "conversation.create_thread", {
+      idempotencyKey: "overlay-size-thread",
+      identityId: "vesper",
+      title,
+    });
+    assert.equal(thread.status, 200);
+    const created = await coreCommand(CORE_URL, "surface.upsert_intent", {
+      idempotencyKey: "overlay-size-panel",
+      threadId: thread.body.id,
+      kind: "attention",
+      role: "attention",
+      persistence: "restorable",
+      priority: 0,
+      minSize: "compact",
+      payloadVersion: 1,
+      payload: { headline: "Overlay sizing", detail: "Readable attention content", actions: [] },
+    });
+    assert.equal(created.status, 200);
+    for (const [width, option, size] of [
+      [1440, "Small", "compact"],
+      [400, "Small", "compact"],
+      [400, "Medium", "standard"],
+    ]) {
+      await page.setViewportSize({ width, height: 860 });
+      await open(title);
+      const overlay = panel(created.body.id);
+      await overlay.getByText("Readable attention content", { exact: true }).waitFor();
+      assert.equal(await overlay.getAttribute("data-surface-region"), "overlay");
+      const before = await geometry();
+      const response = page.waitForResponse(
+        (reply) =>
+          reply.url().endsWith("/commands/surface.arrange") && reply.request().method() === "POST",
+      );
+      await overlay.getByRole("button", { name: /^Size / }).click();
+      await page.getByRole("option", { name: option, exact: true }).click();
+      const saved = await response;
+      assert.equal(saved.status(), 200);
+      assert.equal((await saved.json()).size, size);
+      await waitFor(
+        () => overlay.getAttribute("data-surface-size"),
+        (value) => value === size,
+        "overlay semantic size did not update",
+      );
+      assert.equal(
+        await page
+          .getByRole("alert")
+          .filter({ hasText: "Could not save these panel sizes" })
+          .count(),
+        0,
+        "successful overlay size reported a false storage failure",
+      );
+      assert.deepEqual(await geometry(), before, "overlay size wrote unrelated frame geometry");
+    }
   },
 );
