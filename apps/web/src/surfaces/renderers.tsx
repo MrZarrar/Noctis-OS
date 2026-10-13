@@ -4,11 +4,15 @@ import {
   AttentionSurface,
   ConversationSurface,
   DetailSurface,
+  DocumentSurface,
   EvidenceSurface,
   ExternalToolSurface,
   FallbackSurface,
   ListSurface,
   MediaSurface,
+  PanelActions,
+  TimelineSurface,
+  VerificationSurface,
   NativeApplicationSurface,
   RecallSurface,
   SourceStateSurface,
@@ -20,11 +24,16 @@ import type {
   MediaPayload,
   MediaSource,
   SurfaceSize,
+  DocumentPayload,
+  PanelAction,
+  SurfaceOwner,
 } from "@noctis/contracts";
+import { PANEL_PROPOSABLE_KINDS } from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
 import { LiveBriefSurface } from "./LiveBrief.js";
+import { Markdown } from "../conversation/Markdown.js";
 import type { Resolved, SurfaceKind } from "./registry.js";
 
 /**
@@ -34,6 +43,10 @@ import type { Resolved, SurfaceKind } from "./registry.js";
  * what it may do. "Open in Vault" is the one Section 7 asks for.
  */
 export interface SurfaceContext {
+  panelOwner?: SurfaceOwner;
+  onPanelAction?: (message: string, owner: SurfaceOwner) => void | Promise<void>;
+  panelActionsDisabled?: boolean;
+  panelActionsError?: string;
   mediaUrl?: (source: MediaSource) => string | undefined;
   onOpenInVault?: (evidence: RecallEvidenceView) => void;
   /** Phase 8 handoffs. Each one crosses a boundary the Surface may not cross itself. */
@@ -75,6 +88,20 @@ const RENDERERS: Record<
   SurfaceKind,
   (payload: never, context: SurfaceContext, size: SurfaceSize) => ReactNode
 > = {
+  document: (payload: DocumentPayload) => (
+    <div className="document-panel">
+      <DocumentSurface
+        {...payload}
+        {...(payload.content.from === "inline" && payload.format === "markdown"
+          ? { body: <Markdown text={payload.content.text} readOnlyTasks /> }
+          : {})}
+      />
+    </div>
+  ),
+  timeline: (payload: Parameters<typeof TimelineSurface>[0]) => <TimelineSurface {...payload} />,
+  verification: (payload: Parameters<typeof VerificationSurface>[0]) => (
+    <VerificationSurface {...payload} />
+  ),
   media: (payload: MediaPayload, context: SurfaceContext, size: SurfaceSize) => (
     <MediaSurface
       title={payload.title}
@@ -223,5 +250,28 @@ export function renderSurface(
     return <FallbackSurface kind={resolved.kind} reason={resolved.reason} />;
   }
 
-  return RENDERERS[resolved.kind](resolved.payload as never, context, size);
+  const payload = resolved.payload as { actions?: PanelAction[] };
+  if (!PANEL_PROPOSABLE_KINDS.has(resolved.kind))
+    return RENDERERS[resolved.kind](resolved.payload as never, context, size);
+  const { actions, ...body } = payload;
+  return (
+    <>
+      {RENDERERS[resolved.kind](body as never, context, size)}
+      {actions !== undefined && actions.length > 0 && (
+        <PanelActions
+          actions={actions}
+          {...(context.onPanelAction === undefined || context.panelOwner === undefined
+            ? {}
+            : {
+                onAction: (message: string) =>
+                  context.onPanelAction?.(message, context.panelOwner!),
+              })}
+          {...(context.panelActionsDisabled === undefined
+            ? {}
+            : { disabled: context.panelActionsDisabled })}
+          {...(context.panelActionsError === undefined ? {} : { error: context.panelActionsError })}
+        />
+      )}
+    </>
+  );
 }

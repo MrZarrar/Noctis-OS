@@ -30,6 +30,11 @@ const EVIDENCE = join(REPO_ROOT, ".noctis/panels");
 let core, agent, web, browser, page, context, databaseDirectory, nodeHome, scratch;
 async function openThreads() {
   await page.goto(WEB_URL);
+  await page
+    .getByRole("button", { name: "Threads", exact: true })
+    .or(page.getByLabel("Core token"))
+    .first()
+    .waitFor();
   if (await page.locator('input[type="password"]').count()) {
     await page.getByLabel("Core token").fill(TOKEN);
     await page.getByLabel("Core token").press("Enter");
@@ -168,6 +173,90 @@ describe("Threads desktop panels", () => {
       .evaluate((node) => node.getBoundingClientRect().width);
     assert.ok(width <= 880);
   });
+  it(
+    "THE GATE (work panels): a document and shortlist choices reach their conversation on desktop and phone",
+    { timeout: 120000 },
+    async () => {
+      await openThreads();
+      const created = await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "work-panel-thread",
+        identityId: "vesper",
+        title: "Work panels",
+      });
+      assert.equal(created.status, 200);
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "Work panels", exact: true }).click();
+      await page
+        .locator('section[aria-label="Threads"] header')
+        .getByText(/Work panels/)
+        .waitFor();
+      await prompt("PANEL: # Plan\n- [ ] first step");
+      const document = page.getByRole("complementary", { name: "Thread panels" });
+      await document
+        .getByRole("heading", { name: "Plan", level: 1, exact: true })
+        .waitFor({ timeout: 20000 });
+      const check = document.getByRole("checkbox");
+      assert.equal(await check.isChecked(), false);
+      assert.equal(await check.isDisabled(), true);
+      await page.screenshot({ path: join(EVIDENCE, "P8-document.png") });
+      await prompt("CHOICE: Alpha | Beta");
+      await document
+        .getByRole("button", { name: "Use Alpha", exact: true })
+        .waitFor({ timeout: 20000 });
+      await waitFor(
+        () => document.getByRole("button", { name: "Use Alpha", exact: true }).isEnabled(),
+        Boolean,
+        "choice remains disabled",
+      );
+      await page.route(
+        "**/commands/conversation.send",
+        (route) => route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+        { times: 1 },
+      );
+      await document.getByRole("button", { name: "Use Alpha", exact: true }).click();
+      await document
+        .getByRole("alert")
+        .getByText(/conversation.send was refused/)
+        .waitFor();
+      await page.unroute("**/commands/conversation.send");
+      await document.getByRole("button", { name: "Use Alpha", exact: true }).click();
+      await page
+        .locator('li[data-entry="message"][data-role="user"]')
+        .getByText("Use Alpha", { exact: true })
+        .waitFor();
+      const messages = await coreRead(CORE_URL, `/threads/${created.body.id}/messages`);
+      assert.ok(
+        messages.body.messages.some(
+          (message) => message.role === "user" && message.body === "Use Alpha",
+        ),
+      );
+      await page.setViewportSize({ width: 400, height: 860 });
+      await page.getByRole("button", { name: "Open panel Choices", exact: true }).click();
+      const sheet = page.getByRole("region", { name: "Panel sheet" });
+      await sheet.getByRole("button", { name: "Use Beta", exact: true }).waitFor();
+      await waitFor(
+        () => sheet.getByRole("button", { name: "Use Beta", exact: true }).isEnabled(),
+        Boolean,
+        "phone choice remains disabled",
+      );
+      await page.screenshot({ path: join(EVIDENCE, "P17-phone-choice.png") });
+      await sheet.getByRole("button", { name: "Use Beta", exact: true }).click();
+      await waitFor(
+        async () => {
+          const result = await coreRead(CORE_URL, `/threads/${created.body.id}/messages`);
+          return result.body.messages.some(
+            (message) => message.role === "user" && message.body === "Use Beta",
+          );
+        },
+        Boolean,
+        "phone choice was not sent to owning thread",
+      );
+      await page.getByRole("button", { name: "Leave focus", exact: true }).click();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByRole("button", { name: "Conversations", exact: true }).click();
+      await page.getByRole("button", { name: "New conversation", exact: true }).click();
+    },
+  );
   it(
     "THE GATE (panels): an image a turn makes opens beside the conversation without reload",
     { timeout: 120000 },

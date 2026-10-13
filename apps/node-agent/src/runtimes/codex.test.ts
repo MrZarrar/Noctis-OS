@@ -3,6 +3,9 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import type { RuntimeAnswer, RuntimeAsk, RuntimeItem, RuntimeTurnPayload } from "@noctis/contracts";
 import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts";
@@ -337,6 +340,39 @@ const HAPPY: Scenario = {
 };
 
 describe("the Codex App Server runtime", () => {
+  it("advertises every proposable kind through the stdio MCP used by Codex", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-tools-"));
+    const client = new Client({ name: "panel-description-test", version: "1" });
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        fileURLToPath(new URL("../../dist/noctis-mcp.js", import.meta.url)),
+        "--proposals",
+        join(directory, "proposals.jsonl"),
+      ],
+      stderr: "pipe",
+    });
+    try {
+      await client.connect(transport);
+      const tools = await client.listTools();
+      const description = tools.tools.find(
+        (tool) => tool.name === "noctis_propose_surface",
+      )?.description;
+      for (const kind of [
+        "document",
+        "list",
+        "detail",
+        "evidence",
+        "attention",
+        "timeline",
+        "verification",
+      ])
+        expect(description).toContain(kind);
+    } finally {
+      await client.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
   it("hands a generated image to the core before the turn ends, and records it as an output", async () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7]);
     const { runtime: codex } = runtime({

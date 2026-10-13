@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { useEffect } from "react";
 import { motion, spacing } from "@noctis/ui";
+import type { SurfaceOwner } from "@noctis/contracts";
 import type { ConversationState } from "../conversation/useConversation.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
@@ -14,6 +15,23 @@ export interface ThreadPanelsState {
   sources: readonly ThreadPanelSource[];
   hasPanels: boolean;
   handoffs: SurfaceContext;
+}
+
+export async function sendPanelChoice(
+  conversation: ConversationState,
+  message: string,
+  owner: SurfaceOwner,
+): Promise<void> {
+  const current = conversation.thread;
+  if (
+    current === undefined ||
+    (owner.threadId !== undefined
+      ? owner.threadId !== current.id
+      : owner.objectiveId === undefined || owner.objectiveId !== current.objectiveId)
+  ) {
+    throw new Error("Open the panel's conversation to send this choice.");
+  }
+  await conversation.send(message);
 }
 export function panelsForOwner(
   source: CompositionState,
@@ -89,6 +107,11 @@ export function useThreadPanels(
         0,
     ),
     handoffs: {
+      panelActionsDisabled: conversation.turns.some(
+        (turn) => turn.status === "queued" || turn.status === "running",
+      ),
+      ...(conversation.error === undefined ? {} : { panelActionsError: conversation.error }),
+      onPanelAction: (message, owner) => sendPanelChoice(conversation, message, owner),
       mediaUrl: (source) =>
         source.from === "attachment" ? conversation.outputUrl?.(source.attachmentId) : undefined,
       onConfirm: (id, typed) => {

@@ -780,6 +780,20 @@ describe("the Claude Agent SDK runtime", () => {
 
     const tools = await client.listTools();
 
+    for (const kind of [
+      "document",
+      "list",
+      "detail",
+      "evidence",
+      "attention",
+      "timeline",
+      "verification",
+    ]) {
+      expect(
+        tools.tools.find((tool) => tool.name === "noctis_propose_surface")?.description,
+      ).toContain(kind);
+    }
+
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "noctis_delegate",
       "noctis_propose_objective",

@@ -6,6 +6,7 @@ import type { RuntimeProposal } from "@noctis/contracts";
 import { RuntimeProposalSchema } from "@noctis/contracts";
 
 import { AGENT_VERSION } from "./agent.js";
+import { PANEL_TOOL_DESCRIPTION } from "./panel-tool.js";
 
 /**
  * The Noctis tools a spawned runtime can call. Codex starts this as a stdio
@@ -37,8 +38,7 @@ const server = new McpServer({ name: "noctis", version: AGENT_VERSION });
 server.registerTool(
   "noctis_propose_surface",
   {
-    description:
-      "Propose a surface for Noctis to place. Noctis validates it and decides; nothing is placed by this call.",
+    description: PANEL_TOOL_DESCRIPTION,
     inputSchema: surface.omit({ kind: true }),
   },
   (args) => record(RuntimeProposalSchema.parse({ kind: "surface", ...args })),

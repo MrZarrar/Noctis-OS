@@ -16,8 +16,19 @@ const MessageSchema = z
 
 export const ConversationPayloadSchema = z.object({ messages: z.array(MessageSchema) }).strict();
 
+/** Choice actions are messages, never executable commands or navigation. */
+export const PanelActionSchema = z
+  .object({
+    label: z.string().trim().min(1).max(80),
+    message: z.string().trim().min(1).max(4000),
+  })
+  .strict();
+const PanelActionsSchema = z.array(PanelActionSchema).max(8).optional();
+export type PanelAction = z.infer<typeof PanelActionSchema>;
+
 export const ListPayloadSchema = z
   .object({
+    actions: PanelActionsSchema,
     items: z.array(
       z
         .object({ id: z.string().min(1), label: z.string().min(1), detail: z.string().optional() })
@@ -28,6 +39,7 @@ export const ListPayloadSchema = z
 
 export const DetailPayloadSchema = z
   .object({
+    actions: PanelActionsSchema,
     fields: z.array(z.object({ label: z.string().min(1), value: z.string() }).strict()),
   })
   .strict();
@@ -36,6 +48,7 @@ const FreshnessSchema = z.enum(["current", "stale", "unavailable", "unknown"]);
 
 export const EvidencePayloadSchema = z
   .object({
+    actions: PanelActionsSchema,
     items: z.array(
       z
         .object({
@@ -50,7 +63,7 @@ export const EvidencePayloadSchema = z
   .strict();
 
 export const AttentionPayloadSchema = z
-  .object({ headline: z.string().min(1), detail: z.string() })
+  .object({ headline: z.string().min(1), detail: z.string(), actions: PanelActionsSchema })
   .strict();
 
 export const FileSourceSchema = z
@@ -77,7 +90,66 @@ export const MediaPayloadSchema = z
   })
   .strict();
 
+export const DocumentPayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    format: z.enum(["markdown", "text"]),
+    content: z.discriminatedUnion("from", [
+      z.object({ from: z.literal("inline"), text: z.string().max(50_000) }).strict(),
+      FileSourceSchema,
+    ]),
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
+export const TimelinePayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    items: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(64),
+            start: z.string().max(32).optional(),
+            end: z.string().max(32).optional(),
+            label: z.string().min(1).max(200),
+            detail: z.string().max(400).optional(),
+            due: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(50),
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
+export const VerificationPayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    items: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(64),
+            claim: z.string().min(1).max(300),
+            status: z.enum(["verified", "partial", "required", "blocked"]),
+            reason: z.string().max(120).optional(),
+          })
+          .strict(),
+      )
+      .max(50),
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
+export type DocumentPayload = z.infer<typeof DocumentPayloadSchema>;
+export type TimelinePayload = z.infer<typeof TimelinePayloadSchema>;
+export type VerificationPayload = z.infer<typeof VerificationPayloadSchema>;
+
 export const PANEL_PROPOSABLE_KINDS: ReadonlySet<string> = new Set([
+  "document",
+  "timeline",
+  "verification",
   "list",
   "detail",
   "evidence",
@@ -170,6 +242,9 @@ export const SURFACE_PAYLOAD_SCHEMAS: Record<
   { payloadVersion: number; schema: z.ZodType }
 > = {
   conversation: { payloadVersion: 1, schema: ConversationPayloadSchema },
+  document: { payloadVersion: 1, schema: DocumentPayloadSchema },
+  timeline: { payloadVersion: 1, schema: TimelinePayloadSchema },
+  verification: { payloadVersion: 1, schema: VerificationPayloadSchema },
   list: { payloadVersion: 1, schema: ListPayloadSchema },
   detail: { payloadVersion: 1, schema: DetailPayloadSchema },
   evidence: { payloadVersion: 1, schema: EvidencePayloadSchema },

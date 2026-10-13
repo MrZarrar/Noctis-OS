@@ -53,6 +53,32 @@ function input(prompt: string, signal = new AbortController().signal): RuntimeTu
 }
 
 describe("the fake runtime", () => {
+  it.each(["PANEL: # Plan\n- [ ] first step", "CHOICE: Alpha | Beta"])(
+    "proposes one work panel for %s",
+    async (prompt) => {
+      const r = recorder();
+      await createFakeRuntime().turn(input(prompt), r.sink);
+      const proposals = r.items.filter((item) => item.kind === "proposal");
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0]?.proposal).toMatchObject({
+        kind: "surface",
+        surfaceKind: prompt.startsWith("PANEL:") ? "document" : "list",
+      });
+      if (prompt.startsWith("PANEL:"))
+        expect(proposals[0]?.proposal).toMatchObject({
+          payload: { content: { from: "inline", text: "# Plan\n- [ ] first step" } },
+        });
+      else
+        expect(proposals[0]?.proposal).toMatchObject({
+          payload: {
+            actions: [
+              { label: "Use Alpha", message: "Use Alpha" },
+              { label: "Use Beta", message: "Use Beta" },
+            ],
+          },
+        });
+    },
+  );
   it("uploads a complete tiny PNG for IMAGE turns", async () => {
     const r = recorder();
     let bytes: Uint8Array | undefined;

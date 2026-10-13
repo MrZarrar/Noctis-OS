@@ -338,6 +338,141 @@ const ASK: RuntimeAsk = {
 };
 
 describe("conversation service", () => {
+  it.each([
+    [
+      "document",
+      {
+        title: "Plan",
+        format: "markdown",
+        content: { from: "inline", text: "# Plan\n- [ ] first" },
+      },
+    ],
+    [
+      "timeline",
+      {
+        title: "Today",
+        items: [
+          { id: "a", start: "09:00", end: "10:00", label: "Build", detail: "Plan", due: true },
+        ],
+      },
+    ],
+    [
+      "verification",
+      {
+        title: "Checks",
+        items: [{ id: "a", claim: "Build", status: "partial", reason: "Phone pending" }],
+      },
+    ],
+  ])(
+    "accepts the complete model %s payload into its owning thread",
+    async (surfaceKind, payload) => {
+      const core = await startTestCore();
+      const node = await connectFake(core, mkdtempSync(join(tmpdir(), "noctis-panel-")));
+      await setDefault(core);
+      const sent = await send(core, "new-panel");
+      await waitFor(() => node.jobs().length === 1, "panel job");
+      const actions = [{ label: "Continue", message: "Continue this plan" }];
+      node.frame({
+        kind: "stream",
+        jobId: lastTurnJob(node).assignment.jobId,
+        sequence: 0,
+        item: {
+          itemId: "panel",
+          kind: "proposal",
+          status: "completed",
+          proposal: {
+            kind: "surface",
+            surfaceKind,
+            role: "primary",
+            persistence: "restorable",
+            priority: 20,
+            payloadVersion: 1,
+            payload: { ...(payload as object), actions },
+          },
+        },
+      });
+      await waitFor(
+        () =>
+          listSurfaceIntents(core.core.kernel.db, { threadId: sent.body.threadId as string })
+            .length === 1,
+        "new panel accepted",
+      );
+      expect(
+        listSurfaceIntents(core.core.kernel.db, { threadId: sent.body.threadId as string })[0]
+          ?.payload,
+      ).toEqual({ ...(payload as object), actions });
+    },
+  );
+  it("refuses a model document file source and a foreign objective", async () => {
+    const logs: string[] = [];
+    const core = await startTestCore(logs);
+    const node = await connectFake(core, mkdtempSync(join(tmpdir(), "noctis-panel-")));
+    await setDefault(core);
+    const foreign = await command(core, "objective.create", {
+      idempotencyKey: "foreign-panel-objective",
+      title: "Foreign",
+      intent: "Another owner",
+      status: "draft",
+      identityId: "vesper",
+    });
+    expect(foreign.status).toBe(200);
+    const sent = await send(core, "refuse-panel");
+    await waitFor(() => node.jobs().length === 1, "panel job");
+    const base = {
+      kind: "surface" as const,
+      role: "primary" as const,
+      persistence: "ephemeral" as const,
+      priority: 20,
+      payloadVersion: 1,
+    };
+    node.frame({
+      kind: "stream",
+      jobId: lastTurnJob(node).assignment.jobId,
+      sequence: 0,
+      item: {
+        itemId: "file",
+        kind: "proposal",
+        status: "completed",
+        proposal: {
+          ...base,
+          surfaceKind: "document",
+          payload: {
+            title: "File",
+            format: "text",
+            content: { from: "file", nodeId: "node", grantId: "grant", relativePath: "private.md" },
+          },
+        },
+      },
+    });
+    node.frame({
+      kind: "stream",
+      jobId: lastTurnJob(node).assignment.jobId,
+      sequence: 1,
+      item: {
+        itemId: "foreign",
+        kind: "proposal",
+        status: "completed",
+        proposal: {
+          ...base,
+          objectiveId: foreign.body.id,
+          surfaceKind: "list",
+          payload: { items: [] },
+        },
+      },
+    });
+    await waitFor(
+      () =>
+        logs.some((line) => line.includes("document_must_be_inline")) &&
+        logs.some((line) => line.includes("foreign_objective_for_surface")),
+      "proposal refusals",
+    );
+    expect(
+      listSurfaceIntents(core.core.kernel.db, { threadId: sent.body.threadId as string }),
+    ).toHaveLength(0);
+    expect(
+      listSurfaceIntents(core.core.kernel.db, { objectiveId: foreign.body.id as string }),
+    ).toHaveLength(0);
+  });
   it("free-chat proposals create one panel per turn and reject core-only kinds", async () => {
     const logs: string[] = [];
     const core = await startTestCore(logs);

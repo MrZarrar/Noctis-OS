@@ -5,6 +5,7 @@ import {
   AttentionPayloadSchema,
   ConversationPayloadSchema,
   DetailPayloadSchema,
+  DocumentPayloadSchema,
   EvidencePayloadSchema,
   ExternalToolFocusPayloadSchema,
   ListPayloadSchema,
@@ -12,6 +13,8 @@ import {
   MediaPayloadSchema,
   NativeFocusPayloadSchema,
   SourceStatePayloadSchema,
+  TimelinePayloadSchema,
+  VerificationPayloadSchema,
   VaultRecallPayloadSchema,
 } from "@noctis/contracts";
 import type { z } from "zod";
@@ -57,6 +60,24 @@ export interface SurfaceRegistryEntry {
 const ALL_SIZES: readonly SurfaceSize[] = ["compact", "standard", "wide", "stage"];
 
 export const REGISTRY = {
+  document: {
+    payloadVersion: 1,
+    schema: DocumentPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Document",
+  },
+  timeline: {
+    payloadVersion: 1,
+    schema: TimelinePayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Timeline",
+  },
+  verification: {
+    payloadVersion: 1,
+    schema: VerificationPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Verification",
+  },
   media: {
     payloadVersion: 1,
     schema: MediaPayloadSchema,
@@ -235,7 +256,11 @@ export function resolveSurface(
     status: "ok",
     kind: kind as SurfaceKind,
     title:
-      kind === "media" || kind === "live_brief"
+      kind === "media" ||
+      kind === "live_brief" ||
+      kind === "document" ||
+      kind === "timeline" ||
+      kind === "verification"
         ? (parsed.data as MediaPayload | LiveBriefPayload).title
         : entry.title,
     payload: parsed.data,

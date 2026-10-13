@@ -8,6 +8,101 @@ import { REGISTRY, resolveSurface } from "./registry.js";
 
 const CONVERSATION = { messages: [{ id: "m1", author: "Vesper", text: "Ready." }] };
 
+describe("read-only work panels", () => {
+  const document = {
+    title: "Plan",
+    format: "markdown",
+    content: {
+      from: "inline",
+      text: "# Plan\n- [ ] first step\n\n<script>alert(1)</script>\n\n`code`",
+    },
+  };
+  it.each([
+    ["document", document],
+    [
+      "timeline",
+      {
+        title: "Today",
+        items: [{ id: "a", start: "09:00", end: "10:00", label: "Build", due: true }],
+      },
+    ],
+    [
+      "verification",
+      {
+        title: "Checks",
+        items: [{ id: "a", claim: "Build works", status: "verified", reason: "Tests pass" }],
+      },
+    ],
+  ])("resolves and renders %s with its title", (kind, payload) => {
+    const resolved = resolveSurface(kind, 1, payload, "compact");
+    expect(resolved).toMatchObject({ status: "ok", title: (payload as { title: string }).title });
+    expect(renderToStaticMarkup(createElement("div", null, renderSurface(resolved)))).not.toContain(
+      "could not be rendered",
+    );
+  });
+  it("renders document Markdown safely with a read-only checkbox", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        "div",
+        null,
+        renderSurface(resolveSurface("document", 1, document, "standard")),
+      ),
+    );
+    expect(html).toContain("<h1");
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("disabled");
+    expect(html).toContain("<code>code</code>");
+    expect(html).not.toContain("<script");
+    expect(html).toContain("&lt;script");
+  });
+  it("preserves shortlist details beside message choices", () => {
+    const resolved = resolveSurface(
+      "list",
+      1,
+      {
+        items: [{ id: "a", label: "Alpha", detail: "Fits the deadline" }],
+        actions: [{ label: "Use Alpha", message: "Use Alpha" }],
+      },
+      "standard",
+    );
+    const html = renderToStaticMarkup(createElement("div", null, renderSurface(resolved)));
+    expect(html).toContain("Fits the deadline");
+  });
+  it.each(["list", "detail", "evidence", "attention", "document", "timeline", "verification"])(
+    "renders message actions for %s only with a host handoff",
+    (kind) => {
+      const payloads = {
+        list: { items: [] },
+        detail: { fields: [] },
+        evidence: { items: [] },
+        attention: { headline: "Wait", detail: "Review" },
+        document,
+        timeline: { title: "Today", items: [] },
+        verification: { title: "Checks", items: [] },
+      };
+      const payload = {
+        ...payloads[kind as keyof typeof payloads],
+        actions: [{ label: "Use option A", message: "I choose A" }],
+      };
+      const resolved = resolveSurface(kind, 1, payload, "standard");
+      expect(resolved.status).toBe("ok");
+      const render = (context = {}) =>
+        renderToStaticMarkup(
+          createElement(
+            "div",
+            null,
+            renderSurface(resolved, { panelOwner: { threadId: "owning-thread" }, ...context }),
+          ),
+        );
+      expect(render({ onPanelAction: () => undefined })).toContain("Use option A</button>");
+      expect(render()).toContain("disabled");
+      expect(render({ onPanelAction: () => undefined, panelActionsDisabled: true })).toContain(
+        "disabled",
+      );
+    },
+  );
+});
+
 describe("media panels", () => {
   const payload = {
     title: "A photo",

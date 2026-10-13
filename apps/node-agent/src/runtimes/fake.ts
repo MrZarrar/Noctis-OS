@@ -210,6 +210,39 @@ export function createFakeRuntime(): Runtime {
           });
         }
 
+        if (payload.prompt.startsWith("PANEL:") || payload.prompt.startsWith("CHOICE:")) {
+          await step();
+          const document = payload.prompt.startsWith("PANEL:");
+          const text = payload.prompt.slice(document ? 6 : 7).trim();
+          const labels = text
+            .split("|")
+            .map((label) => label.trim())
+            .filter(Boolean)
+            .slice(0, 8);
+          item({
+            itemId: "panel",
+            kind: "proposal",
+            status: "completed",
+            proposal: {
+              kind: "surface",
+              surfaceKind: document ? "document" : "list",
+              role: "supporting",
+              persistence: "restorable",
+              priority: 20,
+              payloadVersion: 1,
+              payload: document
+                ? { title: "Plan", format: "markdown", content: { from: "inline", text } }
+                : {
+                    items: labels.map((label, index) => ({ id: String(index), label })),
+                    actions: labels.map((label) => ({
+                      label: `Use ${label}`,
+                      message: `Use ${label}`,
+                    })),
+                  },
+            },
+          });
+        }
+
         return evidence("completed");
       } catch (error) {
         if (error instanceof Cancelled) {

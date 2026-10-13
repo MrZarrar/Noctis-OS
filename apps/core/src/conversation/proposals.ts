@@ -100,6 +100,19 @@ export function applyProposal(
 
   const objectiveId = proposal.objectiveId;
 
+  if (
+    proposal.surfaceKind === "document" &&
+    (payload.data as { content: { from: string } }).content.from !== "inline"
+  ) {
+    skip("document_must_be_inline");
+    return;
+  }
+
+  if (objectiveId !== undefined && objectiveId !== turn.objectiveId) {
+    skip("foreign_objective_for_surface");
+    return;
+  }
+
   if (objectiveId !== undefined && getObjective(kernel.db, objectiveId) === undefined) {
     skip("no_objective_for_surface");
     return;

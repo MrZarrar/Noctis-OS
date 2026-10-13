@@ -53,7 +53,12 @@ export function ListSurface({ items, onChoose }: ListSurfaceProps): JSX.Element 
           style={{ borderBottom: `1px solid ${material.border}`, paddingBlock: spacing.sm }}
         >
           {onChoose === undefined ? (
-            <span>{item.label}</span>
+            <span>
+              {item.label}
+              {item.detail !== undefined && (
+                <span style={{ color: typography.color.muted }}> — {item.detail}</span>
+              )}
+            </span>
           ) : (
             <button
               type="button"

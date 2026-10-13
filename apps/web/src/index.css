@@ -134,6 +134,13 @@ body {
   font-weight: 600;
 }
 
+.document-panel .noctis-md :is(h1, h2, h3) {
+  font-size: 0.8em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a99cf8;
+}
+
 .noctis-md :is(ul, ol) {
   padding-left: 1.4em;
 }

@@ -157,7 +157,19 @@ export function Workbench({
           />
         }
       >
-        {renderSurface(resolved, handoffs, slot.size)}
+        {renderSurface(
+          resolved,
+          {
+            ...handoffs,
+            panelOwner:
+              intent.threadId !== undefined
+                ? { threadId: intent.threadId }
+                : intent.objectiveId !== undefined
+                  ? { objectiveId: intent.objectiveId }
+                  : { presence: true },
+          },
+          slot.size,
+        )}
       </SurfaceFrame>
     );
   };
