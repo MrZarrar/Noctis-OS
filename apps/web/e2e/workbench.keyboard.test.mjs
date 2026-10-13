@@ -182,6 +182,7 @@ describe("Threads panels, driven only by the keyboard", () => {
         await page.keyboard.press("Enter");
         await tabTo(page, "Conversations");
         await page.keyboard.press("Enter");
+        await page.getByRole("button", { name: "Keyboard panels", exact: true }).waitFor();
         await tabTo(page, "Keyboard panels");
         await page.keyboard.press("Enter");
         await waitForCanvas(

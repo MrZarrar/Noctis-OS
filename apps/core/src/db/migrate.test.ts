@@ -138,7 +138,7 @@ describe("migrate", () => {
         .map((row) => {
           return Object.fromEntries(
             Object.entries(row as Record<string, unknown>).filter(
-              ([name]) => name !== "thread_id" && name !== "presence",
+              ([name]) => name !== "thread_id" && name !== "presence" && name !== "slot_order",
             ),
           );
         });
@@ -250,7 +250,7 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(17);
+    expect(version.v).toBe(18);
     expect(vaultItems).toContain("sensitive");
     expect(vaultItems).toContain("tags");
   });

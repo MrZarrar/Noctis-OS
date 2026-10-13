@@ -203,6 +203,125 @@ function surfacesPath(objectiveId: string): string {
 }
 
 describe("the Objective and Surface vertical slice", () => {
+  it("arranges panels atomically, swaps same-region order and isolates owners", async () => {
+    const core = await freshCore();
+    const objectiveId = await draftObjective(core);
+    const first = await upsert(core, objectiveId, { kind: "one", role: "supporting" });
+    const second = await upsert(core, objectiveId, { kind: "two", role: "supporting" });
+    const scope = {
+      objectiveId,
+      clientId: CLIENT,
+      display: { fingerprint: FINGERPRINT, widthPx: 3440 },
+      attentionState: "active_canvas",
+    };
+    const slots = (await composed(core, objectiveId)).plan.slots;
+    const placements = [first, second].map((intent) => ({
+      surfaceId: intent.id,
+      region: "right",
+      size: "standard",
+      order: slots.find((slot) => slot.surfaceId !== intent.id)!.order,
+    }));
+    const arrangeKey = key("arrange");
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          ...scope,
+          idempotencyKey: arrangeKey,
+          placements,
+        })
+      ).status,
+    ).toBe(200);
+    const swapped = (await composed(core, objectiveId)).plan.slots;
+    expect(swapped.map((slot) => slot.surfaceId)).toEqual(
+      [...slots].reverse().map((slot) => slot.surfaceId),
+    );
+    const before = core.core.kernel.db.prepare("SELECT * FROM surface_overrides ORDER BY id").all();
+    expect(
+      (await command(core, "surface.arrange", { ...scope, idempotencyKey: arrangeKey, placements }))
+        .status,
+    ).toBe(200);
+    expect(
+      core.core.kernel.db.prepare("SELECT * FROM surface_overrides ORDER BY id").all(),
+    ).toEqual(before);
+    const foreign = await upsert(core, await draftObjective(core), { kind: "foreign" });
+    const invalid = [
+      { ...placements[0], region: "centre" },
+      { ...placements[1], surfaceId: foreign.id },
+    ];
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          ...scope,
+          idempotencyKey: key("foreign"),
+          placements: invalid,
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      core.core.kernel.db.prepare("SELECT * FROM surface_overrides ORDER BY id").all(),
+    ).toEqual(before);
+    core.core.kernel.db.exec(
+      `CREATE TRIGGER refuse_second BEFORE UPDATE ON surface_overrides WHEN OLD.surface_id = '${second.id}' BEGIN SELECT RAISE(ABORT, 'test failure'); END;`,
+    );
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          ...scope,
+          idempotencyKey: key("rollback"),
+          placements: placements.map((entry) => ({ ...entry, size: "wide" })),
+        })
+      ).status,
+    ).toBe(500);
+    expect(
+      core.core.kernel.db.prepare("SELECT * FROM surface_overrides ORDER BY id").all(),
+    ).toEqual(before);
+    core.core.kernel.db.exec("DROP TRIGGER refuse_second");
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          ...scope,
+          idempotencyKey: key("unsupported"),
+          display: { ...scope.display, widthPx: 1400 },
+          placements: [{ ...placements[0], region: "left" }],
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          ...scope,
+          idempotencyKey: key("overflow"),
+          placements: [{ ...placements[0], region: "overflow" }],
+        })
+      ).status,
+    ).toBe(200);
+    expect((await composed(core, objectiveId)).plan.overflowSurfaceIds).toContain(first.id);
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          ...scope,
+          idempotencyKey: key("strict"),
+          unexpected: true,
+          placements,
+        })
+      ).status,
+    ).toBe(400);
+    for (const malformed of [
+      { ...scope, objectiveId: undefined },
+      { ...scope, presence: true },
+      { ...scope, clientId: "" },
+      { ...scope, display: { fingerprint: "", widthPx: 1400 } },
+    ])
+      expect(
+        (
+          await command(core, "surface.arrange", {
+            ...malformed,
+            idempotencyKey: key("malformed"),
+            placements,
+          })
+        ).status,
+      ).toBe(400);
+  });
   it("points the identity thread at the Objective it activated", async () => {
     const core = await freshCore();
     const objectiveId = await activeObjective(core);

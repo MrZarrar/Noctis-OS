@@ -1,5 +1,6 @@
 import type {
   AttentionState,
+  ArrangeSurfacesCommand,
   ChangeSurfaceLifecycleCommand,
   ComposeSurfacesCommand,
   CompositionPlan,
@@ -15,6 +16,7 @@ import {
   SurfaceIntentSchema,
   SurfaceOwnerSchema,
   SurfaceOverrideSchema,
+  ownerIdOf,
 } from "@noctis/contracts";
 import type { DisplayFacts, Result } from "@noctis/domain";
 import {
@@ -57,6 +59,7 @@ type OverrideRow = {
   size: string;
   created_at: string;
   released_at: string | null;
+  slot_order: number | null;
 };
 
 type SnapshotRow = {
@@ -76,7 +79,7 @@ const INTENT_COLUMNS = `id, objective_id, thread_id, presence, kind, role, persi
                         payload_json, requested_at`;
 
 const OVERRIDE_COLUMNS = `id, surface_id, client_id, display_fingerprint, region, size,
-                          created_at, released_at`;
+                          created_at, released_at, slot_order`;
 
 const SNAPSHOT_COLUMNS = `id, objective_id, thread_id, presence, layout_id, display_fingerprint, plan_json,
                           reason_codes_json, generated_at`;
@@ -144,6 +147,7 @@ function toOverride(row: OverrideRow): SurfaceOverride {
     region: row.region,
     size: row.size,
     createdAt: row.created_at,
+    ...(row.slot_order == null ? {} : { order: row.slot_order }),
     ...(row.released_at === null ? {} : { releasedAt: row.released_at }),
   });
 }
@@ -175,7 +179,7 @@ export function listSurfaceOverrides(
   const rows = db
     .prepare(
       `SELECT o.id, o.surface_id, o.client_id, o.display_fingerprint, o.region, o.size,
-              o.created_at, o.released_at
+              o.created_at, o.released_at, o.slot_order
          FROM surface_overrides o
          JOIN surface_intents i ON i.id = o.surface_id
         WHERE i.${ownerQuery(owner).column} = ? AND o.client_id = ? AND o.display_fingerprint = ?
@@ -437,6 +441,7 @@ export function setSurfaceOverride(
          ON CONFLICT (id) DO UPDATE SET
            region = excluded.region,
            size = excluded.size,
+           slot_order = NULL,
            created_at = excluded.created_at`,
       ).run(
         id,
@@ -479,6 +484,111 @@ export function setSurfaceOverride(
             occurredAt: now,
           },
         ],
+      });
+    },
+  );
+}
+
+/** One command owns both halves of a swap, including its audit events. */
+export function arrangeSurfaces(
+  kernel: Kernel,
+  context: CommandContext,
+  command: ArrangeSurfacesCommand,
+): Result<SurfaceOverride> {
+  const owner = ownerOf(command);
+  const now = new Date(kernel.clock.now()).toISOString();
+  const firstId = command.placements[0]!.surfaceId;
+  const resultId =
+    liveOverride(kernel.db, {
+      surfaceId: firstId,
+      clientId: command.clientId,
+      displayFingerprint: command.display.fingerprint,
+    })?.id ?? kernel.ids.nextId();
+  return runCommand(
+    kernel,
+    { scope: "surface.arrange", key: command.idempotencyKey, resultId },
+    (tx) => {
+      const records: SurfaceOverride[] = [];
+      for (const placement of command.placements) {
+        const intent = getSurfaceIntent(tx, placement.surfaceId);
+        if (
+          intent === undefined ||
+          ownerIdOf(intent) !== ownerIdOf(owner) ||
+          intent.lifecycle === "dismissed" ||
+          intent.lifecycle === "exiting"
+        ) {
+          return conflict({ kind: "not_found", entity: "owned_surface", id: placement.surfaceId });
+        }
+        const existing = liveOverride(tx, {
+          surfaceId: placement.surfaceId,
+          clientId: command.clientId,
+          displayFingerprint: command.display.fingerprint,
+        });
+        const record = SurfaceOverrideSchema.parse({
+          ...placement,
+          id: existing?.id ?? (placement.surfaceId === firstId ? resultId : kernel.ids.nextId()),
+          clientId: command.clientId,
+          displayFingerprint: command.display.fingerprint,
+          createdAt: now,
+        });
+        tx.prepare(
+          `INSERT INTO surface_overrides (id, surface_id, client_id, display_fingerprint, region, size, created_at, slot_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET region=excluded.region, size=excluded.size, created_at=excluded.created_at, slot_order=excluded.slot_order`,
+        ).run(
+          record.id,
+          record.surfaceId,
+          record.clientId,
+          record.displayFingerprint,
+          record.region,
+          record.size,
+          now,
+          record.order ?? null,
+        );
+        records.push(record);
+      }
+      const { plan } = compose({
+        owner,
+        intents: listSurfaceIntents(tx, owner),
+        overrides: listSurfaceOverrides(tx, owner, command.clientId, command.display.fingerprint),
+        display: command.display,
+        attentionState: command.attentionState,
+        generatedAt: now,
+      });
+      for (const record of records) {
+        const slot = plan.slots.find((entry) => entry.surfaceId === record.surfaceId);
+        if (
+          record.region === "overflow"
+            ? !plan.overflowSurfaceIds.includes(record.surfaceId)
+            : slot?.region !== record.region || slot.size !== record.size
+        ) {
+          return conflict({
+            kind: "forbidden_transition",
+            machine: "surface.placement",
+            from: "current",
+            to: record.region,
+          });
+        }
+      }
+      return ok({
+        value: records[0]!,
+        events: records.map((record) => ({
+          id: kernel.ids.nextId(),
+          streamType: "surface" as const,
+          streamId: record.surfaceId,
+          type: "surface.override_set.v1" as const,
+          actorType: context.actorType,
+          actorId: context.actorId,
+          payloadVersion: 1,
+          payload: {
+            ...owner,
+            displayFingerprint: record.displayFingerprint,
+            region: record.region,
+            size: record.size,
+            ...(record.order === undefined ? {} : { order: record.order }),
+          },
+          correlationId: context.correlationId,
+          occurredAt: now,
+        })),
       });
     },
   );

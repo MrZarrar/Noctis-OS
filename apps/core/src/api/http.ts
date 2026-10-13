@@ -43,6 +43,7 @@ import {
   SendConversationMessageCommandSchema,
   SetIdentityDefaultModelCommandSchema,
   SetSurfaceOverrideCommandSchema,
+  ArrangeSurfacesCommandSchema,
   SurfaceDisplaySchema,
   UpsertSurfaceIntentCommandSchema,
   FileRelativePathSchema,
@@ -151,6 +152,7 @@ import {
   releaseSurfaceOverride,
   replayComposition,
   setSurfaceOverride,
+  arrangeSurfaces,
   upsertSurfaceIntent,
 } from "../objectives/surface-intents.js";
 import {
@@ -556,6 +558,9 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     SetSurfaceOverrideCommandSchema,
     setSurfaceOverride,
     (db, id) => getSurfaceOverride(db, id),
+  ),
+  "surface.arrange": defineCommand(ArrangeSurfacesCommandSchema, arrangeSurfaces, (db, id) =>
+    getSurfaceOverride(db, id),
   ),
   "surface.release_override": defineCommand(
     ReleaseSurfaceOverrideCommandSchema,

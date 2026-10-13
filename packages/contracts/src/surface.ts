@@ -40,6 +40,7 @@ export function ownerIdOf(value: {
 
 export const SurfaceSizeSchema = z.enum(["compact", "standard", "wide", "stage"]);
 export const SurfaceRegionSchema = z.enum(["left", "centre", "right", "bottom", "overlay"]);
+export const SurfacePlacementRegionSchema = z.enum([...SurfaceRegionSchema.options, "overflow"]);
 
 /**
  * The whole of what composition may know about a display: which one, and how
@@ -88,8 +89,9 @@ export const SurfaceOverrideSchema = z
     surfaceId: UuidSchema,
     clientId: z.string().trim().min(1),
     displayFingerprint: z.string().trim().min(1),
-    region: SurfaceRegionSchema,
+    region: SurfacePlacementRegionSchema,
     size: SurfaceSizeSchema,
+    order: z.int().nonnegative().optional(),
     createdAt: UtcTimestampSchema,
     releasedAt: UtcTimestampSchema.optional(),
   })
@@ -128,6 +130,7 @@ export const CompositionPlanSchema = z
 
 export type SurfaceSize = z.infer<typeof SurfaceSizeSchema>;
 export type SurfaceRegion = z.infer<typeof SurfaceRegionSchema>;
+export type SurfacePlacementRegion = z.infer<typeof SurfacePlacementRegionSchema>;
 export type SurfaceDisplay = z.infer<typeof SurfaceDisplaySchema>;
 export type SurfaceIntent = z.infer<typeof SurfaceIntentSchema>;
 export type SurfaceOverride = z.infer<typeof SurfaceOverrideSchema>;

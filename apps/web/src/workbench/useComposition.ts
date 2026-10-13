@@ -4,7 +4,7 @@ import type {
   SurfaceIntent,
   SurfaceOwner,
   SurfaceOverride,
-  SurfaceRegion,
+  SurfacePlacementRegion,
   SurfaceSize,
 } from "@noctis/contracts";
 import {
@@ -20,6 +20,7 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { PanelUpdateState } from "@noctis/ui";
 import { reconcileIntents } from "./reconcile.js";
 import { clientId, displayFor, screenFacts } from "./display.js";
+import { geometryKey, swapPlacements } from "./arrange.js";
 
 /** Long enough that dragging a window edge is one recomposition, not sixty. */
 const RESIZE_SETTLE_MS = 200;
@@ -54,7 +55,9 @@ export interface CompositionState {
   attentionState: AttentionState;
   error: string | undefined;
   focus: (surfaceId: string | undefined) => void;
-  move: (surfaceId: string, region: SurfaceRegion, size: SurfaceSize) => Promise<void>;
+  geometryScope: string | undefined;
+  move: (surfaceId: string, region: SurfacePlacementRegion, size: SurfaceSize) => Promise<boolean>;
+  swap: (surfaceId: string, targetId: string) => Promise<boolean>;
   release: (surfaceId: string) => Promise<void>;
   dismiss: (surfaceId: string) => Promise<void>;
   /**
@@ -270,10 +273,17 @@ export function useComposition(
 
       const sentOwner = ownerRef.current;
       const sentGeneration = ownerGeneration.current;
-      const response = await transport.request("POST", `/commands/${name}`, {
-        idempotencyKey: nextKey(name),
-        ...body,
-      });
+      let response;
+      try {
+        response = await transport.request("POST", `/commands/${name}`, {
+          idempotencyKey: nextKey(name),
+          ...body,
+        });
+      } catch {
+        if (ownerRef.current === sentOwner && ownerGeneration.current === sentGeneration)
+          setError("Could not save the panel arrangement. Try the action again.");
+        return false;
+      }
 
       if (ownerRef.current !== sentOwner || ownerGeneration.current !== sentGeneration)
         return false;
@@ -329,15 +339,50 @@ export function useComposition(
     focusedSurfaceId,
     attentionState,
     error,
+    geometryScope:
+      ownerKey === undefined
+        ? undefined
+        : geometryKey(client.current ?? "unknown", display.fingerprint, ownerKey),
     focus: setFocusedSurfaceId,
     refresh: useCallback(() => {
       setRevision((current) => current + 1);
     }, []),
     move: useCallback(
       async (surfaceId, region, size) => {
-        await send("surface.set_override", { ...overrideScope(surfaceId), region, size });
+        if (stableOwner === undefined) return false;
+        const saved = await send("surface.arrange", {
+          ...stableOwner,
+          clientId: client.current,
+          display,
+          attentionState,
+          placements: [{ surfaceId, region, size }],
+        });
+        if (
+          saved &&
+          focusedSurfaceId !== undefined &&
+          (surfaceId !== focusedSurfaceId ||
+            plan?.slots.find((slot) => slot.surfaceId === surfaceId)?.region !== region)
+        )
+          setFocusedSurfaceId(undefined);
+        return saved;
       },
-      [send, overrideScope],
+      [send, stableOwner, display, attentionState, focusedSurfaceId, plan],
+    ),
+    swap: useCallback(
+      async (surfaceId, targetId) => {
+        const placements = swapPlacements(plan, surfaceId, targetId);
+        if (stableOwner === undefined || placements === undefined) return false;
+        const saved = await send("surface.arrange", {
+          ...stableOwner,
+          clientId: client.current,
+          display,
+          attentionState,
+          placements,
+        });
+        if (saved) setFocusedSurfaceId(undefined);
+        return saved;
+      },
+      [send, stableOwner, display, attentionState, plan],
     ),
     release: useCallback(
       async (surfaceId) => {

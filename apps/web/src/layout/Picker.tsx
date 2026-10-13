@@ -1,5 +1,5 @@
 import { corner, depth, material, spacing, typography } from "@noctis/ui";
-import type { KeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { buttonStyle, fieldStyle, glass } from "./Page.js";
@@ -56,12 +56,14 @@ export function Picker<T extends string>({
   options,
   onChange,
   disabled = false,
+  style,
 }: {
   label: string;
   value: T;
   options: ReadonlyArray<PickerOption<T>>;
   onChange: (value: T) => void;
   disabled?: boolean;
+  style?: CSSProperties;
 }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -198,6 +200,7 @@ export function Picker<T extends string>({
           textAlign: "left",
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.55 : 1,
+          ...style,
         }}
       >
         <span

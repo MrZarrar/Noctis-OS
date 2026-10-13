@@ -270,6 +270,11 @@ export function compose(input: CompositionInput): CompositionOutcome {
 
   for (const entry of ranked) {
     const override = overrides.get(entry.intent.id);
+    if (override?.region === "overflow") {
+      overflow.push(entry.intent.id);
+      reasons.add("override.overflow");
+      continue;
+    }
     const candidates: SurfaceRegion[] = [];
 
     if (override !== undefined) {
@@ -341,8 +346,16 @@ export function compose(input: CompositionInput): CompositionOutcome {
   slots.sort((a, b) => {
     const byRegion = REGION_ORDER.indexOf(a.region) - REGION_ORDER.indexOf(b.region);
 
-    return byRegion === 0 ? a.order - b.order : byRegion;
+    return byRegion === 0
+      ? (overrides.get(a.surfaceId)?.order ?? a.order) -
+          (overrides.get(b.surfaceId)?.order ?? b.order) || a.order - b.order
+      : byRegion;
   });
+  const orders = new Map<SurfaceRegion, number>();
+  for (const slot of slots) {
+    slot.order = orders.get(slot.region) ?? 0;
+    orders.set(slot.region, slot.order + 1);
+  }
 
   // 8. Stable reason codes, and a plan that is valid by the contract or not
   //    produced at all.

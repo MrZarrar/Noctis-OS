@@ -1260,7 +1260,7 @@ describe("Threads desktop panels", () => {
       const delayed = new Promise((resolve) => {
         release = resolve;
       });
-      const routePattern = "**/commands/surface.set_override";
+      const routePattern = "**/commands/surface.arrange";
       await page.route(routePattern, async (route) => {
         arrived();
         await delayed;
@@ -1274,7 +1274,7 @@ describe("Threads desktop panels", () => {
       await page.getByRole("button", { name: "Back to the Objective", exact: true }).click();
       await restored.waitFor();
       const response = page.waitForResponse(
-        (reply) => reply.url().endsWith("/commands/surface.set_override") && reply.status() === 503,
+        (reply) => reply.url().endsWith("/commands/surface.arrange") && reply.status() === 503,
       );
       release();
       await response;

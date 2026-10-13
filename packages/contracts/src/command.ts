@@ -32,6 +32,7 @@ import {
   SurfaceOwnerSchema,
   SurfaceDisplaySchema,
   SurfaceRegionSchema,
+  SurfacePlacementRegionSchema,
   SurfaceSizeSchema,
   SurfaceSourceIdSchema,
 } from "./surface.js";
@@ -300,6 +301,44 @@ export const SetSurfaceOverrideCommandSchema = z
 export const ReleaseSurfaceOverrideCommandSchema = z
   .object({ ...CommandBase, ...OverrideScope })
   .strict();
+
+export const ArrangeSurfacesCommandSchema = z
+  .object({
+    ...CommandBase,
+    ...SurfaceOwnerSchema.shape,
+    clientId: z.string().trim().min(1).max(200),
+    display: SurfaceDisplaySchema,
+    attentionState: AttentionStateSchema,
+    placements: z
+      .array(
+        z
+          .object({
+            surfaceId: UuidSchema,
+            region: SurfacePlacementRegionSchema,
+            size: SurfaceSizeSchema,
+            order: z.int().nonnegative().max(100).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(2),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      SurfaceOwnerSchema.safeParse({
+        objectiveId: value.objectiveId,
+        threadId: value.threadId,
+        presence: value.presence,
+      }).success,
+    { message: "exactly one owner" },
+  )
+  .refine(
+    (value) =>
+      new Set(value.placements.map((entry) => entry.surfaceId)).size === value.placements.length,
+    { message: "unique panels" },
+  );
+export type ArrangeSurfacesCommand = z.infer<typeof ArrangeSurfacesCommandSchema>;
 
 export const ComposeSurfacesCommandSchema = z
   .object({

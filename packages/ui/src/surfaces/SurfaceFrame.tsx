@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import type { SurfaceRegion, SurfaceRole, SurfaceSize } from "@noctis/contracts";
 import { corner, glass, material, semantic, spacing, typography } from "../tokens/index.js";
 
@@ -16,6 +16,7 @@ export interface SurfaceFrameProps extends PanelUpdateState {
   size: SurfaceSize;
   region: SurfaceRegion;
   controls?: ReactNode;
+  titleProps?: HTMLAttributes<HTMLHeadingElement> | undefined;
   children: ReactNode;
 }
 export function SurfaceFrame({
@@ -25,6 +26,7 @@ export function SurfaceFrame({
   size,
   region,
   controls,
+  titleProps,
   children,
   updating,
   failed,
@@ -50,7 +52,7 @@ export function SurfaceFrame({
       data-surface-role={role}
       data-surface-region={region}
       data-surface-size={size}
-      style={{ ...glass, display: "flex", flexDirection: "column", minWidth: 0 }}
+      style={{ ...glass, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}
     >
       <header
         style={{
@@ -63,12 +65,14 @@ export function SurfaceFrame({
         }}
       >
         <h2
+          {...titleProps}
           id={labelId}
           style={{
             flex: "1 1 120px",
             margin: 0,
             font: `${role === "primary" ? "600" : "500"} ${String(role === "primary" ? typography.scale.lg : typography.scale.sm)}px ${typography.family}`,
             color: typography.color.primary,
+            ...titleProps?.style,
           }}
         >
           {title}
