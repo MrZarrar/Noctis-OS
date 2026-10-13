@@ -4,8 +4,7 @@ import { corner, material, spacing, typography } from "@noctis/ui";
 /**
  * Presence's list of Objectives: propose one, accept a suggestion, activate it.
  *
- * Split out of `Command.tsx` when task 2.7 moved Surface policy into the core
- * (`objectives/proposed-surfaces.ts`). What is left in Command is the canvas;
+ * Objective controls use core-owned Surface policy (`objectives/proposed-surfaces.ts`);
  * this is the thing shown when there is no canvas yet.
  */
 export const buttonStyle = {

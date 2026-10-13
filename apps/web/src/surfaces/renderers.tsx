@@ -27,6 +27,7 @@ import type {
   DocumentPayload,
   PanelAction,
   SurfaceOwner,
+  PagePanelPayload,
 } from "@noctis/contracts";
 import { PANEL_PROPOSABLE_KINDS } from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
@@ -45,6 +46,7 @@ import type { Resolved, SurfaceKind } from "./registry.js";
  * what it may do. "Open in Vault" is the one Section 7 asks for.
  */
 export interface SurfaceContext {
+  renderPage?: (payload: PagePanelPayload) => ReactNode;
   fileTransport?: CoreTransport;
   contentRevision?: string;
   onOpenFile?: (source: Extract<MediaSource, { from: "file" }>) => void;
@@ -93,6 +95,20 @@ const RENDERERS: Record<
   SurfaceKind,
   (payload: never, context: SurfaceContext, size: SurfaceSize) => ReactNode
 > = {
+  page: (payload: PagePanelPayload, context: SurfaceContext) => (
+    <div
+      className="page-panel"
+      style={{
+        display: "flex",
+        minWidth: 0,
+        height: "min(680px, 65dvh)",
+        overflow: "auto",
+        containerType: "inline-size",
+      }}
+    >
+      {context.renderPage?.(payload) ?? <p>Open {payload.page} from the navigation.</p>}
+    </div>
+  ),
   document: (payload: DocumentPayload, context: SurfaceContext) => (
     <div className="document-panel">
       <DocumentSurface

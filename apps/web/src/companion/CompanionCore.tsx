@@ -86,7 +86,9 @@ export function CompanionCore({
 }: CompanionCoreProps): JSX.Element {
   const state = intelligenceState(conversation, listening);
   const dock = dockFor(page, state, mobile);
-  const target = dock.slot ?? dock.anchor;
+  const slots = dock.slots ?? [];
+  const target = dock.anchor;
+  const slotKey = slots.join();
   const [place, setPlace] = useState<Place>();
   const [moving, setMoving] = useState(false);
   const arrived = useRef<string>();
@@ -107,7 +109,9 @@ export function CompanionCore({
           (element) => element.getClientRects().length > 0,
         );
       const slot =
-        drawn(`[data-core-slot="${target}"]`) ?? drawn('[data-core-slot="corner"]') ?? null;
+        slots.map((name) => drawn(`[data-core-slot="${name}"]`)).find(Boolean) ??
+        drawn('[data-core-slot="corner"]') ??
+        null;
       if (slot !== observed) {
         resizeObserver.disconnect();
         if (slot !== null) {
@@ -158,7 +162,7 @@ export function CompanionCore({
       removeEventListener("resize", measure);
       document.removeEventListener("scroll", measure, true);
     };
-  }, [target, page]);
+  }, [slotKey, target, page]);
 
   // A move that changes nothing on screen never ends in a transitionend.
   useEffect(() => {

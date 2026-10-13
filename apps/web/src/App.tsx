@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CompanionCore, useComposerFocus } from "./companion/CompanionCore.js";
 import { guardStrayFileDrops } from "./conversation/file-drops.js";
-import type { RuntimeRootOption, SendOptions } from "./conversation/useConversation.js";
+import type { RuntimeRootOption } from "./conversation/useConversation.js";
 import { useConversation } from "./conversation/useConversation.js";
 import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
 import { useWaitingCount } from "./notify/useWaitingCount.js";
@@ -29,7 +29,6 @@ import type { HistoryEntry } from "./navigation/back.js";
 import { entryPage, pushPage, useBackLayer } from "./navigation/back.js";
 import { Approvals } from "./pages/Approvals.js";
 import { Artifacts } from "./pages/Artifacts.js";
-import { Command } from "./pages/Command.js";
 import { Files } from "./pages/Files.js";
 import type { FileTarget } from "./pages/files-view.js";
 import { Login } from "./pages/Login.js";
@@ -41,15 +40,15 @@ import { Threads } from "./pages/Threads.js";
 import { Vault } from "./pages/Vault.js";
 import { resumeSession } from "./session/login.js";
 import type { CoreTransport } from "./transport/CoreTransport.js";
+import type { SurfaceContext } from "./surfaces/renderers.js";
 
 /**
  * Where the workbench came from when it jumped to the Vault.
  *
  * Section 7 asks for "Open in Vault and return-to-objective preserve selection
  * and composition context". Keeping the return destination and the focused
- * entity here — above both pages — is what makes the jump a round trip: Command
- * keeps its own state while Vault is showing, so returning restores it rather
- * than rebuilding it.
+ * entity here — above both pages — makes the jump a round trip. The core
+ * retains the owner's composition when the conversation returns.
  */
 interface VaultHandoff {
   entityId: string;
@@ -57,7 +56,7 @@ interface VaultHandoff {
 }
 
 /**
- * Command, Missions, Artifacts and Automations predate v1's narrower product.
+ * Missions, Artifacts and Automations predate v1's narrower product.
  * They stay built and working, and a build with this flag offers them again.
  */
 const ALL_PAGES = import.meta.env.VITE_NOCTIS_ALL_PAGES === "1";
@@ -156,7 +155,7 @@ function Workbench({
   // sheet would otherwise need a library for.
   const moreRef = useRef<HTMLDialogElement>(null);
 
-  // Identity and conversation live here, above Command and Threads, so
+  // Identity and conversation live here, above Presence and Threads, so
   // Presence's prompt and the thread's history are one thread with one
   // subscription (0.12).
   const identity = useIdentityRuntime(transport);
@@ -217,8 +216,6 @@ function Workbench({
     if (item === "Presence") {
       setOpenThreadId(undefined);
       setFreeThread(true);
-    } else if (item === "Command") {
-      setFreeThread(false);
     }
     if (item !== "Vault") {
       setHandoff(undefined);
@@ -247,9 +244,51 @@ function Workbench({
     show("Vault");
   };
 
-  const sendAndShow = (text: string, options: SendOptions): void => {
-    void conversation.send(text, options);
+  const openMissionChat = (turn: {
+    identityId: ConversationalIdentityId;
+    objectiveId?: string | undefined;
+  }): void => {
+    if (turn.identityId !== identityId) void identity.activate(turn.identityId);
+    setFreeThread(turn.objectiveId === undefined);
     show("Threads");
+  };
+  const renderPage: NonNullable<SurfaceContext["renderPage"]> = (payload) => {
+    switch (payload.page) {
+      case "Files": {
+        const folder = payload.folder;
+        const root = conversation.roots.find(
+          (root) => root.nodeId === folder?.nodeId && root.grantId === folder.grantId,
+        );
+        return (
+          <Files
+            roots={conversation.roots}
+            transport={transport}
+            {...(root === undefined || folder === undefined
+              ? {}
+              : { contextFiles: { root, relativePath: folder.relativePath } })}
+          />
+        );
+      }
+      case "Vault":
+        return (
+          <Vault
+            transport={transport}
+            {...(payload.focusId === undefined ? {} : { focusId: payload.focusId })}
+          />
+        );
+      case "Approvals":
+        return <Approvals transport={transport} />;
+      case "Nodes":
+        return <Nodes transport={transport} />;
+      case "Missions":
+        return <Missions transport={transport} onOpenChat={openMissionChat} />;
+      case "Artifacts":
+        return <Artifacts transport={transport} />;
+      case "Settings":
+        return (
+          <Settings transport={transport} {...(onSignedOut === undefined ? {} : { onSignedOut })} />
+        );
+    }
   };
 
   const select = (item: RailItem): void => {
@@ -346,6 +385,7 @@ function Workbench({
       <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
         {active === "Presence" && (
           <Presence
+            renderPage={renderPage}
             identity={identity}
             transport={transport}
             conversation={conversation}
@@ -359,24 +399,9 @@ function Workbench({
             onSwitchIdentity={switchIdentity}
           />
         )}
-        {/* Command stays mounted while the Vault is showing, so returning to
-            it finds the composition it had rather than a fresh one. Mounted
-            only when it can be reached at all. */}
-        {ALL_PAGES && (
-          <div style={{ display: active === "Command" ? "contents" : "none" }}>
-            <Command
-              transport={transport}
-              identity={identity}
-              conversation={conversation}
-              listening={listening}
-              onSend={sendAndShow}
-              onOpenInVault={openInVault}
-            />
-          </div>
-        )}
-
         {active === "Threads" && (
           <Threads
+            renderPage={renderPage}
             onOpenInVault={openInVault}
             identityId={identityId}
             conversation={conversation}
@@ -422,23 +447,7 @@ function Workbench({
           />
         )}
 
-        {active === "Missions" && (
-          <Missions
-            transport={transport}
-            onOpenChat={(turn) => {
-              // The thread the turn ran on, not merely the Threads page: a
-              // turn under an Objective is invisible from the free thread and
-              // vice versa, and arriving at the wrong one looks like lost
-              // history.
-              if (turn.identityId !== identityId) {
-                void identity.activate(turn.identityId);
-              }
-
-              setFreeThread(turn.objectiveId === undefined);
-              show("Threads");
-            }}
-          />
-        )}
+        {active === "Missions" && <Missions transport={transport} onOpenChat={openMissionChat} />}
 
         {active === "Artifacts" && <Artifacts transport={transport} />}
 

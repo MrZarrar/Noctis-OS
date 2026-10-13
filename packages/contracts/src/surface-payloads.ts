@@ -79,6 +79,37 @@ export const FileSourceSchema = z
   })
   .strict();
 
+export const PAGE_PANEL_PAGES = [
+  "Files",
+  "Vault",
+  "Approvals",
+  "Nodes",
+  "Missions",
+  "Artifacts",
+  "Settings",
+] as const;
+export const PagePanelPayloadSchema = z
+  .object({
+    page: z.enum(PAGE_PANEL_PAGES),
+    folder: FileSourceSchema.omit({ from: true })
+      .extend({
+        relativePath: z
+          .string()
+          .max(1024)
+          .refine((path) => !path.split(/[\\/]/).includes(".."), "no parent segments"),
+      })
+      .strict()
+      .optional(),
+    focusId: z.string().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine(
+    (payload) =>
+      (payload.folder === undefined || payload.page === "Files") &&
+      (payload.focusId === undefined || payload.page === "Vault"),
+  );
+export type PagePanelPayload = z.infer<typeof PagePanelPayloadSchema>;
+
 export const MediaPayloadSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
@@ -241,6 +272,7 @@ export const SURFACE_PAYLOAD_SCHEMAS: Record<
   string,
   { payloadVersion: number; schema: z.ZodType }
 > = {
+  page: { payloadVersion: 1, schema: PagePanelPayloadSchema },
   conversation: { payloadVersion: 1, schema: ConversationPayloadSchema },
   document: { payloadVersion: 1, schema: DocumentPayloadSchema },
   timeline: { payloadVersion: 1, schema: TimelinePayloadSchema },

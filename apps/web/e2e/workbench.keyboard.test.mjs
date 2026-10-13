@@ -7,7 +7,15 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
-import { TOKEN, launchOptions, startProcess, stopProcess, tabTo, waitForHttp } from "./harness.mjs";
+import {
+  TOKEN,
+  coreCommand,
+  launchOptions,
+  startProcess,
+  stopProcess,
+  tabTo,
+  waitForHttp,
+} from "./harness.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const WEB_ROOT = join(REPO_ROOT, "apps/web");
@@ -69,7 +77,7 @@ async function waitForCanvas(predicate, label, timeoutMs = 20_000) {
   }
 }
 
-describe("the Objective and Surface slice, driven only by the keyboard", () => {
+describe("Threads panels, driven only by the keyboard", () => {
   before(async () => {
     // `vite dev` resolves `@noctis/ui` and `@noctis/contracts` through their
     // package exports, which point at `dist/`. Without a build there is nothing
@@ -110,7 +118,7 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
           ...process.env,
           VITE_CORE_URL: WEB_URL,
           VITE_CORE_TOKEN: TOKEN,
-          // Command and Artifacts are behind the all-pages flag since v1.
+          // Exercise every available rail destination.
           VITE_NOCTIS_ALL_PAGES: "1",
           NOCTIS_CORE_PROXY_TARGET: CORE_URL,
         },
@@ -136,148 +144,118 @@ describe("the Objective and Surface slice, driven only by the keyboard", () => {
   });
 
   it(
-    "THE GATE: activates, arranges, dismisses, and restores without a pointer",
+    "THE GATE: arranges, focuses, dismisses, and restores Threads panels without a pointer",
     { timeout: 120_000 },
     async () => {
-      await page.goto(WEB_URL);
-      await tabTo(page, "Command");
-      await page.keyboard.press("Enter");
-      await page.getByLabel("New Objective").waitFor();
-
-      // Propose. Enter in the field submits the form, because it is a form.
-      await tabTo(page, "New Objective");
-      await page.keyboard.type("Prove the Phase 6 slice");
-      await page.keyboard.press("Enter");
-      await waitForCanvas(
-        (state) => state.objectives.some((entry) => entry.includes("suggested")),
-        "the proposed Objective never appeared as suggested",
-      );
-
-      // suggested -> draft -> active, as two separate acts. There is no
-      // shortcut control between them, so this also proves the ladder.
-      await tabTo(page, "Accept");
-      await page.keyboard.press("Enter");
-      await waitForCanvas(
-        (state) => state.objectives.some((entry) => entry.includes("draft")),
-        "Accept did not move the Objective to draft",
-      );
-
-      await tabTo(page, "Activate");
-      await page.keyboard.press("Enter");
-      await waitForCanvas(
-        (state) => state.surfaces.length === 3 && state.heading === "Prove the Phase 6 slice",
-        "activating did not compose the Objective's Surfaces",
-      );
-
-      const composed = await readCanvas();
-
-      assert.deepEqual(
-        composed.surfaces,
-        [
-          { title: "Choices", region: "left" },
-          { title: "Conversation", region: "centre" },
-          { title: "Detail", region: "right" },
-        ],
-        "the wide canvas layout is not what the compositor committed",
-      );
-      assert.ok(composed.reasonCodes.includes("layout.canvas.split"));
-      assert.ok(composed.reasonCodes.includes("display.wide"));
-
+      const created = await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "keyboard-thread",
+        identityId: "vesper",
+        title: "Keyboard panels",
+      });
+      assert.equal(created.status, 200);
+      const threadId = created.body.id;
+      for (const [kind, payload, preferredRegion, priority] of [
+        ["list", { items: [{ id: "a", label: "First choice" }] }, "left", 50],
+        ["detail", { fields: [{ label: "Status", value: "Ready" }] }, "right", 40],
+      ]) {
+        assert.equal(
+          (
+            await coreCommand(CORE_URL, "surface.upsert_intent", {
+              idempotencyKey: "keyboard-" + kind,
+              threadId,
+              kind,
+              role: "primary",
+              persistence: "restorable",
+              priority,
+              minSize: "standard",
+              preferredRegion,
+              payloadVersion: 1,
+              payload,
+            })
+          ).status,
+          200,
+        );
+      }
+      const open = async () => {
+        await page.goto(WEB_URL);
+        await tabTo(page, "Threads");
+        await page.keyboard.press("Enter");
+        await tabTo(page, "Conversations");
+        await page.keyboard.press("Enter");
+        await tabTo(page, "Keyboard panels");
+        await page.keyboard.press("Enter");
+        await waitForCanvas(
+          (state) => state.heading === "Threads" && state.surfaces.length > 0,
+          "thread panels did not open",
+        );
+      };
+      await open();
+      assert.equal(await page.getByRole("button", { name: "Command", exact: true }).count(), 0);
       await tabTo(page, "Place Detail: Right");
       await page.keyboard.press("Enter");
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
       await waitForCanvas(
         (state) =>
-          state.reasonCodes.includes("override.honoured") &&
           state.surfaces.some(
             (surface) => surface.title === "Detail" && surface.region === "bottom",
-          ),
-        "the keyboard override did not move Detail to the control strip",
+          ) && state.reasonCodes.includes("override.honoured"),
+        "keyboard placement did not reach Threads",
       );
-
-      // Dismiss.
+      await tabTo(page, "Focus Detail");
+      await page.keyboard.press("Enter");
+      await page.getByRole("button", { name: "Show conversation", exact: true }).waitFor();
+      await tabTo(page, "Show conversation");
+      await page.keyboard.press("Enter");
+      await page.getByRole("button", { name: "Focus Detail", exact: true }).waitFor();
       await tabTo(page, "Close Choices");
       await page.keyboard.press("Enter");
       await waitForCanvas(
-        (state) =>
-          state.surfaces.length === 2 &&
-          !state.surfaces.some((surface) => surface.title === "Choices") &&
-          state.reasonCodes.includes("lifecycle.excluded"),
-        "dismissing Choices did not remove it from the composition",
+        (state) => state.surfaces.length === 1 && state.reasonCodes.includes("lifecycle.excluded"),
+        "keyboard close did not dismiss Choices",
       );
-
       assert.ok(
         await page.evaluate(() => document.activeElement !== document.body),
-        "Close lost keyboard focus",
+        "Close lost focus",
       );
       const beforeReload = await readCanvas();
-
-      await page.reload();
-      await tabTo(page, "Command");
-      await page.keyboard.press("Enter");
-      await waitForCanvas(
-        (state) => state.surfaces.length === 2 && state.heading === "Prove the Phase 6 slice",
-        "the workbench did not restore the active Objective after a reload",
-      );
-
+      await open();
       const afterReload = await readCanvas();
-
-      assert.deepEqual(
-        afterReload.surfaces,
-        beforeReload.surfaces,
-        "the restored arrangement is not the one the user left",
-      );
-      assert.ok(
-        afterReload.reasonCodes.includes("override.honoured"),
-        "the user's placement did not survive the reload",
-      );
-      const response = await fetch(`${CORE_URL}/objectives`, {
-        headers: { authorization: `Bearer ${TOKEN}` },
-      });
-      assert.equal(response.status, 200);
-      const { objectives } = await response.json();
-      const objective = objectives.find((entry) => entry.title === "Prove the Phase 6 slice");
-      assert.ok(objective);
-      const seeded = await fetch(`${CORE_URL}/commands/surface.upsert_intent`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          idempotencyKey: "keyboard-unplaceable",
-          objectiveId: objective.id,
-          kind: "detail",
-          role: "supporting",
-          persistence: "objective",
-          priority: 0,
-          minSize: "stage",
-          payloadVersion: 1,
-          payload: { title: "Overflow detail", fields: [] },
-        }),
-      });
-      assert.equal(seeded.status, 200);
-      await page.reload();
-      await tabTo(page, "Command");
-      await page.keyboard.press("Enter");
-      await waitForCanvas(
-        (state) => state.surfaces.length === 1,
-        "panels did not restore with overflow",
-      );
-      assert.equal(await page.locator("details:not([open])").count(), 1);
-      await tabTo(page, "Close Conversation");
-      await page.keyboard.press("Enter");
-      await waitForCanvas((state) => state.surfaces.length === 0, "last panel did not close");
+      assert.deepEqual(afterReload.surfaces, beforeReload.surfaces);
+      assert.ok(afterReload.reasonCodes.includes("override.honoured"));
       assert.equal(
-        await page.locator("details:not([open])").count(),
-        1,
-        "overflow must stay collapsed",
+        (
+          await coreCommand(CORE_URL, "surface.upsert_intent", {
+            idempotencyKey: "keyboard-overflow",
+            threadId,
+            kind: "verification",
+            role: "supporting",
+            persistence: "restorable",
+            priority: 0,
+            minSize: "stage",
+            payloadVersion: 1,
+            payload: { title: "Overflow checks", items: [] },
+          })
+        ).status,
+        200,
       );
-      assert.equal(await page.locator("details li").count(), 1, "overflow entry must remain");
+      await open();
+      await tabTo(page, "Close Detail");
+      await page.keyboard.press("Enter");
+      await waitForCanvas((state) => state.surfaces.length === 0, "last drawn panel did not close");
+      assert.equal(
+        await page
+          .getByRole("complementary", { name: "Thread panels" })
+          .locator("details:not([open])")
+          .count(),
+        1,
+      );
       assert.ok(
         await page.evaluate(
           () =>
             document.activeElement !== document.body && document.activeElement?.checkVisibility(),
         ),
-        "closing the last panel must focus a visible surviving target",
+        "last close lost visible keyboard focus",
       );
     },
   );

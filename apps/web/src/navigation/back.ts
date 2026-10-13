@@ -17,6 +17,7 @@ const PAGES: readonly string[] = [...NAV_ITEMS, ...HIDDEN_ITEMS, "Settings"];
 
 export function entryPage(state: unknown): RailItem | undefined {
   const page = (state as { page?: unknown } | null)?.page;
+  if (page === "Command") return "Threads";
   return typeof page === "string" && PAGES.includes(page) ? (page as RailItem) : undefined;
 }
 

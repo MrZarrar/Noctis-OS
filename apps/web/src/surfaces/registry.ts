@@ -12,6 +12,7 @@ import {
   LiveBriefPayloadSchema,
   MediaPayloadSchema,
   NativeFocusPayloadSchema,
+  PagePanelPayloadSchema,
   SourceStatePayloadSchema,
   TimelinePayloadSchema,
   VerificationPayloadSchema,
@@ -60,6 +61,7 @@ export interface SurfaceRegistryEntry {
 const ALL_SIZES: readonly SurfaceSize[] = ["compact", "standard", "wide", "stage"];
 
 export const REGISTRY = {
+  page: { payloadVersion: 1, schema: PagePanelPayloadSchema, sizes: ALL_SIZES, title: "Page" },
   document: {
     payloadVersion: 1,
     schema: DocumentPayloadSchema,
@@ -256,13 +258,15 @@ export function resolveSurface(
     status: "ok",
     kind: kind as SurfaceKind,
     title:
-      kind === "media" ||
-      kind === "live_brief" ||
-      kind === "document" ||
-      kind === "timeline" ||
-      kind === "verification"
-        ? (parsed.data as MediaPayload | LiveBriefPayload).title
-        : entry.title,
+      kind === "page"
+        ? (parsed.data as { page: string }).page
+        : kind === "media" ||
+            kind === "live_brief" ||
+            kind === "document" ||
+            kind === "timeline" ||
+            kind === "verification"
+          ? (parsed.data as MediaPayload | LiveBriefPayload).title
+          : entry.title,
     payload: parsed.data,
   };
 }

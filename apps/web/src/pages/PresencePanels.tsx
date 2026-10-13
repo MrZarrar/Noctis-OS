@@ -4,12 +4,14 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import { Workbench } from "../workbench/Workbench.js";
 import { useComposition } from "../workbench/useComposition.js";
 import type { ThreadPanelsState } from "./ThreadPanels.js";
+import type { SurfaceContext } from "../surfaces/renderers.js";
 
 const PRESENCE = { presence: true } as const;
 
 export function usePresencePanels(
   transport: CoreTransport | undefined,
   revision: number,
+  renderPage?: SurfaceContext["renderPage"],
 ): ThreadPanelsState {
   const composition = useComposition(transport, transport === undefined ? undefined : PRESENCE);
   const refresh = composition.refresh;
@@ -21,7 +23,7 @@ export function usePresencePanels(
     hasPanels:
       (composition.plan?.slots.length ?? 0) + (composition.plan?.overflowSurfaceIds.length ?? 0) >
       0,
-    handoffs: {},
+    handoffs: renderPage === undefined ? {} : { renderPage },
   };
 }
 

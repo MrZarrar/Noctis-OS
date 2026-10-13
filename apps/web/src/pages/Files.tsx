@@ -78,6 +78,7 @@ export function Files({
   roots,
   transport,
   target,
+  contextFiles,
   onTargetOpened,
 }: {
   roots: readonly RuntimeRootOption[];
@@ -85,13 +86,18 @@ export function Files({
   transport: CoreTransport | undefined;
   /** A file to open on arrival, offered by a thread that wrote it. */
   target?: FileTarget<RuntimeRootOption> | undefined;
+  contextFiles?: FileTarget<RuntimeRootOption> | undefined;
   /** Called once the target is taken, so coming back to Files later starts fresh. */
   onTargetOpened?: () => void;
 }): JSX.Element {
   const isMobile = useIsMobile();
   // The page mounts each time it is opened, so a target is simply where it starts.
-  const [place, setPlace] = useState<RuntimeRootOption | undefined>(target?.root);
-  const [folder, setFolder] = useState(target === undefined ? "" : parentPath(target.relativePath));
+  const [place, setPlace] = useState<RuntimeRootOption | undefined>(
+    target?.root ?? contextFiles?.root,
+  );
+  const [folder, setFolder] = useState(
+    target === undefined ? (contextFiles?.relativePath ?? "") : parentPath(target.relativePath),
+  );
   const [pending, setPending] = useState(target?.relativePath.split("/").at(-1));
   const [listing, setListing] = useState<Listing>({ state: "loading" });
   const [opened, setOpened] = useState<Entry & { path: string }>();
@@ -377,9 +383,11 @@ export function Files({
   return (
     <Page title="Files" subtitle="What your agents made, on any of your PCs">
       <div
+        className="files-layout"
+        data-files-layout
         style={{
           display: "grid",
-          gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(260px, 340px) minmax(0, 1fr)",
+          gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : undefined,
           gap: spacing.lg,
           alignItems: "start",
           flex: 1,

@@ -1,7 +1,12 @@
 import type { CSSProperties } from "react";
 import { useEffect } from "react";
 import { motion, spacing } from "@noctis/ui";
-import type { SurfaceOwner } from "@noctis/contracts";
+import {
+  DocumentPayloadSchema,
+  MediaPayloadSchema,
+  VaultRecallPayloadSchema,
+  type SurfaceOwner,
+} from "@noctis/contracts";
 import type { ConversationState } from "../conversation/useConversation.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
@@ -62,6 +67,7 @@ export function useThreadPanels(
   conversation: ConversationState,
   onOpenInVault?: (entityId: string) => void,
   onOpenFile?: (target: FileTarget<RuntimeRootOption>) => void,
+  renderPage?: SurfaceContext["renderPage"],
 ): ThreadPanelsState {
   const thread = useComposition(
     transport,
@@ -111,6 +117,7 @@ export function useThreadPanels(
         0,
     ),
     handoffs: {
+      ...(renderPage === undefined ? {} : { renderPage }),
       ...(transport === undefined ? {} : { fileTransport: transport }),
       ...(onOpenInVault === undefined
         ? {}
@@ -143,6 +150,52 @@ export function useThreadPanels(
         void conversation.decline(id);
       },
     },
+  };
+}
+
+/** Starting context is read from validated panels and the current thread, never a model page proposal. */
+export function pagePanelContext(
+  panels: ThreadPanelsState,
+  conversation: Pick<ConversationState, "thread" | "roots">,
+) {
+  const intents = panels.sources
+    .flatMap((source) => [...source.composition.intents])
+    .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+    .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  const file = intents.flatMap((intent) => {
+    const media =
+      intent.kind === "media" ? MediaPayloadSchema.safeParse(intent.payload) : undefined;
+    const doc =
+      intent.kind === "document" ? DocumentPayloadSchema.safeParse(intent.payload) : undefined;
+    const source = media?.success ? media.data.source : doc?.success ? doc.data.content : undefined;
+    return source?.from === "file" ? [source] : [];
+  })[0];
+  const root = conversation.roots.find(
+    (root) =>
+      root.nodeId === conversation.thread?.nodeId &&
+      root.grantId === conversation.thread.rootGrantId,
+  );
+  const recall = intents.flatMap((intent) => {
+    const parsed =
+      intent.kind === "vault_recall"
+        ? VaultRecallPayloadSchema.safeParse(intent.payload)
+        : undefined;
+    return parsed?.success ? parsed.data.evidence : [];
+  })[0];
+  return {
+    contextFiles:
+      root !== undefined
+        ? { nodeId: root.nodeId, grantId: root.grantId, relativePath: "" }
+        : file === undefined
+          ? undefined
+          : {
+              nodeId: file.nodeId,
+              grantId: file.grantId,
+              relativePath: file.relativePath.includes("/")
+                ? file.relativePath.slice(0, file.relativePath.lastIndexOf("/"))
+                : "",
+            },
+    focusId: recall?.entityId,
   };
 }
 export function ThreadPanels({

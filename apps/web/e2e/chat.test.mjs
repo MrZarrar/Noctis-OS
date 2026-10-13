@@ -99,9 +99,7 @@ function readPage() {
       })),
       approvals: texts('li[data-entry="approval"]'),
       confirmDisabled: confirm === undefined ? null : confirm.disabled,
-      // Visible only: Command stays mounted behind `display: none`, and its
-      // Presence prompt carries a picker of its own. A closed picker's rows are
-      // still in the page, in the list its button controls.
+      // Visible only: a closed picker's rows remain in the list its button controls.
       modelOptions: [
         ...document.querySelectorAll('button[aria-haspopup="listbox"][aria-label^="Agent"]'),
       ]

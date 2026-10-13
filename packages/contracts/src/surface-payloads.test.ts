@@ -18,6 +18,31 @@ export const PANEL_FIXTURES = {
 } as const;
 
 describe("read-only panels and message choices", () => {
+  it("accepts only owner page panels and bounds their starting context", () => {
+    const schema = SURFACE_PAYLOAD_SCHEMAS.page?.schema;
+    expect(schema).toBeDefined();
+    for (const page of [
+      "Files",
+      "Vault",
+      "Approvals",
+      "Nodes",
+      "Missions",
+      "Artifacts",
+      "Settings",
+    ])
+      expect(schema?.safeParse({ page }).success).toBe(true);
+    for (const page of ["Presence", "Threads", "Login", "Command", "Reminders"])
+      expect(schema?.safeParse({ page }).success).toBe(false);
+    expect(PANEL_PROPOSABLE_KINDS.has("page")).toBe(false);
+    expect(schema?.safeParse({ page: "Files", url: "https://example.com" }).success).toBe(false);
+    expect(
+      schema?.safeParse({
+        page: "Files",
+        folder: { nodeId: "node", grantId: "root", relativePath: "../secret" },
+      }).success,
+    ).toBe(false);
+    expect(schema?.safeParse({ page: "Settings", focusId: "entity" }).success).toBe(false);
+  });
   it.each(Object.entries(PANEL_FIXTURES))("keeps the complete %s payload", (kind, payload) => {
     expect(PANEL_PROPOSABLE_KINDS.has(kind)).toBe(true);
     expect(SURFACE_PAYLOAD_SCHEMAS[kind]?.schema.safeParse(payload)).toMatchObject({

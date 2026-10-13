@@ -5,6 +5,7 @@ import { createLayer, entryPage, pushPage } from "./back.js";
 describe("entryPage", () => {
   it("reads the page a history entry was made on", () => {
     expect(entryPage({ page: "Files", layer: "file" })).toBe("Files");
+    expect(entryPage({ page: "Command" })).toBe("Threads");
   });
 
   it("ignores anything that is not one of the app's pages", () => {

@@ -13,7 +13,7 @@ import { VaultLock } from "./VaultLock.js";
 /**
  * The dedicated Vault view (Section 7).
  *
- * Separate from Command on purpose: Command receives a focused recall Surface,
+ * Threads receives a focused recall Surface,
  * and this is where the whole graph lives. Arriving here from a recall carries
  * `focusId` and a return control, so the handoff is a round trip rather than a
  * one-way navigation that loses the objective.

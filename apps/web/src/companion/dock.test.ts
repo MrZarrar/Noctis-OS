@@ -16,12 +16,12 @@ describe("where the one core sits", () => {
     for (const mobile of [false, true]) {
       expect(dockFor("Presence", "idle", mobile)).toEqual({
         anchor: "slot",
-        slot: "hero",
+        slots: ["hero"],
         size: 0,
       });
       expect(dockFor("Threads", "thinking", mobile)).toEqual({
         anchor: "slot",
-        slot: "composer",
+        slots: ["companion", "composer"],
         size: 76,
       });
     }
@@ -34,18 +34,6 @@ describe("where the one core sits", () => {
       anchor: "corner",
       size: 96,
     });
-  });
-
-  it("fills Command's hero slot on desktop and phone", () => {
-    for (const mobile of [false, true]) {
-      for (const state of STATES) {
-        expect(dockFor("Command", state, mobile)).toEqual({
-          anchor: "slot",
-          slot: "hero",
-          size: 0,
-        });
-      }
-    }
   });
 
   it("docks in the corner everywhere else, smaller on a phone", () => {

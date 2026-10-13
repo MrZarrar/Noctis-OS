@@ -14,11 +14,15 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { PanelSheet, PanelTray, usePanelSheet } from "./PanelTray.js";
 import { PresenceSideColumn, usePresencePanels } from "./PresencePanels.js";
+import { AddPanel } from "./AddPanel.js";
+import { pagePanelContext } from "./ThreadPanels.js";
+import type { SurfaceContext } from "../surfaces/renderers.js";
 import { clockText, greetingFor, msToNextMinute } from "./clock.js";
 import type { DigestView } from "./digest-view.js";
 import { DigestSchema, localMidnight, todayLine } from "./digest-view.js";
 
 export interface PresenceProps {
+  renderPage?: SurfaceContext["renderPage"];
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
   conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots"> &
@@ -62,12 +66,13 @@ export function Presence({
   onReview,
   onOpenThread,
   onSwitchIdentity,
+  renderPage,
 }: PresenceProps): JSX.Element {
   // Only what was said from here, this visit: an exchange from yesterday is
   // history, which Threads keeps, not something to greet the owner with.
   const [sent, setSent] = useState(false);
   const mobile = useIsMobile();
-  const panels = usePresencePanels(transport, conversation.presencePanelsRevision ?? 0);
+  const panels = usePresencePanels(transport, conversation.presencePanelsRevision ?? 0, renderPage);
   const sheet = usePanelSheet(panels);
   const identityId = identity.activeIdentityId ?? "vesper";
   const state = intelligenceState(
@@ -357,6 +362,16 @@ export function Presence({
               <PanelTray panels={panels} sheet={sheet} />
             </>
           )}
+          <AddPanel
+            transport={transport}
+            identityId={identityId}
+            owner={{ presence: true }}
+            {...pagePanelContext(panels, {
+              thread: conversation.thread,
+              roots: conversation.roots,
+            })}
+            onAdded={() => panels.sources.forEach((source) => source.composition.refresh())}
+          />
           <PromptForm
             identityId={identityId}
             models={conversation.models}

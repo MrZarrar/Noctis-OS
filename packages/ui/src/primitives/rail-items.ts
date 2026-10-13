@@ -10,7 +10,7 @@ export const NAV_ITEMS = ["Presence", "Threads", "Files", "Nodes", "Approvals", 
  * Pages built before v1 narrowed the product. They stay in the code and
  * working, offered only when the all-pages flag is set.
  */
-export const HIDDEN_ITEMS = ["Command", "Missions", "Artifacts", "Automations"] as const;
+export const HIDDEN_ITEMS = ["Missions", "Artifacts", "Automations"] as const;
 
 /** Settings is a page too, but it has its own control rather than a slot. */
 export type RailItem = (typeof NAV_ITEMS)[number] | (typeof HIDDEN_ITEMS)[number] | "Settings";

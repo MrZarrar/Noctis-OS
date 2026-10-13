@@ -176,6 +176,50 @@ describe("Threads desktop panels", () => {
     }
   });
 
+  it(
+    "THE GATE (page panels): + works before the first turn, opens multiple pages and persists ownership",
+    { timeout: 120000 },
+    async () => {
+      await openThreads();
+      await page.getByRole("button", { name: "Add panel", exact: true }).click();
+      await page.getByRole("button", { name: "Open Files panel", exact: true }).click();
+      const panels = page.getByRole("complementary", { name: "Thread panels", exact: true });
+      await panels.getByRole("heading", { name: "Files", exact: true, level: 1 }).waitFor();
+      const conversations = await coreRead(CORE_URL, "/conversations?identityId=vesper");
+      const threadId = conversations.body.conversations[0].id;
+      assert.equal(
+        (await coreRead(CORE_URL, `/threads/${threadId}/messages`)).body.messages.length,
+        0,
+      );
+      await page.getByRole("button", { name: "Add panel", exact: true }).click();
+      await page.getByRole("button", { name: "Open Settings panel", exact: true }).click();
+      await panels.getByRole("heading", { name: "Settings", exact: true, level: 1 }).waitFor();
+      assert.equal(await page.locator(".noctis-intelligence").count(), 1);
+      const stored = await coreRead(
+        CORE_URL,
+        `/threads/${threadId}/surfaces?clientId=page-gate&fingerprint=page-gate&widthPx=1440&attentionState=active_canvas`,
+      );
+      assert.equal(stored.body.intents.filter((intent) => intent.kind === "page").length, 2);
+      await page.getByRole("button", { name: "Presence", exact: true }).click();
+      await page.getByRole("button", { name: "Add panel", exact: true }).click();
+      await page.getByRole("button", { name: "Open Approvals panel", exact: true }).click();
+      await page
+        .getByRole("complementary", { name: "Presence panels", exact: true })
+        .getByRole("heading", { name: "Approvals", level: 1, exact: true })
+        .waitFor();
+      const presence = await coreRead(
+        CORE_URL,
+        "/presence/surfaces?clientId=page-gate&fingerprint=page-gate&widthPx=1440&attentionState=active_canvas",
+      );
+      assert.equal(presence.body.intents.filter((intent) => intent.kind === "page").length, 1);
+      // Keep the following existing no-panel gate on an empty free thread.
+      await coreCommand(CORE_URL, "conversation.start_fresh", {
+        idempotencyKey: "page-gate-fresh",
+        identityId: "vesper",
+      });
+    },
+  );
+
   it("a thread with no panels retains the 880px content width", { timeout: 120000 }, async () => {
     await openThreads();
     await prompt("hello");
@@ -206,6 +250,246 @@ describe("Threads desktop panels", () => {
       .waitFor();
     return created.body.id;
   }
+  it(
+    "utility page controls stay in the phone sheet keyboard loop on Threads and Presence",
+    { timeout: 120000 },
+    async () => {
+      await namedThread("Utility keyboard");
+      await page.setViewportSize({ width: 400, height: 860 });
+      for (const host of ["Threads", "Presence"]) {
+        await page.getByRole("button", { name: host, exact: true }).click();
+        await page.getByRole("button", { name: "Add panel", exact: true }).click();
+        await page.getByRole("button", { name: "Open Vault panel", exact: true }).click();
+        const chip = page.getByRole("button", { name: "Open panel Vault", exact: true }).last();
+        await chip.waitFor();
+        await chip.click();
+        const sheet = page.getByRole("region", { name: "Panel sheet", exact: true });
+        const search = sheet.getByPlaceholder("Ask the Vault what it knows");
+        await search.fill("Travel");
+        await search.press("Tab");
+        assert.equal(
+          await sheet
+            .getByRole("button", { name: "Search", exact: true })
+            .evaluate((node) => node === document.activeElement),
+          true,
+          `${host} skipped the Vault search input`,
+        );
+        if (host === "Presence") {
+          await sheet.getByRole("button", { name: "Search", exact: true }).press("Tab");
+          assert.equal(
+            await page.evaluate(
+              () => document.activeElement?.closest('[aria-label="Panel sheet"]') !== null,
+            ),
+            true,
+            "Presence focus escaped the sheet",
+          );
+        }
+        await page.getByRole("button", { name: "Add panel", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Add panel", exact: true });
+        await dialog.getByRole("button", { name: "Open Files panel", exact: true }).press("Tab");
+        assert.equal(
+          await dialog
+            .getByRole("button", { name: "Open Vault panel", exact: true })
+            .evaluate((node) => node === document.activeElement),
+          true,
+          "sheet focus containment blocked the modal picker",
+        );
+        await page.keyboard.press("Escape");
+        await page.goBack();
+      }
+    },
+  );
+  it(
+    "Files fits a narrow desktop panel without clipping its browser or viewer",
+    { timeout: 120000 },
+    async () => {
+      await namedThread("Narrow Files");
+      await page.getByRole("button", { name: "Add panel", exact: true }).click();
+      await page.getByRole("button", { name: "Open Files panel", exact: true }).click();
+      const files = page.locator('.page-panel section[aria-label="Files"]');
+      await files.waitFor();
+      await files.evaluate((node) => {
+        node.closest(".page-panel").style.width = "350px";
+      });
+      await waitFor(
+        () =>
+          files.evaluate((node) => {
+            const grid =
+              node.querySelector("[data-files-layout]") ??
+              node.querySelector("header").parentElement.lastElementChild;
+            return grid.scrollWidth <= grid.clientWidth + 1;
+          }),
+        Boolean,
+        "Files columns clipped inside the panel",
+      );
+    },
+  );
+  it(
+    "page-panel create and upsert refusals retry on the same created thread",
+    { timeout: 120000 },
+    async () => {
+      await coreCommand(CORE_URL, "conversation.start_fresh", {
+        idempotencyKey: "page-refusal-fresh",
+        identityId: "vesper",
+      });
+      await openThreads();
+      const before = (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body
+        .conversations.length;
+      const choose = async () => {
+        await page.getByRole("button", { name: "Add panel", exact: true }).click();
+        await page.getByRole("button", { name: "Open Settings panel", exact: true }).click();
+      };
+      const refuse = (route) =>
+        route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      await page.route("**/commands/conversation.create_thread", refuse);
+      await choose();
+      await page.getByRole("alert").getByText("Could not open this panel. Try again.").waitFor();
+      assert.equal(
+        (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body.conversations.length,
+        before,
+      );
+      await page.unroute("**/commands/conversation.create_thread", refuse);
+      await page.route("**/commands/surface.upsert_intent", refuse);
+      await choose();
+      await page.getByRole("alert").getByText("Could not open this panel. Try again.").waitFor();
+      assert.equal(
+        (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body.conversations.length,
+        before + 1,
+      );
+      await page.unroute("**/commands/surface.upsert_intent", refuse);
+      await choose();
+      await page
+        .locator(".page-panel")
+        .getByRole("heading", { name: "Settings", level: 1, exact: true })
+        .waitFor();
+      assert.equal(
+        (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body.conversations.length,
+        before + 1,
+      );
+    },
+  );
+  it(
+    "duplicate page clicks send once and a late refusal cannot leak after an A to B to A switch",
+    { timeout: 120000 },
+    async () => {
+      await namedThread("Page owner A");
+      await coreCommand(CORE_URL, "conversation.create_thread", {
+        idempotencyKey: "page-owner-b",
+        identityId: "vesper",
+        title: "Page owner B",
+      });
+      let release, received;
+      const pending = new Promise((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise((resolve) => {
+        received = resolve;
+      });
+      let requests = 0;
+      const routePattern = "**/commands/surface.upsert_intent";
+      await page.route(routePattern, async (route) => {
+        requests += 1;
+        received();
+        await pending;
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      });
+      try {
+        await page.getByRole("button", { name: "Add panel", exact: true }).click();
+        await page
+          .getByRole("button", { name: "Open Settings panel", exact: true })
+          .evaluate((node) => {
+            node.click();
+            node.click();
+          });
+        await started;
+        for (const title of ["Page owner B", "Page owner A"]) {
+          await page.getByRole("button", { name: "Conversations", exact: true }).click();
+          await page.getByRole("button", { name: title, exact: true }).click();
+          await page
+            .locator('section[aria-label="Threads"] header')
+            .getByText(new RegExp(title))
+            .waitFor();
+        }
+        const response = page.waitForResponse((result) =>
+          result.url().endsWith("/commands/surface.upsert_intent"),
+        );
+        release();
+        await response;
+        await page.getByRole("button", { name: "Add panel", exact: true }).waitFor();
+        await waitFor(
+          () => page.getByRole("button", { name: "Add panel", exact: true }).isEnabled(),
+          Boolean,
+          "late panel request did not finish",
+        );
+        assert.equal(requests, 1);
+        assert.equal(
+          await page.getByRole("alert").count(),
+          0,
+          "old owner refusal leaked after return",
+        );
+      } finally {
+        release();
+        await page.unroute(routePattern);
+      }
+    },
+  );
+  it(
+    "THE GATE (companion focus): focus replaces the transcript and Show conversation and Back restore it",
+    { timeout: 120000 },
+    async () => {
+      const previousPage = page;
+      const focusContext = await browser.newContext({
+        viewport: { width: 1672, height: 941 },
+        recordVideo: { dir: EVIDENCE, size: { width: 1672, height: 941 } },
+      });
+      page = await focusContext.newPage();
+      try {
+        await namedThread("Companion focus");
+        await page.setViewportSize({ width: 1672, height: 941 });
+        await prompt("IMAGE: companion focus");
+        await page.getByRole("button", { name: /^Focus / }).waitFor();
+        const checkCore = async (slotName) => {
+          await waitFor(
+            () =>
+              page.evaluate((name) => {
+                const slot = document.querySelector(`[data-core-slot="${name}"]`);
+                const core = document.querySelector(".noctis-intelligence");
+                if (!slot || !core) return false;
+                const a = slot.getBoundingClientRect(),
+                  b = core.getBoundingClientRect();
+                return ["x", "y", "width", "height"].every((key) => Math.abs(a[key] - b[key]) <= 2);
+              }, slotName),
+            Boolean,
+            `core did not settle in ${slotName}`,
+          );
+          assert.equal(await page.locator(".noctis-intelligence").count(), 1);
+        };
+        await checkCore("composer");
+        await page.screenshot({ path: join(EVIDENCE, "P12-canvas.png") });
+        await page.getByRole("button", { name: /^Focus / }).click();
+        await page.getByRole("button", { name: "Show conversation", exact: true }).waitFor();
+        assert.equal(await page.locator('ul[aria-label="Conversation"]').isVisible(), false);
+        assert.equal((await page.locator("[data-companion-column]").boundingBox()).width, 300);
+        await checkCore("companion");
+        await page.screenshot({ path: join(EVIDENCE, "P12-focus.png") });
+        await page.getByRole("button", { name: "Show conversation", exact: true }).click();
+        await page.locator('ul[aria-label="Conversation"]').waitFor();
+        await checkCore("composer");
+        await page.screenshot({ path: join(EVIDENCE, "P12-restored.png") });
+        await page.getByRole("button", { name: /^Focus / }).click();
+        await checkCore("companion");
+        await page.goBack();
+        await page.locator('ul[aria-label="Conversation"]').waitFor();
+        await checkCore("composer");
+      } finally {
+        const video = page.video();
+        await page.close();
+        await focusContext.close();
+        await video?.saveAs(join(EVIDENCE, "P12-focus.webm"));
+        page = previousPage;
+      }
+    },
+  );
   it(
     "THE GATE (panels, restore): placed and pinned stay; closed stays closed after reload",
     { timeout: 120000 },

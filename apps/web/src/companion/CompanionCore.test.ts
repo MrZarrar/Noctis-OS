@@ -55,3 +55,46 @@ it("removes the document's clearance when the core unmounts", () => {
   if (typeof cleanup === "function") cleanup();
   expect(properties.has("--noctis-core-clearance")).toBe(false);
 });
+
+it("measures the first drawn ordered slot, then the composer and corner fallbacks", () => {
+  const observe = vi.fn();
+  class Observer {
+    observe = observe;
+    disconnect = vi.fn();
+  }
+  vi.stubGlobal("ResizeObserver", Observer);
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+  vi.stubGlobal("addEventListener", vi.fn());
+  vi.stubGlobal("removeEventListener", vi.fn());
+  const slot = (name: string, drawn: boolean) => ({
+    dataset: { coreSlot: name },
+    parentElement: null,
+    getClientRects: () => (drawn ? [{}] : []),
+    getBoundingClientRect: () => ({ x: 1, y: 2, width: 76, height: 76 }),
+  });
+  for (const available of ["companion", "composer", "corner"]) {
+    vi.mocked(useLayoutEffect).mockClear();
+    observe.mockClear();
+    const slots = ["companion", "composer", "corner"].map((name) =>
+      slot(name, name === available || name === "corner"),
+    );
+    vi.stubGlobal("document", {
+      body: {},
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      querySelectorAll: (selector: string) =>
+        slots.filter((node) => selector.includes(`"${node.dataset.coreSlot}"`)),
+    });
+    renderToStaticMarkup(createElement(CompanionCore, props));
+    const cleanup = vi.mocked(useLayoutEffect).mock.calls[0]?.[0]();
+    const observed = observe.mock.calls[0]?.[0] as ReturnType<typeof slot> | undefined;
+    expect(observed?.dataset.coreSlot).toBe(available);
+    if (typeof cleanup === "function") cleanup();
+  }
+});

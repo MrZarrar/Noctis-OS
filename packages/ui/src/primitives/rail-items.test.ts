@@ -13,7 +13,7 @@ describe("v1 navigation", () => {
 
   it("keeps the earlier pages reachable behind the flag, after the v1 ones", () => {
     expect(railItems(true)).toEqual([...NAV_ITEMS, ...HIDDEN_ITEMS]);
-    expect(HIDDEN_ITEMS).toEqual(["Command", "Missions", "Artifacts", "Automations"]);
+    expect(HIDDEN_ITEMS).toEqual(["Missions", "Artifacts", "Automations"]);
   });
 
   it("never lists Settings as a destination, because it has its own control", () => {

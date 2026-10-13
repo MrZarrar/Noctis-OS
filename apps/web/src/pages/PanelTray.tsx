@@ -26,6 +26,10 @@ export function usePanelSheet(panels: ThreadPanelsState) {
   });
   const wasOpen = useRef(false);
   useEffect(() => {
+    // Desktop focus opens in place, so it has no chip click to push its Back layer.
+    if (open && root.current === null && !layer.owns()) layer.pushed();
+  }, [open, layer]);
+  useEffect(() => {
     if (open && root.current !== null) {
       const page = root.current.closest<HTMLElement>('section[aria-label="Threads"]');
       if (page !== null) page.scrollTop = 0;
@@ -44,11 +48,11 @@ export function usePanelSheet(panels: ThreadPanelsState) {
   useEffect(() => {
     if (!open || root.current === null) return;
     const contain = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      const column = root.current?.closest("[data-conversation-column]");
+      if (event.key !== "Tab" || document.querySelector("dialog:modal") !== null) return;
+      const column = root.current?.closest("[data-conversation-column]") ?? root.current;
       const controls = Array.from(
         column?.querySelectorAll<HTMLElement>(
-          '[aria-label="Panel sheet"] button, [data-panel-composer] button, [data-panel-composer] textarea, [data-panel-composer] input, [data-panel-composer] [tabindex="0"]',
+          ':is([aria-label="Panel sheet"], [data-panel-composer]) :is(button, textarea, input, select, a[href], [tabindex="0"])',
         ) ?? [],
       ).filter((node) => node.checkVisibility() && !node.hasAttribute("disabled"));
       const index = controls.indexOf(document.activeElement as HTMLElement);

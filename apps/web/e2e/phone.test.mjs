@@ -1162,7 +1162,8 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
             range.selectNodeContents(node);
 
             for (const rect of range.getClientRects()) {
-              if (rect.height > 1 && rect.bottom > floor + 0.5 && rect.top < edge) {
+              // Range geometry extends past the scroll clip; only its painted intersection counts.
+              if (rect.height > 1 && Math.min(rect.bottom, edge) > floor + 0.5 && rect.top < edge) {
                 seen.push(node.textContent.trim().slice(0, 40));
               }
             }
