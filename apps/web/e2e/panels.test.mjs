@@ -434,6 +434,45 @@ describe("Threads desktop panels", () => {
     },
   );
   it(
+    "a Missions page panel opens the selected turn's exact conversation from another named thread",
+    { timeout: 120000 },
+    async () => {
+      const targetId = await namedThread("Mission destination B");
+      await prompt("mission destination B contents");
+      const turn = await waitFor(
+        async () => (await coreRead(CORE_URL, `/threads/${targetId}/turns`)).body.turns.at(-1),
+        (value) => value?.status === "completed",
+        "mission destination turn did not complete",
+      );
+      const sourceId = await namedThread("Mission source A");
+      await page.getByRole("button", { name: "Add panel", exact: true }).click();
+      await page.getByRole("button", { name: "Open Missions panel", exact: true }).click();
+      const mission = page
+        .locator('.page-panel li[data-entry="mission"]')
+        .filter({ hasText: turn.jobId });
+      await mission.getByRole("button", { name: "Open in Chat", exact: true }).click();
+      await waitFor(
+        () => page.locator('ul[aria-label="Conversation"]').textContent(),
+        (text) => text.includes("mission destination B contents"),
+        "Missions opened another conversation instead of the selected turn's thread",
+      );
+      await prompt("mission destination B follow-up");
+      await waitFor(
+        async () => (await coreRead(CORE_URL, `/threads/${targetId}/messages`)).body.messages,
+        (messages) =>
+          messages.some(
+            (message) =>
+              message.role === "user" && message.body === "mission destination B follow-up",
+          ),
+        "Missions follow-up did not reach the selected thread",
+      );
+      assert.equal(
+        (await coreRead(CORE_URL, `/threads/${sourceId}/messages`)).body.messages.length,
+        0,
+      );
+    },
+  );
+  it(
     "THE GATE (companion focus): focus replaces the transcript and Show conversation and Back restore it",
     { timeout: 120000 },
     async () => {

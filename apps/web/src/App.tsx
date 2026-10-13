@@ -246,11 +246,13 @@ function Workbench({
 
   const openMissionChat = (turn: {
     identityId: ConversationalIdentityId;
+    threadId: string;
     objectiveId?: string | undefined;
   }): void => {
     if (turn.identityId !== identityId) void identity.activate(turn.identityId);
     setFreeThread(turn.objectiveId === undefined);
     show("Threads");
+    openThread(turn.threadId);
   };
   const renderPage: NonNullable<SurfaceContext["renderPage"]> = (payload) => {
     switch (payload.page) {
