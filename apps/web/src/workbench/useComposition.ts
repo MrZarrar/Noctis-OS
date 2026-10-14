@@ -20,7 +20,7 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { PanelUpdateState } from "@noctis/ui";
 import { reconcileIntents } from "./reconcile.js";
 import { clientId, displayFor, screenFacts } from "./display.js";
-import { geometryKey, swapPlacements } from "./arrange.js";
+import { geometryKey } from "./arrange.js";
 import type { FileTextCache } from "../pages/useFileText.js";
 import { clearFileImages, releaseFileImage, type FileImageCache } from "../surfaces/FileMedia.js";
 
@@ -61,7 +61,6 @@ export interface CompositionState {
   focus: (surfaceId: string | undefined) => void;
   geometryScope: string | undefined;
   move: (surfaceId: string, region: SurfacePlacementRegion, size: SurfaceSize) => Promise<boolean>;
-  swap: (surfaceId: string, targetId: string) => Promise<boolean>;
   release: (surfaceId: string) => Promise<void>;
   dismiss: (surfaceId: string) => Promise<void>;
   /**
@@ -387,22 +386,6 @@ export function useComposition(
         return saved;
       },
       [send, stableOwner, display, attentionState, focusedSurfaceId, plan],
-    ),
-    swap: useCallback(
-      async (surfaceId, targetId) => {
-        const placements = swapPlacements(plan, surfaceId, targetId);
-        if (stableOwner === undefined || placements === undefined) return false;
-        const saved = await send("surface.arrange", {
-          ...stableOwner,
-          clientId: client.current,
-          display,
-          attentionState,
-          placements,
-        });
-        if (saved) setFocusedSurfaceId(undefined);
-        return saved;
-      },
-      [send, stableOwner, display, attentionState, plan],
     ),
     release: useCallback(
       async (surfaceId) => {

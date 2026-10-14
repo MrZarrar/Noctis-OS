@@ -464,7 +464,7 @@ describe("Threads desktop panels", () => {
         assert.equal(result.status, 200);
         await page.getByText("Higher", { exact: true }).waitFor();
         await popup.close();
-        const overflow = page.locator('details[data-drop-region="overflow"]');
+        const overflow = page.locator("details[data-panel-overflow]");
         await overflow.getByText("Overflow: 1 panel", { exact: true }).waitFor();
         await overflow.locator("summary").click();
         await overflow
@@ -1082,18 +1082,11 @@ describe("Threads desktop panels", () => {
           await frame.getByRole("button", { name: "Return Rewritten frame", exact: true }).click();
           await panel.locator("img").waitFor();
           assert.deepEqual(await pixel(panel.locator("img")), [255, 0, 0]);
-          const before = await panel.getAttribute("data-surface-region");
-          await panel.getByRole("button", { name: /^Place Rewritten frame:/ }).click();
-          await page
-            .getByRole("listbox", { name: "Place Rewritten frame", exact: true })
-            .locator('[role="option"][aria-selected="false"]')
-            .first()
-            .click();
-          await waitFor(
-            () => panel.getAttribute("data-surface-region"),
-            (region) => region !== before,
-            "image region did not change",
-          );
+          // Focus and back remounts the frame: floating, into the page, floating again.
+          await panel.getByRole("button", { name: "Focus Rewritten frame", exact: true }).click();
+          await panel.getByRole("button", { name: "Leave focus", exact: true }).click();
+          await panel.getByRole("button", { name: "Focus Rewritten frame", exact: true }).waitFor();
+          await panel.locator("img").waitFor();
           assert.deepEqual(await pixel(panel.locator("img")), [255, 0, 0]);
           await panel.getByRole("button", { name: "Use new version", exact: true }).click();
           await waitFor(
@@ -1151,18 +1144,10 @@ describe("Threads desktop panels", () => {
         await panel.waitFor();
         await assertPreview(panel, "WRITE: accepted v1");
         const move = async () => {
-          const before = await panel.getAttribute("data-surface-region");
-          await panel.getByRole("button", { name: /^Place written.md:/ }).click();
-          await page
-            .getByRole("listbox", { name: "Place written.md", exact: true })
-            .locator('[role="option"][aria-selected="false"]')
-            .first()
-            .click();
-          await waitFor(
-            () => panel.getAttribute("data-surface-region"),
-            (region) => region !== before,
-            "file region did not change",
-          );
+          // Focus and back remounts the frame: floating, into the page, floating again.
+          await panel.getByRole("button", { name: "Focus written.md", exact: true }).click();
+          await panel.getByRole("button", { name: "Leave focus", exact: true }).click();
+          await panel.getByRole("button", { name: "Focus written.md", exact: true }).waitFor();
         };
         await move();
         await assertPreview(panel, "WRITE: accepted v1");
@@ -1697,7 +1682,8 @@ describe("Threads desktop panels", () => {
       const conversationBox = await page
         .getByRole("list", { name: "Conversation", exact: true })
         .boundingBox();
-      assert.ok(panelBox.x >= conversationBox.x + conversationBox.width);
+      // Panels float: it opens on the right, over the page, not in a column beside it.
+      assert.ok(panelBox.x > conversationBox.x, "the image panel did not open on the right");
       assert.equal(await page.locator(".noctis-intelligence").count(), 1);
       await waitFor(
         async () => {

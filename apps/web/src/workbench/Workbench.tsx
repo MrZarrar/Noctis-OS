@@ -1,18 +1,22 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { usePopouts } from "./PopoutProvider.js";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import type { PanelUpdateState } from "@noctis/ui";
 import { buttonStyle } from "../layout/Page.js";
 import { PanelControls } from "./PanelControls.js";
-import type {
-  CompositionPlan,
-  SurfaceIntent,
-  SurfaceRegion,
-  SurfacePlacementRegion,
-  SurfaceSize,
-} from "@noctis/contracts";
-import { SurfaceFrame, elevation, glass, semantic, spacing, typography } from "@noctis/ui";
+import type { CompositionPlan, SurfaceIntent, SurfaceRegion } from "@noctis/contracts";
+import {
+  SurfaceFrame,
+  corner,
+  depth,
+  elevation,
+  glass,
+  material,
+  semantic,
+  spacing,
+  typography,
+} from "@noctis/ui";
 
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { renderSurface } from "../surfaces/renderers.js";
@@ -20,29 +24,75 @@ import { resolveSurface } from "../surfaces/registry.js";
 import type { CompositionState } from "./useComposition.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import {
-  clampShares,
-  dropTarget,
+  defaultRect,
+  fitRect,
   PANEL_MIN_WIDTH,
-  readGeometry,
-  supportedRegions,
-  writeGeometry,
-  type PanelGeometry,
+  presetRect,
+  readWindows,
+  resizeRect,
+  writeWindows,
+  type PanelWindows,
+  type ResizeEdge,
+  type Viewport,
+  type WindowRect,
 } from "./arrange.js";
-import type { DisplayClass } from "@noctis/domain";
 
-const COLUMNS: readonly SurfaceRegion[] = ["left", "centre", "right"];
+/** The reading order when panels stack in the page instead of floating. */
+const STACK_ORDER: readonly SurfaceRegion[] = ["left", "centre", "right", "bottom", "overlay"];
+const KEY_STEP = 32;
+const ARROWS: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowLeft: [-KEY_STEP, 0],
+  ArrowRight: [KEY_STEP, 0],
+  ArrowUp: [0, -KEY_STEP],
+  ArrowDown: [0, KEY_STEP],
+};
+/** Where each resize grip sits on a window; corners come last so they sit above the edges. */
+const EDGES: Readonly<Record<ResizeEdge, CSSProperties>> = {
+  n: { top: -4, left: 10, right: 10, height: 8, cursor: "ns-resize" },
+  s: { bottom: -4, left: 10, right: 10, height: 8, cursor: "ns-resize" },
+  e: { right: -4, top: 10, bottom: 10, width: 8, cursor: "ew-resize" },
+  w: { left: -4, top: 10, bottom: 10, width: 8, cursor: "ew-resize" },
+  ne: { top: -4, right: -4, width: 14, height: 14, cursor: "nesw-resize" },
+  nw: { top: -4, left: -4, width: 14, height: 14, cursor: "nwse-resize" },
+  se: { bottom: -4, right: -4, width: 14, height: 14, cursor: "nwse-resize" },
+  sw: { bottom: -4, left: -4, width: 14, height: 14, cursor: "nesw-resize" },
+};
+/**
+ * Every mounted Workbench's committed windows, so a panel opening for one owner
+ * (the thread) lands clear of another's (its Objective). Written after commit,
+ * never during render: React may discard a render, and its entry would linger.
+ */
+// ponytail: two owners whose first panels arrive in the same commit can still share a spot; drag one.
+const onScreen = new Map<string, readonly WindowRect[]>();
+/**
+ * One stacking order for every floating window on the page, last on top, so a
+ * thread's window and its Objective's can be raised over each other.
+ * Session-only: a reload starts every panel level.
+ */
+// ponytail: only the 16 most recently raised keep their order, so z-index stays under the modal layer.
+let stacking: readonly string[] = [];
+const stackingListeners = new Set<() => void>();
+function raiseWindows(ids: readonly string[]): void {
+  const next = [...stacking.filter((id) => !ids.includes(id)), ...ids].slice(-16);
+  if (next.length === stacking.length && next.every((id, index) => id === stacking[index])) return;
+  stacking = next;
+  stackingListeners.forEach((listener) => listener());
+}
+function subscribeStacking(listener: () => void): () => void {
+  stackingListeners.add(listener);
+  return () => stackingListeners.delete(listener);
+}
+const SAVE_FAILED = "Could not save these panel sizes. Enable browser storage and try again.";
 
-/** A named column's share of the canvas. Fixed sides, elastic middle. */
-const COLUMN_WEIGHT: Readonly<Record<string, number>> = { left: 0.8, centre: 2, right: 1 };
-const DEFAULT_GEOMETRY: PanelGeometry = { columns: {}, bottom: 0.3 };
-function storedGeometry(scope: string | undefined): PanelGeometry {
+function storedWindows(scope: string | undefined): PanelWindows {
   try {
-    return scope === undefined
-      ? DEFAULT_GEOMETRY
-      : (readGeometry(window.localStorage, scope) ?? DEFAULT_GEOMETRY);
+    return scope === undefined ? {} : (readWindows(window.localStorage, scope) ?? {});
   } catch {
-    return DEFAULT_GEOMETRY;
+    return {};
   }
+}
+function viewportSize(): Viewport {
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 export interface WorkbenchProps {
@@ -85,10 +135,10 @@ function slotsIn(plan: CompositionPlan, region: SurfaceRegion): CompositionPlan[
 /**
  * Renders a committed plan. It reads the plan; it never computes one.
  *
- * Nothing here decides what goes where — the compositor already did, in a pure
- * function the core ran and persisted. This component's whole job is to turn
- * five region names into CSS, which is why no ranking, capacity, or override
- * logic appears in it.
+ * The compositor decides which panels exist and which spill to overflow. Where
+ * a panel sits on a desktop screen is the owner's: each one is a floating
+ * window they drag and resize, remembered per screen in this browser. A phone,
+ * or a focused panel, stacks in the page instead.
  */
 export function Workbench({
   composition,
@@ -97,8 +147,6 @@ export function Workbench({
   updates = {},
 }: WorkbenchProps): JSX.Element {
   const root = useRef<HTMLDivElement>(null);
-  const stage = useRef<HTMLDivElement>(null);
-  const main = useRef<HTMLDivElement>(null);
   const mobile = useIsMobile();
   const owner = useId();
   const { coordinator, state: popouts } = usePopouts();
@@ -118,6 +166,7 @@ export function Workbench({
     }
   }, [popouts, composition.plan]);
   useEffect(() => () => coordinator?.releaseOwner(owner), [coordinator, owner]);
+
   useEffect(() => {
     coordinator?.retain(
       owner,
@@ -131,81 +180,87 @@ export function Workbench({
   const scope = composition.geometryScope;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
-  const [stored, setStored] = useState<{ scope: string | undefined; geometry: PanelGeometry }>(
-    () => ({
-      scope,
-      geometry: storedGeometry(scope),
-    }),
+  const [stored, setStored] = useState<{ scope: string | undefined; windows: PanelWindows }>(
+    () => ({ scope, windows: storedWindows(scope) }),
   );
-  const [preview, setPreview] = useState<PanelGeometry>();
+  // Read straight away on an owner switch: an empty map here would save defaults over its places.
+  const windows = stored.scope === scope ? stored.windows : storedWindows(scope);
+  const [preview, setPreview] = useState<{ id: string; rect: WindowRect }>();
   const [arrangeError, setArrangeError] = useState<string>();
-  const [bounds, setBounds] = useState({ width: 0, height: 480 });
-  const [drag, setDrag] = useState<{
-    id: string;
-    region?: SurfacePlacementRegion;
-    targetId?: string | undefined;
-  }>();
+  const [viewport, setViewport] = useState(viewportSize);
+  const front = useSyncExternalStore(subscribeStacking, () => stacking);
   const gesture = useRef<{
     pointerId: number;
     x: number;
     y: number;
-    sourceId: string | undefined;
-    separator: number | "bottom" | undefined;
-    initial: PanelGeometry;
+    id: string;
+    edge: ResizeEdge | undefined;
+    initial: WindowRect;
+    minWidth: number;
     moved: boolean;
   }>();
-  const geometry = preview ?? (stored.scope === scope ? stored.geometry : DEFAULT_GEOMETRY);
+  /** The latest saved windows and live panels, for saves that land after an await. */
+  const latest = useRef({ windows, intents: composition.intents });
+  latest.current = { windows, intents: composition.intents };
+  /** Panels drawn at a default place this render, written down after it so they never jump. */
+  const unsaved = useRef<PanelWindows>({});
+  /** Panels already raised as new, so one whose place cannot be saved is not raised every render. */
+  const announced = useRef(new Set<string>());
+  /** This render's windows, published to `onScreen` once committed. */
+  const drawn = useRef<readonly WindowRect[]>([]);
+  useLayoutEffect(() => {
+    onScreen.set(owner, drawn.current);
+  });
+  useEffect(() => () => void onScreen.delete(owner), [owner]);
   const cancel = (): void => {
     gesture.current = undefined;
     setPreview(undefined);
-    setDrag(undefined);
   };
-  const saveGeometry = (value: PanelGeometry): boolean => {
+  const write = (changes: PanelWindows): boolean => {
+    const live = new Set(latest.current.intents.map((intent) => intent.id));
+    const next = Object.fromEntries(
+      Object.entries({ ...latest.current.windows, ...changes }).filter(([id]) => live.has(id)),
+    );
     let saved = false;
     try {
-      saved = scope !== undefined && writeGeometry(window.localStorage, scope, value);
+      saved = scope !== undefined && writeWindows(window.localStorage, scope, next);
     } catch {
       /* Browser storage can be disabled entirely. */
     }
-    if (!saved) {
-      setArrangeError("Could not save these panel sizes. Enable browser storage and try again.");
-      setPreview(undefined);
-      return false;
-    }
-    setStored({ scope, geometry: value });
+    if (saved) setStored({ scope, windows: next });
+    return saved;
+  };
+  const saveWindow = (id: string, rect: WindowRect): void => {
     setPreview(undefined);
-    setArrangeError(undefined);
-    return true;
+    setArrangeError(write({ [id]: rect }) ? undefined : SAVE_FAILED);
   };
   useEffect(() => {
+    if (Object.keys(unsaved.current).length > 0) write(unsaved.current);
+    // A panel that has just opened comes up on top, as a new window would. Once:
+    // two Workbenches re-raising their own would re-render each other forever.
+    const opened = Object.keys(unsaved.current).filter((id) => !announced.current.has(id));
+    opened.forEach((id) => announced.current.add(id));
+    if (opened.length > 0) raiseWindows(opened);
+  });
+  useEffect(() => {
     cancel();
-    setStored({
-      scope,
-      geometry: storedGeometry(scope),
-    });
+    setStored({ scope, windows: storedWindows(scope) });
     setArrangeError(undefined);
   }, [scope]);
   useEffect(() => {
     const onEscape = (event: KeyboardEvent): void => {
       if (event.key === "Escape") cancel();
     };
+    const onResize = (): void => setViewport(viewportSize());
     window.addEventListener("keydown", onEscape);
-    return () => window.removeEventListener("keydown", onEscape);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("keydown", onEscape);
+      window.removeEventListener("resize", onResize);
+    };
   }, []);
   const restoreAfterClose = useRef<HTMLElement>();
   const { plan, intents, overrides, focusedSurfaceId } = composition;
-  useEffect(() => {
-    const element = stage.current;
-    if (element === null) return;
-    const observer = new ResizeObserver(() =>
-      setBounds({
-        width: main.current?.clientWidth ?? element.clientWidth,
-        height: element.clientHeight,
-      }),
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [plan === undefined]);
   useEffect(() => {
     const previous = restoreAfterClose.current;
     if (previous !== undefined && !previous.isConnected) {
@@ -235,6 +290,8 @@ export function Workbench({
     }
   };
 
+  unsaved.current = {};
+  drawn.current = [];
   if (plan === undefined) {
     return <p style={{ padding: spacing.xl }}>Composing…</p>;
   }
@@ -245,84 +302,41 @@ export function Workbench({
     ...plan,
     slots: plan.slots.filter((slot) => !poppedIds.has(slot.surfaceId)),
   };
-  const display: DisplayClass = plan.reasonCodes.includes("display.wide")
-    ? "wide"
-    : plan.reasonCodes.includes("display.compact")
-      ? "compact"
-      : "standard";
-  const regions = supportedRegions(plan.layoutId, display);
-  const occupied = COLUMNS.filter((region) => slotsIn(canvasPlan, region).length > 0);
-  const minimums = occupied.map((region) =>
-    Math.max(
-      ...slotsIn(canvasPlan, region).map(
-        (slot) => PANEL_MIN_WIDTH[byId.get(slot.surfaceId)?.kind ?? ""] ?? 240,
-      ),
-    ),
-  );
-  const availableWidth = Math.max(1, bounds.width - Math.max(0, occupied.length - 1) * spacing.md);
-  const stacked =
-    mobile ||
-    (bounds.width > 0 && minimums.reduce((sum, width) => sum + width, 0) > availableWidth);
-  const shares = clampShares(
-    occupied.map(
-      (region) =>
-        geometry.columns[region as keyof PanelGeometry["columns"]] ?? COLUMN_WEIGHT[region] ?? 1,
-    ),
-    minimums,
-    availableWidth,
-  );
-  const bottom = slotsIn(canvasPlan, "bottom");
-  const overlay = slotsIn(canvasPlan, "overlay");
-  const rowShares = clampShares(
-    [1 - geometry.bottom, geometry.bottom],
-    [240, 180],
-    bounds.height - spacing.md,
-  );
-  const resize = (
-    separator: number | "bottom",
-    delta: number,
-    initial: PanelGeometry = geometry,
-  ): PanelGeometry => {
-    if (separator === "bottom")
-      return {
-        ...initial,
-        bottom: clampShares(
-          [1 - initial.bottom + delta / bounds.height, initial.bottom - delta / bounds.height],
-          [240, 180],
-          bounds.height - spacing.md,
-        )[1]!,
-      };
-    const next = clampShares(
-      occupied.map(
-        (region) =>
-          initial.columns[region as keyof PanelGeometry["columns"]] ?? COLUMN_WEIGHT[region] ?? 1,
-      ),
-      minimums,
-      availableWidth,
-    );
-    next[separator] = Math.max(0.001, (next[separator] ?? 0) + delta / availableWidth);
-    next[separator + 1] = Math.max(0.001, (next[separator + 1] ?? 0) - delta / availableWidth);
-    const clamped = clampShares(next, minimums, availableWidth);
-    return {
-      ...initial,
-      columns: Object.fromEntries(occupied.map((region, index) => [region, clamped[index]])),
-    };
-  };
-  const start = (
-    event: ReactPointerEvent<HTMLElement>,
-    sourceId?: string,
-    separator?: number | "bottom",
-  ): void => {
-    if (mobile || event.button !== 0) return;
+  const compact = plan.reasonCodes.includes("display.compact");
+  const floating = !mobile && focusedSurfaceId === undefined;
+  const minWidthOf = (id: string): number => PANEL_MIN_WIDTH[byId.get(id)?.kind ?? ""] ?? 240;
+  const rects = new Map<string, WindowRect>();
+  if (floating) {
+    const placed = [...onScreen].flatMap(([key, list]) => (key === owner ? [] : list));
+    for (const slot of canvasPlan.slots) {
+      // A slot with no live intent draws nothing, and `write` would drop its id on every save.
+      if (!byId.has(slot.surfaceId)) continue;
+      const saved =
+        windows[slot.surfaceId] ??
+        (unsaved.current[slot.surfaceId] = defaultRect(slot.size, placed, viewport));
+      const rect = fitRect(
+        preview?.id === slot.surfaceId ? preview.rect : saved,
+        viewport,
+        minWidthOf(slot.surfaceId),
+      );
+      rects.set(slot.surfaceId, rect);
+      placed.push(rect);
+    }
+  }
+  drawn.current = [...rects.values()];
+  const start = (event: ReactPointerEvent<HTMLElement>, id: string, edge?: ResizeEdge): void => {
+    const rect = rects.get(id);
+    if (event.button !== 0 || rect === undefined) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     gesture.current = {
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
-      sourceId,
-      separator,
-      initial: geometry,
+      id,
+      edge,
+      initial: rect,
+      minWidth: minWidthOf(id),
       moved: false,
     };
   };
@@ -331,107 +345,21 @@ export function Workbench({
     if (active === undefined || active.pointerId !== event.pointerId) return;
     const dx = event.clientX - active.x;
     const dy = event.clientY - active.y;
-    active.moved ||= Math.hypot(dx, dy) > 6;
+    active.moved ||= Math.hypot(dx, dy) > 3;
     if (!active.moved) return;
-    if (active.separator !== undefined) {
-      setPreview(resize(active.separator, active.separator === "bottom" ? dy : dx, active.initial));
-      return;
-    }
-    if (active.sourceId === undefined) return;
-    const hit = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest<HTMLElement>("[data-drop-region], [data-surface-id]");
-    const frame = hit?.dataset.surfaceId === undefined ? undefined : hit;
-    const region = dropTarget(
-      frame?.dataset.surfaceRegion ?? hit?.dataset.dropRegion,
-      plan.layoutId,
-      display,
-    );
-    setDrag({
-      id: active.sourceId,
-      ...(region === undefined ? {} : { region }),
-      ...(frame === undefined || frame.dataset.surfaceId === active.sourceId
-        ? {}
-        : { targetId: frame.dataset.surfaceId }),
-    });
+    const next =
+      active.edge === undefined
+        ? { ...active.initial, x: active.initial.x + dx, y: active.initial.y + dy }
+        : resizeRect(active.initial, active.edge, dx, dy, active.minWidth);
+    setPreview({ id: active.id, rect: fitRect(next, viewport, active.minWidth) });
   };
   const pointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const active = gesture.current;
     if (active === undefined || active.pointerId !== event.pointerId) return;
     gesture.current = undefined;
-    if (active.moved && active.separator !== undefined && preview !== undefined)
-      saveGeometry(preview);
-    if (active.moved && drag?.region !== undefined) {
-      const source = plan.slots.find((slot) => slot.surfaceId === drag.id);
-      if (source !== undefined)
-        void (drag.targetId === undefined
-          ? composition.move(drag.id, drag.region, source.size)
-          : composition.swap(drag.id, drag.targetId));
-    }
-    setPreview(undefined);
-    setDrag(undefined);
+    if (active.moved && preview?.id === active.id) saveWindow(active.id, preview.rect);
+    else setPreview(undefined);
   };
-  const separatorFor = (separator: number | "bottom"): JSX.Element => (
-    <div
-      role="separator"
-      tabIndex={0}
-      aria-label={
-        separator === "bottom"
-          ? "Resize main and bottom panels"
-          : `Resize ${occupied[separator]} and ${occupied[separator + 1]} panels`
-      }
-      aria-orientation={separator === "bottom" ? "horizontal" : "vertical"}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(
-        (separator === "bottom" ? rowShares[0]! : shares[separator]!) * 100,
-      )}
-      onPointerDown={(event) => start(event, undefined, separator)}
-      onDoubleClick={() =>
-        saveGeometry(
-          separator === "bottom"
-            ? { ...geometry, bottom: DEFAULT_GEOMETRY.bottom }
-            : { ...geometry, columns: {} },
-        )
-      }
-      onKeyDown={(event) => {
-        const decrease = separator === "bottom" ? "ArrowUp" : "ArrowLeft";
-        const increase = separator === "bottom" ? "ArrowDown" : "ArrowRight";
-        if (event.key === decrease || event.key === increase) {
-          event.preventDefault();
-          saveGeometry(resize(separator, event.key === decrease ? -32 : 32));
-        }
-        if (event.key === "Home") {
-          event.preventDefault();
-          saveGeometry(
-            separator === "bottom"
-              ? { ...geometry, bottom: DEFAULT_GEOMETRY.bottom }
-              : { ...geometry, columns: {} },
-          );
-        }
-      }}
-      style={{
-        position: "absolute",
-        zIndex: 2,
-        touchAction: "none",
-        ...(separator === "bottom"
-          ? { height: 44, width: "100%", left: 0, bottom: -28, cursor: "row-resize" }
-          : { width: 44, height: "100%", right: -28, top: 0, cursor: "col-resize" }),
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          background: semantic.approval,
-          opacity: 0.55,
-          borderRadius: 2,
-          ...(separator === "bottom" ? { height: 3, width: "100%" } : { width: 3, height: "100%" }),
-        }}
-      />
-    </div>
-  );
   const overriddenIds = new Set(
     overrides.filter((entry) => entry.releasedAt === undefined).map((entry) => entry.surfaceId),
   );
@@ -457,6 +385,7 @@ export function Workbench({
       slot.size,
       capabilities,
     );
+    const rect = popped ? undefined : rects.get(slot.surfaceId);
 
     return (
       <SurfaceFrame
@@ -467,24 +396,32 @@ export function Workbench({
         size={slot.size}
         region={slot.region}
         titleProps={
-          mobile || popped
+          rect === undefined
             ? undefined
             : {
+                tabIndex: 0,
                 onPointerDown: (event) => start(event, slot.surfaceId),
+                onKeyDown: (event) => {
+                  const step = ARROWS[event.key];
+                  if (step === undefined) return;
+                  event.preventDefault();
+                  const minWidth = minWidthOf(slot.surfaceId);
+                  const next = event.shiftKey
+                    ? resizeRect(rect, "se", step[0], step[1], minWidth)
+                    : { ...rect, x: rect.x + step[0], y: rect.y + step[1] };
+                  saveWindow(slot.surfaceId, fitRect(next, viewport, minWidth));
+                },
                 style: { cursor: "grab", touchAction: "none", userSelect: "none" },
-                title: "Drag to place or swap this panel",
+                title: "Drag to move. Arrow keys move it, Shift and arrow keys resize it.",
               }
         }
         {...updates[slot.surfaceId]}
         controls={
           <PanelControls
             title={resolved.status === "ok" ? resolved.title : intent.kind}
-            region={slot.region}
             size={slot.size}
-            display={plan.reasonCodes.includes("display.compact") ? "compact" : "standard"}
             pinned={overriddenIds.has(slot.surfaceId)}
             focused={focusedSurfaceId === slot.surfaceId}
-            regions={regions}
             popped={popped}
             onPopout={
               mobile || coordinator === undefined
@@ -502,35 +439,15 @@ export function Workbench({
                 ? composition.release(slot.surfaceId)
                 : composition.move(slot.surfaceId, slot.region, slot.size));
             }}
-            onPlace={(region) => {
-              void composition.move(slot.surfaceId, region, slot.size);
-            }}
             onSize={(size) => {
-              const proportion: Record<SurfaceSize, number> = {
-                compact: 0.25,
-                standard: 0.4,
-                wide: 0.6,
-                stage: 0.75,
-              };
               const next =
-                slot.region === "bottom"
-                  ? { ...geometry, bottom: proportion[size] }
-                  : COLUMNS.includes(slot.region)
-                    ? {
-                        ...geometry,
-                        columns: {
-                          ...Object.fromEntries(
-                            occupied.map((region, index) => [region, shares[index]]),
-                          ),
-                          [slot.region]: proportion[size],
-                        },
-                        bottom: bottom.length > 0 ? 1 - proportion[size] : geometry.bottom,
-                      }
-                    : undefined;
+                rect === undefined
+                  ? undefined
+                  : presetRect(rect, size, viewport, minWidthOf(slot.surfaceId));
               const sentScope = scope;
               void composition.move(slot.surfaceId, slot.region, size).then((saved) => {
                 if (saved && next !== undefined && sentScope === scopeRef.current)
-                  saveGeometry(next);
+                  saveWindow(slot.surfaceId, next);
               });
             }}
             onClose={() => {
@@ -563,124 +480,77 @@ export function Workbench({
     );
   };
 
+  const windowFor = (slot: CompositionPlan["slots"][number]): JSX.Element | null => {
+    const rect = rects.get(slot.surfaceId);
+    const frame = frameFor(slot);
+    if (rect === undefined || frame === undefined) return null;
+    const id = slot.surfaceId;
+    return (
+      <div
+        key={id}
+        data-panel-window={id}
+        onPointerDownCapture={() => raiseWindows([id])}
+        onPointerMove={pointerMove}
+        onPointerUp={pointerUp}
+        onPointerCancel={cancel}
+        onLostPointerCapture={() => {
+          if (gesture.current !== undefined) cancel();
+        }}
+        style={{
+          position: "fixed",
+          left: rect.x,
+          top: rect.y,
+          width: rect.w,
+          height: rect.h,
+          zIndex:
+            (slot.region === "overlay" ? elevation.overlay : elevation.surface) +
+            1 +
+            front.indexOf(id),
+          display: "grid",
+          gridTemplateRows: "minmax(0, 1fr)",
+          // The glass is translucent; a window over another must hide what is behind it.
+          background: depth.layers[0],
+          borderRadius: corner.lg,
+          boxShadow: `0 18px 48px -12px ${material.shadow}`,
+        }}
+      >
+        {frame}
+        {(Object.keys(EDGES) as ResizeEdge[]).map((edge) => (
+          <div
+            key={edge}
+            aria-hidden="true"
+            data-resize-edge={edge}
+            onPointerDown={(event) => start(event, id, edge)}
+            style={{ position: "absolute", touchAction: "none", ...EDGES[edge] }}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div
       ref={root}
       tabIndex={-1}
       data-reason-codes={plan.reasonCodes.join(" ")}
-      onPointerMove={pointerMove}
-      onPointerUp={pointerUp}
-      onPointerCancel={cancel}
-      onLostPointerCapture={() => {
-        if (gesture.current !== undefined) cancel();
-      }}
       style={{ position: "relative", flex: 1, minWidth: 0, display: "grid", gap: spacing.md }}
     >
       {(arrangeError ?? composition.error) !== undefined && (
         <p role="alert">{arrangeError ?? composition.error}</p>
       )}
-      {drag !== undefined && (
-        <div
-          aria-label="Panel drop regions"
-          style={{ display: "flex", flexWrap: "wrap", gap: spacing.sm }}
-        >
-          {regions.map((region) => (
-            <div
-              key={region}
-              data-drop-region={region}
-              style={{
-                ...glass,
-                minHeight: 44,
-                padding: spacing.sm,
-                outline: drag.region === region ? `2px solid ${semantic.approval}` : undefined,
-              }}
-            >
-              {region}
-            </div>
-          ))}
-        </div>
-      )}
-      <div
-        ref={stage}
-        style={{
-          minWidth: 0,
-          minHeight: 0,
-          display: "grid",
-          gap: spacing.md,
-          height: !mobile && bottom.length > 0 ? "clamp(480px, 56vh, 620px)" : undefined,
-          gridTemplateRows:
-            !mobile && bottom.length > 0 ? `${rowShares[0]}fr ${rowShares[1]}fr` : undefined,
-        }}
-      >
-        <div
-          ref={main}
-          style={{
-            display: "grid",
-            gap: spacing.md,
-            gridTemplateColumns: stacked
-              ? "minmax(0, 1fr)"
-              : shares.map((share) => `minmax(0, ${share}fr)`).join(" "),
-            alignItems: "stretch",
-            minHeight: 0,
-            position: "relative",
-          }}
-        >
-          {occupied.map((region, index) => (
-            <div
-              key={region}
-              data-drop-region={region}
-              style={{
-                position: "relative",
-                display: "grid",
-                gridTemplateRows: `repeat(${slotsIn(canvasPlan, region).length}, minmax(0, 1fr))`,
-                gap: spacing.md,
-                minWidth: 0,
-                minHeight: 0,
-                outline: drag?.region === region ? `2px solid ${semantic.approval}` : undefined,
-              }}
-            >
-              {slotsIn(canvasPlan, region).map((slot) => frameFor(slot))}
-              {!stacked && index < occupied.length - 1 && separatorFor(index)}
-            </div>
-          ))}
-          {!mobile && bottom.length > 0 && separatorFor("bottom")}
-        </div>
-
-        {bottom.length > 0 && (
-          <div
-            data-drop-region="bottom"
-            style={{
-              // The control strip spans the canvas rather than hugging the left
-              // edge: it is the row beneath the columns, not a fourth column.
-              display: "grid",
-              gap: spacing.md,
-              gridAutoFlow: "column",
-              gridAutoColumns: "1fr",
-              minWidth: 0,
-              minHeight: 0,
-            }}
-          >
-            {bottom.map((slot) => frameFor(slot))}
-          </div>
-        )}
-      </div>
-
-      {overlay.length > 0 && (
-        <div
-          style={{
-            position: plan.reasonCodes.includes("display.compact") ? "static" : "absolute",
-            top: spacing.lg,
-            right: spacing.lg,
-            width: plan.reasonCodes.includes("display.compact") ? "auto" : 360,
-            borderTop: plan.reasonCodes.includes("display.compact")
-              ? `2px solid ${semantic.approval}`
-              : undefined,
-            display: "grid",
-            gap: spacing.md,
-            zIndex: elevation.overlay,
-          }}
-        >
-          {overlay.map((slot) => frameFor(slot))}
+      {floating ? (
+        canvasPlan.slots.map(windowFor)
+      ) : (
+        <div style={{ display: "grid", gap: spacing.md, minWidth: 0 }}>
+          {STACK_ORDER.flatMap((region) => slotsIn(canvasPlan, region)).map((slot) =>
+            slot.region === "overlay" && compact ? (
+              <div key={slot.surfaceId} style={{ borderTop: `2px solid ${semantic.approval}` }}>
+                {frameFor(slot)}
+              </div>
+            ) : (
+              frameFor(slot)
+            ),
+          )}
         </div>
       )}
 
@@ -692,7 +562,6 @@ export function Workbench({
         intents={byId}
         composition={composition}
         onClose={close}
-        desktop={!mobile}
       />
       {ownPopouts.map((entry) => {
         const slot = lastSlots.current.get(entry.surfaceId);
@@ -705,26 +574,19 @@ export function Workbench({
 }
 
 interface OverflowProps {
-  desktop: boolean;
   onClose: (id: string) => Promise<void>;
   plan: CompositionPlan;
   intents: Map<string, SurfaceIntent>;
   composition: CompositionState;
 }
 
-function Overflow({
-  plan,
-  intents,
-  composition,
-  onClose,
-  desktop,
-}: OverflowProps): JSX.Element | null {
-  if (plan.overflowSurfaceIds.length === 0 && !desktop) {
+function Overflow({ plan, intents, composition, onClose }: OverflowProps): JSX.Element | null {
+  if (plan.overflowSurfaceIds.length === 0) {
     return null;
   }
 
   return (
-    <details data-drop-region="overflow" style={{ ...glass, padding: spacing.md }}>
+    <details data-panel-overflow style={{ ...glass, padding: spacing.md }}>
       <summary
         style={{ cursor: "pointer", font: `${String(typography.scale.sm)}px ${typography.family}` }}
       >

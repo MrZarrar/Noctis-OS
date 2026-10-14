@@ -1,52 +1,67 @@
 import { describe, expect, it } from "vitest";
 import {
-  clampShares,
-  readGeometry,
-  writeGeometry,
+  defaultRect,
+  fitRect,
   geometryKey,
-  dropTarget,
-  supportedRegions,
-  swapPlacements,
+  presetRect,
+  readWindows,
+  resizeRect,
+  writeWindows,
+  type WindowRect,
 } from "./arrange.js";
 
-describe("manual panel arrangement", () => {
-  it("swaps actual slots and order while retaining each panel's own size", () => {
-    const plan = {
-      presence: true as const,
-      layoutId: "canvas.split",
-      displayFingerprint: "display",
-      generatedAt: "2026-10-13T00:00:00.000Z",
-      reasonCodes: [],
-      overflowSurfaceIds: [],
-      slots: [
-        { surfaceId: "a", region: "right" as const, order: 0, size: "standard" as const, layer: 0 },
-        { surfaceId: "b", region: "right" as const, order: 1, size: "wide" as const, layer: 0 },
-      ],
-    };
-    expect(swapPlacements(plan, "a", "b")).toEqual([
-      { surfaceId: "a", region: "right", order: 1, size: "standard" },
-      { surfaceId: "b", region: "right", order: 0, size: "wide" },
-    ]);
-    expect(swapPlacements(plan, "a", "missing")).toBeUndefined();
-    expect(swapPlacements(plan, "a", "a")).toBeUndefined();
+const viewport = { width: 1600, height: 900 };
+
+describe("floating panel windows", () => {
+  it("opens new panels side by side from the right, clear of every open window", () => {
+    const overlaps = (a: WindowRect, b: WindowRect): boolean =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    const first = defaultRect("standard", [], viewport);
+    const second = defaultRect("standard", [first], viewport);
+    expect(first.x + first.w).toBeLessThanOrEqual(viewport.width);
+    expect(first.x).toBeGreaterThan(viewport.width / 2);
+    expect(second.x + second.w).toBeLessThan(first.x);
+    expect(overlaps(first, second)).toBe(false);
+    const moved = { x: 1000, y: 60, w: 300, h: 300 };
+    expect(overlaps(defaultRect("standard", [moved], viewport), moved)).toBe(false);
+    expect(defaultRect("wide", [], viewport).w).toBeGreaterThan(first.w);
   });
-  it("only offers regions supported by the committed layout", () => {
-    expect(supportedRegions("canvas.split", "standard")).toEqual([
-      "centre",
-      "right",
-      "bottom",
-      "overflow",
-    ]);
-    expect(supportedRegions("focus.stage", "standard")).toEqual(["centre", "bottom", "overflow"]);
-    expect(dropTarget("left", "canvas.split", "standard")).toBeUndefined();
-    expect(dropTarget("overflow", "canvas.split", "standard")).toBe("overflow");
+  it("cascades once the row is full, so a new panel never lands exactly on another", () => {
+    const small = { width: 800, height: 700 };
+    const first = defaultRect("standard", [], small);
+    const second = defaultRect("standard", [first], small);
+    expect(second.x + second.w).toBeLessThanOrEqual(small.width);
+    expect([second.x, second.y]).not.toEqual([first.x, first.y]);
   });
-  it("bounds column shares by all panel minimums and total available room", () => {
-    expect(clampShares([0.01, 0.99], [300, 400], 1000)).toEqual([0.3, 0.7]);
-    expect(clampShares([0.99, 0.01], [300, 400], 1000)).toEqual([0.6, 0.4]);
-    expect(clampShares([0.5, 0.5], [300, 400], 500)).toEqual([3 / 7, 4 / 7]);
+  it("keeps a window reachable on a smaller screen without losing its stored size", () => {
+    const stored = { x: 1500, y: 880, w: 640, h: 600 };
+    const fitted = fitRect(stored, { width: 800, height: 600 }, 240);
+    expect(fitted.x + fitted.w).toBeLessThanOrEqual(800);
+    expect(fitted.y + 48).toBeLessThanOrEqual(600);
+    expect(fitted.h).toBeLessThanOrEqual(600);
+    expect(fitRect({ x: -50, y: -20, w: 100, h: 100 }, viewport, 240)).toEqual({
+      x: 0,
+      y: 0,
+      w: 240,
+      h: 160,
+    });
   });
-  it("rejects corrupt storage, separates owners and keeps old geometry after a refused save", () => {
+  it("resizes from any edge, never below the kind's minimum, keeping the opposite edge still", () => {
+    const rect = { x: 400, y: 200, w: 400, h: 400 };
+    expect(resizeRect(rect, "se", 50, 30, 240)).toEqual({ x: 400, y: 200, w: 450, h: 430 });
+    expect(resizeRect(rect, "nw", 50, 30, 240)).toEqual({ x: 450, y: 230, w: 350, h: 370 });
+    expect(resizeRect(rect, "w", 300, 0, 240)).toEqual({ x: 560, y: 200, w: 240, h: 400 });
+    expect(resizeRect(rect, "n", 0, 500, 240)).toEqual({ x: 400, y: 440, w: 400, h: 160 });
+    expect(resizeRect(rect, "e", -500, 99, 240)).toEqual({ x: 400, y: 200, w: 240, h: 400 });
+  });
+  it("applies a size preset in place and keeps it on screen", () => {
+    const rect = { x: 1200, y: 100, w: 340, h: 440 };
+    const large = presetRect(rect, "wide", viewport, 240);
+    expect(large.w).toBe(defaultRect("wide", [], viewport).w);
+    expect(large.x + large.w).toBeLessThanOrEqual(viewport.width);
+    expect(large.y).toBe(100);
+  });
+  it("rejects corrupt storage, separates owners and reports a refused save", () => {
     const values = new Map<string, string>();
     const storage = {
       getItem: (key: string) => values.get(key) ?? null,
@@ -55,21 +70,23 @@ describe("manual panel arrangement", () => {
       },
     };
     const key = geometryKey("client", "1920x1080@1", "thread:a");
-    const geometry = { columns: { centre: 0.7, right: 0.3 }, bottom: 0.25 };
-    expect(writeGeometry(storage, key, geometry)).toBe(true);
-    expect(readGeometry(storage, key)).toEqual(geometry);
-    expect(readGeometry(storage, geometryKey("client", "1920x1080@1", "thread:b"))).toBeUndefined();
-    values.set(key, '{"columns":{"centre":-1},"bottom":2}');
-    expect(readGeometry(storage, key)).toBeUndefined();
+    const windows = { detail: { x: 10, y: 20, w: 300, h: 400 } };
+    expect(writeWindows(storage, key, windows)).toBe(true);
+    expect(readWindows(storage, key)).toEqual(windows);
+    expect(readWindows(storage, geometryKey("client", "1920x1080@1", "thread:b"))).toBeUndefined();
+    values.set(key, '{"columns":{"centre":0.5},"bottom":0.3}');
+    expect(readWindows(storage, key)).toBeUndefined();
+    values.set(key, '{"detail":{"x":0,"y":0,"w":-1,"h":5}}');
+    expect(readWindows(storage, key)).toBeUndefined();
     expect(
-      writeGeometry(
+      writeWindows(
         {
           setItem: () => {
             throw new Error("blocked");
           },
         },
         key,
-        geometry,
+        windows,
       ),
     ).toBe(false);
   });

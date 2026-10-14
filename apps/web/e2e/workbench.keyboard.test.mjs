@@ -14,6 +14,7 @@ import {
   startProcess,
   stopProcess,
   tabTo,
+  waitFor,
   waitForHttp,
 } from "./harness.mjs";
 
@@ -192,16 +193,23 @@ describe("Threads panels, driven only by the keyboard", () => {
       };
       await open();
       assert.equal(await page.getByRole("button", { name: "Command", exact: true }).count(), 0);
-      await tabTo(page, "Place Detail: Right");
-      await page.keyboard.press("Enter");
-      await page.keyboard.press("ArrowDown");
+      // A floating panel moves from the keyboard: its focused title takes the arrow keys.
+      const left = () =>
+        page.evaluate(
+          () =>
+            [...document.querySelectorAll("[data-panel-window]")].find(
+              (node) => node.querySelector("h2")?.textContent === "Detail",
+            )?.style.left,
+        );
+      const before = await left();
+      await tabTo(page, "Detail");
+      await page.keyboard.press("ArrowLeft");
+      await waitFor(left, (value) => value !== before, "keyboard move did not move Detail");
+      await tabTo(page, "Pin Detail");
       await page.keyboard.press("Enter");
       await waitForCanvas(
-        (state) =>
-          state.surfaces.some(
-            (surface) => surface.title === "Detail" && surface.region === "bottom",
-          ) && state.reasonCodes.includes("override.honoured"),
-        "keyboard placement did not reach Threads",
+        (state) => state.reasonCodes.includes("override.honoured"),
+        "keyboard pin did not reach the core",
       );
       await tabTo(page, "Focus Detail");
       await page.keyboard.press("Enter");

@@ -27,7 +27,10 @@ export function usePresencePanels(
   };
 }
 
-/** The desktop side column: every Presence panel stacked, whatever region the plan gave it. */
+/**
+ * The desktop home for Presence panels. They float over the page, so the column
+ * only takes room for a focused panel and the overflow list.
+ */
 export function PresenceSideColumn({ panels }: { panels: ThreadPanelsState }): JSX.Element | null {
   const composition = panels.sources[0]?.composition;
   if (!panels.hasPanels || composition?.plan === undefined) return null;
@@ -36,7 +39,7 @@ export function PresenceSideColumn({ panels }: { panels: ThreadPanelsState }): J
       aria-label="Presence panels"
       className="thread-panels"
       style={{
-        width: 300,
+        width: composition.focusedSurfaceId === undefined ? undefined : 300,
         flexShrink: 0,
         alignSelf: "flex-start",
         display: "grid",
@@ -44,16 +47,7 @@ export function PresenceSideColumn({ panels }: { panels: ThreadPanelsState }): J
       }}
     >
       <Workbench
-        composition={{
-          ...composition,
-          plan: {
-            ...composition.plan,
-            // The column is phone-narrow with one region, so it gets the phone's controls:
-            // Place would have nowhere else to go.
-            reasonCodes: [...new Set([...composition.plan.reasonCodes, "display.compact"])],
-            slots: composition.plan.slots.map((slot) => ({ ...slot, region: "centre" })),
-          },
-        }}
+        composition={composition}
         updates={composition.updates ?? {}}
         handoffs={panels.handoffs}
       />

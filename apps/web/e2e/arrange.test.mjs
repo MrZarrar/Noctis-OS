@@ -82,28 +82,34 @@ async function snapshot() {
     nodes.map((node) => ({ id: node.dataset.surfaceId, region: node.dataset.surfaceRegion })),
   );
 }
-async function dragTitle(id, target, cancel) {
-  const title = panel(id).locator("h2").first();
-  const from = await title.boundingBox();
-  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2, { steps: 3 });
-  await page.getByLabel("Panel drop regions").waitFor();
-  const box = await target.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 });
-  if (cancel === "escape") await page.keyboard.press("Escape");
-  if (cancel === "pointer") await title.dispatchEvent("pointercancel", { pointerId: 1 });
-  await page.mouse.up();
-}
-async function resize(handle, dx, dy, cancel) {
-  const box = await handle.boundingBox();
-  const x = box.x + box.width / 2,
-    y = box.y + box.height / 2;
+const box = (id) => panel(id).boundingBox();
+const floating = (id) =>
+  panel(id).evaluate((node) => getComputedStyle(node.parentElement).position === "fixed");
+const layer = (id) =>
+  panel(id).evaluate((node) => Number(getComputedStyle(node.parentElement).zIndex));
+const title = (id) => panel(id).locator("h2").first();
+const edge = (id, name) => page.locator(`[data-panel-window="${id}"] [data-resize-edge="${name}"]`);
+async function dragBy(handle, dx, dy, cancel) {
+  const from = await handle.boundingBox();
+  const x = from.x + Math.min(from.width / 2, 40),
+    y = from.y + from.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + dx, y + dy, { steps: 8 });
-  if (cancel) await page.keyboard.press("Escape");
+  if (cancel === "escape") await page.keyboard.press("Escape");
+  if (cancel === "pointer") await handle.dispatchEvent("pointercancel", { pointerId: 1 });
   await page.mouse.up();
+}
+/** The panel-enter slide must finish before a box is measured. */
+const settle = () =>
+  page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .filter((animation) => animation.effect?.target?.closest?.("[data-panel-window]"))
+      .every((animation) => animation.playState === "finished"),
+  );
+function near(actual, expected, label) {
+  assert.ok(Math.abs(actual - expected) < 3, `${label}: expected ${expected}, got ${actual}`);
 }
 async function geometry() {
   return page.evaluate(() =>
@@ -113,7 +119,7 @@ async function geometry() {
   );
 }
 it(
-  "P19/P20: pointer snap, real swaps, manual overflow, cancel/refusal, resize/reload/reset and phone boundary",
+  "panels float: drag anywhere, resize from edges, raise, keyboard, refusal, reload, focus and phone",
   { timeout: 120000 },
   async () => {
     const thread = await coreCommand(CORE_URL, "conversation.create_thread", {
@@ -124,7 +130,7 @@ it(
     assert.equal(thread.status, 200);
     threadId = thread.body.id;
     const ids = [];
-    for (const [title, role] of [
+    for (const [name, role] of [
       ["Main", "primary"],
       ["One", "supporting"],
       ["Two", "supporting"],
@@ -139,171 +145,177 @@ it(
         priority: 0,
         minSize: "compact",
         payloadVersion: 1,
-        payload: { fields: [{ label: title, value: `Readable ${title} content` }], actions: [] },
+        payload: { fields: [{ label: name, value: `Readable ${name} content` }], actions: [] },
         sourceIds: [`01941f29-7c00-7000-8000-${String(sequence).padStart(12, "0")}`],
         artifactIds: [],
       });
       assert.equal(created.status, 200);
-      // Distinct kinds are not needed: source identity differentiates detail intents.
       ids.push(created.body.id);
     }
     // The upsert deduplication contract requires unique sources for otherwise identical kinds.
     assert.equal(new Set(ids).size, 4);
+    const [mainId, one, two] = ids;
     await open();
     await waitFor(snapshot, (value) => value.length === 4, "four arrange panels did not render");
     assert.equal(await page.getByText("Readable Main content", { exact: true }).count(), 1);
-    const before = await snapshot();
-    const one = before.filter((entry) => entry.region === "right")[0].id;
-    const two = before.filter((entry) => entry.region === "right")[1].id;
-    const mainId = before.find((entry) => entry.region === "centre").id;
-    await dragTitle(mainId, panel(one).locator("h2"));
-    await waitFor(
-      snapshot,
-      (value) =>
-        value.some((entry) => entry.id === mainId && entry.region === "right") &&
-        value.some((entry) => entry.id === one && entry.region === "centre"),
-      "cross-region swap did not exchange both panels",
+    await settle();
+
+    // No predefined places: no drop chips, separators or Place picker, and every panel floats.
+    assert.equal(await page.getByRole("separator").count(), 0);
+    assert.equal(await page.getByRole("button", { name: /^Place / }).count(), 0);
+    for (const id of ids) assert.equal(await floating(id), true, `${id} did not float`);
+    // Overlapping windows must not show through each other.
+    const backing = await panel(mainId).evaluate(
+      (node) => getComputedStyle(node.parentElement).backgroundColor,
     );
-    await dragTitle(mainId, panel(one).locator("h2"));
-    await waitFor(
-      snapshot,
-      (value) => value.some((entry) => entry.id === mainId && entry.region === "centre"),
-      "cross-region restore did not exchange both panels",
-    );
-    await dragTitle(one, panel(two).locator("h2"));
-    await waitFor(
-      snapshot,
-      (value) => value.filter((entry) => entry.region === "right")[0]?.id === two,
-      "same-region swap did not reorder",
-    );
-    const swapped = await snapshot();
-    await dragTitle(two, panel(one).locator("h2"), "escape");
-    assert.deepEqual(await snapshot(), swapped);
-    await dragTitle(two, panel(one).locator("h2"), "pointer");
-    assert.deepEqual(await snapshot(), swapped);
-    await dragTitle(
-      two,
-      page.locator('[aria-label="Panel drop regions"] [data-drop-region="left"]'),
-    );
-    await waitFor(
-      snapshot,
-      (value) => value.some((entry) => entry.id === two && entry.region === "left"),
-      "left snap did not persist",
-    );
-    await page.reload();
-    await open();
-    await waitFor(
-      snapshot,
-      (value) => value.some((entry) => entry.id === two && entry.region === "left"),
-      "left snap did not restore",
-    );
-    await dragTitle(
-      one,
-      page.locator('[aria-label="Panel drop regions"] [data-drop-region="overflow"]'),
-    );
-    await waitFor(
-      snapshot,
-      (value) => !value.some((entry) => entry.id === one),
-      "manual overflow did not remove slot",
-    );
-    await page.locator('details[data-drop-region="overflow"] summary').click();
-    assert.ok(
-      await page
-        .locator('details[data-drop-region="overflow"]')
-        .getByText("detail", { exact: true })
-        .count(),
-    );
-    const horizontal = page.getByRole("separator", { name: "Resize main and bottom panels" });
-    const columns = page.getByRole("separator", { name: "Resize left and centre panels" });
-    await columns.waitFor();
-    const sizesBefore = await geometry();
-    const originalWidth = (await panel(two).boundingBox()).width;
+    assert.match(backing, /^rgb\(/, `window backing was not opaque: ${backing}`);
+    const opened = await Promise.all(ids.map(box));
+
+    for (const [index, b] of opened.entries()) {
+      assert.ok(b.x + b.width <= 2200 && b.y + b.height <= 1000, "a panel opened off screen");
+      for (const other of opened.slice(index + 1))
+        assert.ok(
+          b.x + b.width <= other.x || other.x + other.width <= b.x,
+          "new panels opened on top of each other",
+        );
+    }
+    assert.ok(Math.max(...opened.map((b) => b.x + b.width)) > 2100, "panels did not start right");
+
+    // Drag anywhere; only the dragged panel moves.
+    const start = await box(mainId);
+    const others = await Promise.all([one, two].map(box));
+    await dragBy(title(mainId), -900, 150);
+    let moved = await box(mainId);
+    near(moved.x, start.x - 900, "dragged x");
+    near(moved.y, start.y + 150, "dragged y");
+    assert.deepEqual(await Promise.all([one, two].map(box)), others, "a drag moved other panels");
+    await dragBy(title(mainId), 300, 0, "escape");
+    assert.deepEqual(await box(mainId), moved, "Escape kept a cancelled drag");
+    await dragBy(title(mainId), 300, 0, "pointer");
+    assert.deepEqual(await box(mainId), moved, "pointercancel kept a cancelled drag");
+
+    // Resize from a corner and from the far edge, which stops at the kind's minimum.
+    await dragBy(edge(mainId, "se"), 120, 80);
+    const grown = await box(mainId);
+    near(grown.width, moved.width + 120, "corner width");
+    near(grown.height, moved.height + 80, "corner height");
+    near(grown.x, moved.x, "corner resize kept the left edge");
+    await dragBy(edge(mainId, "w"), 2000, 0);
+    const narrowed = await box(mainId);
+    assert.ok(narrowed.width >= 239, "panel shrank below detail minimum");
+    near(narrowed.x + narrowed.width, grown.x + grown.width, "west resize kept the right edge");
+
+    // Clicking a panel brings it to the front.
+    await title(one).click();
+    assert.ok((await layer(one)) > (await layer(mainId)), "clicked panel stayed behind");
+
+    // Keyboard: arrows move, Shift+arrows resize.
+    const keyed = await box(two);
+    await title(two).focus();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("Shift+ArrowDown");
+    near((await box(two)).x, keyed.x - 32, "keyboard move");
+    near((await box(two)).height, keyed.height + 32, "keyboard resize");
+
+    // A refused save says so and leaves the panel where it was.
+    const saved = await geometry();
+    const beforeRefusal = await box(two);
     await page.evaluate(() => {
       window.arrangeSetItem = Storage.prototype.setItem;
       Storage.prototype.setItem = () => {
         throw new Error("test blocked storage");
       };
     });
-    await resize(columns, 90, 0);
+    await dragBy(title(two), -200, 0);
     await page.getByRole("alert").filter({ hasText: "Could not save these panel sizes" }).waitFor();
-    assert.deepEqual(await geometry(), sizesBefore);
-    assert.ok(
-      Math.abs((await panel(two).boundingBox()).width - originalWidth) < 2,
-      "refused storage retained a preview",
-    );
+    assert.deepEqual(await geometry(), saved);
+    assert.deepEqual(await box(two), beforeRefusal, "refused storage kept the new place");
     await page.evaluate(() => {
       Storage.prototype.setItem = window.arrangeSetItem;
       delete window.arrangeSetItem;
     });
-    await resize(columns, 90, 0, true);
-    assert.deepEqual(await geometry(), sizesBefore);
-    await resize(columns, 90, 0);
-    await resize(horizontal, 0, -70);
-    const widthBeforeReload = (await panel(two).boundingBox()).width;
-    const resized = await geometry();
-    assert.ok(Object.keys(resized).length > 0);
-    await page.screenshot({ path: join(evidence, "P19-P20-arranged.png") });
+
+    // Places survive a reload and a switch to another thread and back.
+    moved = await box(mainId);
+    const twoBefore = await box(two);
+    const other = await coreCommand(CORE_URL, "conversation.create_thread", {
+      idempotencyKey: "arrange-other-thread",
+      identityId: "vesper",
+      title: "Arrange other",
+    });
+    assert.equal(other.status, 200);
+    await coreCommand(CORE_URL, "surface.upsert_intent", {
+      idempotencyKey: "arrange-other-panel",
+      threadId: other.body.id,
+      kind: "detail",
+      role: "primary",
+      persistence: "restorable",
+      priority: 0,
+      minSize: "compact",
+      payloadVersion: 1,
+      payload: { fields: [{ label: "Other", value: "Readable Other content" }], actions: [] },
+    });
+    await page.getByRole("button", { name: "Conversations", exact: true }).click();
+    await page.getByRole("button", { name: "Arrange other", exact: true }).click();
+    await page.getByText("Readable Other content", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Conversations", exact: true }).click();
+    await page.getByRole("button", { name: "Arrange gate", exact: true }).click();
+    await waitFor(snapshot, (value) => value.length === 4, "panels did not return after a switch");
+    await settle();
+    assert.deepEqual(await box(mainId), moved, "a thread switch lost the dragged panel's place");
+    await page.screenshot({ path: join(evidence, "floating-arranged.png") });
     await page.reload();
     await open();
-    await columns.waitFor();
-    assert.deepEqual(await geometry(), resized);
-    assert.ok(
-      Math.abs((await panel(two).boundingBox()).width - widthBeforeReload) < 2,
-      "restored panel width differed",
-    );
-    await resize(columns, -1500, 0);
-    assert.ok((await panel(two).boundingBox()).width >= 239, "column shrank below detail minimum");
-    await horizontal.dblclick();
-    await columns.dblclick();
-    const reset = JSON.parse(Object.values(await geometry())[0]);
-    assert.deepEqual(reset.columns, {});
-    assert.equal(reset.bottom, 0.3);
-    await columns.focus();
-    await page.keyboard.press("ArrowRight");
-    assert.notDeepEqual(JSON.parse(Object.values(await geometry())[0]).columns, {});
-    const beforePreset = await geometry();
+    await waitFor(snapshot, (value) => value.length === 4, "panels did not return after reload");
+    await settle();
+    assert.deepEqual(await box(mainId), moved, "dragged panel did not restore");
+    assert.deepEqual(await box(two), twoBefore, "keyboard-moved panel did not restore");
+
+    // Size presets resize the window and keep the semantic size.
+    await title(two).click();
     await panel(two)
       .getByRole("button", { name: /^Size / })
       .click();
     await page.getByRole("option", { name: "Large", exact: true }).click();
     await waitFor(
-      geometry,
-      (value) => JSON.stringify(value) !== JSON.stringify(beforePreset),
-      "keyboard size preset did not update separator geometry",
+      () => box(two),
+      (value) => Math.abs(value.width - 640) < 2,
+      "Large did not resize the window",
     );
-    await panel(two)
-      .getByRole("button", { name: /^Focus / })
-      .click();
-    await page.getByRole("button", { name: "Show conversation", exact: true }).waitFor();
+    assert.equal(await panel(two).getAttribute("data-surface-size"), "wide");
+
+    // A refused size leaves the window alone.
+    const beforeRefusedSize = await geometry();
     await page.route("**/commands/surface.arrange", (route) =>
       route.fulfill({ status: 409, contentType: "application/json", body: "{}" }),
     );
     await panel(two)
-      .getByRole("button", { name: /^Place / })
+      .getByRole("button", { name: /^Size / })
       .click();
-    await page.getByRole("option", { name: "Bottom", exact: true }).click();
+    await page.getByRole("option", { name: "Small", exact: true }).click();
     await page.getByRole("alert").filter({ hasText: "refused" }).waitFor();
-    assert.ok(await page.getByRole("button", { name: "Show conversation", exact: true }).count());
+    assert.deepEqual(await geometry(), beforeRefusedSize);
     await page.unroute("**/commands/surface.arrange");
+
+    // Focus takes the panel into the page; leaving focus floats it again.
     await panel(two)
-      .getByRole("button", { name: /^Place / })
+      .getByRole("button", { name: /^Focus / })
       .click();
-    await page.getByRole("option", { name: "Bottom", exact: true }).click();
+    await page.getByRole("button", { name: "Show conversation", exact: true }).waitFor();
+    assert.equal(await floating(two), false, "focused panel still floated");
+    await panel(two).getByRole("button", { name: "Leave focus", exact: true }).click();
     await waitFor(
-      snapshot,
-      (value) => value.some((entry) => entry.id === two && entry.region === "bottom"),
-      "successful move stayed in focused stage",
+      () => floating(two),
+      (value) => value === true,
+      "panel did not float again",
     );
-    assert.equal(
-      await page.getByRole("button", { name: "Show conversation", exact: true }).count(),
-      0,
-    );
+
     await page.setViewportSize({ width: 400, height: 860 });
     await page
       .getByRole("button", { name: /^Open panel / })
       .first()
       .waitFor();
-    assert.equal(await page.getByRole("separator").count(), 0);
+    assert.equal(await page.locator("[data-resize-edge]").count(), 0);
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
       false,
@@ -312,7 +324,7 @@ it(
 );
 
 it(
-  "overlay size choices persist semantically on desktop and phone without saving column geometry",
+  "overlay size choices persist semantically on desktop and phone; only the desktop window resizes",
   { timeout: 60000 },
   async () => {
     const title = "Overlay size gate";
@@ -367,7 +379,14 @@ it(
         0,
         "successful overlay size reported a false storage failure",
       );
-      assert.deepEqual(await geometry(), before, "overlay size wrote unrelated frame geometry");
+      if (width === 400)
+        assert.deepEqual(await geometry(), before, "a phone size choice wrote window geometry");
+      else
+        await waitFor(
+          () => panel(created.body.id).boundingBox(),
+          (value) => Math.abs(value.width - 340) < 2,
+          "Small did not resize the floating overlay",
+        );
     }
   },
 );

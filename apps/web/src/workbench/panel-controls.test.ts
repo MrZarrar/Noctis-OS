@@ -1,24 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { controlsFor, PanelControls } from "./PanelControls.js";
+import { PanelControls } from "./PanelControls.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+const props = {
+  title: "Approvals",
+  size: "standard" as const,
+  pinned: false,
+  focused: false,
+  onFocus() {},
+  onPin() {},
+  onSize() {},
+  onClose() {},
+};
+
 describe("panel controls", () => {
-  it("offers pop-out in a narrow desktop strip when the host supplies the action", () => {
-    const props = {
-      title: "Approvals",
-      region: "centre" as const,
-      size: "standard" as const,
-      display: "compact" as const,
-      pinned: false,
-      focused: false,
-      regions: [],
-      onFocus() {},
-      onPin() {},
-      onPlace() {},
-      onSize() {},
-      onClose() {},
-    };
+  it("offers pop-out only when the host supplies the action", () => {
     expect(
       renderToStaticMarkup(createElement(PanelControls, { ...props, onPopout() {} })),
     ).toContain('aria-label="Pop out Approvals"');
@@ -26,9 +23,7 @@ describe("panel controls", () => {
       'aria-label="Pop out Approvals"',
     );
   });
-  it("keeps place off compact panels", () => {
-    expect(controlsFor("compact")).toEqual(["focus", "pin", "size", "close"]);
-    expect(controlsFor("standard")).toEqual(["focus", "pin", "place", "size", "close"]);
-    expect(controlsFor("wide")).toEqual(controlsFor("standard"));
+  it("has no fixed Place picker: a panel is moved by dragging it", () => {
+    expect(renderToStaticMarkup(createElement(PanelControls, props))).not.toContain("Place ");
   });
 });

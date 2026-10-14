@@ -383,7 +383,6 @@ export function Threads({
 }: ThreadsProps): JSX.Element {
   const mobile = useIsMobile();
   const panels = useThreadPanels(transport, conversation, onOpenInVault, onOpenFile, renderPage);
-  const hasPanels = panels.hasPanels && !mobile;
   const panelSheet = usePanelSheet(panels);
   const focused = !mobile && panelSheet.focused !== undefined;
   const pageContext = pagePanelContext(panels, conversation);
@@ -458,7 +457,8 @@ export function Threads({
   return (
     <Page
       title="Threads"
-      maxWidth={hasPanels ? 1680 : 880}
+      // Panels float over the page; only a focused one takes a column beside the thread.
+      maxWidth={focused ? 1680 : 880}
       subtitle={subtitle}
       actions={
         <>
@@ -527,11 +527,7 @@ export function Threads({
           data-thread-workspace
           style={{
             display: "grid",
-            gridTemplateColumns: hasPanels
-              ? focused
-                ? "300px minmax(0, 1fr)"
-                : "minmax(340px, 420px) minmax(0, 1fr)"
-              : "minmax(0, 1fr)",
+            gridTemplateColumns: focused ? "300px minmax(0, 1fr)" : "minmax(0, 1fr)",
             gap: spacing.lg,
             flex: 1,
             minWidth: 0,

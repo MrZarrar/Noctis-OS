@@ -1,118 +1,131 @@
-import type { CompositionPlan, SurfacePlacementRegion } from "@noctis/contracts";
-import { SurfacePlacementRegionSchema } from "@noctis/contracts";
-import { LAYOUTS, attentionStateForLayout, type DisplayClass } from "@noctis/domain";
+import type { SurfaceSize } from "@noctis/contracts";
 import { z } from "zod";
 
-export function supportedRegions(
-  layoutId: string,
-  display: DisplayClass,
-): SurfacePlacementRegion[] {
-  const state = attentionStateForLayout(layoutId);
-  return state === undefined
-    ? []
-    : SurfacePlacementRegionSchema.options.filter(
-        (region) => region === "overflow" || region in LAYOUTS[state].capacity[display],
-      );
-}
-export function dropTarget(
-  region: string | undefined,
-  layoutId: string,
-  display: DisplayClass,
-): SurfacePlacementRegion | undefined {
-  return supportedRegions(layoutId, display).find((entry) => entry === region);
-}
-
-export function swapPlacements(
-  plan: CompositionPlan | undefined,
-  sourceId: string,
-  targetId: string,
-):
-  | {
-      surfaceId: string;
-      region: SurfacePlacementRegion;
-      size: CompositionPlan["slots"][number]["size"];
-      order: number;
-    }[]
-  | undefined {
-  if (sourceId === targetId) return undefined;
-  const source = plan?.slots.find((slot) => slot.surfaceId === sourceId);
-  const target = plan?.slots.find((slot) => slot.surfaceId === targetId);
-  if (source === undefined || target === undefined) return undefined;
-  return [
-    { surfaceId: sourceId, region: target.region, order: target.order, size: source.size },
-    { surfaceId: targetId, region: source.region, order: source.order, size: target.size },
-  ];
-}
-
-const share = z.number().finite().positive().max(1);
-const GeometrySchema = z
+/** A floating panel's place on screen, in CSS pixels from the viewport's top-left. */
+const RectSchema = z
   .object({
-    columns: z
-      .object({ left: share.optional(), centre: share.optional(), right: share.optional() })
-      .strict(),
-    bottom: share,
+    x: z.number().finite(),
+    y: z.number().finite(),
+    w: z.number().finite().positive(),
+    h: z.number().finite().positive(),
   })
   .strict();
-export type PanelGeometry = z.infer<typeof GeometrySchema>;
+export type WindowRect = z.infer<typeof RectSchema>;
+/** Saved windows, keyed by panel kind so a new panel of a kind opens where the last one was left. */
+const WindowsSchema = z.record(z.string(), RectSchema);
+export type PanelWindows = z.infer<typeof WindowsSchema>;
+export interface Viewport {
+  width: number;
+  height: number;
+}
+export type ResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+const PANEL_MIN_HEIGHT = 160;
+const PRESETS: Readonly<Record<SurfaceSize, readonly [number, number]>> = {
+  compact: [340, 440],
+  standard: [460, 560],
+  wide: [640, 640],
+  stage: [820, 720],
+};
+
+/** Keeps the whole window on screen without forgetting how it was sized for a larger one. */
+export function fitRect(rect: WindowRect, viewport: Viewport, minWidth: number): WindowRect {
+  const w = Math.min(Math.max(rect.w, minWidth), viewport.width);
+  const h = Math.min(Math.max(rect.h, PANEL_MIN_HEIGHT), viewport.height);
+  return {
+    x: Math.min(Math.max(rect.x, 0), viewport.width - w),
+    y: Math.min(Math.max(rect.y, 0), viewport.height - h),
+    w,
+    h,
+  };
+}
+
+function overlaps(a: WindowRect, b: WindowRect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/**
+ * Where a panel with nothing saved opens: the first spot along the top, from
+ * the right edge leftwards, that covers no open window. When the row is full
+ * it cascades instead, so it still never lands exactly on another.
+ */
+export function defaultRect(
+  size: SurfaceSize,
+  placed: readonly WindowRect[],
+  viewport: Viewport,
+): WindowRect {
+  const [w, h] = PRESETS[size];
+  const top = 72;
+  let right = viewport.width - 24;
+  while (right - w >= 0) {
+    const rect = fitRect({ x: right - w, y: top, w, h }, viewport, 0);
+    const hits = placed.filter((other) => overlaps(other, rect));
+    if (hits.length === 0) return rect;
+    // Every hit starts left of `right`, so this always moves on.
+    right = Math.min(...hits.map((other) => other.x)) - 16;
+  }
+  const step = placed.length * 32;
+  return fitRect({ x: viewport.width - w - 24 - step, y: top + step, w, h }, viewport, 0);
+}
+
+export function presetRect(
+  rect: WindowRect,
+  size: SurfaceSize,
+  viewport: Viewport,
+  minWidth: number,
+): WindowRect {
+  const [w, h] = PRESETS[size];
+  return fitRect({ ...rect, w, h }, viewport, minWidth);
+}
+
+/** Drags one edge or corner; the opposite edge stays where it is. */
+export function resizeRect(
+  rect: WindowRect,
+  edge: ResizeEdge,
+  dx: number,
+  dy: number,
+  minWidth: number,
+): WindowRect {
+  let { x, y, w, h } = rect;
+  if (edge.includes("e")) w = Math.max(minWidth, w + dx);
+  if (edge.includes("w")) {
+    w = Math.max(minWidth, rect.w - dx);
+    x = rect.x + rect.w - w;
+  }
+  if (edge.includes("s")) h = Math.max(PANEL_MIN_HEIGHT, h + dy);
+  if (edge.includes("n")) {
+    h = Math.max(PANEL_MIN_HEIGHT, rect.h - dy);
+    y = rect.y + rect.h - h;
+  }
+  return { x, y, w, h };
+}
+
 export function geometryKey(client: string, fingerprint: string, owner: string): string {
   return `noctis.panelGeometry:${JSON.stringify([client, fingerprint, owner])}`;
 }
-export function readGeometry(
+export function readWindows(
   storage: Pick<Storage, "getItem">,
   key: string,
-): PanelGeometry | undefined {
+): PanelWindows | undefined {
   try {
     const raw = storage.getItem(key);
-    const parsed = GeometrySchema.safeParse(
-      raw === null ? undefined : (JSON.parse(raw) as unknown),
-    );
+    const parsed = WindowsSchema.safeParse(raw === null ? undefined : (JSON.parse(raw) as unknown));
     return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
   }
 }
-export function writeGeometry(
+export function writeWindows(
   storage: Pick<Storage, "setItem">,
   key: string,
-  value: PanelGeometry,
+  value: PanelWindows,
 ): boolean {
   try {
-    storage.setItem(key, JSON.stringify(GeometrySchema.parse(value)));
+    storage.setItem(key, JSON.stringify(WindowsSchema.parse(value)));
     return true;
   } catch {
     return false;
   }
-}
-
-/** Distribute one canvas, keeping every kind's minimum before handing out spare room. */
-export function clampShares(
-  shares: readonly number[],
-  minimums: readonly number[],
-  room: number,
-): number[] {
-  const totalMinimum = minimums.reduce((sum, value) => sum + value, 0);
-  if (room <= totalMinimum) return minimums.map((value) => value / totalMinimum);
-  const result = new Array<number>(shares.length).fill(0);
-  let active = shares.map((_value, index) => index);
-  let remaining = 1;
-  while (active.length > 0) {
-    const total = active.reduce((sum, index) => sum + (shares[index] ?? 0), 0);
-    const blocked = active.filter(
-      (index) => (remaining * (shares[index] ?? 0)) / total < (minimums[index] ?? 0) / room,
-    );
-    if (blocked.length === 0) {
-      for (const index of active)
-        result[index] =
-          total > 0 ? (remaining * (shares[index] ?? 0)) / total : remaining / active.length;
-      break;
-    }
-    for (const index of blocked) {
-      result[index] = (minimums[index] ?? 0) / room;
-      remaining -= result[index];
-    }
-    active = active.filter((index) => !blocked.includes(index));
-  }
-  return result;
 }
 
 export const PANEL_MIN_WIDTH: Readonly<Record<string, number>> = {
