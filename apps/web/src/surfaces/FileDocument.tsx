@@ -23,6 +23,7 @@ export function FileDocument({
     path,
     context.contentRevision,
     JSON.stringify(context.panelOwner),
+    context.fileText,
   );
   if (source.from !== "file" || path === undefined) return null;
   const url = context.fileTransport?.contentUrl?.(path);

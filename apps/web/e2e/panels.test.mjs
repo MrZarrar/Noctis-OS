@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath, URL } from "node:url";
 import { Buffer } from "node:buffer";
+import { crc32, deflateSync } from "node:zlib";
 
 import { chromium } from "playwright";
 import { createTestVault } from "@noctis/test-kit";
@@ -30,6 +31,28 @@ const CORE_URL = `http://127.0.0.1:${CORE_PORT}`;
 const WEB_URL = `http://localhost:${WEB_PORT}`;
 const EVIDENCE = join(REPO_ROOT, ".noctis/panels");
 let core, agent, web, browser, page, context, databaseDirectory, nodeHome, scratch;
+/** A valid one-pixel PNG, so two versions of one file differ by a readable colour. */
+function pixelPng(r, g, b) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const size = Buffer.alloc(4);
+    size.writeUInt32BE(data.length);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([size, body, sum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1, 0);
+  header.writeUInt32BE(1, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.from([0, r, g, b]))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 async function openThreads() {
   await page.goto(WEB_URL);
   await page
@@ -279,6 +302,7 @@ describe("Threads desktop panels", () => {
           await frame.waitFor();
           const id = await frame.getAttribute("data-surface-id");
           const region = await frame.getAttribute("data-surface-region");
+          const parentFont = await frame.evaluate((node) => getComputedStyle(node).fontFamily);
           await frame
             .getByRole("button", { name: "Pop out Choices", exact: true })
             .waitFor({ timeout: 3000 });
@@ -288,6 +312,20 @@ describe("Threads desktop panels", () => {
             .click({ timeout: 3000 });
           const popup = await popupEvent;
           await popup.getByRole("heading", { name: "Choices", exact: true }).waitFor();
+          assert.equal(
+            await popup
+              .locator(`[data-surface-id="${id}"]`)
+              .evaluate((node) => getComputedStyle(node).fontFamily),
+            parentFont,
+            "popped panel body must keep the app typography",
+          );
+          assert.equal(
+            await popup
+              .locator("body > div > header")
+              .evaluate((node) => getComputedStyle(node).fontFamily),
+            parentFont,
+            "pop-out header must use the app typography",
+          );
           assert.equal(await page.locator(`[data-surface-id="${id}"]`).count(), 0);
           await popup
             .getByText(
@@ -356,7 +394,10 @@ describe("Threads desktop panels", () => {
             "Close must dismiss the panel",
           );
           assert.equal(popup.isClosed(), false, "another popped panel still owns the child");
-          await popup.screenshot({ path: join(EVIDENCE, `P21-${mode}.png`) });
+          await popup.screenshot({
+            path: join(EVIDENCE, `P21-${mode}.png`),
+            animations: "disabled",
+          });
           await popup.close();
           const restored = page.locator(`[data-surface-id="${id}"]`);
           await restored.waitFor();
@@ -831,6 +872,340 @@ describe("Threads desktop panels", () => {
       }
     },
   );
+  for (const startsFocused of [false, true]) {
+    it(
+      `THE GATE (focus draft ${startsFocused ? "restore" : "focus"}): text, files and selections survive one composer`,
+      { timeout: 120000 },
+      async () => {
+        const previous = page;
+        const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+        await isolated.route("**/models", async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.catalogue.push({ providerId: "codex", model: "other-model", label: "Other" });
+          await route.fulfill({ response, json: body });
+        });
+        page = await isolated.newPage();
+        try {
+          const threadId = await namedThread(`Focus draft ${startsFocused}`);
+          const panel = await coreCommand(CORE_URL, "surface.upsert_intent", {
+            idempotencyKey: `focus-draft-${startsFocused}`,
+            threadId,
+            kind: "detail",
+            role: "supporting",
+            persistence: "ephemeral",
+            priority: 90,
+            minSize: "compact",
+            payloadVersion: 1,
+            sourceIds: ["0199a000-0000-7000-8000-0000000000d1"],
+            payload: { fields: [{ label: "Draft", value: "Keep this unsent" }] },
+          });
+          assert.equal(panel.status, 200);
+          await page.getByRole("button", { name: "Focus Detail", exact: true }).waitFor();
+          if (startsFocused)
+            await page.getByRole("button", { name: "Focus Detail", exact: true }).click();
+          await page
+            .getByLabel("Message Vesper")
+            .fill("Unsent draft with its files and selections");
+          await page.locator('input[type="file"]').setInputFiles({
+            name: "draft.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("Keep this attachment"),
+          });
+          await page.getByRole("button", { name: /^Agent:/ }).click();
+          await page.getByRole("option", { name: "Other (codex)", exact: true }).click();
+          await page.getByRole("button", { name: /^PC and folder:/ }).click();
+          await page.getByRole("option").filter({ hasText: " on e2e" }).click();
+          const selectedRoot = await page
+            .getByRole("button", { name: /^PC and folder:/ })
+            .getAttribute("aria-label");
+          await page.getByLabel("Message Vesper").evaluate((node) => {
+            node.ownerDocument.defaultView.draftComposer = node;
+          });
+          await page
+            .getByRole("button", {
+              name: startsFocused ? "Show conversation" : "Focus Detail",
+              exact: true,
+            })
+            .click();
+          assert.equal(
+            await page.getByLabel("Message Vesper").inputValue(),
+            "Unsent draft with its files and selections",
+          );
+          await page.getByRole("button", { name: "Preview draft.txt", exact: true }).waitFor();
+          assert.equal(
+            await page.getByRole("button", { name: /^Agent:/ }).getAttribute("aria-label"),
+            "Agent: Other (codex)",
+          );
+          assert.equal(
+            await page.getByRole("button", { name: /^PC and folder:/ }).getAttribute("aria-label"),
+            selectedRoot,
+          );
+          assert.equal(await page.getByLabel("Message Vesper").count(), 1);
+          assert.equal(
+            await page
+              .getByLabel("Message Vesper")
+              .evaluate((node) => node === node.ownerDocument.defaultView.draftComposer),
+            true,
+          );
+          if (!startsFocused) {
+            await page.getByLabel("Message Vesper").fill("Edited while focused");
+            await page.goBack();
+            await page.locator("[data-conversation-column]").waitFor();
+            assert.equal(
+              await page.getByLabel("Message Vesper").inputValue(),
+              "Edited while focused",
+            );
+            await page.getByRole("button", { name: "Preview draft.txt", exact: true }).waitFor();
+            assert.equal(
+              await page.getByRole("button", { name: /^Agent:/ }).getAttribute("aria-label"),
+              "Agent: Other (codex)",
+            );
+            assert.equal(
+              await page
+                .getByRole("button", { name: /^PC and folder:/ })
+                .getAttribute("aria-label"),
+              selectedRoot,
+            );
+          }
+        } finally {
+          page = previous;
+          await isolated.close();
+        }
+      },
+    );
+  }
+  it(
+    "THE GATE (first binding): an unsent draft survives the unstarted thread getting its id",
+    { timeout: 120000 },
+    async () => {
+      const previous = page;
+      const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      page = await isolated.newPage();
+      try {
+        await openThreads();
+        // No other gate speaks to Jester, so its thread really is unstarted here.
+        await prompt("JESTER");
+        const composer = page.getByRole("textbox", { name: "Message Jester" });
+        const header = page.locator('section[aria-label="Threads"] header');
+        await header.getByText("Jester · nothing said yet").waitFor();
+        const draft = "Draft typed before the thread has an id";
+        await composer.fill(draft);
+        await composer.evaluate((node) => {
+          node.ownerDocument.defaultView.firstComposer = node;
+        });
+        await page.getByRole("button", { name: "Add panel", exact: true }).click();
+        await page.getByRole("button", { name: "Open Files panel", exact: true }).click();
+        await page
+          .getByRole("complementary", { name: "Thread panels", exact: true })
+          .getByRole("heading", { name: "Files", exact: true, level: 1 })
+          .waitFor();
+        // The thread is read after the panel exists; the id arrives with it.
+        await header.getByText("Jester · nothing said yet").waitFor({ state: "hidden" });
+        assert.equal(await composer.inputValue(), draft);
+        assert.equal(
+          await composer.evaluate((node) => node === node.ownerDocument.defaultView.firstComposer),
+          true,
+        );
+      } finally {
+        // The active identity is the core's, so it would follow every later gate.
+        const restored = await coreCommand(CORE_URL, "identity.activate", {
+          idempotencyKey: "first-binding-restore-vesper",
+          identityId: "vesper",
+        });
+        assert.equal(restored.status, 200);
+        page = previous;
+        await isolated.close();
+      }
+    },
+  );
+  it(
+    "THE GATE (file media presentation): a pending rewritten image keeps the accepted pixels through pop-out, Return and region moves",
+    { timeout: 120000 },
+    async () => {
+      const previous = page;
+      const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      page = await isolated.newPage();
+      try {
+        const threadId = await namedThread("File media presentation");
+        await prompt("WRITE: media source");
+        await page
+          .locator("[data-surface-id]")
+          .filter({ has: page.getByRole("heading", { name: "written.md", exact: true }) })
+          .getByRole("heading", { name: "Written by the fake" })
+          .waitFor();
+        const intents = await coreRead(
+          CORE_URL,
+          `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+        );
+        const source = {
+          ...intents.body.intents.find((intent) => intent.kind === "document").payload.content,
+          relativePath: "frame.png",
+        };
+        const original = readFileSync(join(scratch, "frame.png"));
+        const publish = (key) =>
+          coreCommand(CORE_URL, "surface.upsert_intent", {
+            idempotencyKey: key,
+            threadId,
+            kind: "media",
+            role: "primary",
+            persistence: "ephemeral",
+            priority: 100,
+            minSize: "compact",
+            sourceIds: ["0199a000-0000-7000-8000-0000000000b1"],
+            payloadVersion: 1,
+            payload: { title: "Rewritten frame", mediaType: "image/png", source },
+          });
+        try {
+          writeFileSync(join(scratch, "frame.png"), pixelPng(255, 0, 0));
+          assert.equal((await publish("file-media-v1")).status, 200);
+          const panel = page.locator("[data-surface-id]").filter({ has: page.locator("img") });
+          const pixel = (image) =>
+            image.evaluate(async (img) => {
+              await img.decode();
+              const canvas = img.ownerDocument.createElement("canvas");
+              canvas.width = canvas.height = 1;
+              const context = canvas.getContext("2d");
+              context.drawImage(img, 0, 0);
+              return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+            });
+          assert.deepEqual(await pixel(panel.locator("img")), [255, 0, 0]);
+          writeFileSync(join(scratch, "frame.png"), pixelPng(0, 0, 255));
+          assert.equal((await publish("file-media-v2")).status, 200);
+          await panel.getByRole("button", { name: "Use new version", exact: true }).waitFor();
+          const opened = isolated.waitForEvent("page");
+          await panel.getByRole("button", { name: "Pop out Rewritten frame", exact: true }).click();
+          const popup = await opened;
+          const frame = popup.locator("[data-surface-id]");
+          await frame.locator("img").waitFor();
+          assert.deepEqual(await pixel(frame.locator("img")), [255, 0, 0]);
+          await frame.getByRole("button", { name: "Return Rewritten frame", exact: true }).click();
+          await panel.locator("img").waitFor();
+          assert.deepEqual(await pixel(panel.locator("img")), [255, 0, 0]);
+          const before = await panel.getAttribute("data-surface-region");
+          await panel.getByRole("button", { name: /^Place Rewritten frame:/ }).click();
+          await page
+            .getByRole("listbox", { name: "Place Rewritten frame", exact: true })
+            .locator('[role="option"][aria-selected="false"]')
+            .first()
+            .click();
+          await waitFor(
+            () => panel.getAttribute("data-surface-region"),
+            (region) => region !== before,
+            "image region did not change",
+          );
+          assert.deepEqual(await pixel(panel.locator("img")), [255, 0, 0]);
+          await panel.getByRole("button", { name: "Use new version", exact: true }).click();
+          await waitFor(
+            () => pixel(panel.locator("img")),
+            (value) => value[2] === 255 && value[0] === 0,
+            "accepted image did not show the new bytes",
+          );
+        } finally {
+          writeFileSync(join(scratch, "frame.png"), original);
+        }
+      } finally {
+        page = previous;
+        await isolated.close();
+      }
+    },
+  );
+  it(
+    "THE GATE (file presentation): pending acceptance and last-good text survive pop-out, Return and region moves",
+    { timeout: 120000 },
+    async () => {
+      const previous = page;
+      const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      page = await isolated.newPage();
+      try {
+        await namedThread("File presentation");
+        await prompt("WRITE: accepted v1");
+        const panel = page
+          .locator("[data-surface-id]")
+          .filter({ has: page.getByRole("heading", { name: "written.md", exact: true }) });
+        await panel.getByRole("heading", { name: "Written by the fake" }).waitFor();
+        await prompt("WRITE: pending v2");
+        await panel.getByRole("button", { name: "Use new version", exact: true }).waitFor();
+        const assertPreview = async (frame, accepted) => {
+          await frame.getByText("Opening…", { exact: true }).waitFor({ state: "hidden" });
+          assert.ok(
+            (await frame.innerText()).includes(accepted),
+            `lost accepted preview ${accepted}`,
+          );
+          assert.ok(
+            !(await frame.innerText()).includes("WRITE: pending v2") ||
+              accepted === "WRITE: pending v2",
+          );
+        };
+        const pop = async () => {
+          const opened = isolated.waitForEvent("page");
+          await panel.getByRole("button", { name: "Pop out written.md", exact: true }).click();
+          const popup = await opened;
+          const frame = popup.locator("[data-surface-id]");
+          await frame.getByRole("heading", { name: "written.md", exact: true }).waitFor();
+          return { popup, frame };
+        };
+        const child = await pop();
+        await assertPreview(child.frame, "WRITE: accepted v1");
+        await child.frame.getByRole("button", { name: "Return written.md", exact: true }).click();
+        await panel.waitFor();
+        await assertPreview(panel, "WRITE: accepted v1");
+        const move = async () => {
+          const before = await panel.getAttribute("data-surface-region");
+          await panel.getByRole("button", { name: /^Place written.md:/ }).click();
+          await page
+            .getByRole("listbox", { name: "Place written.md", exact: true })
+            .locator('[role="option"][aria-selected="false"]')
+            .first()
+            .click();
+          await waitFor(
+            () => panel.getAttribute("data-surface-region"),
+            (region) => region !== before,
+            "file region did not change",
+          );
+        };
+        await move();
+        await assertPreview(panel, "WRITE: accepted v1");
+        await panel.getByRole("button", { name: "Use new version", exact: true }).click();
+        await waitFor(
+          () => panel.innerText(),
+          (text) => text.includes("WRITE: pending v2"),
+          "accepted v2 did not arrive",
+        );
+        const pattern = "**/files/content?**preview=1";
+        await isolated.route(pattern, (route) =>
+          route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { message: "Presentation read failure" } }),
+          }),
+        );
+        await prompt("WRITE: failed v3");
+        await panel.getByRole("button", { name: "Use new version", exact: true }).click();
+        await panel
+          .getByRole("alert")
+          .getByText(/Presentation read failure/)
+          .waitFor();
+        const failed = await pop();
+        await assertPreview(failed.frame, "WRITE: pending v2");
+        await failed.frame.getByRole("button", { name: "Return written.md", exact: true }).click();
+        await panel.waitFor();
+        await assertPreview(panel, "WRITE: pending v2");
+        await move();
+        await assertPreview(panel, "WRITE: pending v2");
+        await isolated.unroute(pattern);
+        await panel.getByRole("button", { name: "Retry file", exact: true }).click();
+        await waitFor(
+          () => panel.innerText(),
+          (text) => text.includes("WRITE: failed v3"),
+          "file retry did not recover",
+        );
+      } finally {
+        page = previous;
+        await isolated.close();
+      }
+    },
+  );
   it(
     "THE GATE (panels, restore): placed and pinned stay; closed stays closed after reload",
     { timeout: 120000 },
@@ -844,14 +1219,18 @@ describe("Threads desktop panels", () => {
       await first.getByRole("button", { name: /^Pin / }).click();
       await first.getByRole("button", { name: /^Unpin / }).waitFor();
       await prompt("IMAGE: second");
-      await panels.locator("details summary").waitFor();
-      const surfaces = await coreRead(
-        CORE_URL,
-        `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+      const second = await waitFor(
+        async () =>
+          (
+            await coreRead(
+              CORE_URL,
+              `/threads/${threadId}/surfaces?clientId=test&fingerprint=gate&widthPx=1440&attentionState=active_canvas`,
+            )
+          ).body.intents.find((intent) => intent.kind === "media" && intent.id !== firstId),
+        (intent) => intent !== undefined,
+        "second image never arrived",
       );
-      const secondId = surfaces.body.intents.find(
-        (intent) => intent.kind === "media" && intent.id !== firstId,
-      ).id;
+      const secondId = second.id;
       await panels.locator("details summary").click();
       await panels
         .locator("details")
@@ -859,7 +1238,7 @@ describe("Threads desktop panels", () => {
         .first()
         .click();
       await waitFor(
-        () => panels.locator("details").count(),
+        () => panels.locator("details li").count(),
         (count) => count === 0,
         "closed panel still in overflow",
       );
@@ -986,16 +1365,19 @@ describe("Threads desktop panels", () => {
       await page.screenshot({ path: join(EVIDENCE, "P11-phone-file.png") });
       await page.getByRole("button", { name: "Leave focus", exact: true }).click();
       await page.getByRole("button", { name: /^Show .* more panels/ }).click();
+      // The panel keeps the accepted bytes as a blob, so the cookie request is the proof.
+      const fetched = page.waitForResponse(
+        (response) =>
+          /\/files\/content\?node=.*root=.*path=frame.png/.test(response.url()) &&
+          response.status() === 200,
+      );
       await page
         .getByRole("list", { name: "More panels" })
         .getByRole("button", { name: "Open panel File image", exact: true })
         .click();
+      await fetched;
       const image = sheet.locator("img");
       await image.waitFor();
-      assert.match(
-        await image.getAttribute("src"),
-        /\/files\/content\?node=.*root=.*path=frame.png/,
-      );
       assert.equal(await image.evaluate((img) => new URL(img.src).origin), WEB_URL);
       await waitFor(
         () => image.evaluate((img) => img.complete && img.naturalWidth === 1),

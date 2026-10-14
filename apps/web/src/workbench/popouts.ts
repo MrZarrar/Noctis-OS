@@ -1,3 +1,5 @@
+import { typography } from "@noctis/ui";
+
 export interface PopoutEntry {
   owner: string;
   surfaceId: string;
@@ -67,6 +69,7 @@ export class PanelPopouts {
     child.document.body.style.margin = "0";
     child.document.body.style.overflow = "auto";
     child.document.body.style.height = "auto";
+    child.document.body.style.fontFamily = typography.family;
     const header = child.document.createElement("div");
     child.document.body.append(header);
     child.addEventListener("pagehide", this.returnAll);
@@ -80,6 +83,7 @@ export class PanelPopouts {
   }
   open = async (owner: string, surfaceId: string): Promise<void> => {
     const panel = { owner, surfaceId };
+    if (this.state.window?.closed === true) this.returnAll();
     if (this.state.window !== undefined && !this.state.window.closed) {
       this.add(panel);
       this.state.window.focus();

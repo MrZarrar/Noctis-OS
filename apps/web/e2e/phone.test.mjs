@@ -1054,6 +1054,25 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       await page.setViewportSize(DESKTOP);
       await page.goto(WEB_URL);
       await open("Threads");
+      // A long thread loads and follows its own end after the page opens, and a real
+      // scroll closes an open picker, so wait until the entries and scroll hold still.
+      let last;
+      let steady = 0;
+      await waitFor(
+        () =>
+          page.evaluate(
+            () =>
+              `${String(document.querySelectorAll("[data-entry]").length)}:${String(
+                [...document.querySelectorAll("*")].reduce((sum, node) => sum + node.scrollTop, 0),
+              )}`,
+          ),
+        (sample) => {
+          steady = sample === last ? steady + 1 : 0;
+          last = sample;
+          return steady >= 5;
+        },
+        "the thread did not settle",
+      );
 
       const button = page.getByRole("button", { name: /^PC and folder/ });
       const list = page.getByRole("listbox", { name: "PC and folder" });

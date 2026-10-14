@@ -543,6 +543,12 @@ export function Workbench({
           resolved,
           {
             ...handoffs,
+            ...(composition.fileTextCache === undefined
+              ? {}
+              : { fileText: { cache: composition.fileTextCache, surfaceId: intent.id } }),
+            ...(composition.fileImageCache === undefined
+              ? {}
+              : { fileMedia: { cache: composition.fileImageCache, surfaceId: intent.id } }),
             contentRevision: intent.requestedAt,
             panelOwner:
               intent.threadId !== undefined

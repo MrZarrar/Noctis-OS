@@ -1,5 +1,7 @@
 # Adaptive panels: paused checkpoint, 14 October 2026
 
+> **Historical checkpoint:** The owner resumed completion on 14 October. P21 subsequently passed independent review and fresh focused checks; the broad-review repairs and P14 browser acceptance then completed on 14 October. The current [plan status](../superpowers/plans/2026-10-09-adaptive-panels.md#adaptive-panels-in-the-v1-web-app-implementation-plan) and [verification entry](IMPLEMENTATION-STATUS.md#2026-10-14-adaptive-panels-final-verification) supersede the pending items below. This record is preserved as it stood at the pause; no production deployment is implied.
+
 The owner requested a graceful stop and a push of all outstanding repository code, docs and plans. This is a work-in-progress checkpoint, not final acceptance or deployment.
 
 ## Reviewed and pushed

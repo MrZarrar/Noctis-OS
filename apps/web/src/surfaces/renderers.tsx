@@ -35,6 +35,8 @@ import type { ReactNode } from "react";
 
 import { LiveBriefSurface } from "./LiveBrief.js";
 import { FileDocument } from "./FileDocument.js";
+import { FileMedia, type FileImageCache } from "./FileMedia.js";
+import type { FileTextCache } from "../pages/useFileText.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { Markdown } from "../conversation/Markdown.js";
 import type { Resolved, SurfaceKind } from "./registry.js";
@@ -46,6 +48,8 @@ import type { Resolved, SurfaceKind } from "./registry.js";
  * what it may do. "Open in Vault" is the one Section 7 asks for.
  */
 export interface SurfaceContext {
+  fileText?: { cache: FileTextCache; surfaceId: string };
+  fileMedia?: { cache: FileImageCache; surfaceId: string };
   renderPage?: (payload: PagePanelPayload) => ReactNode;
   fileTransport?: CoreTransport;
   contentRevision?: string;
@@ -125,14 +129,16 @@ const RENDERERS: Record<
   verification: (payload: Parameters<typeof VerificationSurface>[0]) => (
     <VerificationSurface {...payload} />
   ),
-  media: (payload: MediaPayload, context: SurfaceContext, size: SurfaceSize) => (
-    <MediaSurface
-      title={payload.title}
-      mediaType={payload.mediaType}
-      url={context.mediaUrl?.(payload.source, context.contentRevision)}
-      size={size}
-    />
-  ),
+  media: (payload: MediaPayload, context: SurfaceContext, size: SurfaceSize) => {
+    const url = context.mediaUrl?.(payload.source, context.contentRevision);
+    return payload.source.from === "file" &&
+      payload.mediaType.startsWith("image/") &&
+      context.fileMedia !== undefined ? (
+      <FileMedia payload={payload} url={url} size={size} retained={context.fileMedia} />
+    ) : (
+      <MediaSurface title={payload.title} mediaType={payload.mediaType} url={url} size={size} />
+    );
+  },
   live_brief: (payload: LiveBriefPayload) => <LiveBriefSurface {...payload} />,
   conversation: (payload: Parameters<typeof ConversationSurface>[0]) => (
     <ConversationSurface {...payload} />

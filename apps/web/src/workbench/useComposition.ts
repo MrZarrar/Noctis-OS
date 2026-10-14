@@ -21,6 +21,8 @@ import type { PanelUpdateState } from "@noctis/ui";
 import { reconcileIntents } from "./reconcile.js";
 import { clientId, displayFor, screenFacts } from "./display.js";
 import { geometryKey, swapPlacements } from "./arrange.js";
+import type { FileTextCache } from "../pages/useFileText.js";
+import { clearFileImages, releaseFileImage, type FileImageCache } from "../surfaces/FileMedia.js";
 
 /** Long enough that dragging a window edge is one recomposition, not sixty. */
 const RESIZE_SETTLE_MS = 200;
@@ -47,6 +49,8 @@ function nextKey(scope: string): string {
 }
 
 export interface CompositionState {
+  fileTextCache?: FileTextCache;
+  fileImageCache?: FileImageCache;
   updates?: Readonly<Record<string, PanelUpdateState>>;
   plan: CompositionPlan | undefined;
   intents: readonly SurfaceIntent[];
@@ -99,6 +103,20 @@ export function useComposition(
   const intentsRef = useRef<readonly SurfaceIntent[]>([]);
   const [plan, setPlan] = useState<CompositionPlan>();
   const [intents, setIntents] = useState<readonly SurfaceIntent[]>([]);
+  const fileTextCache = useMemo<FileTextCache>(() => new Map(), [ownerKey, transport]);
+  useEffect(() => () => fileTextCache.clear(), [fileTextCache]);
+  const fileImageCache = useMemo<FileImageCache>(() => new Map(), [ownerKey, transport]);
+  useEffect(() => () => clearFileImages(fileImageCache), [fileImageCache]);
+  useEffect(() => {
+    const live = new Set(
+      intents
+        .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+        .map((intent) => intent.id),
+    );
+    for (const id of fileTextCache.keys()) if (!live.has(id)) fileTextCache.delete(id);
+    for (const id of [...fileImageCache.keys()])
+      if (!live.has(id)) releaseFileImage(fileImageCache, id);
+  }, [fileTextCache, fileImageCache, intents]);
   const [overrides, setOverrides] = useState<readonly SurfaceOverride[]>([]);
   const [focusedSurfaceId, setFocusedSurfaceId] = useState<string>();
   const [error, setError] = useState<string>();
@@ -333,6 +351,8 @@ export function useComposition(
         },
       ]),
     ),
+    fileTextCache,
+    fileImageCache,
     plan,
     intents,
     overrides,

@@ -31,20 +31,23 @@ function childWindow() {
   return child;
 }
 function host(open: () => Window | null, requestWindow?: () => Promise<Window>) {
-  let check: (() => void) | undefined;
+  const checks = new Map<number, () => void>();
+  let timer = 0;
   const events = new EventTarget();
   const documentEvents = new EventTarget();
   return {
     isSecureContext: true,
     open,
     setInterval: (callback: () => void) => {
-      check = callback;
-      return 1;
+      checks.set(++timer, callback);
+      return timer;
     },
-    clearInterval: () => {
-      check = undefined;
+    clearInterval: (id: number) => {
+      checks.delete(id);
     },
-    tick: () => check?.(),
+    tick: () => {
+      for (const check of [...checks.values()]) check();
+    },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
     dispatchEvent: events.dispatchEvent.bind(events),
@@ -58,6 +61,19 @@ function host(open: () => Window | null, requestWindow?: () => Promise<Window>) 
   } as unknown as Window & { tick: () => void };
 }
 describe("one panel pop-out coordinator per browser tab", () => {
+  it("keeps a replacement window when the previous child closes before its observer runs", async () => {
+    const first = childWindow();
+    const second = childWindow();
+    let opens = 0;
+    const parent = host(() => (++opens === 1 ? first : second));
+    const popouts = new PanelPopouts(parent);
+    await popouts.open("thread", "a");
+    first.closeSilently();
+    await popouts.open("thread", "a");
+    parent.tick();
+    expect(second.closed).toBe(false);
+    expect(popouts.snapshot().entries).toHaveLength(1);
+  });
   it("checks closure immediately when the parent regains focus", async () => {
     const child = childWindow();
     const parent = host(() => child);

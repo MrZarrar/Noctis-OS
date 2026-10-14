@@ -1,9 +1,7 @@
 import type { ConversationalIdentityId } from "@noctis/contracts";
 import { IDENTITY_PROFILES, identityAccent, spacing, typography, semantic } from "@noctis/ui";
-import { PromptForm } from "../conversation/PromptForm.js";
 import type { ConversationState } from "../conversation/useConversation.js";
 import { buttonStyle } from "../layout/Page.js";
-import { pinnedTo } from "./conversations-view.js";
 import { lastExchange } from "../conversation/last-exchange.js";
 
 export function companionReply(
@@ -26,20 +24,12 @@ export function companionReply(
 export function CompanionColumn({
   identityId,
   conversation,
-  connected,
   onShowConversation,
-  onSwitchIdentity,
 }: {
   identityId: ConversationalIdentityId;
   conversation: ConversationState;
-  connected: boolean;
   onShowConversation: () => void;
-  onSwitchIdentity?: (id: ConversationalIdentityId) => void;
 }): JSX.Element {
-  const lockedTo =
-    conversation.thread === undefined
-      ? undefined
-      : pinnedTo(conversation.thread, conversation.roots);
   return (
     <aside
       data-companion-column
@@ -78,19 +68,6 @@ export function CompanionColumn({
           {conversation.error}
         </p>
       )}
-      <PromptForm
-        identityId={identityId}
-        models={conversation.models}
-        defaultModel={conversation.defaultModel}
-        disabled={!connected}
-        canAttach={conversation.canAttach}
-        roots={conversation.roots}
-        {...(lockedTo === undefined ? {} : { lockedTo })}
-        {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
-        onSend={(text, options) => {
-          void conversation.send(text, options);
-        }}
-      />
     </aside>
   );
 }

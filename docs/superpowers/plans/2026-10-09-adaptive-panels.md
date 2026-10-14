@@ -2,7 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Read first: the owner's decisions of 12 October 2026 (next section) settle D1 to D6 and the open questions, and add tasks P15 to P21.** Nothing is to be built until the owner says so (12 October 2026: plan only).
+> **Current status, 14 October 2026:** The owner approved the remainder on 13 October and explicitly resumed completion on 14 October. The 12 October decisions below supersede the original draft, recommendations and unchecked historical steps. P1–P21 are implemented and P14 browser acceptance passed on 14 October, after the broad-review repairs. Production deployment is outside this completion scope and not performed.
+
+| Tasks            | Current result                                                                                                                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1–P7, P15       | Thread/Objective/Presence ownership, event-made media and live briefs, shared controls, last-good updates, phone sheets; Slice 1 deployed on 12 October                                            |
+| P8–P11, P13, P17 | Read-only documents, timeline/verification, message choices, persisted placement, thread recall and bounded written-file panels; accepted text and image versions survive pop-out and region moves |
+| P12, P16, P18    | Companion focus, owner + utility page panels and retired Command; one composer keeps its draft, files and selections through focus and first thread binding                                        |
+| P19, P20         | Pointer snap/swap/overflow and bounded persistent resize, with keyboard equivalents; reviewed with scoped fixes                                                                                    |
+| P21              | Shared live Edge Document PiP and browser fallback, return/dismissal/owner cleanup; reviewed, with final regression checks under P14                                                               |
+| P14              | Full unit run (2455), typecheck, web build, lint/format, full panels (31) and every other browser suite green on 14 October; physical window behavior unverified                                   |
+
+Current evidence and boundaries: [implementation status](../../acceptance/IMPLEMENTATION-STATUS.md#2026-10-14-adaptive-panels-final-verification).
+The [paused checkpoint](../../acceptance/2026-10-14-adaptive-panels-checkpoint.md) is a historical resume record. The checklist below records the original plan; it is not a claim that every original step was performed unchanged.
+Reminders/schedules, additional host pages, a separate layout model and native window capabilities remain separate plans. Event rules create panels and validated agent proposals add semantic content; deterministic code owns placement and restore.
+
+Pop-out is ephemeral: opening or closing it never silently pins a panel. Pinned/manual placement restores; an unpinned panel follows the current composition, including accessible overflow after higher-priority arrivals. Physical always-on-top behavior, window size/position and multiple monitors remain unverified; Computer Use was unavailable, so visual evidence uses Playwright captures. A live Claude/Codex document-generation probe is a separate post-deploy owner check.
 
 ## Owner decisions, 12 October 2026
 
