@@ -8,6 +8,7 @@ import { modelKey, modelLabel } from "../conversation/PromptForm.js";
 import { RuntimeRootOptionSchema } from "../conversation/useConversation.js";
 import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
 import { Picker } from "../layout/Picker.js";
+import { CoreSettings } from "./CoreSettings.js";
 import type { PushState } from "../notify/subscribe.js";
 import { enablePush, initialPushState } from "../notify/subscribe.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
@@ -298,7 +299,10 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
   const revoked = permissions.filter((permission) => permission.revokedAt !== undefined);
 
   return (
-    <Page title="Settings" subtitle="Defaults, notifications and standing permissions">
+    <Page
+      title="Settings"
+      subtitle="Defaults, notifications, standing permissions and how Noctis runs"
+    >
       <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
         <SectionHeading>Default model</SectionHeading>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
@@ -430,6 +434,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
           </ul>
         </section>
       )}
+
+      <CoreSettings transport={transport} />
 
       {onSignedOut !== undefined && (
         <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
