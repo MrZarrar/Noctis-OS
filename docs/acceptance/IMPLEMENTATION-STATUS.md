@@ -3900,3 +3900,37 @@ On a desktop each panel is now a `position: fixed` window: drag the title anywhe
 | Browser `workbench.keyboard`, `presence-panels`                 | 1/1, 1/1                                                                                                       |
 
 Repairs found during verification: translucent windows showed through each other (now backed by `depth.layers[0]`, gate red then green); a 32px cascade hid the controls of panels behind (tiling placement); stacking was per Workbench (now one page-wide order); two Workbenches whose new-panel saves failed raised each other forever ("Maximum update depth exceeded", reproduced by the A→B→A gate; each panel now raised once); an in-place owner switch rendered one frame with an empty place map (now read immediately). Known limits: two owners whose first panels arrive in one commit can share a spot; only the 16 most recently raised windows keep their order. `phone`, `chat`, `jester`, `presence`, `tokenless` and other browser suites were not rerun.
+
+### 2026-10-15 Settings in the UI
+
+The owner's rule: anything about how Noctis behaves is set on the Settings page, not in code or the environment. A new
+section, **How Noctis runs**, holds seven settings that take effect without a restart: the daily digest time, the
+nightly inbox filing time (used by the Vault promoter), Vault writes, how long a login lasts, the core's log detail,
+showing unfinished pages, and the remote-desktop hosts. Each says whether its value was set here, came from start-up or
+is the default, and Reset goes back. Below them the start-up values are listed read only, because the core needs them
+before it can serve a page; the token and keys show only as "set" or "not set".
+
+A setting the owner has not set falls back to the environment variable it replaces, so nothing changes on deploy. Values
+are kept in `runtime_kv` (`setting:<key>`), checked by the command's own schema, and read through
+`GET /configuration` (not `/settings`, which is the page's own address).
+
+| Clause                                                                                   | State       | Evidence                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI value, else environment, else default; a bad environment value is ignored and said so | implemented | `config/settings.test.ts` (6): red (no module), then green                                                                                                 |
+| A value of the wrong kind is refused; secrets never reach the page                       | implemented | `contracts/settings.test.ts` (10); `headless.integration.test.ts` "settings on the Settings page" (2)                                                      |
+| The digest reschedules once when its time changes, never twice                           | implemented | `notify/daily.test.ts` (3): red, then green                                                                                                                |
+| Vault writes, login length, log level and remote hosts follow the setting live           | implemented | `headless.integration.test.ts` "settings the core follows live" (2), `logging.test.ts`, `remote.integration.test.ts` hosts from Settings incl. page policy |
+| The gateway key alone is accepted; hosts are added on the page                           | implemented | `remote-desktop.test.ts` (2)                                                                                                                               |
+| The section draws each kind of control, Reset where set here, start-up list read only    | implemented | `CoreSettings.test.ts` (6)                                                                                                                                 |
+| Every Settings control meets the phone touch floor                                       | implemented | `node --test apps/web/e2e/phone.test.mjs` exit 0                                                                                                           |
+
+| Command                                                       | Result            |
+| ------------------------------------------------------------- | ----------------- |
+| `npx vitest run apps/core`                                    | exit 0; 643 tests |
+| `npx vitest run apps/web/src`                                 | exit 0; 295 tests |
+| `npm run typecheck`; ESLint and Prettier on the changed files | exit 0            |
+| `node --test apps/web/e2e/phone.test.mjs`                     | exit 0            |
+
+For the owner: nothing changes on deploy. From then on, change these on the Settings page, and once set there, the
+matching lines can come out of the deploy script. Not yet in the UI: the Vault location and live switch, and the
+per-PC settings (identity cards, tool paths, LM Studio address); both are follow-ups.
