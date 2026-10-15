@@ -269,6 +269,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     notifier,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     vaultEnv: env,
+    env,
   };
 
   const requests = new WeakMap<Duplex, { req: IncomingMessage; res: ServerResponse }>();

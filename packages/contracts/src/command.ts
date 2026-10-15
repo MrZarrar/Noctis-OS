@@ -27,6 +27,8 @@ import {
   UuidSchema,
 } from "./primitives.js";
 import { ModelRefSchema, RuntimeProviderIdSchema } from "./runtime.js";
+import { SETTING_VALUE_SCHEMAS, SettingKeySchema } from "./settings.js";
+import type { SettingKey } from "./settings.js";
 import { UnavailableSemanticsSchema } from "./source.js";
 import {
   SurfaceOwnerSchema,
@@ -520,6 +522,28 @@ export type ObserveSourceCommand = z.infer<typeof ObserveSourceCommandSchema>;
 export type RecordArtifactCommand = z.infer<typeof RecordArtifactCommandSchema>;
 export type ImportArtifactCommand = z.infer<typeof ImportArtifactCommandSchema>;
 
+/** One setting set on the Settings page, checked against that setting's own schema. */
+export const SetSettingCommandSchema = z.discriminatedUnion(
+  "key",
+  (Object.keys(SETTING_VALUE_SCHEMAS) as SettingKey[]).map((key) =>
+    z.object({ ...CommandBase, key: z.literal(key), value: SETTING_VALUE_SCHEMAS[key] }).strict(),
+  ) as unknown as readonly [z.ZodObject, ...z.ZodObject[]],
+);
+
+/** Forgets the owner's value, so the start-up value or the default answers again. */
+export const ResetSettingCommandSchema = z
+  .object({ ...CommandBase, key: SettingKeySchema })
+  .strict();
+
+export type SetSettingCommand = {
+  [K in SettingKey]: {
+    idempotencyKey: string;
+    key: K;
+    value: z.infer<(typeof SETTING_VALUE_SCHEMAS)[K]>;
+  };
+}[SettingKey];
+export type ResetSettingCommand = z.infer<typeof ResetSettingCommandSchema>;
+
 export const COMMAND_NAMES = [
   "objective.create",
   "objective.change_status",
@@ -542,6 +566,8 @@ export const COMMAND_NAMES = [
   "surface.compose",
   "vault.reindex",
   "vault.recall",
+  "settings.set",
+  "settings.reset",
   "node.issue_pairing_code",
   "node.revoke",
   "node.grant_capability",

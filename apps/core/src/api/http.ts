@@ -1,10 +1,12 @@
-import type { SurfaceOwner } from "@noctis/contracts";
+import type { SetSettingCommand, SurfaceOwner } from "@noctis/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Readable } from "node:stream";
 
 import {
   ActivateIdentityCommandSchema,
   BridgeEventSchema,
+  ResetSettingCommandSchema,
+  SetSettingCommandSchema,
   AdoptRuntimeSessionCommandSchema,
   ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
@@ -165,6 +167,7 @@ import {
 } from "../sources/service.js";
 import { listRemoteHosts, openRemoteDesktop } from "../remote/service.js";
 import { readDigest } from "../notify/digest.js";
+import { listSettings, resetSetting, setSetting, startUpSettings } from "../config/settings.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
 import {
   VISIBLE_ENTITY,
@@ -269,6 +272,8 @@ export interface ApiDeps {
   vaultRoot?: VaultRoot;
   /** The environment the Vault write switch is read from. */
   vaultEnv?: Readonly<Record<string, string | undefined>>;
+  /** The core's environment: the fallback for every setting the owner has not set. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 interface ErrorBody {
@@ -585,6 +590,17 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     (deps, context, command) => recordRecall(deps.kernel, context, command, deps.vaultRoot),
     (db, id) => getRecall(db, id),
   ),
+  "settings.set": defineDepsCommand(
+    SetSettingCommandSchema,
+    (deps, context, command) => setSetting(deps.kernel, context, command as SetSettingCommand),
+    // A reused key is a 409; the page asks again with a new one.
+    () => undefined,
+  ),
+  "settings.reset": defineDepsCommand(
+    ResetSettingCommandSchema,
+    (deps, context, command) => resetSetting(deps.kernel, context, command),
+    () => undefined,
+  ),
   "node.issue_pairing_code": defineCommand(
     IssueNodePairingCodeCommandSchema,
     issuePairingCode,
@@ -860,6 +876,15 @@ function handleRead(
     return {
       status: 200,
       body: readDigest(deps.kernel.db, new Date(from).toISOString(), new Date(to).toISOString()),
+    };
+  }
+
+  if (segments.length === 1 && segments[0] === "configuration") {
+    const env = deps.env ?? {};
+
+    return {
+      status: 200,
+      body: { settings: listSettings(deps.kernel.db, env), startUp: startUpSettings(env) },
     };
   }
 

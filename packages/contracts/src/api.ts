@@ -31,6 +31,8 @@ export const API_SEGMENTS = [
   "artifacts",
   "attachments",
   "commands",
+  /** The owner's settings. Not `settings`: that is the Settings page's own address. */
+  "configuration",
   "conversations",
   "diagnostics",
   "digest",

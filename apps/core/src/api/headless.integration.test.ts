@@ -2328,3 +2328,56 @@ describe("the push realm", () => {
     }
   });
 });
+
+describe("settings on the Settings page", () => {
+  it("lists the settings and the start-up values, and never a secret", async () => {
+    const core = await startTestCore(
+      {},
+      { NOCTIS_CORE_TOKEN: "s3cret-token", NOCTIS_DIGEST_AT: "21:30" },
+    );
+
+    const listed = await read(core, "/configuration");
+    const settings = listed.body.settings as Array<{ key: string; value: unknown; source: string }>;
+
+    expect(listed.status).toBe(200);
+    expect(settings.find((setting) => setting.key === "digestAt")).toMatchObject({
+      value: "21:30",
+      source: "start-up",
+    });
+    expect(listed.body.startUp).toContainEqual({ name: "NOCTIS_CORE_TOKEN", value: "set" });
+    expect(JSON.stringify(listed.body)).not.toContain("s3cret");
+  });
+
+  it("sets and resets a setting, and refuses a value of the wrong kind", async () => {
+    const core = await startTestCore({}, { NOCTIS_DIGEST_AT: "21:30" });
+    const digest = async (): Promise<unknown> =>
+      (
+        (await read(core, "/configuration")).body.settings as Array<{ key: string; value: unknown }>
+      ).find((setting) => setting.key === "digestAt")?.value;
+
+    expect(
+      (
+        await command(core, "settings.set", {
+          idempotencyKey: "st-1",
+          key: "digestAt",
+          value: "25:00",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await command(core, "settings.set", {
+          idempotencyKey: "st-2",
+          key: "digestAt",
+          value: "07:15",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await digest()).toBe("07:15");
+
+    expect(
+      (await command(core, "settings.reset", { idempotencyKey: "st-3", key: "digestAt" })).status,
+    ).toBe(200);
+    expect(await digest()).toBe("21:30");
+  });
+});

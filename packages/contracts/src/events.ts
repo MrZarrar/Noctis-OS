@@ -76,6 +76,8 @@ export const EVENT_NAMES = [
   "node.capability_revoked.v1",
   /** A live bridge session started, said something, or ended (payload: its id and what happened). */
   "bridge.session_updated.v1",
+  /** The owner changed a setting on the Settings page (payload: its key, never its value). */
+  "settings.changed.v1",
 ] as const;
 
 export const EventNameSchema = z.enum(EVENT_NAMES);
@@ -106,6 +108,8 @@ export const StreamTypeSchema = z.enum([
   "provider",
   /** Task 3.9: one stream per remote-desktop session, keyed by its association id. */
   "remote",
+  /** The owner's settings: one stream, so their history reads in order. */
+  "settings",
 ]);
 
 export const ActorTypeSchema = z.enum(["user", "identity", "system", "node", "adapter"]);
