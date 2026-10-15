@@ -356,3 +356,45 @@ describe("runtime.turn", () => {
     await expect(ADAPTERS["runtime.turn"]({ prompt: "hi" }, context())).rejects.toThrow();
   });
 });
+
+describe("runtime.warm", () => {
+  const payload = {
+    threadId: "0199a000-0000-7000-8000-0000000000e1",
+    identityId: "jester",
+    model: { providerId: "hermes", model: "qwen/qwen3.5-9b" },
+    primaryRootGrantId: "d",
+    objectiveActive: false,
+  };
+
+  it("warms the runtime the payload names, and says so", async () => {
+    const warmed: string[] = [];
+    const hermes = {
+      ...createFakeRuntime(),
+      providerId: "hermes" as const,
+      warm: (input: { payload: { model: { model: string } } }) => {
+        warmed.push(input.payload.model.model);
+        return Promise.resolve(true);
+      },
+    };
+
+    expect(await ADAPTERS["runtime.warm"](payload, context({ runtimes: { hermes } }))).toEqual({
+      warmed: true,
+    });
+    expect(warmed).toEqual(["qwen/qwen3.5-9b"]);
+  });
+
+  it("has nothing to warm for a runtime that starts fast", async () => {
+    expect(
+      await ADAPTERS["runtime.warm"](
+        { ...payload, model: { providerId: "codex", model: "gpt-5.6-sol" } },
+        context({ runtimes: { codex: createFakeRuntime() } }),
+      ),
+    ).toEqual({ warmed: false });
+  });
+
+  it("refuses a payload with something said in it", async () => {
+    await expect(
+      ADAPTERS["runtime.warm"]({ ...payload, prompt: "hello" }, context({ runtimes: {} })),
+    ).rejects.toThrow();
+  });
+});
