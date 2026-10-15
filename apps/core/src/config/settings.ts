@@ -128,6 +128,14 @@ function fromEnvironment(
   }
 }
 
+/** The value the owner set on the Settings page, or undefined when they have not. */
+export function ownerSetting<K extends SettingKey>(
+  db: NoctisDatabase,
+  key: K,
+): SettingValue<K> | undefined {
+  return stored(db, key)?.value as SettingValue<K> | undefined;
+}
+
 export function readSetting<K extends SettingKey>(
   db: NoctisDatabase,
   env: Env,

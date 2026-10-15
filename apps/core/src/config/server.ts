@@ -348,22 +348,24 @@ function parseRemoteDesktop(
     return undefined;
   }
 
-  if (rawTargets === "" || keyFile === "") {
+  // The key alone is enough: the owner can add hosts on the Settings page. Hosts
+  // without the key are not: nothing could sign a token for them.
+  if (keyFile === "") {
     throw new ConfigurationError(
-      `The remote desktop needs both NOCTIS_REMOTE_DESKTOPS and NOCTIS_GATEWAY_PROVISIONER_KEY_FILE, or neither. Missing: ${
-        rawTargets === "" ? "NOCTIS_REMOTE_DESKTOPS" : "NOCTIS_GATEWAY_PROVISIONER_KEY_FILE"
-      }.`,
+      "The remote desktop needs NOCTIS_GATEWAY_PROVISIONER_KEY_FILE to sign for the hosts in NOCTIS_REMOTE_DESKTOPS. Missing: NOCTIS_GATEWAY_PROVISIONER_KEY_FILE.",
     );
   }
 
   let json: unknown;
   try {
-    json = JSON.parse(rawTargets) as unknown;
+    json = rawTargets === "" ? [] : (JSON.parse(rawTargets) as unknown);
   } catch {
     json = undefined;
   }
 
-  const targets = RemoteDesktopTargetsSchema.safeParse(json);
+  const targets = (rawTargets === "" ? z.array(z.never()) : RemoteDesktopTargetsSchema).safeParse(
+    json,
+  );
 
   if (!targets.success) {
     throw new ConfigurationError(

@@ -167,7 +167,13 @@ import {
 } from "../sources/service.js";
 import { listRemoteHosts, openRemoteDesktop } from "../remote/service.js";
 import { readDigest } from "../notify/digest.js";
-import { listSettings, resetSetting, setSetting, startUpSettings } from "../config/settings.js";
+import {
+  listSettings,
+  ownerSetting,
+  resetSetting,
+  setSetting,
+  startUpSettings,
+} from "../config/settings.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
 import {
   VISIBLE_ENTITY,
@@ -482,6 +488,18 @@ function defineCommand<S extends z.ZodType>(
   );
 }
 
+/**
+ * The remote desktop as it stands now: the hosts the owner saved on the
+ * Settings page, else the start-up allowlist. Without the start-up key there is
+ * no remote desktop at all, whatever the hosts say: nothing could sign for them.
+ */
+function remoteFor(deps: ApiDeps): CoreConfig["remoteDesktop"] {
+  const remote = deps.config.remoteDesktop;
+  const targets = ownerSetting(deps.kernel.db, "remoteDesktops");
+
+  return remote === undefined || targets === undefined ? remote : { ...remote, targets };
+}
+
 /** Refusal for a Vault command when no Vault is configured. Off is the default. */
 function vaultNotConfigured(): Result<never> {
   return {
@@ -660,8 +678,7 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   ),
   "remote.open_session": defineDepsCommand(
     OpenRemoteDesktopCommandSchema,
-    (deps, context, command) =>
-      openRemoteDesktop(deps.kernel, context, command, deps.config.remoteDesktop),
+    (deps, context, command) => openRemoteDesktop(deps.kernel, context, command, remoteFor(deps)),
     // Never a replay: the only thing worth replaying is the token, and it is
     // stored nowhere. A reused key is a 409 and the page asks with a new one.
     () => undefined,
@@ -838,7 +855,7 @@ function handleRead(
   }
 
   if (segments.length === 2 && segments[0] === "remote" && segments[1] === "hosts") {
-    return { status: 200, body: { hosts: listRemoteHosts(deps.config.remoteDesktop) } };
+    return { status: 200, body: { hosts: listRemoteHosts(remoteFor(deps)) } };
   }
 
   if (segments.length === 1 && segments[0] === "objectives") {
@@ -2035,9 +2052,7 @@ export async function handleRequest(
         url.pathname,
         res,
         pageSecurityPolicy(
-          (deps.config.remoteDesktop?.targets ?? []).map(
-            (target) => new URL(target.gatewayUrl).origin,
-          ),
+          (remoteFor(deps)?.targets ?? []).map((target) => new URL(target.gatewayUrl).origin),
         ),
       );
       return;
@@ -2517,12 +2532,11 @@ export async function handleRequest(
         return;
       }
 
-      const created = createSession(sessionDeps(deps), deps.config.sessionTtlHours);
+      const ttlHours =
+        ownerSetting(deps.kernel.db, "sessionTtlHours") ?? deps.config.sessionTtlHours;
+      const created = createSession(sessionDeps(deps), ttlHours);
 
-      res.setHeader(
-        "set-cookie",
-        sessionCookie(created.cookieValue, deps.config.sessionTtlHours * 3600),
-      );
+      res.setHeader("set-cookie", sessionCookie(created.cookieValue, ttlHours * 3600));
 
       logger.log("info", "session established");
       send(res, 200, { csrf: created.csrf }, correlationId);

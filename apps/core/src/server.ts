@@ -37,7 +37,9 @@ import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
 import { createLogger } from "./logging.js";
 import type { SendPush, VapidKeys } from "./notify/push.js";
-import { digestLine, msUntilNext, readDigest } from "./notify/digest.js";
+import { ownerSetting, onSettingChange, readSetting } from "./config/settings.js";
+import { createDailyTimer } from "./notify/daily.js";
+import { digestLine, readDigest } from "./notify/digest.js";
 import { createNotifier } from "./notify/push.js";
 import { resolveVaultRoot } from "./vault/root.js";
 
@@ -125,9 +127,6 @@ function currentSchemaVersion(db: NoctisDatabase): number {
 export async function startCore(options: StartCoreOptions): Promise<RunningCore> {
   const { config } = options;
   const clock = options.clock ?? systemClock;
-  const logger =
-    options.logger ?? createLogger({ level: config.logLevel, clock, base: { component: "core" } });
-
   const db = openDatabase(config.databasePath);
 
   try {
@@ -136,6 +135,16 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     db.close();
     throw error;
   }
+
+  // After the migration, so the setting can be read: the owner's level when
+  // they set one on the Settings page, the start-up level otherwise.
+  const logger =
+    options.logger ??
+    createLogger({
+      levelOf: () => ownerSetting(db, "logLevel") ?? config.logLevel,
+      clock,
+      base: { component: "core" },
+    });
 
   const kernel: Kernel = {
     db,
@@ -181,7 +190,12 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     live,
     runtimeFrames,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
-    vaultEnv: env,
+    get vaultEnv() {
+      return {
+        ...env,
+        NOCTIS_VAULT_ALLOW_WRITES: readSetting(db, env, "vaultWrites") ? "true" : "",
+      };
+    },
   });
 
   const files = createFileGateway({ kernel, dispatcher });
@@ -224,17 +238,12 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     });
   });
 
-  // The daily digest: off unless NOCTIS_DIGEST_AT names a local time such as
-  // "21:30". It goes only to the owner's own phones, over push already set up.
-  let digestTimer: ReturnType<typeof setTimeout> | undefined;
-  const scheduleDigest = (): void => {
-    const wait = msUntilNext(new Date(clock.now()), env.NOCTIS_DIGEST_AT ?? "");
-
-    if (wait === undefined) {
-      return;
-    }
-
-    digestTimer = setTimeout(() => {
+  // The daily digest: off unless the owner sets a time on the Settings page
+  // (or NOCTIS_DIGEST_AT at start-up). It goes only to the owner's own phones.
+  const digestTimer = createDailyTimer({
+    clock,
+    at: () => readSetting(db, env, "digestAt"),
+    run: () => {
       const to = clock.now();
       const digest = readDigest(
         db,
@@ -249,12 +258,15 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
             reason: error instanceof Error ? error.message : "unknown",
           });
         });
-      scheduleDigest();
-    }, wait);
-    digestTimer.unref();
-  };
+    },
+  });
+  const stopFollowingSettings = onSettingChange((key) => {
+    if (key === "digestAt") {
+      digestTimer.restart();
+    }
+  });
 
-  scheduleDigest();
+  digestTimer.start();
 
   const deps: ApiDeps = {
     kernel,
@@ -268,7 +280,14 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     live,
     notifier,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
-    vaultEnv: env,
+    // Read on every use, so turning Vault writes off on the Settings page
+    // refuses the very next write.
+    get vaultEnv() {
+      return {
+        ...env,
+        NOCTIS_VAULT_ALLOW_WRITES: readSetting(db, env, "vaultWrites") ? "true" : "",
+      };
+    },
     env,
   };
 
@@ -359,7 +378,8 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     live,
     conversation,
     async close() {
-      clearTimeout(digestTimer);
+      digestTimer.stop();
+      stopFollowingSettings();
       conversation.close();
       files.close();
       screen.close();

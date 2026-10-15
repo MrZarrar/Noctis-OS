@@ -2381,3 +2381,30 @@ describe("settings on the Settings page", () => {
     expect(await digest()).toBe("21:30");
   });
 });
+
+describe("settings the core follows live", () => {
+  it("refuses Vault writes as soon as they are turned off", async () => {
+    const core = await startTestCore({}, { NOCTIS_VAULT_ALLOW_WRITES: "true" });
+
+    expect((await read(core, "/vault")).body.writesEnabled).toBe(true);
+    await command(core, "settings.set", {
+      idempotencyKey: "w-1",
+      key: "vaultWrites",
+      value: false,
+    });
+    expect((await read(core, "/vault")).body.writesEnabled).toBe(false);
+  });
+
+  it("issues a login for the hours set on the Settings page", async () => {
+    const core = await startTestCore();
+
+    await command(core, "settings.set", {
+      idempotencyKey: "t-1",
+      key: "sessionTtlHours",
+      value: 2,
+    });
+    const response = await login(core);
+
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=7200");
+  });
+});

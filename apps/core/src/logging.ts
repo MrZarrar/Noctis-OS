@@ -12,6 +12,8 @@ export interface Logger {
 
 export interface LoggerOptions {
   level?: LogLevel;
+  /** Read for every line; overrides `level`. The core passes its `logLevel` setting. */
+  levelOf?: () => LogLevel;
   /** Defaults to stdout. Tests pass a collector. */
   sink?: (line: string) => void;
   base?: LogFields;
@@ -67,14 +69,16 @@ export function redact(value: unknown, depth = 0): unknown {
 }
 
 export function createLogger(options: LoggerOptions = {}): Logger {
-  const level = options.level ?? "info";
+  // The setting, when there is one, is read per line, so a change on the
+  // Settings page takes effect without rebuilding every logger the core holds.
+  const levelOf = options.levelOf ?? ((): LogLevel => options.level ?? "info");
   const sink = options.sink ?? ((line: string) => process.stdout.write(`${line}\n`));
   const base = options.base ?? {};
   const clock = options.clock ?? systemClock;
 
   return {
     log(entryLevel, message, fields = {}) {
-      if (LEVEL_ORDER[entryLevel] < LEVEL_ORDER[level]) {
+      if (LEVEL_ORDER[entryLevel] < LEVEL_ORDER[levelOf()]) {
         return;
       }
 
