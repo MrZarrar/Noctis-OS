@@ -2023,3 +2023,102 @@ describe("many conversations", () => {
     expect(listed.map((conversation) => conversation.id).sort()).toEqual([old, next].sort());
   });
 });
+
+describe("waking an agent before the owner sends", () => {
+  const HERMES_MODEL = { providerId: "hermes", model: "qwen3.5-9b" };
+  const HERMES_PROBE = {
+    providerId: "hermes",
+    available: true,
+    authMode: "local",
+    models: [HERMES_MODEL],
+  };
+
+  function lastJob(node: FakeNode) {
+    const job = node.jobs().at(-1);
+
+    if (job === undefined) {
+      throw new Error("no job frame");
+    }
+
+    return NodeJobAssignmentSchema.parse(JSON.parse(job.assignment));
+  }
+
+  const wake = (core: TestCore, key: string, extra: Record<string, unknown> = {}) =>
+    command(core, "conversation.warm", { idempotencyKey: key, identityId: "jester", ...extra });
+
+  const turnCount = (core: TestCore): number =>
+    (core.core.kernel.db.prepare("SELECT COUNT(*) AS n FROM identity_turns").get() as { n: number })
+      .n;
+
+  it("THE GATE: waking Jester sends a warm job with nothing said, and records no turn", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, {
+      providers: ["codex", "hermes"],
+      probes: [CODEX_PROBE, HERMES_PROBE],
+    });
+
+    expect((await wake(core, "wake-1")).status).toBe(200);
+    await waitFor(() => node.jobs().length === 1, "the warm job");
+
+    const job = lastJob(node);
+    expect(job.capability).toBe("runtime.warm");
+    expect(job.payload).toMatchObject({ identityId: "jester", model: HERMES_MODEL });
+    expect(job.payload).not.toHaveProperty("prompt");
+    expect(turnCount(core)).toBe(0);
+
+    const identities = await read(core, "/identities");
+    const jester = (
+      identities.body.threads as Array<{ identityId: string; awakeUntil?: string }>
+    ).find((thread) => thread.identityId === "jester");
+    expect(Date.parse(jester?.awakeUntil ?? "")).toBeGreaterThan(core.core.kernel.clock.now());
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("waking does not choose the next turn's model", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const OTHER = { providerId: "hermes", model: "qwen3.5-27b" };
+    const node = await connectFake(core, directory, {
+      providers: ["codex", "hermes"],
+      probes: [CODEX_PROBE, { ...HERMES_PROBE, models: [HERMES_MODEL, OTHER] }],
+    });
+
+    await wake(core, "wake-2");
+    await waitFor(() => node.jobs().length === 1, "the warm job");
+    await send(core, "after-wake", { identityId: "jester", model: OTHER });
+    await waitFor(() => node.jobs().length === 2, "the turn");
+
+    expect(lastTurnJob(node).payload.model).toEqual(OTHER);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("waking again sends one more job, and is cheap", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, {
+      providers: ["codex", "hermes"],
+      probes: [CODEX_PROBE, HERMES_PROBE],
+    });
+
+    await wake(core, "wake-4");
+    await waitFor(() => node.jobs().length === 1, "the first warm job");
+    expect((await wake(core, "wake-5")).status).toBe(200);
+    await waitFor(() => node.jobs().length === 2, "the second warm job");
+    expect(lastJob(node).capability).toBe("runtime.warm");
+    expect(turnCount(core)).toBe(0);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("no PC, no wake: refused, and nothing says the agent is awake", async () => {
+    const core = await startTestCore();
+
+    expect((await wake(core, "wake-3")).status).toBeGreaterThanOrEqual(400);
+
+    const identities = await read(core, "/identities");
+    expect(JSON.stringify(identities.body)).not.toContain("awakeUntil");
+  });
+});

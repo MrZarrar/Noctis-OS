@@ -7,6 +7,7 @@ import {
   BridgeEventSchema,
   ResetSettingCommandSchema,
   SetSettingCommandSchema,
+  WarmConversationCommandSchema,
   AdoptRuntimeSessionCommandSchema,
   ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
@@ -646,6 +647,12 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     (deps, context, command) => deps.conversation.sendMessage(context, command),
     (db, id) => getTurn(db, id),
   ),
+  "conversation.warm": defineDepsCommand(
+    WarmConversationCommandSchema,
+    (deps, context, command) => deps.conversation.warm(context, command),
+    // A wake has nothing worth replaying: a reused key is a 409, and waking again is cheap.
+    () => undefined,
+  ),
   "conversation.create_thread": defineDepsCommand(
     CreateConversationThreadCommandSchema,
     (deps, context, command) => deps.conversation.createThread(context, command),
@@ -871,7 +878,13 @@ function handleRead(
         activeIdentityId: activeIdentityId ?? null,
         threads: (["vesper", "jester"] as const)
           .map((identityId) => getThreadForIdentity(deps.kernel.db, identityId))
-          .filter((thread) => thread !== undefined),
+          .filter((thread) => thread !== undefined)
+          .map((thread) => {
+            // Present only while the agent is awake: the page draws it asleep otherwise.
+            const awakeUntil = deps.conversation.awakeUntil(thread.id);
+
+            return awakeUntil === undefined ? thread : { ...thread, awakeUntil };
+          }),
       },
     };
   }

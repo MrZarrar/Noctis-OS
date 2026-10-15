@@ -152,7 +152,8 @@ export const CAPABILITY_OPERATION_CLASS = {
  * is one list of shared folders per PC rather than two that drift apart.
  */
 const GRANT_ALSO_COVERS: Partial<Record<NodeCapability, readonly NodeCapability[]>> = {
-  "runtime.turn": ["file.list", "file.read", "session.list", "session.history"],
+  // Waking an agent readies what a turn on that grant would run: no more than the turn.
+  "runtime.turn": ["file.list", "file.read", "session.list", "session.history", "runtime.warm"],
 };
 
 /** Whether a grant of `granted` lets a node run a job of `capability`. */

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CAPABILITY_OPERATION_CLASS,
   ELIGIBLE_AUTH_MODES,
+  grantCovers,
   ModelRefSchema,
   NodeFrameSchema,
   NodeServerFrameSchema,
@@ -221,6 +222,8 @@ describe("waking an agent", () => {
 
   it("is a node capability that only reads", () => {
     expect(CAPABILITY_OPERATION_CLASS["runtime.warm"]).toBe("read_inspect");
+    // The folder a turn may run in is a folder a wake may ready: no new grant to give.
+    expect(grantCovers("runtime.turn", "runtime.warm")).toBe(true);
   });
 
   it("is asked for by identity, the thread and model optional", () => {
