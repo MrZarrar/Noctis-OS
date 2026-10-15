@@ -207,10 +207,18 @@ const START_UP = [
   "NOCTIS_GATEWAY_PROVISIONER_KEY_FILE",
 ] as const;
 
+/**
+ * Shown only as set or not set: the secrets, and the paths. GET /vault never
+ * names the Vault's folder, and the page has no more use for where the
+ * database or the built page live than for where the notes do.
+ */
 const SECRET: ReadonlySet<string> = new Set([
   "NOCTIS_CORE_TOKEN",
   "NOCTIS_VAPID_PRIVATE_KEY",
   "NOCTIS_GATEWAY_PROVISIONER_KEY_FILE",
+  "NOCTIS_VAULT_ROOT",
+  "NOCTIS_DATABASE_PATH",
+  "NOCTIS_WEB_ROOT",
 ]);
 
 export function startUpSettings(env: Env): Array<{ name: string; value: string }> {

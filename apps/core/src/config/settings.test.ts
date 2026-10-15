@@ -124,6 +124,22 @@ describe("a setting", () => {
     expect(listed).not.toContain("k3y");
   });
 
+  it("never shows where the Vault, the database or the page live, as GET /vault never does", () => {
+    const listed = JSON.stringify(
+      startUpSettings({
+        NOCTIS_VAULT_ROOT: "C:\\Users\\owner\\OneDrive\\MindVault",
+        NOCTIS_DATABASE_PATH: "C:\\noctis\\core.db",
+        NOCTIS_WEB_ROOT: "C:\\noctis\\web",
+      }),
+    );
+
+    expect(listed).toContain('{"name":"NOCTIS_VAULT_ROOT","value":"set"}');
+    expect(listed).toContain('{"name":"NOCTIS_DATABASE_PATH","value":"set"}');
+    expect(listed).not.toContain("MindVault");
+    expect(listed).not.toContain("core.db");
+    expect(listed).not.toContain("noctis");
+  });
+
   it("tells listeners which setting changed, once it is saved", () => {
     const kernel = makeKernel();
     const heard: string[] = [];
