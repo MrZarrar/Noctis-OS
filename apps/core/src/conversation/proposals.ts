@@ -18,7 +18,12 @@ import {
 } from "../productivity/tasks.js";
 import type { TaskExecutionDeps } from "../productivity/tasks.js";
 import { rememberPreference } from "../vault/brain.js";
-import { addFact, createNote as createVaultNote, proposeRevision } from "../vault/promote.js";
+import {
+  addFact,
+  captureToInbox,
+  createNote as createVaultNote,
+  proposeRevision,
+} from "../vault/promote.js";
 import type { VaultRoot } from "../vault/root.js";
 import type { Turn } from "./service.js";
 
@@ -62,6 +67,15 @@ export function applyProposal(
     return;
   }
   proposal = validated.data;
+  if (proposal.kind === "inbox_note") {
+    const saved = captureToInbox(
+      { kernel, root: deps.vaultRoot, env: deps.vaultEnv ?? {} },
+      { title: proposal.title, body: proposal.body, identityId: turn.identityId },
+    );
+    if ("reason" in saved) skip(saved.reason);
+    else kernel.logger.log("info", "inbox note saved", { turnId: turn.id, path: saved.path });
+    return;
+  }
   if (
     proposal.kind === "vault_fact" ||
     proposal.kind === "vault_note" ||

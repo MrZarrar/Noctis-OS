@@ -192,7 +192,9 @@ export function ItemRow({
                       ? `: ${item.proposal.name}`
                       : item.proposal.kind === "task_action"
                         ? `: ${item.proposal.action}`
-                        : `: ${item.proposal.path}`}
+                        : item.proposal.kind === "inbox_note"
+                          ? `: ${item.proposal.title}`
+                          : `: ${item.proposal.path}`}
         </span>
       );
     case "sub_agent":

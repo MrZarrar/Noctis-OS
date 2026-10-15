@@ -815,6 +815,7 @@ describe("the Claude Agent SDK runtime", () => {
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "noctis_delegate",
+      "noctis_propose_inbox_note",
       "noctis_propose_note",
       "noctis_propose_objective",
       "noctis_propose_reminder",

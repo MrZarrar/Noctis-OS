@@ -25,6 +25,12 @@ export const PRODUCTIVITY_TOOLS = [
       "Request Run now for an existing owner-enabled scheduled task, or pause an existing task. The core enforces the task's existing authority and run limits; this never activates a task or widens what it may do.",
   },
   {
+    kind: "inbox_note",
+    inputSchema: proposalSchema("inbox_note").omit({ kind: true }),
+    description:
+      "Save one durable fact about the owner's people, projects or world to the MindVault inbox, with [[wikilinks]] for every name. Noctis writes it and files it into the Vault later.",
+  },
+  {
     kind: "vault_fact",
     inputSchema: proposalSchema("vault_fact").omit({ kind: true }),
     description:

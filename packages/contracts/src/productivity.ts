@@ -11,7 +11,16 @@ import { TriggerSchema } from "./trigger.js";
 export { TriggerSchema } from "./trigger.js";
 export type { Trigger } from "./trigger.js";
 
-const Provenance = { identityId: ConversationalIdentityIdSchema, threadId: UuidSchema.optional() };
+/** Which agent captured a reminder or note, and where. Absent: the owner made it. */
+const Provenance = {
+  identityId: ConversationalIdentityIdSchema.optional(),
+  threadId: UuidSchema.optional(),
+};
+/** A task always has an agent: the one that runs it. */
+const TaskProvenance = {
+  identityId: ConversationalIdentityIdSchema,
+  threadId: UuidSchema.optional(),
+};
 const RecordBase = {
   id: UuidSchema,
   ...Provenance,
@@ -51,6 +60,7 @@ export const NoteSchema = z.object({ ...RecordBase, ...NoteFields }).strict();
 export const ScheduledTaskSchema = z
   .object({
     ...RecordBase,
+    ...TaskProvenance,
     ...TaskFields,
     paused: z.boolean(),
     nextDueAt: UtcTimestampSchema.optional(),
@@ -104,7 +114,7 @@ export const CreateNoteCommandSchema = z
 export const UpdateNoteCommandSchema = z.object({ ...NoteMutation, ...NoteFields }).strict();
 export const DeleteNoteCommandSchema = z.object(NoteMutation).strict();
 export const CreateTaskCommandSchema = z
-  .object({ ...CommandBase, ...Provenance, ...TaskFields })
+  .object({ ...CommandBase, ...TaskProvenance, ...TaskFields })
   .strict();
 export const UpdateTaskCommandSchema = z.object({ ...TaskMutation, ...TaskFields }).strict();
 export const PauseTaskCommandSchema = z.object(TaskMutation).strict();

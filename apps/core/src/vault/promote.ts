@@ -228,7 +228,7 @@ export function createNote(
   }
 
   const created = now(deps).slice(0, 10);
-  const contents = `---\ntitle: ${input.title}\ntags: []\ncreated: ${created}\nsource: noctis-promoter\n---\n\n# ${input.title}\n\n${input.body.trim()}\n\nFrom ${sourceLink(input.source)}.\n`;
+  const contents = `---\ntitle: ${JSON.stringify(input.title)}\ntags: []\ncreated: ${created}\nsource: noctis-promoter\n---\n\n# ${input.title}\n\n${input.body.trim()}\n\nFrom ${sourceLink(input.source)}.\n`;
   const failed = write(deps, input.path, contents, undefined);
   if (failed !== undefined) return refused(failed === "conflict" ? "note_exists" : failed);
 
@@ -336,4 +336,32 @@ export function undoEdit(deps: PromoteDeps, id: string): VaultEdit {
   return failed === undefined
     ? decide(deps, id, "undone", null)
     : decide(deps, id, "applied", failed);
+}
+
+/**
+ * An agent's capture: a new note in `inbox/`, written by the core under the
+ * same Vault switch, so no agent needs a write share on the folder. Never
+ * overwrites: a taken name gets a number.
+ */
+export function captureToInbox(
+  deps: PromoteDeps,
+  input: { title: string; body: string; identityId: string },
+): { path: string } | { reason: string } {
+  if (deps.root === undefined) return { reason: "no_vault" };
+  if (!writesEnabled(deps.env)) return { reason: "writes_disabled" };
+
+  const date = now(deps).slice(0, 10);
+  const slug =
+    input.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "note";
+  const contents = `---\ntitle: ${JSON.stringify(input.title)}\ntags: []\ncreated: ${date}\nsource: noctis-${input.identityId}\n---\n\n${input.body.trim()}\n`;
+
+  for (let n = 1; n <= 20; n += 1) {
+    const path = `inbox/${date}-${slug}${n === 1 ? "" : `-${String(n)}`}.md`;
+    if (write(deps, path, contents, undefined) === undefined) return { path };
+  }
+  return { reason: "name_taken" };
 }

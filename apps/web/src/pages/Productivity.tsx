@@ -411,8 +411,9 @@ function ProductivityContent({
     if (!record) return;
     focused.current = true;
     if ("model" in record) setDraft(taskDraft(record, models, roots));
-    else if ("text" in record) setDraft({ ...blank(), ...record, note: record.note ?? "" });
-    else setDraft({ ...blank(), ...record });
+    else if ("text" in record)
+      setDraft({ ...blank(), ...record, identityId: "vesper", note: record.note ?? "" });
+    else setDraft({ ...blank(), ...record, identityId: "vesper" });
   }, [focusId, tasks, notes, reminders, models, roots]);
   const endpoint = kind === "todos" ? "reminders" : kind;
   useEffect(() => {
@@ -465,7 +466,7 @@ function ProductivityContent({
           if (kind === "notes")
             void command(
               `note.${suffix}`,
-              { ...existing, title: draft.title, body: draft.body, identityId: draft.identityId },
+              { ...existing, title: draft.title, body: draft.body },
               true,
             );
           else if (kind === "tasks") {
@@ -499,7 +500,6 @@ function ProductivityContent({
                 text: draft.text,
                 note: draft.note,
                 trigger: kind === "todos" ? null : draft.trigger,
-                identityId: draft.identityId,
               },
               true,
             );
@@ -654,18 +654,20 @@ function ProductivityContent({
             allowNone={kind !== "tasks"}
           />
         )}
-        <label>
-          Identity
-          <select
-            style={fieldStyle}
-            disabled={draft.id !== undefined}
-            value={draft.identityId}
-            onChange={(e) => update({ identityId: e.target.value as Draft["identityId"] })}
-          >
-            <option value="vesper">Vesper</option>
-            <option value="jester">Jester</option>
-          </select>
-        </label>
+        {kind === "tasks" && (
+          <label>
+            Runs as
+            <select
+              style={fieldStyle}
+              disabled={draft.id !== undefined}
+              value={draft.identityId}
+              onChange={(e) => update({ identityId: e.target.value as Draft["identityId"] })}
+            >
+              <option value="vesper">Vesper</option>
+              <option value="jester">Jester</option>
+            </select>
+          </label>
+        )}
         {kind === "tasks" && !draft.id && (
           <p style={{ margin: 0, color: typography.color.muted }}>
             Saved paused. Review it, then Turn on when you are ready.
@@ -715,10 +717,13 @@ function ProductivityContent({
                 <h2 style={{ margin: 0, fontSize: 18 }}>{n.title}</h2>
                 <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{n.body}</p>
                 <small>
-                  {n.identityId} · {ownerDate(n.updatedAt)}
+                  {n.identityId ?? "You"} · {ownerDate(n.updatedAt)}
                 </small>
                 <div style={row}>
-                  <button style={buttonStyle} onClick={() => setDraft({ ...blank(), ...n })}>
+                  <button
+                    style={buttonStyle}
+                    onClick={() => setDraft({ ...blank(), ...n, identityId: "vesper" })}
+                  >
                     Edit
                   </button>
                   <button
@@ -845,7 +850,7 @@ function ProductivityContent({
                         : r.status === "snoozed" && r.nextDueAt
                           ? ownerDate(r.nextDueAt)
                           : triggerLabel(r.trigger)}{" "}
-                      · {r.identityId}
+                      · {r.identityId ?? "You"}
                     </small>
                     <div style={row}>
                       {r.status !== "done" && (
@@ -902,7 +907,9 @@ function ProductivityContent({
                       )}
                       <button
                         style={buttonStyle}
-                        onClick={() => setDraft({ ...blank(), ...r, note: r.note ?? "" })}
+                        onClick={() =>
+                          setDraft({ ...blank(), ...r, identityId: "vesper", note: r.note ?? "" })
+                        }
                       >
                         Edit
                       </button>

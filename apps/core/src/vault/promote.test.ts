@@ -27,6 +27,7 @@ import {
   createNote,
   declineRevision,
   proposeRevision,
+  captureToInbox,
   undoEdit,
 } from "./promote.js";
 import type { PromoteDeps } from "./promote.js";
@@ -188,7 +189,7 @@ describe("a new note", () => {
 
     expect(edit.status).toBe("applied");
     expect(readNote(root, "reference/hyperframes.md")).toBe(
-      "---\ntitle: Hyperframes\ntags: []\ncreated: 2026-09-06\nsource: noctis-promoter\n---\n\n# Hyperframes\n\nA template.\n\nFrom [[a]].\n",
+      '---\ntitle: "Hyperframes"\ntags: []\ncreated: 2026-09-06\nsource: noctis-promoter\n---\n\n# Hyperframes\n\nA template.\n\nFrom [[a]].\n',
     );
     expect(
       createNote(deps, {
@@ -198,6 +199,20 @@ describe("a new note", () => {
         source: "inbox/a.md",
       }).reason,
     ).toBe("note_exists");
+  });
+});
+
+describe("an agent's inbox capture", () => {
+  it("is written by the core under a dated name, numbered when taken, and refused when writes are off", () => {
+    const { deps, root } = setup();
+    const note = { title: "Tolga: moved", body: "To [[Istanbul]].", identityId: "jester" };
+
+    expect(captureToInbox(deps, note)).toEqual({ path: "inbox/2026-09-06-tolga-moved.md" });
+    expect(captureToInbox(deps, note)).toEqual({ path: "inbox/2026-09-06-tolga-moved-2.md" });
+    expect(readNote(root, "inbox/2026-09-06-tolga-moved.md")).toBe(
+      '---\ntitle: "Tolga: moved"\ntags: []\ncreated: 2026-09-06\nsource: noctis-jester\n---\n\nTo [[Istanbul]].\n',
+    );
+    expect(captureToInbox({ ...deps, env: {} }, note)).toEqual({ reason: "writes_disabled" });
   });
 });
 

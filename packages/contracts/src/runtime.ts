@@ -269,6 +269,14 @@ export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
       bullet: z.string().trim().min(8).max(300),
     })
     .strict(),
+  /** A durable fact for the MindVault inbox. The core writes it; the promoter files it later. */
+  z
+    .object({
+      kind: z.literal("inbox_note"),
+      title: z.string().trim().min(1).max(200),
+      body: z.string().trim().min(1).max(8000),
+    })
+    .strict(),
   /** One line added to a note's Noctis block. Add-only, so it applies without asking. */
   z
     .object({

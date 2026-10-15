@@ -4008,3 +4008,15 @@ Vesper files inbox notes into the MindVault. A promoter run is an ordinary Vespe
 | `npm run typecheck`; ESLint and Prettier on the changed files                            | exit 0                |
 
 **Owner steps:** deploy the work-PC core (migration 0020), then restart the nodes. On the Settings page turn on **Let Noctis write to the Vault** and set **File the inbox nightly** to a time. Share `MindVault\inbox` with **write** for every agent on each PC. Press **Promote now** on the Vault page once and read what it filed. Not exercised live: a real promoter turn against the real Vault, or the Vault page in a browser.
+
+## 2026-10-15 Inbox capture through the core; your notes and to-dos are yours
+
+Agents save durable facts with `noctis_propose_inbox_note`; the core writes `inbox/<date>-<title>.md` through the hash-checked writer, under the **Let Noctis write to the Vault** setting, so no agent needs a write share on `MindVault\inbox` (the earlier share-based instruction is removed). Reminders, to-dos and notes you make yourself carry no agent and show as "You"; the agent picker remains only on scheduled tasks, where it chooses who runs them.
+
+| Command/check                                                              | Result             |
+| -------------------------------------------------------------------------- | ------------------ |
+| `promote.test.ts` inbox capture (dated name, numbering, refusal when off)  | 13/13              |
+| `npx vitest run apps/core apps/node-agent apps/web/src packages/contracts` | exit 0; 1970 tests |
+| `npm run typecheck`; ESLint and Prettier on the changed files              | exit 0             |
+
+Deploy: work-PC core first, then restart both nodes (the new tool is offered by the node).
