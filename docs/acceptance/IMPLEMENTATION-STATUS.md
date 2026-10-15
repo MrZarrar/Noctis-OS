@@ -3934,3 +3934,35 @@ are kept in `runtime_kv` (`setting:<key>`), checked by the command's own schema,
 For the owner: nothing changes on deploy. From then on, change these on the Settings page, and once set there, the
 matching lines can come out of the deploy script. Not yet in the UI: the Vault location and live switch, and the
 per-PC settings (identity cards, tool paths, LM Studio address); both are follow-ups.
+
+### 2026-10-15 Waking Jester before the first message
+
+Jester's first reply waited on LM Studio loading Qwen (about 35 seconds) before Hermes could think. Now the owner wakes
+it while still writing: a **Wake** button in the composer while it sleeps, and, by default, the first keystroke wakes it
+once (the Settings toggle "Wake an agent as I start typing"). The core shows a dim, still **asleep** state for any agent
+that must load a model first (Jester, or Vesper on a local model) until it is woken or has just answered, and for ten
+minutes after, LM Studio's idle unload.
+
+`conversation.warm` chooses the thread, model, PC and folder exactly as a message would (routing is now one function,
+`routeTurn`, shared with `openTurn`), and queues a `runtime.warm` job with nothing said in it; no turn is recorded. The
+node loads the model through the same serialised LM Studio path a turn uses, so a message sent mid-wake waits for that
+load rather than starting another. A folder shared for turns covers waking: no new grant.
+
+| Clause                                                                                        | State       | Evidence                                                                        |
+| --------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------- |
+| A wake job carries a turn's payload with nothing said; a turn grant covers it                 | implemented | `contracts/runtime.test.ts` "waking an agent" (3)                               |
+| The node loads the model, starts nothing, says nothing; Claude and Codex have nothing to warm | implemented | `hermes.test.ts` (2), `adapters.test.ts` "runtime.warm" (3)                     |
+| THE GATE: waking Jester queues a warm job, records no turn, reports awakeUntil                | implemented | `conversation.integration.test.ts` "waking an agent before the owner sends" (4) |
+| Asleep, the Wake button, one wake per sleep however much is typed, the toggle                 | implemented | `intelligence-state.test.ts`, `wake.test.ts` (3), `PromptForm.test.ts` (2)      |
+| Presence, Jester and phone pages still pass                                                   | implemented | `jester.test.mjs`, `presence.test.mjs`, `phone.test.mjs` exit 0                 |
+
+| Command                                                                | Result             |
+| ---------------------------------------------------------------------- | ------------------ |
+| `npx vitest run apps/web/src packages/ui apps/core packages/contracts` | exit 0; 1736 tests |
+| `npx vitest run apps/node-agent`                                       | exit 0; 298 tests  |
+| `npm run typecheck`; ESLint and Prettier on the changed files          | exit 0             |
+
+**Deploy order:** the work-PC core first, then restart the nodes. A node that offers `runtime.warm` to a core that does
+not know it is refused at hello. Known edges: Hermes itself still starts on the first message (a few seconds; the model
+load was the bulk); the page can show "awake" for up to ten minutes after LM Studio was restarted by hand; named
+conversations in Threads have no Wake yet, only Presence.
