@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { identityCard, mindVaultIn, ownerClockBlock } from "./identity.js";
+import { identityCard, isOwnerClockBlock, mindVaultIn, ownerClockBlock } from "./identity.js";
 
 it("resolves a fresh owner clock for every turn, independent of a worker's local zone", () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -141,5 +141,23 @@ describe("the MindVault among a turn's folders", () => {
 
     expect(card).toContain("MindVault");
     expect(card).not.toContain("shared with you, read only");
+  });
+});
+
+describe("the targets beside the clock", () => {
+  it("lists the exact ids a tool may name, and tells the model to ask when unsure", () => {
+    const pc = "00000000-0000-7000-8000-000000000001";
+    const task = "00000000-0000-7000-8000-000000000002";
+    const block = ownerClockBlock("Europe/London", {
+      pcs: [{ nodeId: pc, hostId: "HOME-PC", current: true, online: false }],
+      folders: [{ grantId: "d", nodeId: pc, path: "C:/work" }],
+      tasks: [{ taskId: task, name: "Morning review", paused: true }],
+    });
+
+    expect(block).toContain(`HOME-PC: nodeId ${pc}, this PC, offline`);
+    expect(block).toContain(`C:/work on HOME-PC: rootGrantId d`);
+    expect(block).toContain(`Morning review: taskId ${task}, paused`);
+    expect(block).toContain("ask the owner");
+    expect(isOwnerClockBlock(block)).toBe(true);
   });
 });

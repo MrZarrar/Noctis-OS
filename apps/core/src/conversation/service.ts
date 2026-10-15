@@ -14,6 +14,7 @@ import type {
   RuntimeItem,
   RuntimeOutput,
   RuntimeProviderId,
+  RuntimeTargets,
   RuntimeTurnPayload,
   RuntimeWarmPayload,
   SendConversationMessageCommand,
@@ -42,7 +43,13 @@ import { runCommand } from "../kernel.js";
 import type { Dispatcher } from "../nodes/dispatch.js";
 import type { NodeJobRecord } from "../nodes/jobs.js";
 import { cancelJob, enqueueJobInTransaction, getJob } from "../nodes/jobs.js";
-import { listRuntimeCandidates, sharedFolder } from "../nodes/registry.js";
+import {
+  listNodes,
+  listRuntimeCandidates,
+  listRuntimeRoots,
+  sharedFolder,
+} from "../nodes/registry.js";
+import { listTasks } from "../productivity/tasks.js";
 import type { RuntimeFrameHub } from "../nodes/runtime-frames.js";
 import { getObjective } from "../objectives/service.js";
 import type { VaultRoot } from "../vault/root.js";
@@ -625,6 +632,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         objectiveActive,
         ...(scheduledRun === undefined ? {} : { scheduledTaskId: scheduledRun.task_id }),
         ...(attachments.length === 0 ? {} : { attachments }),
+        targets: runtimeTargets(tx, (id) => dispatcher.isConnected(id), selected.nodeId, now),
       };
       const enqueued = enqueueJobInTransaction(tx, kernel, context, {
         capability: "runtime.turn",
@@ -1750,5 +1758,32 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       delegations.clear();
       threadByJob.clear();
     },
+  };
+}
+
+/** What the owner's words can name, so a model proposing a task never invents an id. */
+function runtimeTargets(
+  db: NoctisDatabase,
+  isConnected: (nodeId: string) => boolean,
+  currentNodeId: string,
+  now: number,
+): RuntimeTargets {
+  return {
+    pcs: listNodes(db, 32)
+      .filter((node) => node.status !== "revoked" && node.status !== "pending")
+      .map((node) => ({
+        nodeId: node.id,
+        hostId: node.hostId,
+        current: node.id === currentNodeId,
+        online: isConnected(node.id),
+      })),
+    folders: listRuntimeRoots(db, isConnected, now)
+      .slice(0, 128)
+      .map(({ grantId, nodeId, path }) => ({ grantId, nodeId, path })),
+    tasks: listTasks(db, 200).map((task) => ({
+      taskId: task.id,
+      name: task.name,
+      paused: task.paused,
+    })),
   };
 }

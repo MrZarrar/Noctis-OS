@@ -9,7 +9,7 @@ export interface LiveProcess {
   /** The session the runtime reported, once it has. */
   sessionRef: string | undefined;
   readonly alive: boolean;
-  close(): void;
+  close(): void | Promise<void>;
 }
 
 /** Long enough to cover reading a reply and typing the next one; short enough not to hoard memory. */
@@ -27,7 +27,7 @@ export interface ProcessPool<P extends LiveProcess> {
     open: () => P,
     turn: (process: P) => Promise<T>,
   ): Promise<T>;
-  closeAll(): void;
+  closeAll(): Promise<void>;
 }
 
 /**
@@ -40,12 +40,14 @@ export function createProcessPool<P extends LiveProcess>(idleMs = RUNTIME_IDLE_M
   const live = new Map<string, P>();
   const timers = new Map<string, NodeJS.Timeout>();
   const queues = new Map<string, Promise<unknown>>();
+  let closed = false;
 
-  function retire(threadId: string): void {
+  async function retire(threadId: string): Promise<void> {
     clearTimeout(timers.get(threadId));
     timers.delete(threadId);
-    live.get(threadId)?.close();
-    live.delete(threadId);
+    const current = live.get(threadId);
+    await current?.close();
+    if (live.get(threadId) === current) live.delete(threadId);
   }
 
   async function runNow<T>(
@@ -54,6 +56,7 @@ export function createProcessPool<P extends LiveProcess>(idleMs = RUNTIME_IDLE_M
     open: () => P,
     turn: (process: P) => Promise<T>,
   ): Promise<T> {
+    if (closed) throw new Error("runtime process pool is closed");
     clearTimeout(timers.get(threadId));
     timers.delete(threadId);
 
@@ -67,7 +70,8 @@ export function createProcessPool<P extends LiveProcess>(idleMs = RUNTIME_IDLE_M
       want.sessionRef === undefined ||
       current.sessionRef !== want.sessionRef
     ) {
-      retire(threadId);
+      await retire(threadId);
+      if (closed) throw new Error("runtime process pool is closed");
       current = open();
       live.set(threadId, current);
     }
@@ -77,11 +81,14 @@ export function createProcessPool<P extends LiveProcess>(idleMs = RUNTIME_IDLE_M
     } finally {
       if (live.get(threadId) === current) {
         if (current.alive) {
-          const timer = setTimeout(() => retire(threadId), idleMs);
+          const timer = setTimeout(() => {
+            void retire(threadId);
+          }, idleMs);
 
           timer.unref();
           timers.set(threadId, timer);
         } else {
+          await current.close();
           live.delete(threadId);
         }
       }
@@ -106,10 +113,9 @@ export function createProcessPool<P extends LiveProcess>(idleMs = RUNTIME_IDLE_M
 
       return next;
     },
-    closeAll() {
-      for (const threadId of [...live.keys()]) {
-        retire(threadId);
-      }
+    async closeAll() {
+      closed = true;
+      await Promise.all([...live.keys()].map(retire));
     },
   };
 }

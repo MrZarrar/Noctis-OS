@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 import type {
   CanUseTool,
   HookJSONOutput,
@@ -22,6 +24,7 @@ import type {
   RuntimeItem,
   RuntimeProbe,
   RuntimeProposal,
+  RuntimeTargets,
   RuntimeTurnEvidence,
   SessionExchange,
 } from "@noctis/contracts";
@@ -39,6 +42,8 @@ import { PANEL_TOOL_DESCRIPTION } from "../panel-tool.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
+import { trackChild } from "./orphans.js";
+import { killProcessTree, type KillableChild } from "./kill-tree.js";
 import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
 import { PRODUCTIVITY_TOOLS, proposalSchema } from "../proposal-tools.js";
 import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
@@ -430,7 +435,7 @@ interface ClaudeTurn {
 }
 
 interface ClaudeProcess extends LiveProcess {
-  send(prompt: string, timeZone?: string): void;
+  send(prompt: string, timeZone?: string, targets?: RuntimeTargets): void;
   current: ClaudeTurn | undefined;
   failure: Error | undefined;
 }
@@ -445,6 +450,8 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     const controller = new AbortController();
     const inbox = createInbox();
     let alive = true;
+    let child: KillableChild | undefined;
+    let closing: Promise<void> | undefined;
 
     const proc: ClaudeProcess = {
       key,
@@ -454,14 +461,14 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       get alive() {
         return alive;
       },
-      send(prompt, timeZone) {
+      send(prompt, timeZone, targets) {
         inbox.push({
           type: "user",
           message: {
             role: "user",
             content: [
               { type: "text", text: prompt },
-              { type: "text", text: ownerClockBlock(timeZone) },
+              { type: "text", text: ownerClockBlock(timeZone, targets) },
             ],
           },
           parent_tool_use_id: null,
@@ -470,15 +477,25 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       close() {
         if (alive) {
           alive = false;
-          inbox.end();
-          controller.abort();
+          const stopSdk = (): void => {
+            inbox.end();
+            controller.abort();
+          };
+          if (child === undefined) {
+            stopSdk();
+            closing = Promise.resolve();
+          } else {
+            // Keep the root alive for taskkill to discover descendants before SDK teardown.
+            closing = killProcessTree(child).then(stopSdk);
+          }
         }
+        return closing ?? Promise.resolve();
       },
     };
 
     function end(error: Error): void {
       proc.failure ??= error;
-      proc.close();
+      void proc.close();
       proc.current?.stop(error);
     }
 
@@ -587,6 +604,19 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           }),
       includePartialMessages: true,
       abortController: controller,
+      spawnClaudeCodeProcess(spawnOptions) {
+        const spawned = spawn(spawnOptions.command, spawnOptions.args, {
+          cwd: spawnOptions.cwd,
+          env: spawnOptions.env,
+          stdio: ["pipe", "pipe", "pipe"],
+          detached: process.platform !== "win32",
+          windowsHide: true,
+        });
+        spawned.stderr.resume();
+        trackChild(spawned, spawnOptions.command);
+        child = spawned;
+        return spawned;
+      },
       mcpServers: {
         noctis,
         ...(browser === undefined
@@ -692,7 +722,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     return new Promise<RuntimeTurnEvidence>((resolve, reject) => {
       let settled = false;
       // Cancelling closes the CLI; the next turn resumes the session in a new one.
-      const cancel = (): void => proc.close();
+      const cancel = (): void => {
+        void Promise.resolve(proc.close()).then(() => turn.stop(new Error("claude cancelled")));
+      };
 
       function settle(outcome: RuntimeTurnEvidence | Error): void {
         if (settled) {
@@ -706,11 +738,12 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           proc.current = undefined;
         }
 
-        if (outcome instanceof Error) {
-          reject(outcome);
-        } else {
-          resolve(outcome);
-        }
+        const cleanup =
+          outcome instanceof Error || signal.aborted || !proc.alive ? proc.close() : undefined;
+        void Promise.resolve(cleanup).then(() => {
+          if (outcome instanceof Error) reject(outcome);
+          else resolve(outcome);
+        });
       }
 
       /** Asks the core and waits. A timeout fails the turn in its own words. */
@@ -734,7 +767,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           if (error instanceof ApprovalTimedOut) {
             // The CLI is mid-call; a later turn must not inherit it. The next
             // message resumes the session in a new process.
-            proc.close();
+            void proc.close();
             settle(error);
           }
 
@@ -919,7 +952,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
 
       proc.current = turn;
       signal.addEventListener("abort", cancel, { once: true });
-      proc.send(payload.prompt, payload.ownerTimeZone);
+      proc.send(payload.prompt, payload.ownerTimeZone, payload.targets);
 
       if (!proc.alive) {
         turn.stop(proc.failure ?? new Error("claude ended before the turn started"));

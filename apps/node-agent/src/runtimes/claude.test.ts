@@ -1,3 +1,7 @@
+import { spawn } from "node:child_process";
+import type * as ChildProcess from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -12,7 +16,7 @@ import type {
   RuntimeTurnPayload,
 } from "@noctis/contracts";
 import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
@@ -23,6 +27,11 @@ import { PLAYWRIGHT_SERVER } from "./mcp-config.js";
 const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: ["C:\\ref"], localOnly: false };
 const SESSION = "0199a000-0000-7000-8000-00000000c1a0";
 const SIGNAL = new AbortController().signal;
+
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof ChildProcess>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 type Params = Parameters<ClaudeQuery>[0];
 type Script = (params: Params) => AsyncIterable<unknown>;
@@ -911,6 +920,60 @@ describe("the Claude Agent SDK runtime", () => {
     await turn;
   });
 
+  it("waits for the SDK child exit when its stream ends during cancellation", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null as number | null,
+      killed: false,
+      kill: () => {
+        child.killed = true;
+        return true;
+      },
+    });
+    vi.mocked(spawn).mockReturnValueOnce(child as unknown as ReturnType<typeof spawn>);
+    let sdkSignal: AbortSignal | undefined;
+    const { query } = scripted(async function* (params) {
+      sdkSignal = params.options?.abortController?.signal;
+      params.options?.spawnClaudeCodeProcess?.({
+        command: "fake-claude",
+        args: [],
+        env: {},
+        signal: new AbortController().signal,
+      });
+      yield init();
+      await new Promise<void>((resolve) =>
+        params.options?.abortController?.signal.addEventListener("abort", () => resolve(), {
+          once: true,
+        }),
+      );
+    });
+    const controller = new AbortController();
+    let settled = false;
+    const turn = createClaudeRuntime({ query })
+      .turn(input({}, controller.signal), recorder().sink)
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(child.stderr.readableFlowing).toBe(true);
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    try {
+      expect(settled).toBe(false);
+      expect(child.killed).toBe(true);
+      expect(sdkSignal?.aborted).toBe(false);
+    } finally {
+      child.exitCode = 1;
+      child.emit("exit", 1, null);
+      await turn;
+      vi.mocked(spawn).mockClear();
+    }
+    expect(sdkSignal?.aborted).toBe(true);
+  });
+
   it("reports cancellation when the job's signal aborts mid-turn", async () => {
     const { query } = scripted(async function* (params) {
       yield init();
@@ -982,7 +1045,7 @@ describe("the Claude Agent SDK runtime", () => {
       expect([first.finalText, second.finalText]).toEqual(["re: say hello", "re: and again"]);
       expect(second.sessionRef).toBe(SESSION);
 
-      runtime.close?.();
+      await runtime.close?.();
     });
 
     it("closes an idle process, and the next message resumes the session in a new one", async () => {
@@ -1003,7 +1066,7 @@ describe("the Claude Agent SDK runtime", () => {
       expect(calls[1]?.options?.resume).toBe(SESSION);
       expect(second.finalText).toBe("re: back again");
 
-      runtime.close?.();
+      await runtime.close?.();
     });
 
     it("reopens rather than reuse when the core names no session or another root", async () => {
@@ -1026,7 +1089,7 @@ describe("the Claude Agent SDK runtime", () => {
         true,
       ]);
 
-      runtime.close?.();
+      await runtime.close?.();
     });
 
     it("keeps threads apart, and close() ends every live process", async () => {
@@ -1040,7 +1103,7 @@ describe("the Claude Agent SDK runtime", () => {
       );
 
       expect(calls).toHaveLength(2);
-      runtime.close?.();
+      await runtime.close?.();
       expect(calls.map((c) => c.options?.abortController?.signal.aborted)).toEqual([true, true]);
     });
   });

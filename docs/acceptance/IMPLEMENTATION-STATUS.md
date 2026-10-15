@@ -3971,13 +3971,27 @@ conversations in Threads have no Wake yet, only Presence.
 
 Core-local reminders, to-dos and notes (migration `0019_productivity.sql`), the shared trigger engine (one-time, weekly, interval, owner-at-PC; repeat, catch-up, Done, snooze), scheduled tasks (created paused, owner activation, proposed edits held for review, pinned runtime threads, history, timeouts, pause after three failures), task-scoped standing permissions, Claude/Codex/Hermes capture tools, owner-presence reporting through the Windows helper, the Reminders/To-dos/Notes pages and panels, capture receipts (including `task_action`: "Run requested", "Task paused", "Proposed only", never an activation button) and Conversations grouped by scheduled task. Execution and presence stay default-off (`NOCTIS_TASKS_ENABLED`, `NOCTIS_OWNER_PRESENCE`). See `docs/PRODUCTIVITY-HANDOFF.md`.
 
-| Command/check                                                                 | Result                                   |
-| ----------------------------------------------------------------------------- | ---------------------------------------- |
-| `npm run typecheck`                                                           | exit 0                                   |
-| ESLint on every changed/new `.ts`/`.tsx`                                      | exit 0                                   |
-| Focused Vitest: core productivity/conversation/notify, contracts, domain authority, web productivity + grouping | 17 files, 172/172          |
-| `conversation-groups.test.ts`                                                 | red (missing export) then green          |
-| `ProductivityReceipt.test.ts` (task_action receipts)                          | red then green                           |
-| Browser `productivity.test.mjs`, `productivity-app.test.mjs`                  | 2/2                                      |
+| Command/check                                                                                                   | Result                          |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `npm run typecheck`                                                                                             | exit 0                          |
+| ESLint on every changed/new `.ts`/`.tsx`                                                                        | exit 0                          |
+| Focused Vitest: core productivity/conversation/notify, contracts, domain authority, web productivity + grouping | 17 files, 172/172               |
+| `conversation-groups.test.ts`                                                                                   | red (missing export) then green |
+| `ProductivityReceipt.test.ts` (task_action receipts)                                                            | red then green                  |
+| Browser `productivity.test.mjs`, `productivity-app.test.mjs`                                                    | 2/2                             |
 
 Not yet done: natural-language target discovery (tools still need node, grant and task IDs; "when I get home" cannot resolve a PC), and the cancellation guarantee (Codex/Hermes `kill()` is not awaited and does not take down the Windows process tree), which must be fixed before `NOCTIS_TASKS_ENABLED` is turned on. "Always for this task" on Approvals has unit coverage only; no browser check. No real phone push, live agent execution, Windows lock/unlock or deployment.
+
+## 2026-10-15 Productivity: named targets and runs that really stop
+
+Every `runtime.turn` now carries core-derived `targets` (PCs with this-PC/online, shared folders, scheduled tasks); the node renders them inside the fresh `<noctis-clock>` block and tells the model to use only those ids and to ask when the owner's words match no single entry. Runtime cancellation kills the whole process tree and awaits OS exit (bounded 6 s fallback); agent shutdown awaits every runtime; processes a crashed agent left behind are stopped at the next start, matched by pid and image name.
+
+| Command/check                                                                     | Result                                 |
+| --------------------------------------------------------------------------------- | -------------------------------------- |
+| `npm run typecheck`; ESLint on node-agent, conversation service, runtime contract | exit 0                                 |
+| Targets: payload assertion and clock-block rendering                              | red then green                         |
+| Orphan reaping (`orphans.test.ts`)                                                | red (missing module) then green, 2/2   |
+| Codex: kill-tree, adapter close, shutdown and queue tests                         | red then green, 92/92 across six files |
+| Focused Vitest: node-agent, core conversation + productivity, contracts           | 58 files, 1019/1019                    |
+
+Limits: PCs are known only by hostname, so "home" resolves when the hostname says so or the owner answers the question. Off Windows the orphan reap does not check the image name. Not exercised live: a real node crash, a real scheduled run, or the Approvals "Always for this task" button in a browser (owner to check).

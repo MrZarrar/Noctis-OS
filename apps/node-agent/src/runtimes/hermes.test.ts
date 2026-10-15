@@ -480,6 +480,77 @@ describe("the Hermes runtime (ACP)", () => {
     expect(r.items).toEqual([]);
   });
 
+  it("cancels during session initialization and waits for OS exit", async () => {
+    const controller = new AbortController();
+    const child = new FakeChild();
+    child.kill = () => {
+      child.killed = true;
+      return true;
+    };
+    const hermes = createHermesRuntime({
+      command: "fake-hermes",
+      spawn: () => child,
+      hermesHome: join(scratch, "hermes"),
+      proposalsDir: join(scratch, "proposals"),
+      localProbe: () =>
+        Promise.resolve({ providerId: "local", available: true, authMode: "local", models: [] }),
+    });
+    let settled = false;
+    const turn = hermes.turn(input({}, controller.signal), recorder().sink).then(
+      (result) => {
+        settled = true;
+        return result;
+      },
+      (error: unknown) => {
+        settled = true;
+        return error;
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      expect(child.killed).toBe(true);
+      expect(settled).toBe(false);
+    } finally {
+      child.exitCode = 1;
+      child.emit("exit", 1, null);
+      await turn;
+    }
+    expect(await turn).toMatchObject({ stoppedReason: "cancelled" });
+  });
+
+  it("waits for OS exit after ACP acknowledges cancellation", async () => {
+    const controller = new AbortController();
+    const { runtime: hermes, spawned } = runtime(
+      () =>
+        new Promise((resolve) => {
+          controller.signal.addEventListener("abort", () => resolve("cancelled"), { once: true });
+        }),
+    );
+    let settled = false;
+    const turn = hermes.turn(input({}, controller.signal), recorder().sink).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const child = spawned[0]!.child;
+    child.kill = () => {
+      child.killed = true;
+      return true;
+    };
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    try {
+      expect(settled).toBe(false);
+      expect(child.killed).toBe(true);
+    } finally {
+      child.exitCode = 1;
+      child.emit("exit", 1, null);
+      await turn;
+    }
+  });
+
   it("cancels the turn through ACP when the job is cancelled", async () => {
     const controller = new AbortController();
     const slow: Script = () =>

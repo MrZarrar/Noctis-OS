@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ConversationalIdentityId } from "@noctis/contracts";
+import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
 import { ModelRefSchema } from "@noctis/contracts";
 
 export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
@@ -19,8 +19,30 @@ export function ownerTimeContext(now = new Date(), timeZone = "Europe/London"): 
   return `Current time: ${now.toISOString()}. Owner time zone: ${timeZone}. Owner local time: ${local}. Resolve relative reminder times using this clock.`;
 }
 
-export function ownerClockBlock(timeZone?: string): string {
-  return `<noctis-clock>\n${ownerTimeContext(new Date(), timeZone)}\n</noctis-clock>`;
+export function ownerClockBlock(timeZone?: string, targets?: RuntimeTargets): string {
+  const listed = targets === undefined ? "" : `\n${targetsContext(targets)}`;
+  return `<noctis-clock>\n${ownerTimeContext(new Date(), timeZone)}${listed}\n</noctis-clock>`;
+}
+
+/**
+ * The ids Noctis tools take, from the core. A model resolves "when I get home"
+ * against this list, never by guessing an id.
+ */
+export function targetsContext({ pcs, folders, tasks }: RuntimeTargets): string {
+  const host = (nodeId: string) => pcs.find((pc) => pc.nodeId === nodeId)?.hostId ?? nodeId;
+  const lines = [
+    "Owner's PCs:",
+    ...pcs.map(
+      (pc) =>
+        `- ${pc.hostId}: nodeId ${pc.nodeId}${pc.current ? ", this PC" : ""}, ${pc.online ? "online" : "offline"}`,
+    ),
+    "Shared folders:",
+    ...folders.map((f) => `- ${f.path} on ${host(f.nodeId)}: rootGrantId ${f.grantId}`),
+    "Scheduled tasks:",
+    ...tasks.map((t) => `- ${t.name}: taskId ${t.taskId}, ${t.paused ? "paused" : "on"}`),
+    "Use only these ids in Noctis tools. If the owner's words do not clearly match exactly one listed PC, folder or task, ask the owner which before proposing.",
+  ];
+  return lines.join("\n");
 }
 
 export function isOwnerClockBlock(text: string): boolean {

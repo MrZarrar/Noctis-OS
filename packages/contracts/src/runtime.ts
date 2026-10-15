@@ -85,6 +85,42 @@ export const RuntimeGrantConstraintsSchema = z
   })
   .strict();
 
+/**
+ * Core-derived: the PCs, shared folders and scheduled tasks the owner's words
+ * can name, so a model proposing a task never invents an id.
+ */
+export const RuntimeTargetsSchema = z
+  .object({
+    pcs: z
+      .array(
+        z
+          .object({
+            nodeId: UuidSchema,
+            hostId: z.string().min(1).max(253),
+            current: z.boolean(),
+            online: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(32),
+    folders: z
+      .array(
+        z
+          .object({ grantId: ShortId, nodeId: UuidSchema, path: z.string().min(1).max(1024) })
+          .strict(),
+      )
+      .max(128),
+    tasks: z
+      .array(
+        z
+          .object({ taskId: UuidSchema, name: z.string().min(1).max(200), paused: z.boolean() })
+          .strict(),
+      )
+      .max(200),
+  })
+  .strict();
+export type RuntimeTargets = z.infer<typeof RuntimeTargetsSchema>;
+
 /** The payload of a `runtime.turn` job. */
 export const RuntimeTurnPayloadSchema = z
   .object({
@@ -106,6 +142,7 @@ export const RuntimeTurnPayloadSchema = z
     objectiveActive: z.boolean(),
     /** Core-derived reservation marker; API and model input never set it. */
     scheduledTaskId: UuidSchema.optional(),
+    targets: RuntimeTargetsSchema.optional(),
     /** The core's owner clock zone; workers may run in a different zone. */
     ownerTimeZone: z
       .string()

@@ -95,5 +95,5 @@ export interface Runtime {
    */
   readHistory?(cwd: string, sessionRef: string, env: NodeJS.ProcessEnv): Promise<SessionExchange[]>;
   /** Ends every process the runtime is keeping open between turns. */
-  close?(): void;
+  close?(): void | Promise<void>;
 }

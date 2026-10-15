@@ -25,6 +25,8 @@ import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { resolveCodexCommand } from "./codex-command.js";
 import { installCodexRules } from "./codex-rules.js";
 import { childEnvironment } from "./env.js";
+import { trackChild } from "./orphans.js";
+import { killProcessTree, type KillableChild } from "./kill-tree.js";
 import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
@@ -45,12 +47,15 @@ import { createProcessPool, processKey } from "./sessions.js";
  */
 
 /** What `spawn` returns, narrowed to what a turn touches so tests can hand in a fake. */
-export interface SpawnedChild {
+export interface SpawnedChild extends KillableChild {
   stdin: Writable;
   stdout: Readable;
   stderr: Readable | null;
   exitCode: number | null;
-  on(event: "exit", listener: (code: number | null, signal: string | null) => void): unknown;
+  on(
+    event: "exit" | "close",
+    listener: (code: number | null, signal: string | null) => void,
+  ): unknown;
   on(event: "error", listener: (error: Error) => void): unknown;
   kill(): unknown;
 }
@@ -387,6 +392,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       spawnChild(file, [...args], {
         ...spawnOptions,
         stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
         windowsHide: true,
       }));
   const mcpEntry = options.mcpEntry ?? fileURLToPath(new URL("../noctis-mcp.js", import.meta.url));
@@ -409,6 +415,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       // Stripped again here: the adapter already did, and this is the boundary.
       { cwd: roots.cwd, env: childEnvironment(input.env) },
     );
+    trackChild(child, command);
     const rpc = createJsonRpcClient(
       { input: child.stdout, output: child.stdin },
       {
@@ -423,6 +430,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       },
     );
     let alive = true;
+    let closing: Promise<void> | undefined;
     let stderrTail = "";
     let killTimer: NodeJS.Timeout | undefined;
 
@@ -437,7 +445,9 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
         return alive;
       },
       killSoon() {
-        killTimer ??= setTimeout(() => proc.close(), KILL_AFTER_INTERRUPT_MS);
+        killTimer ??= setTimeout(() => {
+          void proc.close();
+        }, KILL_AFTER_INTERRUPT_MS);
         killTimer.unref();
       },
       close() {
@@ -445,11 +455,8 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           alive = false;
           clearTimeout(killTimer);
           rpc.close();
-
-          if (child.exitCode === null) {
-            child.kill();
-          }
         }
+        return (closing ??= killProcessTree(child));
       },
     };
 
@@ -457,7 +464,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     // would otherwise arrive as a second, less useful one.
     function end(error: Error): void {
       proc.current?.ended(error);
-      proc.close();
+      void proc.close();
     }
 
     child.stderr?.on("data", (chunk: Buffer | string) => {
@@ -612,14 +619,16 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
 
         if ("error" in outcome) {
           // Whatever went wrong may have left the process mid-turn; the next turn starts clean.
-          proc.close();
-          reject(outcome.error);
+          void Promise.resolve(proc.close()).then(() => reject(outcome.error));
           return;
         }
 
         // The result is what tells the core the turn is over, so every output
         // item has to have reached it first.
-        void Promise.allSettled(uploads).then(() => {
+        void Promise.allSettled([
+          ...uploads,
+          ...(signal.aborted || outcome.evidence === "cancelled" ? [proc.close()] : []),
+        ]).then(() => {
           resolve({
             model: payload.model,
             ...(proc.threadId === undefined ? {} : { sessionRef: proc.threadId }),
@@ -875,7 +884,11 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             threadId: proc.threadId,
             input: [
               { type: "text", text: payload.prompt, text_elements: [] },
-              { type: "text", text: ownerClockBlock(payload.ownerTimeZone), text_elements: [] },
+              {
+                type: "text",
+                text: ownerClockBlock(payload.ownerTimeZone, payload.targets),
+                text_elements: [],
+              },
             ],
             sandboxPolicy,
           }),
@@ -919,6 +932,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       cwd,
       env: childEnvironment(env),
     });
+    trackChild(child, command);
     const rpc = createJsonRpcClient({ input: child.stdout, output: child.stdin });
     let timer: NodeJS.Timeout | undefined;
 
@@ -940,9 +954,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       clearTimeout(timer);
       rpc.close();
 
-      if (child.exitCode === null) {
-        child.kill();
-      }
+      await killProcessTree(child);
     }
   }
 

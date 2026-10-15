@@ -673,6 +673,12 @@ describe("conversation service", () => {
       objectiveActive: false,
     });
     expect(payload.sessionRef).toBeUndefined();
+    // What the owner's words can name, so a model never invents an id.
+    expect(payload.targets).toMatchObject({
+      pcs: [{ nodeId: node.nodeId, current: true, online: true }],
+      folders: [{ grantId: "d", nodeId: node.nodeId }],
+      tasks: [],
+    });
 
     const turns = await read(core, `/threads/${sent.body.threadId as string}/turns`);
     expect(turns.status).toBe(200);

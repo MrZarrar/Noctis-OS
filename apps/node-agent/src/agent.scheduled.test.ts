@@ -1,8 +1,10 @@
 import { createHmac } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { NodeFrameSchema, type NodeFrame } from "@noctis/contracts";
 import { expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 import { startAgent } from "./agent.js";
+import { killProcessTree } from "./runtimes/kill-tree.js";
 
 async function waitFor(test: () => boolean): Promise<void> {
   for (const deadline = Date.now() + 2_000; !test();) {
@@ -11,7 +13,7 @@ async function waitFor(test: () => boolean): Promise<void> {
   }
 }
 
-it("waits for scheduled cancellation cleanup, skips a cancelled queued job and leaves chats concurrent", async () => {
+it("waits for scheduled process exit, skips a cancelled queued job and leaves chats concurrent", async () => {
   const server = new WebSocketServer({ port: 0 });
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -53,10 +55,14 @@ it("waits for scheduled cancellation cleanup, skips a cancelled queued job and l
     });
   });
   const started: string[] = [];
-  let releaseCleanup = (): void => undefined;
-  const cleanup = new Promise<void>((resolve) => {
-    releaseCleanup = resolve;
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null as number | null,
+    kill: () => true,
   });
+  const releaseCleanup = (): void => {
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+  };
   let firstAborted = false;
   const agent = startAgent({
     credential: {
@@ -83,7 +89,7 @@ it("waits for scheduled cancellation cleanup, skips a cancelled queued job and l
               { once: true },
             ),
           );
-          await cleanup;
+          await killProcessTree(child);
         }
         return { prompt };
       },

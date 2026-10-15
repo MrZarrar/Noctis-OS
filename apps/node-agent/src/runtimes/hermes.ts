@@ -26,6 +26,8 @@ import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
 import type { LiveProcess } from "./sessions.js";
 import { createProcessPool, processKey } from "./sessions.js";
+import { trackChild } from "./orphans.js";
+import { killProcessTree } from "./kill-tree.js";
 
 /**
  * Hermes Agent behind the node boundary (ADR-0030, v1 S3), over the Agent
@@ -218,6 +220,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       spawnChild(file, [...args], {
         ...spawnOptions,
         stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
         windowsHide: true,
       }));
   const mcpEntry = options.mcpEntry ?? fileURLToPath(new URL("../noctis-mcp.js", import.meta.url));
@@ -256,7 +259,9 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       cwd: input.roots.cwd,
       env: { ...childEnvironment(input.env), HERMES_HOME: home },
     });
+    trackChild(child, command);
     let alive = true;
+    let closing: Promise<void> | undefined;
     let killTimer: NodeJS.Timeout | undefined;
     const rpc = createJsonRpcClient(
       { input: child.stdout, output: child.stdin },
@@ -275,7 +280,9 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
         return alive && child.exitCode === null;
       },
       killSoon() {
-        killTimer ??= setTimeout(() => proc.close(), KILL_AFTER_CANCEL_MS);
+        killTimer ??= setTimeout(() => {
+          void proc.close();
+        }, KILL_AFTER_CANCEL_MS);
         killTimer.unref();
       },
       close() {
@@ -283,11 +290,8 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
           alive = false;
           clearTimeout(killTimer);
           rpc.close();
-
-          if (child.exitCode === null) {
-            child.kill();
-          }
         }
+        return (closing ??= killProcessTree(child));
       },
     };
 
@@ -295,7 +299,9 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       alive = false;
       rpc.close("hermes exited");
     });
-    child.on("error", () => proc.close());
+    child.on("error", () => {
+      void proc.close();
+    });
     rpc.onNotification((method, params) => {
       if (method === "session/update" && !proc.loading) {
         proc.current?.update(params);
@@ -375,7 +381,21 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     sink: RuntimeSink,
   ): Promise<RuntimeTurnEvidence> {
     const { payload, roots, signal } = input;
-    const sessionId = await session(proc, input, sink);
+    const cancelOpening = (): void => {
+      void proc.close();
+    };
+    signal.addEventListener("abort", cancelOpening, { once: true });
+    let sessionId: string;
+    try {
+      if (signal.aborted) cancelOpening();
+      sessionId = await session(proc, input, sink);
+    } catch (error) {
+      await proc.close();
+      if (signal.aborted) return { model: payload.model, itemCount: 0, stoppedReason: "cancelled" };
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", cancelOpening);
+    }
     const commands = new Map<string, string>();
     /** Tool calls Hermes started; it also closes its permission requests' bubbles, which are not. */
     const started = new Set<string>();
@@ -594,7 +614,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
           sessionId,
           prompt: [
             { type: "text", text: payload.prompt },
-            { type: "text", text: ownerClockBlock(payload.ownerTimeZone) },
+            { type: "text", text: ownerClockBlock(payload.ownerTimeZone, payload.targets) },
           ],
         }),
       );
@@ -623,6 +643,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
         stoppedReason: signal.aborted ? "cancelled" : (STOPPED[result.stopReason] ?? "failed"),
       };
     } catch (error) {
+      await proc.close();
       if (signal.aborted) {
         return {
           model: payload.model,
@@ -637,6 +658,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       stopChannel();
       signal.removeEventListener("abort", cancel);
       proc.current = undefined;
+      if (signal.aborted || !proc.alive) await proc.close();
     }
   }
 

@@ -439,7 +439,7 @@ describe("the Codex App Server runtime", () => {
         attachmentId: UPLOADED,
       },
     ]);
-    codex.close?.();
+    await codex.close?.();
   });
 
   it("reads a generated image far larger than a megabyte, as real ones are", async () => {
@@ -472,7 +472,7 @@ describe("the Codex App Server runtime", () => {
 
     expect(evidence).toMatchObject({ stoppedReason: "completed", finalText: "Done." });
     expect(r.uploads[0]?.bytes.length).toBe(png.length);
-    codex.close?.();
+    await codex.close?.();
   });
 
   it("fails the turn, rather than wait forever, when the app-server sends what cannot be read", async () => {
@@ -496,7 +496,7 @@ describe("the Codex App Server runtime", () => {
     });
 
     await expect(codex.turn(input(), recorder().sink)).rejects.toThrow(/exceeded 2048 bytes/);
-    codex.close?.();
+    await codex.close?.();
   });
 
   it("drives initialize → thread/start → turn/start and maps every item, delta, and ask", async () => {
@@ -836,6 +836,32 @@ describe("the Codex App Server runtime", () => {
     });
   });
 
+  it("waits for OS exit after cancellation even when the app-server acknowledges interruption", async () => {
+    const controller = new AbortController();
+    const { runtime: codex, spawned } = runtime({ turn: () => Promise.resolve() });
+    let settled = false;
+    const turn = codex.turn(input({}, controller.signal), recorder().sink).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const child = spawned[0]!.child;
+    child.kill = () => {
+      child.killed = true;
+      return true;
+    };
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    try {
+      expect(settled).toBe(false);
+      expect(child.killed).toBe(true);
+    } finally {
+      child.exitCode = 1;
+      child.emit("exit", 1, null);
+      await turn;
+    }
+  });
+
   it("interrupts the turn on cancel and reports it as cancelled", async () => {
     const controller = new AbortController();
     const { runtime: codex, spawned } = runtime({
@@ -1092,7 +1118,7 @@ describe("the Codex App Server runtime", () => {
       expect(second.sessionRef).toBe("thread-1");
       expect(s?.child.killed).toBe(false);
 
-      codex.close?.();
+      await codex.close?.();
     });
 
     it("closes an idle process, and the next message resumes the thread in a new one", async () => {
@@ -1114,7 +1140,7 @@ describe("the Codex App Server runtime", () => {
       ]);
       expect(second.finalText).toBe("re: back again");
 
-      codex.close?.();
+      await codex.close?.();
     });
 
     it("reopens rather than reuse when the core names no session, or the process died", async () => {
@@ -1130,7 +1156,7 @@ describe("the Codex App Server runtime", () => {
       await codex.turn(input({ sessionRef: first.sessionRef }), recorder().sink);
       expect(spawned).toHaveLength(3);
 
-      codex.close?.();
+      await codex.close?.();
     });
 
     it("keeps threads apart, and close() ends every live process", async () => {
@@ -1143,7 +1169,7 @@ describe("the Codex App Server runtime", () => {
       );
 
       expect(spawned).toHaveLength(2);
-      codex.close?.();
+      await codex.close?.();
       expect(spawned.map((s) => s.child.killed)).toEqual([true, true]);
     });
 
@@ -1159,7 +1185,7 @@ describe("the Codex App Server runtime", () => {
       expect([a.finalText, b.finalText]).toEqual(["re: one", "re: two"]);
       expect(spawned).toHaveLength(1);
 
-      codex.close?.();
+      await codex.close?.();
     });
   });
 
