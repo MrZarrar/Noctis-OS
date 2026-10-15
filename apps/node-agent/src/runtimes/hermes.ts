@@ -697,6 +697,21 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
         (proc) => run(proc, input, sink),
       );
     },
+    /**
+     * Loads the model, which is most of a cold start (about 35 seconds for
+     * Qwen at Hermes's context). Hermes itself starts on the first turn: a
+     * process opened now would hold no session the core knows of, and the pool
+     * would replace it. Nothing to load when the node does not drive LM Studio.
+     */
+    async warm(input) {
+      if (options.host === undefined) {
+        return false;
+      }
+
+      await ensureModel(options.host, input.payload.model.model);
+
+      return true;
+    },
     close: () => pool.closeAll(),
   };
 }

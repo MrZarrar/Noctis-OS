@@ -12,6 +12,7 @@ import { useIsMobile } from "../layout/useIsMobile.js";
 import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ProductivityPresence } from "./ProductivityPresence.js";
+import { useWakeWhileTyping } from "./CoreSettings.js";
 import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { PanelSheet, PanelTray, usePanelSheet } from "./PanelTray.js";
 import { PresenceSideColumn, usePresencePanels } from "./PresencePanels.js";
@@ -53,6 +54,7 @@ export interface PresenceProps {
 }
 
 const STATE_WORDS = {
+  asleep: "Asleep. Wake me, or just start typing",
   idle: "Ready when you are",
   listening: "Listening",
   thinking: "Thinking",
@@ -80,6 +82,15 @@ export function Presence({
   const panels = usePresencePanels(transport, conversation.presencePanelsRevision ?? 0, renderPage);
   const sheet = usePanelSheet(panels);
   const identityId = identity.activeIdentityId ?? "vesper";
+  // Only an agent that loads a model before it can answer sleeps: Jester, or
+  // Vesper on a local model. Claude and Codex start fast and never do.
+  const coldStart =
+    identityId === "jester" ||
+    conversation.defaultModel?.providerId === "local" ||
+    conversation.defaultModel?.providerId === "hermes";
+  const until = identity.awakeUntil[identityId];
+  const asleep = coldStart && (until === undefined || Date.parse(until) <= Date.now());
+  const wakeWhileTyping = useWakeWhileTyping(transport);
   const state = intelligenceState(
     {
       turns: conversation.turns ?? [],
@@ -87,6 +98,7 @@ export function Presence({
       pendingApprovals: conversation.pendingApprovals ?? [],
     },
     listening,
+    asleep,
   );
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -394,6 +406,9 @@ export function Presence({
               onSend(text, options);
             }}
             {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
+            asleep={asleep}
+            onWake={() => void identity.wake(identityId)}
+            wakeWhileTyping={wakeWhileTyping}
           />
           {/* Not mid-turn: the turn would carry on in a thread Presence had just let go of. */}
           {conversation.thread !== undefined &&

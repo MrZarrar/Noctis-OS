@@ -226,6 +226,15 @@ function recorder(decision: RuntimeAnswer["decision"] = "allow") {
   return { sink, items, deltas, asks };
 }
 
+/** Jester's turn payload with nothing said in it: what a wake carries. */
+function warmPayload() {
+  const { threadId, identityId, model, primaryRootGrantId, objectiveActive } = input({
+    identityId: "jester",
+  }).payload;
+
+  return { threadId, identityId, model, primaryRootGrantId, objectiveActive };
+}
+
 function runtime(
   script: Script = HAPPY,
   models = ["qwen/qwen3.5-9b"],
@@ -564,6 +573,33 @@ describe("the Hermes runtime (ACP)", () => {
 
     expect(ensured).toEqual(["qwen/qwen3.5-9b"]);
     expect(spawned).toHaveLength(1);
+  });
+
+  it("wakes by loading the model, and starts nothing and says nothing", async () => {
+    const ensured: string[] = [];
+    const { runtime: hermes, spawned } = runtime(HAPPY, [], {
+      downloaded: () => Promise.resolve(["qwen/qwen3.5-9b"]),
+      ensure: (model) => {
+        ensured.push(model);
+        return Promise.resolve();
+      },
+    });
+    const warm = warmPayload();
+
+    expect(
+      await hermes.warm?.({ payload: warm, env: {}, signal: new AbortController().signal }),
+    ).toBe(true);
+    expect(ensured).toEqual(["qwen/qwen3.5-9b"]);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("has nothing to wake when the node does not drive LM Studio", async () => {
+    const { runtime: hermes } = runtime();
+    const warm = warmPayload();
+
+    expect(
+      await hermes.warm?.({ payload: warm, env: {}, signal: new AbortController().signal }),
+    ).toBe(false);
   });
 
   it("refuses, saying why and spawning nothing, when LM Studio cannot load the model", async () => {

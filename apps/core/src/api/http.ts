@@ -1,4 +1,4 @@
-import type { SurfaceOwner } from "@noctis/contracts";
+import type { SetSettingCommand, SurfaceOwner } from "@noctis/contracts";
 import {
   createReminder,
   updateReminder,
@@ -47,6 +47,9 @@ import {
   ReminderStatusSchema,
   ActivateIdentityCommandSchema,
   BridgeEventSchema,
+  ResetSettingCommandSchema,
+  SetSettingCommandSchema,
+  WarmConversationCommandSchema,
   AdoptRuntimeSessionCommandSchema,
   ArchiveConversationThreadCommandSchema,
   CreateConversationThreadCommandSchema,
@@ -207,6 +210,13 @@ import {
 } from "../sources/service.js";
 import { listRemoteHosts, openRemoteDesktop } from "../remote/service.js";
 import { readDigest } from "../notify/digest.js";
+import {
+  listSettings,
+  ownerSetting,
+  resetSetting,
+  setSetting,
+  startUpSettings,
+} from "../config/settings.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
 import {
   VISIBLE_ENTITY,
@@ -312,6 +322,8 @@ export interface ApiDeps {
   vaultRoot?: VaultRoot;
   /** The environment the Vault write switch is read from. */
   vaultEnv?: Readonly<Record<string, string | undefined>>;
+  /** The core's environment: the fallback for every setting the owner has not set. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 interface ErrorBody {
@@ -520,6 +532,18 @@ function defineCommand<S extends z.ZodType>(
   );
 }
 
+/**
+ * The remote desktop as it stands now: the hosts the owner saved on the
+ * Settings page, else the start-up allowlist. Without the start-up key there is
+ * no remote desktop at all, whatever the hosts say: nothing could sign for them.
+ */
+function remoteFor(deps: ApiDeps): CoreConfig["remoteDesktop"] {
+  const remote = deps.config.remoteDesktop;
+  const targets = ownerSetting(deps.kernel.db, "remoteDesktops");
+
+  return remote === undefined || targets === undefined ? remote : { ...remote, targets };
+}
+
 /** Refusal for a Vault command when no Vault is configured. Off is the default. */
 function vaultNotConfigured(): Result<never> {
   return {
@@ -671,6 +695,17 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     (deps, context, command) => recordRecall(deps.kernel, context, command, deps.vaultRoot),
     (db, id) => getRecall(db, id),
   ),
+  "settings.set": defineDepsCommand(
+    SetSettingCommandSchema,
+    (deps, context, command) => setSetting(deps.kernel, context, command as SetSettingCommand),
+    // A reused key is a 409; the page asks again with a new one.
+    () => undefined,
+  ),
+  "settings.reset": defineDepsCommand(
+    ResetSettingCommandSchema,
+    (deps, context, command) => resetSetting(deps.kernel, context, command),
+    () => undefined,
+  ),
   "node.issue_pairing_code": defineCommand(
     IssueNodePairingCodeCommandSchema,
     issuePairingCode,
@@ -697,6 +732,12 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     SendConversationMessageCommandSchema,
     (deps, context, command) => deps.conversation.sendMessage(context, command),
     (db, id) => getTurn(db, id),
+  ),
+  "conversation.warm": defineDepsCommand(
+    WarmConversationCommandSchema,
+    (deps, context, command) => deps.conversation.warm(context, command),
+    // A wake has nothing worth replaying: a reused key is a 409, and waking again is cheap.
+    () => undefined,
   ),
   "conversation.create_thread": defineDepsCommand(
     CreateConversationThreadCommandSchema,
@@ -730,8 +771,7 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   ),
   "remote.open_session": defineDepsCommand(
     OpenRemoteDesktopCommandSchema,
-    (deps, context, command) =>
-      openRemoteDesktop(deps.kernel, context, command, deps.config.remoteDesktop),
+    (deps, context, command) => openRemoteDesktop(deps.kernel, context, command, remoteFor(deps)),
     // Never a replay: the only thing worth replaying is the token, and it is
     // stored nowhere. A reused key is a 409 and the page asks with a new one.
     () => undefined,
@@ -908,7 +948,7 @@ function handleRead(
   }
 
   if (segments.length === 2 && segments[0] === "remote" && segments[1] === "hosts") {
-    return { status: 200, body: { hosts: listRemoteHosts(deps.config.remoteDesktop) } };
+    return { status: 200, body: { hosts: listRemoteHosts(remoteFor(deps)) } };
   }
 
   if (segments.length === 1 && segments[0] === "objectives") {
@@ -951,7 +991,13 @@ function handleRead(
         activeIdentityId: activeIdentityId ?? null,
         threads: (["vesper", "jester"] as const)
           .map((identityId) => getThreadForIdentity(deps.kernel.db, identityId))
-          .filter((thread) => thread !== undefined),
+          .filter((thread) => thread !== undefined)
+          .map((thread) => {
+            // Present only while the agent is awake: the page draws it asleep otherwise.
+            const awakeUntil = deps.conversation.awakeUntil(thread.id);
+
+            return awakeUntil === undefined ? thread : { ...thread, awakeUntil };
+          }),
       },
     };
   }
@@ -973,6 +1019,15 @@ function handleRead(
     return {
       status: 200,
       body: readDigest(deps.kernel.db, new Date(from).toISOString(), new Date(to).toISOString()),
+    };
+  }
+
+  if (segments.length === 1 && segments[0] === "configuration") {
+    const env = deps.env ?? {};
+
+    return {
+      status: 200,
+      body: { settings: listSettings(deps.kernel.db, env), startUp: startUpSettings(env) },
     };
   }
 
@@ -2123,9 +2178,7 @@ export async function handleRequest(
         url.pathname,
         res,
         pageSecurityPolicy(
-          (deps.config.remoteDesktop?.targets ?? []).map(
-            (target) => new URL(target.gatewayUrl).origin,
-          ),
+          (remoteFor(deps)?.targets ?? []).map((target) => new URL(target.gatewayUrl).origin),
         ),
       );
       return;
@@ -2605,12 +2658,11 @@ export async function handleRequest(
         return;
       }
 
-      const created = createSession(sessionDeps(deps), deps.config.sessionTtlHours);
+      const ttlHours =
+        ownerSetting(deps.kernel.db, "sessionTtlHours") ?? deps.config.sessionTtlHours;
+      const created = createSession(sessionDeps(deps), ttlHours);
 
-      res.setHeader(
-        "set-cookie",
-        sessionCookie(created.cookieValue, deps.config.sessionTtlHours * 3600),
-      );
+      res.setHeader("set-cookie", sessionCookie(created.cookieValue, ttlHours * 3600));
 
       logger.log("info", "session established");
       send(res, 200, { csrf: created.csrf }, correlationId);

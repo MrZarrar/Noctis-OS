@@ -9,6 +9,7 @@ import type {
   RuntimeProviderId,
   RuntimeTurnEvidence,
   RuntimeTurnPayload,
+  RuntimeWarmPayload,
   SessionExchange,
 } from "@noctis/contracts";
 
@@ -65,10 +66,23 @@ export interface RuntimeTurnInput {
   signal: AbortSignal;
 }
 
+/** A wake: everything a turn names except anything said. */
+export interface RuntimeWarmInput {
+  payload: RuntimeWarmPayload;
+  env: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+}
+
 export interface Runtime {
   providerId: RuntimeProviderId;
   probe(): Promise<RuntimeProbe>;
   turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence>;
+  /**
+   * Readies the runtime before its first turn, so the owner does not wait for
+   * it after sending. True when there was something to ready. A runtime that
+   * starts fast (Claude, Codex) has no `warm`.
+   */
+  warm?(input: RuntimeWarmInput): Promise<boolean>;
   /**
    * The sessions this agent keeps on disk for `cwd`, newest first, started
    * anywhere but Noctis: what the owner can pick up and continue.

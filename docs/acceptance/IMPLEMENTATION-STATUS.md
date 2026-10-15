@@ -3901,6 +3901,72 @@ On a desktop each panel is now a `position: fixed` window: drag the title anywhe
 
 Repairs found during verification: translucent windows showed through each other (now backed by `depth.layers[0]`, gate red then green); a 32px cascade hid the controls of panels behind (tiling placement); stacking was per Workbench (now one page-wide order); two Workbenches whose new-panel saves failed raised each other forever ("Maximum update depth exceeded", reproduced by the A→B→A gate; each panel now raised once); an in-place owner switch rendered one frame with an empty place map (now read immediately). Known limits: two owners whose first panels arrive in one commit can share a spot; only the 16 most recently raised windows keep their order. `phone`, `chat`, `jester`, `presence`, `tokenless` and other browser suites were not rerun.
 
+### 2026-10-15 Settings in the UI
+
+The owner's rule: anything about how Noctis behaves is set on the Settings page, not in code or the environment. A new
+section, **How Noctis runs**, holds seven settings that take effect without a restart: the daily digest time, the
+nightly inbox filing time (used by the Vault promoter), Vault writes, how long a login lasts, the core's log detail,
+showing unfinished pages, and the remote-desktop hosts. Each says whether its value was set here, came from start-up or
+is the default, and Reset goes back. Below them the start-up values are listed read only, because the core needs them
+before it can serve a page; the token and keys show only as "set" or "not set".
+
+A setting the owner has not set falls back to the environment variable it replaces, so nothing changes on deploy. Values
+are kept in `runtime_kv` (`setting:<key>`), checked by the command's own schema, and read through
+`GET /configuration` (not `/settings`, which is the page's own address).
+
+| Clause                                                                                   | State       | Evidence                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI value, else environment, else default; a bad environment value is ignored and said so | implemented | `config/settings.test.ts` (6): red (no module), then green                                                                                                 |
+| A value of the wrong kind is refused; secrets never reach the page                       | implemented | `contracts/settings.test.ts` (10); `headless.integration.test.ts` "settings on the Settings page" (2)                                                      |
+| The digest reschedules once when its time changes, never twice                           | implemented | `notify/daily.test.ts` (3): red, then green                                                                                                                |
+| Vault writes, login length, log level and remote hosts follow the setting live           | implemented | `headless.integration.test.ts` "settings the core follows live" (2), `logging.test.ts`, `remote.integration.test.ts` hosts from Settings incl. page policy |
+| The gateway key alone is accepted; hosts are added on the page                           | implemented | `remote-desktop.test.ts` (2)                                                                                                                               |
+| The section draws each kind of control, Reset where set here, start-up list read only    | implemented | `CoreSettings.test.ts` (6)                                                                                                                                 |
+| Every Settings control meets the phone touch floor                                       | implemented | `node --test apps/web/e2e/phone.test.mjs` exit 0                                                                                                           |
+
+| Command                                                       | Result            |
+| ------------------------------------------------------------- | ----------------- |
+| `npx vitest run apps/core`                                    | exit 0; 643 tests |
+| `npx vitest run apps/web/src`                                 | exit 0; 295 tests |
+| `npm run typecheck`; ESLint and Prettier on the changed files | exit 0            |
+| `node --test apps/web/e2e/phone.test.mjs`                     | exit 0            |
+
+For the owner: nothing changes on deploy. From then on, change these on the Settings page, and once set there, the
+matching lines can come out of the deploy script. Not yet in the UI: the Vault location and live switch, and the
+per-PC settings (identity cards, tool paths, LM Studio address); both are follow-ups.
+
+### 2026-10-15 Waking Jester before the first message
+
+Jester's first reply waited on LM Studio loading Qwen (about 35 seconds) before Hermes could think. Now the owner wakes
+it while still writing: a **Wake** button in the composer while it sleeps, and, by default, the first keystroke wakes it
+once (the Settings toggle "Wake an agent as I start typing"). The core shows a dim, still **asleep** state for any agent
+that must load a model first (Jester, or Vesper on a local model) until it is woken or has just answered, and for ten
+minutes after, LM Studio's idle unload.
+
+`conversation.warm` chooses the thread, model, PC and folder exactly as a message would (routing is now one function,
+`routeTurn`, shared with `openTurn`), and queues a `runtime.warm` job with nothing said in it; no turn is recorded. The
+node loads the model through the same serialised LM Studio path a turn uses, so a message sent mid-wake waits for that
+load rather than starting another. A folder shared for turns covers waking: no new grant.
+
+| Clause                                                                                        | State       | Evidence                                                                        |
+| --------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------- |
+| A wake job carries a turn's payload with nothing said; a turn grant covers it                 | implemented | `contracts/runtime.test.ts` "waking an agent" (3)                               |
+| The node loads the model, starts nothing, says nothing; Claude and Codex have nothing to warm | implemented | `hermes.test.ts` (2), `adapters.test.ts` "runtime.warm" (3)                     |
+| THE GATE: waking Jester queues a warm job, records no turn, reports awakeUntil                | implemented | `conversation.integration.test.ts` "waking an agent before the owner sends" (4) |
+| Asleep, the Wake button, one wake per sleep however much is typed, the toggle                 | implemented | `intelligence-state.test.ts`, `wake.test.ts` (3), `PromptForm.test.ts` (2)      |
+| Presence, Jester and phone pages still pass                                                   | implemented | `jester.test.mjs`, `presence.test.mjs`, `phone.test.mjs` exit 0                 |
+
+| Command                                                                | Result             |
+| ---------------------------------------------------------------------- | ------------------ |
+| `npx vitest run apps/web/src packages/ui apps/core packages/contracts` | exit 0; 1736 tests |
+| `npx vitest run apps/node-agent`                                       | exit 0; 298 tests  |
+| `npm run typecheck`; ESLint and Prettier on the changed files          | exit 0             |
+
+**Deploy order:** the work-PC core first, then restart the nodes. A node that offers `runtime.warm` to a core that does
+not know it is refused at hello. Known edges: Hermes itself still starts on the first message (a few seconds; the model
+load was the bulk); the page can show "awake" for up to ten minutes after LM Studio was restarted by hand; named
+conversations in Threads have no Wake yet, only Presence.
+
 ## 2026-10-15 Reminders, scheduled tasks, to-dos and notes (first pass)
 
 Core-local reminders, to-dos and notes (migration `0019_productivity.sql`), the shared trigger engine (one-time, weekly, interval, owner-at-PC; repeat, catch-up, Done, snooze), scheduled tasks (created paused, owner activation, proposed edits held for review, pinned runtime threads, history, timeouts, pause after three failures), task-scoped standing permissions, Claude/Codex/Hermes capture tools, owner-presence reporting through the Windows helper, the Reminders/To-dos/Notes pages and panels, capture receipts (including `task_action`: "Run requested", "Task paused", "Proposed only", never an activation button) and Conversations grouped by scheduled task. Execution and presence stay default-off (`NOCTIS_TASKS_ENABLED`, `NOCTIS_OWNER_PRESENCE`). See `docs/PRODUCTIVITY-HANDOFF.md`.

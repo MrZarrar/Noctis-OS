@@ -16,6 +16,7 @@ export * from "./productivity.js";
 export * from "./provider.js";
 export * from "./remote.js";
 export * from "./runtime.js";
+export * from "./settings.js";
 export * from "./source.js";
 export * from "./surface.js";
 export * from "./surface-payloads.js";

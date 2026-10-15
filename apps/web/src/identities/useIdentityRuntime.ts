@@ -17,6 +17,10 @@ export interface IdentityRuntimeState {
   setActiveObjectiveId: (objectiveId: string | undefined) => void;
   toggleNoir: () => void;
   error: string | undefined;
+  /** Until when each identity's agent stays awake; absent while it is asleep. */
+  awakeUntil: Partial<Record<ConversationalIdentityId, string>>;
+  /** Loads the identity's model before the owner sends (`conversation.warm`). */
+  wake: (identityId: ConversationalIdentityId) => Promise<void>;
 }
 
 let activationCounter = 0;
@@ -33,6 +37,9 @@ export function useIdentityRuntime(transport: CoreTransport | undefined): Identi
   const [activeObjectiveId, setActiveObjectiveId] = useState<string>();
   const [protocolIds, setProtocolIds] = useState<readonly ProtocolId[]>([]);
   const [error, setError] = useState<string>();
+  const [awakeUntil, setAwakeUntil] = useState<Partial<Record<ConversationalIdentityId, string>>>(
+    {},
+  );
 
   useEffect(() => {
     if (transport === undefined) {
@@ -50,8 +57,20 @@ export function useIdentityRuntime(transport: CoreTransport | undefined): Identi
 
         const body = response.body as {
           activeIdentityId?: ConversationalIdentityId | null;
-          threads?: Array<{ identityId: ConversationalIdentityId; activeObjectiveId?: string }>;
+          threads?: Array<{
+            identityId: ConversationalIdentityId;
+            activeObjectiveId?: string;
+            awakeUntil?: string;
+          }>;
         };
+
+        setAwakeUntil(
+          Object.fromEntries(
+            (body.threads ?? []).flatMap((thread) =>
+              thread.awakeUntil === undefined ? [] : [[thread.identityId, thread.awakeUntil]],
+            ),
+          ),
+        );
 
         if (body.activeIdentityId !== null && body.activeIdentityId !== undefined) {
           setActiveIdentityId(body.activeIdentityId);
@@ -98,6 +117,27 @@ export function useIdentityRuntime(transport: CoreTransport | undefined): Identi
     [transport],
   );
 
+  const wake = useCallback(
+    async (identityId: ConversationalIdentityId) => {
+      if (transport === undefined) {
+        return;
+      }
+
+      activationCounter += 1;
+
+      const response = await transport.request("POST", "/commands/conversation.warm", {
+        idempotencyKey: `web-wake-${String(activationCounter)}-${String(Date.now())}`,
+        identityId,
+      });
+      const until = (response.body as { awakeUntil?: unknown } | undefined)?.awakeUntil;
+
+      if (response.status === 200 && typeof until === "string") {
+        setAwakeUntil((current) => ({ ...current, [identityId]: until }));
+      }
+    },
+    [transport],
+  );
+
   const toggleNoir = useCallback(() => {
     setProtocolIds((current) => (current.includes("noir") ? [] : ["noir"]));
   }, []);
@@ -110,5 +150,7 @@ export function useIdentityRuntime(transport: CoreTransport | undefined): Identi
     setActiveObjectiveId,
     toggleNoir,
     error,
+    awakeUntil,
+    wake,
   };
 }

@@ -43,6 +43,7 @@ import { Settings } from "./pages/Settings.js";
 import { Threads } from "./pages/Threads.js";
 import { Vault } from "./pages/Vault.js";
 import { resumeSession } from "./session/login.js";
+import { useShowAllPages } from "./pages/CoreSettings.js";
 import type { CoreTransport } from "./transport/CoreTransport.js";
 import type { SurfaceContext } from "./surfaces/renderers.js";
 
@@ -63,7 +64,8 @@ interface VaultHandoff {
  * Missions, Artifacts and Automations predate v1's narrower product.
  * They stay built and working, and a build with this flag offers them again.
  */
-const ALL_PAGES = import.meta.env.VITE_NOCTIS_ALL_PAGES === "1";
+/** The build-time switch, used until the core says what the owner chose in Settings. */
+const ALL_PAGES_AT_BUILD = import.meta.env.VITE_NOCTIS_ALL_PAGES === "1";
 
 /**
  * A page with no token cannot build a transport until it has a session, and it
@@ -209,6 +211,7 @@ function Workbench({
   };
   /** What waits on the owner, on the Approvals tab wherever they are. */
   const counts = { Approvals: useWaitingCount(transport) };
+  const allPages = useShowAllPages(transport) ?? ALL_PAGES_AT_BUILD;
 
   // Every move to another page is a history entry, so back lands on the page before.
   const show = (item: RailItem, replace = false): void => {
@@ -383,7 +386,7 @@ function Workbench({
         fontFamily: typography.family,
       }}
     >
-      {!isMobile && <Rail active={active} onSelect={select} allPages={ALL_PAGES} counts={counts} />}
+      {!isMobile && <Rail active={active} onSelect={select} allPages={allPages} counts={counts} />}
 
       {isMobile && (
         <header
@@ -589,7 +592,7 @@ function Workbench({
               }}
             >
               <div style={{ display: "grid", gap: spacing.xs }}>
-                {[...NAV_ITEMS.slice(4), ...(ALL_PAGES ? HIDDEN_ITEMS : [])].map((item) => (
+                {[...NAV_ITEMS.slice(4), ...(allPages ? HIDDEN_ITEMS : [])].map((item) => (
                   <button
                     key={item}
                     type="button"

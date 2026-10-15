@@ -15,8 +15,10 @@ import type {
   RuntimeOutput,
   RuntimeProviderId,
   RuntimeTurnPayload,
+  RuntimeWarmPayload,
   SendConversationMessageCommand,
   StreamType,
+  WarmConversationCommand,
 } from "@noctis/contracts";
 import {
   ConversationalIdentityIdSchema,
@@ -281,6 +283,18 @@ function findNode(db: NoctisDatabase, name: string): { id: string; hostId: strin
 }
 
 /** What a turn needs besides its thread. */
+type ProviderDecision = ReturnType<typeof chooseProvider>;
+
+/** Where a turn on a thread would run, as `routeTurn` decides it. */
+interface TurnRoute {
+  model: ModelRef;
+  objectiveActive: boolean;
+  decision: ProviderDecision;
+  selected: ProviderDecision["selected"];
+  reasonCodes: ProviderDecision["reasonCodes"];
+  primaryRootGrantId: string | undefined;
+}
+
 interface TurnRequest {
   text: string;
   /** Absent means the identity's default model. */
@@ -322,6 +336,13 @@ export interface ConversationServiceDeps {
 
 export interface ConversationService {
   sendMessage(context: CommandContext, command: SendConversationMessageCommand): Result<Turn>;
+  /** Readies an agent before the owner sends: loads its model. Nothing is said, no turn is made. */
+  warm(
+    context: CommandContext,
+    command: WarmConversationCommand,
+  ): Result<{ threadId: string; jobId: string; awakeUntil: string }>;
+  /** When the thread's agent goes back to sleep, or undefined while asleep. */
+  awakeUntil(threadId: string): string | undefined;
   adoptSession(
     context: CommandContext,
     command: AdoptRuntimeSessionCommand,
@@ -444,15 +465,17 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
    * something can run it, a `runtime.turn` job. Runs inside the caller's
    * command, so a refusal rolls back whatever the caller wrote before it.
    */
-  function openTurn(
+  /**
+   * Which model, PC and folder a turn on this thread would run with, or why it
+   * cannot run. Shared by a turn and a wake, so waking readies exactly what the
+   * next message will use. Writes nothing.
+   */
+  function routeTurn(
     tx: NoctisDatabase,
-    context: CommandContext,
     thread: ConversationThread,
-    request: TurnRequest,
-    turnId: string,
+    request: Pick<TurnRequest, "model" | "rootGrantId" | "nodeId">,
     now: number,
-  ): Result<Mutation<Turn>> {
-    const at = new Date(now).toISOString();
+  ): Result<TurnRoute> {
     const { identityId, objectiveId } = thread;
     const model =
       identityId === "jester"
@@ -474,22 +497,6 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     // Carried to the node so it can choose auto-allow behaviour honestly;
     // the evaluator still makes the actual decision on each ask.
     const objectiveActive = objective?.status === "active";
-
-    // Resolved before anything is written. An id that names no attachment
-    // is a client bug, and sending the turn without the file the prompt
-    // refers to would produce an answer about a file the model never saw.
-    const { attachmentIds } = request;
-    const attachments = attachmentRefs(tx, attachmentIds);
-
-    if (attachments.length !== attachmentIds.length) {
-      const missing = attachmentIds.find(
-        (id) => !attachments.some((attachment) => attachment.id === id),
-      );
-
-      return conflict({ kind: "not_found", entity: "attachment", id: missing ?? "unknown" });
-    }
-
-    const userMessageId = insertMessage(tx, kernel, thread.id, "user", request.text, at);
 
     const requiredRoots = request.rootGrantId === undefined ? [] : [request.rootGrantId];
     const candidates = listRuntimeCandidates(
@@ -545,6 +552,43 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         reasonCodes = [...reasonCodes, "no_writable_root"];
       }
     }
+
+    return ok({ model, objectiveActive, decision, selected, reasonCodes, primaryRootGrantId });
+  }
+
+  function openTurn(
+    tx: NoctisDatabase,
+    context: CommandContext,
+    thread: ConversationThread,
+    request: TurnRequest,
+    turnId: string,
+    now: number,
+  ): Result<Mutation<Turn>> {
+    const at = new Date(now).toISOString();
+    const { identityId, objectiveId } = thread;
+    const routed = routeTurn(tx, thread, request, now);
+
+    if (!routed.ok) {
+      return conflict(routed.conflict);
+    }
+
+    const { model, objectiveActive, decision } = routed.value;
+    const { selected, reasonCodes, primaryRootGrantId } = routed.value;
+    // Resolved before anything is written. An id that names no attachment
+    // is a client bug, and sending the turn without the file the prompt
+    // refers to would produce an answer about a file the model never saw.
+    const { attachmentIds } = request;
+    const attachments = attachmentRefs(tx, attachmentIds);
+
+    if (attachments.length !== attachmentIds.length) {
+      const missing = attachmentIds.find(
+        (id) => !attachments.some((attachment) => attachment.id === id),
+      );
+
+      return conflict({ kind: "not_found", entity: "attachment", id: missing ?? "unknown" });
+    }
+
+    const userMessageId = insertMessage(tx, kernel, thread.id, "user", request.text, at);
 
     const events: EventDraft[] = [
       draft(
@@ -704,11 +748,207 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
   }
 
   /** Post-commit, like http.ts does for node.job_enqueue: a job frame must never describe a row a rollback erased. */
+  /**
+   * How long a woken agent stays ready: LM Studio unloads a model after ten
+   * idle minutes ("--ttl 600" in the node's lmstudio.ts), so the page shows it
+   * asleep again then.
+   */
+  const AWAKE_MS = 10 * 60_000;
+  /** Thread -> when its agent goes back to sleep. Memory only: a restart forgets it. */
+  const awake = new Map<string, number>();
+  /** A warm job -> its thread, so a failed wake clears the thread's awake time. */
+  const warmJobs = new Map<string, string>();
+
+  function warm(
+    context: CommandContext,
+    command: WarmConversationCommand,
+  ): Result<{ threadId: string; jobId: string; awakeUntil: string }> {
+    const now = kernel.clock.now();
+    const at = new Date(now).toISOString();
+
+    const outcome = runCommand<{ threadId: string; jobId: string; awakeUntil: string }>(
+      kernel,
+      { scope: "conversation.warm", key: command.idempotencyKey, resultId: kernel.ids.nextId() },
+      (tx) => {
+        const resolved = resolveThread(tx, command, at);
+
+        if (!resolved.ok) {
+          return conflict(resolved.conflict);
+        }
+
+        const { thread, model, rootGrantId } = resolved.value;
+        const routed = routeTurn(
+          tx,
+          thread,
+          {
+            model,
+            ...(rootGrantId === undefined ? {} : { rootGrantId }),
+            ...(thread.nodeId === undefined ? {} : { nodeId: thread.nodeId }),
+          },
+          now,
+        );
+
+        if (!routed.ok) {
+          return conflict(routed.conflict);
+        }
+
+        const { selected, primaryRootGrantId, reasonCodes, objectiveActive } = routed.value;
+
+        if (selected === undefined || primaryRootGrantId === undefined) {
+          return conflict({
+            kind: "unavailable",
+            entity: "node",
+            reason: `no_eligible_provider:${reasonCodes.join(",")}`,
+          });
+        }
+
+        const session = sessionOn(tx, thread.id, selected.model.providerId, selected.nodeId);
+        const payload: RuntimeWarmPayload = {
+          threadId: thread.id,
+          identityId: thread.identityId,
+          model: selected.model,
+          primaryRootGrantId,
+          ...(session === undefined ? {} : { sessionRef: session.sessionRef }),
+          ...(session?.forkPending === true ? { forkSession: true } : {}),
+          ...(thread.objectiveId === undefined ? {} : { objectiveId: thread.objectiveId }),
+          objectiveActive,
+        };
+        const enqueued = enqueueJobInTransaction(tx, kernel, context, {
+          capability: "runtime.warm",
+          payload,
+          idempotencyKey: `warm:${command.idempotencyKey}`,
+          pinnedNodeId: selected.nodeId,
+        });
+
+        if (!enqueued.ok) {
+          return conflict(enqueued.conflict);
+        }
+
+        return ok({
+          value: {
+            threadId: thread.id,
+            jobId: enqueued.value.value.job.id,
+            awakeUntil: new Date(now + AWAKE_MS).toISOString(),
+          },
+          events: enqueued.value.events,
+        });
+      },
+    );
+
+    if (outcome.ok) {
+      awake.set(outcome.value.threadId, now + AWAKE_MS);
+      warmJobs.set(outcome.value.jobId, outcome.value.threadId);
+      dispatcher.pass();
+    }
+
+    return outcome;
+  }
+
+  /** When this thread's agent goes back to sleep, if it is awake now. */
+  function awakeUntil(threadId: string): string | undefined {
+    const until = awake.get(threadId);
+
+    return until === undefined || until <= kernel.clock.now()
+      ? undefined
+      : new Date(until).toISOString();
+  }
+
+  /** A wake that failed, or found nothing to ready, leaves the agent asleep. */
+  function settleWarm(jobId: string, warmed: boolean): void {
+    const threadId = warmJobs.get(jobId);
+
+    warmJobs.delete(jobId);
+
+    if (threadId !== undefined && !warmed) {
+      awake.delete(threadId);
+    }
+  }
+
   function dispatchOpened(outcome: Result<Turn>): void {
     if (outcome.ok && outcome.value.jobId !== undefined) {
       threadByJob.set(outcome.value.jobId, outcome.value.threadId);
       dispatcher.pass();
     }
+  }
+
+  /**
+   * The thread a message or a wake is for, and the model and folder it asks
+   * for. Shared, so a wake readies the thread the next message will land on.
+   */
+  function resolveThread(
+    tx: NoctisDatabase,
+    command: Pick<
+      SendConversationMessageCommand,
+      "identityId" | "threadId" | "objectiveId" | "model" | "rootGrantId"
+    >,
+    at: string,
+  ): Result<{
+    thread: ConversationThread;
+    model: ModelRef | undefined;
+    rootGrantId: string | undefined;
+  }> {
+    let thread: ConversationThread;
+
+    if (command.threadId !== undefined) {
+      const named = getThread(tx, command.threadId);
+
+      // The other identity's thread is not one this identity may write to.
+      if (named === undefined || named.identityId !== command.identityId) {
+        return conflict({ kind: "not_found", entity: "thread", id: command.threadId });
+      }
+
+      thread = named;
+    } else {
+      if (
+        command.objectiveId !== undefined &&
+        getObjective(tx, command.objectiveId) === undefined
+      ) {
+        return conflict({ kind: "not_found", entity: "objective", id: command.objectiveId });
+      }
+
+      thread = threadFor(tx, kernel, command.identityId, command.objectiveId, at);
+    }
+
+    // A pinned thread holds one agent's session in one folder on one PC;
+    // anything else would start that agent somewhere its session is not.
+    const pinned = thread.providerId;
+
+    if (
+      pinned !== undefined &&
+      command.model !== undefined &&
+      command.model.providerId !== pinned
+    ) {
+      return conflict({
+        kind: "unavailable",
+        entity: "thread",
+        reason: `thread_runs_on_${pinned}`,
+      });
+    }
+
+    if (
+      thread.rootGrantId !== undefined &&
+      command.rootGrantId !== undefined &&
+      command.rootGrantId !== thread.rootGrantId
+    ) {
+      return conflict({
+        kind: "unavailable",
+        entity: "thread",
+        reason: `thread_runs_in_${thread.rootGrantId}`,
+      });
+    }
+
+    const model =
+      command.model ??
+      (pinned !== undefined
+        ? modelFor(tx, thread.id, thread.identityId, pinned)
+        : // A delegated thread belongs to the runtime that was asked, not to
+          // the identity's default, so the owner's follow-up stays on it.
+          thread.parentThreadId === undefined
+          ? undefined
+          : lastModel(tx, thread.id));
+    const rootGrantId = command.rootGrantId ?? thread.rootGrantId;
+
+    return ok({ thread, model, rootGrantId });
   }
 
   function sendMessage(
@@ -723,66 +963,13 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       kernel,
       { scope: "conversation.send", key: command.idempotencyKey, resultId: turnId },
       (tx) => {
-        let thread: ConversationThread;
+        const resolved = resolveThread(tx, command, at);
 
-        if (command.threadId !== undefined) {
-          const named = getThread(tx, command.threadId);
-
-          // The other identity's thread is not one this identity may write to.
-          if (named === undefined || named.identityId !== command.identityId) {
-            return conflict({ kind: "not_found", entity: "thread", id: command.threadId });
-          }
-
-          thread = named;
-        } else {
-          if (
-            command.objectiveId !== undefined &&
-            getObjective(tx, command.objectiveId) === undefined
-          ) {
-            return conflict({ kind: "not_found", entity: "objective", id: command.objectiveId });
-          }
-
-          thread = threadFor(tx, kernel, command.identityId, command.objectiveId, at);
+        if (!resolved.ok) {
+          return conflict(resolved.conflict);
         }
 
-        // A pinned thread holds one agent's session in one folder on one PC;
-        // anything else would start that agent somewhere its session is not.
-        const pinned = thread.providerId;
-
-        if (
-          pinned !== undefined &&
-          command.model !== undefined &&
-          command.model.providerId !== pinned
-        ) {
-          return conflict({
-            kind: "unavailable",
-            entity: "thread",
-            reason: `thread_runs_on_${pinned}`,
-          });
-        }
-
-        if (
-          thread.rootGrantId !== undefined &&
-          command.rootGrantId !== undefined &&
-          command.rootGrantId !== thread.rootGrantId
-        ) {
-          return conflict({
-            kind: "unavailable",
-            entity: "thread",
-            reason: `thread_runs_in_${thread.rootGrantId}`,
-          });
-        }
-
-        const model =
-          command.model ??
-          (pinned !== undefined
-            ? modelFor(tx, thread.id, thread.identityId, pinned)
-            : // A delegated thread belongs to the runtime that was asked, not to
-              // the identity's default, so the owner's follow-up stays on it.
-              thread.parentThreadId === undefined
-              ? undefined
-              : lastModel(tx, thread.id));
-        const rootGrantId = command.rootGrantId ?? thread.rootGrantId;
+        const { thread, model, rootGrantId } = resolved.value;
 
         return openTurn(
           tx,
@@ -1443,8 +1630,30 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
             failureReason?: string;
           };
 
+          if (payload.capability === "runtime.warm") {
+            settleWarm(
+              event.streamId,
+              payload.outcome === "succeeded" &&
+                (payload.evidence as { warmed?: boolean } | undefined)?.warmed === true,
+            );
+            break;
+          }
+
           if (payload.capability !== "runtime.turn") {
             break;
+          }
+
+          {
+            // A turn on a local model leaves it loaded for the same ten minutes.
+            const finished = getTurnByJobId(kernel.db, event.streamId);
+
+            if (
+              payload.outcome === "succeeded" &&
+              finished !== undefined &&
+              (finished.model.providerId === "hermes" || finished.model.providerId === "local")
+            ) {
+              awake.set(finished.threadId, kernel.clock.now() + AWAKE_MS);
+            }
           }
 
           completeTurn(
@@ -1457,6 +1666,14 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         }
         case "node.job_status_changed.v1": {
           const { to } = event.payload as { to: string };
+
+          if (warmJobs.has(event.streamId)) {
+            if (to === "cancelled" || to === "expired" || to === "failed") {
+              settleWarm(event.streamId, false);
+            }
+
+            break;
+          }
 
           if (to === "cancelled") {
             completeTurn(event.streamId, { status: "cancelled" });
@@ -1517,6 +1734,8 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
 
   return {
     sendMessage,
+    warm,
+    awakeUntil,
     adoptSession,
     createThread,
     cancelTurn,

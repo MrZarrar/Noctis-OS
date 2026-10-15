@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   CAPABILITY_OPERATION_CLASS,
   ELIGIBLE_AUTH_MODES,
+  grantCovers,
   ModelRefSchema,
   NodeFrameSchema,
   NodeServerFrameSchema,
   RuntimeGrantConstraintsSchema,
   RuntimeItemSchema,
   RuntimeTurnPayloadSchema,
+  RuntimeWarmPayloadSchema,
   ServerFrameSchema,
+  WarmConversationCommandSchema,
 } from "./index.js";
 
 const UUID = "0199a000-0000-7000-8000-000000000001";
@@ -197,5 +200,51 @@ describe("runtime contracts", () => {
         attachmentId: UUID,
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("waking an agent", () => {
+  const warm = {
+    threadId: UUID,
+    identityId: "jester",
+    model: { providerId: "hermes", model: "qwen/qwen3.5-9b" },
+    primaryRootGrantId: "d",
+    objectiveActive: false,
+  };
+
+  it("carries what a turn carries, except anything said", () => {
+    expect(RuntimeWarmPayloadSchema.safeParse(warm).success).toBe(true);
+    expect(RuntimeWarmPayloadSchema.safeParse({ ...warm, prompt: "hello" }).success).toBe(false);
+    expect(RuntimeWarmPayloadSchema.safeParse({ ...warm, userMessageId: UUID }).success).toBe(
+      false,
+    );
+  });
+
+  it("is a node capability that only reads", () => {
+    expect(CAPABILITY_OPERATION_CLASS["runtime.warm"]).toBe("read_inspect");
+    // The folder a turn may run in is a folder a wake may ready: no new grant to give.
+    expect(grantCovers("runtime.turn", "runtime.warm")).toBe(true);
+  });
+
+  it("is asked for by identity, the thread and model optional", () => {
+    expect(
+      WarmConversationCommandSchema.safeParse({ idempotencyKey: "wake-1", identityId: "jester" })
+        .success,
+    ).toBe(true);
+    expect(
+      WarmConversationCommandSchema.safeParse({
+        idempotencyKey: "wake-2",
+        identityId: "jester",
+        threadId: UUID,
+        model: { providerId: "hermes", model: "qwen/qwen3.5-9b" },
+      }).success,
+    ).toBe(true);
+    expect(
+      WarmConversationCommandSchema.safeParse({
+        idempotencyKey: "wake-3",
+        identityId: "jester",
+        text: "hello",
+      }).success,
+    ).toBe(false);
   });
 });

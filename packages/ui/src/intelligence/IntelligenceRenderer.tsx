@@ -70,6 +70,7 @@ const GRIN = along(
   GRIN_STEPS,
 );
 const LABEL: Record<IntelligenceState, string> = {
+  asleep: "asleep",
   idle: "idle",
   listening: "listening",
   thinking: "thinking",

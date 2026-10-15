@@ -74,13 +74,19 @@ describe("loadCoreConfig: remote desktop (Task 3.9)", () => {
     expect(remote?.privateKey.asymmetricKeyType).toBe("rsa");
   });
 
-  it("refuses one half without the other", () => {
+  it("refuses hosts without the key that signs for them", () => {
     expect(() => loadCoreConfig(env({ NOCTIS_REMOTE_DESKTOPS: TARGETS }))).toThrow(
       /NOCTIS_GATEWAY_PROVISIONER_KEY_FILE/,
     );
-    expect(() => loadCoreConfig(env({ NOCTIS_GATEWAY_PROVISIONER_KEY_FILE: RSA_KEY }))).toThrow(
-      /NOCTIS_REMOTE_DESKTOPS/,
-    );
+  });
+
+  it("takes the key alone, so the hosts can be added on the Settings page", () => {
+    const remote = loadCoreConfig(
+      env({ NOCTIS_GATEWAY_PROVISIONER_KEY_FILE: RSA_KEY }),
+    ).remoteDesktop;
+
+    expect(remote?.targets).toEqual([]);
+    expect(remote?.privateKey.asymmetricKeyType).toBe("rsa");
   });
 
   it("refuses a key that cannot sign the Gateway's RS256 token", () => {

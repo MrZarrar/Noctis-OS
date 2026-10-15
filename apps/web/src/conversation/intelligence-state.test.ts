@@ -45,3 +45,22 @@ describe("the core follows the conversation", () => {
     ).toBe("speaking");
   });
 });
+
+describe("an agent that has to load before it can answer", () => {
+  const quiet = { turns: [], streaming: new Map<string, string>(), pendingApprovals: [] };
+
+  it("is asleep when nothing runs and it has not been woken", () => {
+    expect(intelligenceState(quiet, false, true)).toBe("asleep");
+    expect(intelligenceState(quiet, false, false)).toBe("idle");
+  });
+
+  it("is never asleep while it listens, thinks or waits", () => {
+    expect(intelligenceState(quiet, true, true)).toBe("listening");
+    expect(
+      intelligenceState({ ...quiet, turns: [{ status: "running", items: [] }] }, false, true),
+    ).toBe("thinking");
+    expect(intelligenceState({ ...quiet, pendingApprovals: [{}] }, false, true)).toBe(
+      "waiting_for_approval",
+    );
+  });
+});

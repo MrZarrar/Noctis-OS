@@ -30,6 +30,7 @@ import {
   SessionListPayloadSchema,
   RuntimeTurnEvidenceSchema,
   RuntimeTurnPayloadSchema,
+  RuntimeWarmPayloadSchema,
   VerificationNoopPayloadSchema,
 } from "@noctis/contracts";
 
@@ -277,6 +278,40 @@ export const TURN_HEARTBEAT_MS = 10_000;
  * environment arrives stripped, and every ask goes to the core and comes back
  * as the core's answer. The runtime proposes; the frames decide.
  */
+/**
+ * Wakes a runtime before the owner sends: loads its model while they type. The
+ * heartbeat keeps the lease, because a model load can outlast it.
+ */
+const runtimeWarm: Adapter = async (payload, context) => {
+  const request = RuntimeWarmPayloadSchema.parse(payload);
+  const runtime = context.runtimes[request.model.providerId];
+
+  if (runtime === undefined) {
+    throw new AdapterRefused(`no runtime for ${request.model.providerId}`);
+  }
+
+  assertNotCancelled(context.signal);
+
+  if (runtime.warm === undefined) {
+    return { warmed: false };
+  }
+
+  const heartbeat = setInterval(() => context.progress(0, "waking"), TURN_HEARTBEAT_MS);
+  heartbeat.unref();
+
+  try {
+    return {
+      warmed: await runtime.warm({
+        payload: request,
+        env: childEnvironment(context.env),
+        signal: context.signal,
+      }),
+    };
+  } finally {
+    clearInterval(heartbeat);
+  }
+};
+
 const runtimeTurn: Adapter = async (payload, context) => {
   const request = RuntimeTurnPayloadSchema.parse(payload);
   const roots = await resolveRoots(context.grants, request.primaryRootGrantId);
@@ -568,6 +603,7 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "file.search": fileSearch,
   "verification.noop": verificationNoop,
   "runtime.turn": runtimeTurn,
+  "runtime.warm": runtimeWarm,
   "file.list": fileList,
   "file.read": fileRead,
   "session.list": sessionList,

@@ -95,3 +95,18 @@ describe("createLogger", () => {
     expect(JSON.parse(lines[0] ?? "")).toMatchObject({ correlationId: "c1", token: REDACTED });
   });
 });
+
+describe("a logger whose level is a setting", () => {
+  it("follows the level as it changes, without being rebuilt", () => {
+    const lines: string[] = [];
+    let level: "info" | "warn" = "warn";
+    const logger = createLogger({ sink: (line) => lines.push(line), levelOf: () => level });
+
+    logger.log("info", "quiet");
+    level = "info";
+    logger.log("info", "heard");
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("heard");
+  });
+});

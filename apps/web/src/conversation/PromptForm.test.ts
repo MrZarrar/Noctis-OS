@@ -1,6 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { offeredModels, pastedFiles, rootOption } from "./PromptForm.js";
+import { PromptForm, offeredModels, pastedFiles, rootOption } from "./PromptForm.js";
 
 const CLAUDE = { providerId: "claude" as const, model: "opus" };
 const LOCAL = { providerId: "local" as const, model: "qwen/qwen3.5-9b" };
@@ -96,5 +98,29 @@ describe("pastedFiles", () => {
       ),
     ).toEqual([]);
     expect(pastedFiles([], now)).toEqual([]);
+  });
+});
+
+describe("waking from the composer", () => {
+  const render = (extra: Record<string, unknown>): string =>
+    renderToStaticMarkup(
+      createElement(PromptForm, {
+        identityId: "jester",
+        models: [],
+        defaultModel: undefined,
+        disabled: false,
+        onSend: () => undefined,
+        ...extra,
+      }),
+    );
+
+  it("offers Wake while the agent is asleep", () => {
+    expect(render({ asleep: true, onWake: () => undefined })).toMatch(
+      /<button[^>]*>Wake<\/button>/,
+    );
+  });
+
+  it("offers nothing to wake once it is awake", () => {
+    expect(render({ asleep: false, onWake: () => undefined })).not.toContain(">Wake<");
   });
 });

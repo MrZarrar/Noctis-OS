@@ -18,6 +18,8 @@ import {
   RuntimeProbeSchema,
   RuntimeProviderIdSchema,
   RuntimeTurnEvidenceSchema,
+  RuntimeWarmEvidenceSchema,
+  RuntimeWarmPayloadSchema,
   RuntimeTurnPayloadSchema,
 } from "./runtime.js";
 
@@ -96,6 +98,11 @@ export const NODE_CAPABILITIES = [
   "verification.noop",
   /** Phase 10: one conversational turn on a spawned runtime. */
   "runtime.turn",
+  /**
+   * Readies a runtime before its first turn: loads the model, starts the
+   * process. Nothing is said to it; the owner wakes an agent while still typing.
+   */
+  "runtime.warm",
   /** v1 S4: the owner browsing and opening files in a granted root. */
   "file.list",
   "file.read",
@@ -128,6 +135,8 @@ export const CAPABILITY_OPERATION_CLASS = {
    * arrives as an `ask` and is classed by its own capability, not by this one.
    */
   "runtime.turn": "read_inspect",
+  /** Loads a model and starts a process; no prompt, nothing outside the PC. */
+  "runtime.warm": "read_inspect",
   "file.list": "read_inspect",
   "file.read": "read_inspect",
   "session.list": "read_inspect",
@@ -143,7 +152,8 @@ export const CAPABILITY_OPERATION_CLASS = {
  * is one list of shared folders per PC rather than two that drift apart.
  */
 const GRANT_ALSO_COVERS: Partial<Record<NodeCapability, readonly NodeCapability[]>> = {
-  "runtime.turn": ["file.list", "file.read", "session.list", "session.history"],
+  // Waking an agent readies what a turn on that grant would run: no more than the turn.
+  "runtime.turn": ["file.list", "file.read", "session.list", "session.history", "runtime.warm"],
 };
 
 /** Whether a grant of `granted` lets a node run a job of `capability`. */
@@ -368,6 +378,7 @@ export const CAPABILITY_CONTRACTS = {
     evidence: VerificationNoopEvidenceSchema,
   },
   "runtime.turn": { payload: RuntimeTurnPayloadSchema, evidence: RuntimeTurnEvidenceSchema },
+  "runtime.warm": { payload: RuntimeWarmPayloadSchema, evidence: RuntimeWarmEvidenceSchema },
   "file.list": { payload: FileListPayloadSchema, evidence: FileListEvidenceSchema },
   "file.read": { payload: FileReadPayloadSchema, evidence: FileReadEvidenceSchema },
   "session.list": { payload: SessionListPayloadSchema, evidence: SessionListEvidenceSchema },

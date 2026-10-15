@@ -262,6 +262,43 @@ describe("remote desktop session tokens (Task 3.9, ADR-0035)", () => {
     expect(eventsOf(core, "remote.session_opened.v1")).toHaveLength(1);
   });
 
+  it("takes its hosts from the Settings page once the owner sets them, page policy included", async () => {
+    const webRoot = mkdtempSync(join(tmpdir(), "noctis-remote-page-"));
+    writeFileSync(join(webRoot, "index.html"), "<!doctype html>");
+    const core = await startTestCore({ ...REMOTE, targets: [] }, { webRoot });
+    const headers = await session(core);
+    const hosts = async () => await (await fetch(`${core.base}/remote/hosts`, { headers })).json();
+
+    expect(await hosts()).toEqual({ hosts: [] });
+
+    const saved = await fetch(`${core.base}/commands/settings.set`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        idempotencyKey: "rd-1",
+        key: "remoteDesktops",
+        value: [
+          {
+            host: "homepc",
+            gatewayUrl: "wss://homepc.example.ts.net/jet/rdp",
+            destination: "homepc.example.ts.net:3389",
+          },
+        ],
+      }),
+    });
+
+    expect(saved.status).toBe(200);
+    expect(await hosts()).toEqual({ hosts: [{ host: "homepc" }] });
+    expect((await fetch(`${core.base}/`)).headers.get("content-security-policy")).toContain(
+      "wss://homepc.example.ts.net",
+    );
+    expect((await open(core, { idempotencyKey: "rd-2", host: "homepc" }, headers)).status).toBe(
+      200,
+    );
+
+    rmSync(webRoot, { recursive: true, force: true });
+  });
+
   it("serves the page with a CSP the component can run under, only when a Gateway is configured", async () => {
     const webRoot = mkdtempSync(join(tmpdir(), "noctis-remote-page-"));
     writeFileSync(join(webRoot, "index.html"), "<!doctype html>");

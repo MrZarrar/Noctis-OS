@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
 import { z } from "zod";
 
-import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
+import type { Runtime, RuntimeSink, RuntimeTurnInput, RuntimeWarmInput } from "./Runtime.js";
 import { AdapterRefused } from "./Runtime.js";
 import { identityCard } from "./identity.js";
 import type { ModelHost } from "./lmstudio.js";
@@ -322,7 +322,18 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
     return evidence("completed");
   }
 
-  return { providerId: "local", probe, turn };
+  /** Loads the model before the first turn, when the node drives LM Studio. */
+  async function warm(input: RuntimeWarmInput): Promise<boolean> {
+    if (options.host === undefined) {
+      return false;
+    }
+
+    await ensureModel(options.host, input.payload.model.model);
+
+    return true;
+  }
+
+  return { providerId: "local", probe, turn, warm };
 }
 
 /** The model loaded before a turn asks it anything; a failure refuses the turn and says why. */

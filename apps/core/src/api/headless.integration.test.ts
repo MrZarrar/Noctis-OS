@@ -330,8 +330,8 @@ describe("headless kernel loop", () => {
     // child threads a delegation runs on; 0011 named and pinned threads; 0012
     // the session a thread adopted; 0013 archived conversations; 0014 the
     // Vault passcode; 0015 the live bridge's sessions; 0016 Surface owners;
-    // 0017 Vault tags; 0018 manual Surface override order.
-    expect(diagnostics.body.schemaVersion).toBe(18);
+    // 0017 Vault tags; 0018 manual Surface override order; 0019 productivity.
+    expect(diagnostics.body.schemaVersion).toBe(19);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -2326,5 +2326,85 @@ describe("the push realm", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("settings on the Settings page", () => {
+  it("lists the settings and the start-up values, and never a secret", async () => {
+    const core = await startTestCore(
+      {},
+      { NOCTIS_CORE_TOKEN: "s3cret-token", NOCTIS_DIGEST_AT: "21:30" },
+    );
+
+    const listed = await read(core, "/configuration");
+    const settings = listed.body.settings as Array<{ key: string; value: unknown; source: string }>;
+
+    expect(listed.status).toBe(200);
+    expect(settings.find((setting) => setting.key === "digestAt")).toMatchObject({
+      value: "21:30",
+      source: "start-up",
+    });
+    expect(listed.body.startUp).toContainEqual({ name: "NOCTIS_CORE_TOKEN", value: "set" });
+    expect(JSON.stringify(listed.body)).not.toContain("s3cret");
+  });
+
+  it("sets and resets a setting, and refuses a value of the wrong kind", async () => {
+    const core = await startTestCore({}, { NOCTIS_DIGEST_AT: "21:30" });
+    const digest = async (): Promise<unknown> =>
+      (
+        (await read(core, "/configuration")).body.settings as Array<{ key: string; value: unknown }>
+      ).find((setting) => setting.key === "digestAt")?.value;
+
+    expect(
+      (
+        await command(core, "settings.set", {
+          idempotencyKey: "st-1",
+          key: "digestAt",
+          value: "25:00",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await command(core, "settings.set", {
+          idempotencyKey: "st-2",
+          key: "digestAt",
+          value: "07:15",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await digest()).toBe("07:15");
+
+    expect(
+      (await command(core, "settings.reset", { idempotencyKey: "st-3", key: "digestAt" })).status,
+    ).toBe(200);
+    expect(await digest()).toBe("21:30");
+  });
+});
+
+describe("settings the core follows live", () => {
+  it("refuses Vault writes as soon as they are turned off", async () => {
+    const core = await startTestCore({}, { NOCTIS_VAULT_ALLOW_WRITES: "true" });
+
+    expect((await read(core, "/vault")).body.writesEnabled).toBe(true);
+    await command(core, "settings.set", {
+      idempotencyKey: "w-1",
+      key: "vaultWrites",
+      value: false,
+    });
+    expect((await read(core, "/vault")).body.writesEnabled).toBe(false);
+  });
+
+  it("issues a login for the hours set on the Settings page", async () => {
+    const core = await startTestCore();
+
+    await command(core, "settings.set", {
+      idempotencyKey: "t-1",
+      key: "sessionTtlHours",
+      value: 2,
+    });
+    const response = await login(core);
+
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=7200");
   });
 });
