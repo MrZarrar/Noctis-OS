@@ -112,6 +112,21 @@ export const RuntimeTurnPayloadSchema = z
   })
   .strict();
 
+/**
+ * What a wake carries: a turn's payload with nothing said in it, so the node
+ * readies the same runtime, model, folder and session the next turn will use.
+ */
+export const RuntimeWarmPayloadSchema = RuntimeTurnPayloadSchema.omit({
+  prompt: true,
+  userMessageId: true,
+  attachments: true,
+}).strict();
+
+export type RuntimeWarmPayload = z.infer<typeof RuntimeWarmPayloadSchema>;
+
+/** Whether there was anything to warm: Claude and Codex start fast and have nothing. */
+export const RuntimeWarmEvidenceSchema = z.object({ warmed: z.boolean() }).strict();
+
 export const RuntimeItemStatusSchema = z.enum(["in_progress", "completed", "failed", "declined"]);
 
 /** What a runtime may propose. Proposals are data until the core turns them into commands. */

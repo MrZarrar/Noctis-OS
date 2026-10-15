@@ -38,6 +38,8 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   "file.search": 200,
   "verification.noop": 200,
   "runtime.turn": 100_000,
+  /** A heartbeat every ten seconds while a model loads, which can take a minute. */
+  "runtime.warm": 60,
   "file.list": 200,
   /** A heartbeat every ten seconds while bytes flow, counted per window: hours of film. */
   "file.read": 60,

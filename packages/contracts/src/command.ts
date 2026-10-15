@@ -522,6 +522,23 @@ export type ObserveSourceCommand = z.infer<typeof ObserveSourceCommandSchema>;
 export type RecordArtifactCommand = z.infer<typeof RecordArtifactCommandSchema>;
 export type ImportArtifactCommand = z.infer<typeof ImportArtifactCommandSchema>;
 
+/**
+ * Wakes an agent before the owner sends: the node chosen as a send would choose
+ * it loads the model and starts the runtime. Nothing is said and no turn is made.
+ */
+export const WarmConversationCommandSchema = z
+  .object({
+    ...CommandBase,
+    identityId: ConversationalIdentityIdSchema,
+    model: ModelRefSchema.optional(),
+    objectiveId: UuidSchema.optional(),
+    threadId: UuidSchema.optional(),
+    rootGrantId: z.string().trim().min(1).max(128).optional(),
+  })
+  .strict();
+
+export type WarmConversationCommand = z.infer<typeof WarmConversationCommandSchema>;
+
 /** One setting set on the Settings page, checked against that setting's own schema. */
 export const SetSettingCommandSchema = z.discriminatedUnion(
   "key",
@@ -574,6 +591,7 @@ export const COMMAND_NAMES = [
   "node.job_enqueue",
   "node.job_cancel",
   "conversation.send",
+  "conversation.warm",
   "conversation.cancel",
   "authority.decline",
   "identity.set_default_model",

@@ -568,6 +568,7 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "file.search": fileSearch,
   "verification.noop": verificationNoop,
   "runtime.turn": runtimeTurn,
+  "runtime.warm": () => Promise.reject(new AdapterRefused("waking is not built on this node yet")),
   "file.list": fileList,
   "file.read": fileRead,
   "session.list": sessionList,
