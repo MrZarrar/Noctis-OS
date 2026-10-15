@@ -80,6 +80,14 @@ const REGISTRY: Record<SettingKey, Entry> = {
     label: "Show unfinished pages",
     help: "Missions, Artifacts and Automations in the rail.",
   },
+  wakeWhileTyping: {
+    env: "NOCTIS_WAKE_WHILE_TYPING",
+    fromEnv: (raw) => raw !== "false",
+    fallback: true,
+    kind: "boolean",
+    label: "Wake an agent as I start typing",
+    help: "Loads Jester's model while you write, so the reply is not held up. The Wake button works either way.",
+  },
   remoteDesktops: {
     env: "NOCTIS_REMOTE_DESKTOPS",
     fromEnv: (raw) => JSON.parse(raw) as unknown,

@@ -10,6 +10,7 @@ describe("a setting the owner sets", () => {
     expect(set("digestAt", "21:30")).toBe(true);
     expect(set("digestAt", "")).toBe(true);
     expect(set("vaultWrites", true)).toBe(true);
+    expect(set("wakeWhileTyping", false)).toBe(true);
     expect(set("sessionTtlHours", 48)).toBe(true);
     expect(set("logLevel", "warn")).toBe(true);
     expect(

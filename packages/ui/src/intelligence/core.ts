@@ -1,5 +1,6 @@
+/** `asleep`: an agent that must load a model before it can answer, not yet woken. */
 export type IntelligenceState =
-  "idle" | "listening" | "thinking" | "speaking" | "waiting_for_approval";
+  "asleep" | "idle" | "listening" | "thinking" | "speaking" | "waiting_for_approval";
 
 export interface IntelligenceProfile {
   readonly name: "vesper" | "jester";
@@ -143,6 +144,7 @@ export function coreAppearance(
   fault: number;
 } {
   const light = {
+    asleep: 0.38,
     idle: 0.72,
     listening: 1.02,
     thinking: 1.18,
@@ -161,6 +163,7 @@ export function coreAppearance(
 }
 
 const JESTER_FACE: Record<IntelligenceState, number> = {
+  asleep: 0,
   idle: 0,
   listening: 0,
   thinking: 0.75,
@@ -168,6 +171,7 @@ const JESTER_FACE: Record<IntelligenceState, number> = {
   waiting_for_approval: 0,
 };
 const JESTER_FAULT: Record<IntelligenceState, number> = {
+  asleep: 0.12,
   idle: 0.45,
   listening: 0.6,
   thinking: 0.8,

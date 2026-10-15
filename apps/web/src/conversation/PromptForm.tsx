@@ -20,6 +20,7 @@ import { Picker } from "../layout/Picker.js";
 import { useBackLayer } from "../navigation/back.js";
 import { AttachmentPreview } from "./AttachmentPreview.js";
 import { carriesFiles } from "./file-drops.js";
+import { createWakeGuard } from "./wake.js";
 import type { RuntimeRootOption, SendOptions } from "./useConversation.js";
 
 export interface PromptFormProps {
@@ -55,6 +56,12 @@ export interface PromptFormProps {
   onSwitchIdentity?: (identityId: ConversationalIdentityId) => void;
   /** At the right of the switch row, which never scrolls away: Threads puts the core here. */
   aside?: ReactNode;
+  /** The agent loads a model before it can answer, and has not been woken. */
+  asleep?: boolean;
+  /** Wakes it: offered as a button while asleep, and on the first keystroke when allowed. */
+  onWake?: () => void;
+  /** The Settings toggle: wake as the owner starts typing. */
+  wakeWhileTyping?: boolean;
 }
 
 /** `SendConversationMessageCommandSchema.attachmentIds` caps the array at eight. */
@@ -240,8 +247,19 @@ export function PromptForm({
   onSend,
   onSwitchIdentity,
   aside,
+  asleep = false,
+  onWake,
+  wakeWhileTyping = true,
 }: PromptFormProps): JSX.Element {
   const [text, setText] = useState("");
+  const wakeGuard = useRef(createWakeGuard());
+
+  // Re-armed whenever the agent is awake, so the next sleep wakes on typing again.
+  useEffect(() => {
+    if (!asleep) {
+      wakeGuard.current.typed({ asleep: false, enabled: wakeWhileTyping });
+    }
+  }, [asleep, wakeWhileTyping]);
   const [chosen, setChosen] = useState<string>();
   const [files, setFiles] = useState<readonly File[]>([]);
   const [preview, setPreview] = useState<File>();
@@ -391,6 +409,13 @@ export function PromptForm({
           rows={2}
           onChange={(event) => {
             setText(event.target.value);
+
+            if (
+              onWake !== undefined &&
+              wakeGuard.current.typed({ asleep, enabled: wakeWhileTyping })
+            ) {
+              onWake();
+            }
           }}
           onPaste={(event) => {
             const images = canAttach
@@ -431,6 +456,11 @@ export function PromptForm({
             resize: "none",
           }}
         />
+        {asleep && onWake !== undefined && (
+          <button type="button" onClick={onWake} style={buttonStyle}>
+            Wake
+          </button>
+        )}
         <button
           type="submit"
           disabled={disabled || text.trim() === ""}

@@ -38,6 +38,7 @@ export const SETTING_VALUE_SCHEMAS = {
   sessionTtlHours: z.int().min(1).max(8760),
   logLevel: z.enum(["debug", "info", "warn", "error"]),
   showAllPages: z.boolean(),
+  wakeWhileTyping: z.boolean(),
   remoteDesktops: RemoteDesktopTargetsSettingSchema,
 } as const;
 

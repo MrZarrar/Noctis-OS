@@ -378,6 +378,15 @@ export function allPagesChoice(settings: readonly SettingView[] | undefined): bo
   return setting?.source === "ui" ? setting.value === true : undefined;
 }
 
+/** The Settings toggle for waking an agent as the owner types; on until the core says otherwise. */
+export function useWakeWhileTyping(transport: CoreTransport | undefined): boolean {
+  const [configuration] = useConfiguration(transport);
+
+  return (
+    configuration?.settings.find((setting) => setting.key === "wakeWhileTyping")?.value !== false
+  );
+}
+
 export function useShowAllPages(transport: CoreTransport | undefined): boolean | undefined {
   const [configuration] = useConfiguration(transport);
 

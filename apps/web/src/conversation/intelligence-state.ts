@@ -8,6 +8,8 @@ export function intelligenceState(
     pendingApprovals: readonly unknown[];
   },
   listening: boolean,
+  /** The agent loads a model before it can answer, and nobody has woken it. */
+  asleep = false,
 ): IntelligenceState {
   if (activity.pendingApprovals.length > 0) return "waiting_for_approval";
   const active = activity.turns.filter(
@@ -26,5 +28,5 @@ export function intelligenceState(
       );
     return text ? "speaking" : "thinking";
   }
-  return listening ? "listening" : "idle";
+  return listening ? "listening" : asleep ? "asleep" : "idle";
 }
