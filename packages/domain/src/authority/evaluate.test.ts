@@ -59,6 +59,53 @@ function permission(overrides: Partial<StandingPermission> = {}): StandingPermis
   };
 }
 
+describe("scheduled task standing permissions", () => {
+  const taskId = "0199a000-0000-7000-8000-000000000011";
+  it("does not lend a task permission to an ordinary chat or another task", () => {
+    const grant = permission({ taskId });
+    for (const task of [undefined, "0199a000-0000-7000-8000-000000000012"]) {
+      expect(
+        evaluateAuthority(
+          input({
+            operationClass: "external_write",
+            ...(task === undefined ? {} : { taskId: task }),
+            standingPermissions: [grant],
+          }),
+        ).outcome,
+      ).toBe("require_confirmation");
+    }
+  });
+  it("uses the owner's exact task permission even when the runtime asks again", () => {
+    expect(
+      evaluateAuthority(
+        input({
+          operationClass: "external_write",
+          taskId,
+          askedByRuntime: true,
+          standingPermissions: [permission({ taskId })],
+        }),
+      ).outcome,
+    ).toBe("allow");
+  });
+  it("does not borrow a global permission or delegate a destructive operation", () => {
+    expect(
+      evaluateAuthority(
+        input({ operationClass: "external_write", taskId, standingPermissions: [permission()] }),
+      ).outcome,
+    ).toBe("require_confirmation");
+    expect(
+      evaluateAuthority(
+        input({
+          operationClass: "destructive",
+          taskId,
+          askedByRuntime: true,
+          standingPermissions: [permission({ taskId, operationClass: "destructive" })],
+        }),
+      ).outcome,
+    ).toBe("require_typed_confirmation");
+  });
+});
+
 describe("evaluateAuthority", () => {
   it("covers every operation class the contract defines", () => {
     for (const operationClass of ALL_CLASSES) {

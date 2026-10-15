@@ -40,6 +40,32 @@ function decision(outcome: string): OrchestrationEvent {
 }
 
 describe("pushFor", () => {
+  it("pushes the reminder wording and scheduled run results", () => {
+    expect(pushFor(event("reminder.due.v1", { text: "Renew car tax" }))).toMatchObject({
+      title: "Reminder",
+      body: "Renew car tax",
+    });
+    expect(
+      pushFor(
+        event("task.run_completed.v1", {
+          name: "Repo check",
+          status: "completed",
+          result: "Three files changed",
+          threadId: "thread",
+        }),
+      ),
+    ).toMatchObject({ title: "Repo check", body: "Three files changed" });
+    expect(
+      pushFor(
+        event("task.run_completed.v1", {
+          name: "Repo check",
+          status: "needs_you",
+          reason: "approval_timeout",
+        }),
+      )?.title,
+    ).toContain("needs you");
+    expect(pushFor(event("task.run_skipped.v1", { reason: "pc_offline" }))).toBeUndefined();
+  });
   it("pushes when a decision needs a confirmation, because that is a person being asked", () => {
     const payload = pushFor(decision("require_confirmation"));
 

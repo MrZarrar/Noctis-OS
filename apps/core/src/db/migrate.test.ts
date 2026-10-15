@@ -171,7 +171,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 45 tables", () => {
+  it("applies every migration and creates all 50 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -199,7 +199,7 @@ describe("migrate", () => {
     };
     db.close();
 
-    expect(row.c).toBe(45);
+    expect(row.c).toBe(50);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -214,6 +214,11 @@ describe("migrate", () => {
         "passcode_unlocks",
         "live_sessions",
         "live_session_entries",
+        "reminders",
+        "notes",
+        "scheduled_tasks",
+        "task_runs",
+        "node_owner_presence",
       ]),
     );
     expect(indexes).toEqual(
@@ -228,10 +233,13 @@ describe("migrate", () => {
         "idx_push_subscriptions_session",
         "idx_live_sessions_updated",
         "idx_live_session_entries_session",
+        "idx_task_runs_active_task",
+        "idx_task_runs_active_node",
+        "idx_permissions_task",
       ]),
     );
     expect(approvals).toEqual(
-      expect.arrayContaining(["node_job_id", "ask_id", "declined_at", "declined_by"]),
+      expect.arrayContaining(["node_job_id", "ask_id", "declined_at", "declined_by", "task_id"]),
     );
     expect(nodeJobs).toContain("pinned_node_id");
     expect(nodes).toContain("providers_json");
@@ -250,7 +258,7 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(18);
+    expect(version.v).toBe(19);
     expect(vaultItems).toContain("sensitive");
     expect(vaultItems).toContain("tags");
   });

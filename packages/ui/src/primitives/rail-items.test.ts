@@ -4,7 +4,17 @@ import { HIDDEN_ITEMS, NAV_ITEMS, railItems } from "./rail-items.js";
 
 describe("v1 navigation", () => {
   it("opens with Presence before the five v1 destinations", () => {
-    expect(NAV_ITEMS).toEqual(["Presence", "Threads", "Files", "Nodes", "Approvals", "Vault"]);
+    expect(NAV_ITEMS).toEqual([
+      "Presence",
+      "Threads",
+      "Files",
+      "Nodes",
+      "Approvals",
+      "Vault",
+      "Reminders",
+      "To-dos",
+      "Notes",
+    ]);
   });
 
   it("shows only the v1 destinations unless every page is asked for", () => {

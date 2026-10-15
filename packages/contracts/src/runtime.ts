@@ -9,6 +9,7 @@ import {
   SurfaceRoleSchema,
 } from "./enums.js";
 import { SchemaVersionSchema, UuidSchema } from "./primitives.js";
+import { TriggerSchema } from "./trigger.js";
 
 /* -------------------------------------------------------------------------- */
 /* The runtime vocabulary. Imports nothing from node.ts; node.ts imports this. */
@@ -103,6 +104,22 @@ export const RuntimeTurnPayloadSchema = z
     forkSession: z.boolean().optional(),
     objectiveId: UuidSchema.optional(),
     objectiveActive: z.boolean(),
+    /** Core-derived reservation marker; API and model input never set it. */
+    scheduledTaskId: UuidSchema.optional(),
+    /** The core's owner clock zone; workers may run in a different zone. */
+    ownerTimeZone: z
+      .string()
+      .min(1)
+      .max(64)
+      .refine((value) => {
+        try {
+          new Intl.DateTimeFormat("en", { timeZone: value });
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .optional(),
     /**
      * Files the node fetches from the core before the runtime starts. Resolved
      * by the core from `attachmentIds`, so a node never sees an id the core did
@@ -116,6 +133,42 @@ export const RuntimeItemStatusSchema = z.enum(["in_progress", "completed", "fail
 
 /** What a runtime may propose. Proposals are data until the core turns them into commands. */
 export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("task_action"),
+      taskId: UuidSchema,
+      action: z.enum(["run_now", "pause"]),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("reminder"),
+      text: z.string().trim().min(1).max(2000),
+      note: z.string().max(20_000).optional(),
+      trigger: TriggerSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("note"),
+      title: z.string().trim().min(1).max(200),
+      body: z.string().max(100_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("task"),
+      taskId: UuidSchema.optional(),
+      name: z.string().trim().min(1).max(200),
+      prompt: z.string().min(1).max(20_000),
+      model: ModelRefSchema,
+      nodeId: UuidSchema,
+      rootGrantId: z.string().trim().min(1).max(128),
+      trigger: TriggerSchema.refine((trigger) => trigger !== null),
+      threadMode: z.enum(["new", "continue"]).default("new"),
+      maxRunMinutes: z.int().min(1).max(1440).default(30),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("surface"),
@@ -225,7 +278,14 @@ export const RuntimeItemSchema = z.discriminatedUnion("kind", [
       output: z.string().max(4000).optional(),
     })
     .strict(),
-  z.object({ ...ItemBase, kind: z.literal("proposal"), proposal: RuntimeProposalSchema }).strict(),
+  z
+    .object({
+      ...ItemBase,
+      kind: z.literal("proposal"),
+      proposal: RuntimeProposalSchema,
+      appliedRecordId: UuidSchema.optional(),
+    })
+    .strict(),
   z.object({ ...ItemBase, kind: z.literal("sub_agent"), label: z.string().max(200) }).strict(),
   z.object({ ...ItemBase, kind: z.literal("output"), ...RuntimeOutputSchema.shape }).strict(),
 ]);

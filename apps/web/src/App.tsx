@@ -1,6 +1,9 @@
 import type { ConversationalIdentityId } from "@noctis/contracts";
+import { ConversationThreadSchema } from "@noctis/contracts";
+import { linkedThread } from "./navigation/thread-link.js";
 import {
   HIDDEN_ITEMS,
+  NAV_ITEMS,
   NavIcon,
   NoctisMark,
   Rail,
@@ -27,6 +30,7 @@ import { useIdentityRuntime } from "./identities/useIdentityRuntime.js";
 import { useIsMobile } from "./layout/useIsMobile.js";
 import type { HistoryEntry } from "./navigation/back.js";
 import { entryPage, pushPage, useBackLayer } from "./navigation/back.js";
+import { Productivity } from "./pages/Productivity.js";
 import { Approvals } from "./pages/Approvals.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Files } from "./pages/Files.js";
@@ -145,7 +149,10 @@ function Workbench({
   /** Absent for the packaged shell and a token build, which have no session to end. */
   onSignedOut?: () => void;
 }): JSX.Element {
+  const [productivityFocus, setProductivityFocus] = useState<{ id: string; task: boolean }>();
   const [active, setActive] = useState<RailItem>("Presence");
+  const initialThreadLink = useRef(linkedThread(window.location.href));
+  const [linkError, setLinkError] = useState<string>();
   const [handoff, setHandoff] = useState<VaultHandoff>();
   /** A file a thread offered, for Files to open when it next mounts. */
   const [fileTarget, setFileTarget] = useState<FileTarget<RuntimeRootOption>>();
@@ -254,6 +261,26 @@ function Workbench({
     show("Threads");
     openThread(turn.threadId);
   };
+  const openTaskThread = (id: string): void => {
+    if (!transport) return;
+    setLinkError(undefined);
+    void transport
+      .request("GET", `/threads/${id}`)
+      .then(async (response) => {
+        const parsed = ConversationThreadSchema.safeParse(response.body);
+        if (response.status !== 200 || !parsed.success)
+          throw new Error("This task thread could not be opened.");
+        await identity.activate(parsed.data.identityId);
+        setFreeThread(parsed.data.objectiveId === undefined);
+        show("Threads");
+        openThread(id);
+      })
+      .catch((error: unknown) =>
+        setLinkError(
+          error instanceof Error ? error.message : "This task thread could not be opened.",
+        ),
+      );
+  };
   const renderPage: NonNullable<SurfaceContext["renderPage"]> = (payload) => {
     switch (payload.page) {
       case "Files": {
@@ -278,6 +305,18 @@ function Workbench({
             {...(payload.focusId === undefined ? {} : { focusId: payload.focusId })}
           />
         );
+      case "Reminders":
+      case "To-dos":
+      case "Notes":
+        return (
+          <Productivity
+            page={payload.page}
+            transport={transport}
+            roots={conversation.roots}
+            models={conversation.models}
+            onOpenThread={openTaskThread}
+          />
+        );
       case "Approvals":
         return <Approvals transport={transport} />;
       case "Nodes":
@@ -293,7 +332,18 @@ function Workbench({
     }
   };
 
+  useEffect(() => {
+    const id = initialThreadLink.current;
+    if (!transport || !id) return;
+    initialThreadLink.current = undefined;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("thread");
+    history.replaceState(history.state, "", url);
+    openTaskThread(id);
+  }, [transport]);
+
   const select = (item: RailItem): void => {
+    setProductivityFocus(undefined);
     if (item === "Presence" && openThreadId !== undefined) {
       void threadLayer.closed().then(() => {
         arrive(item);
@@ -385,8 +435,11 @@ function Workbench({
       )}
 
       <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+        {linkError && <p role="alert">{linkError}</p>}
         {active === "Presence" && (
           <Presence
+            onOpenTaskThread={openTaskThread}
+            onOpenReminders={() => show("Reminders")}
             renderPage={renderPage}
             identity={identity}
             transport={transport}
@@ -403,6 +456,10 @@ function Workbench({
         )}
         {active === "Threads" && (
           <Threads
+            onOpenProductivity={(page, id, task) => {
+              setProductivityFocus({ id, task: task ?? false });
+              show(page);
+            }}
             renderPage={renderPage}
             onOpenInVault={openInVault}
             identityId={identityId}
@@ -429,6 +486,20 @@ function Workbench({
             transport={transport}
             target={fileTarget}
             onTargetOpened={() => setFileTarget(undefined)}
+          />
+        )}
+
+        {(active === "Reminders" || active === "To-dos" || active === "Notes") && (
+          <Productivity
+            key={productivityFocus?.id ?? active}
+            {...(productivityFocus
+              ? { focusId: productivityFocus.id, task: productivityFocus.task }
+              : {})}
+            page={active}
+            transport={transport}
+            roots={conversation.roots}
+            models={conversation.models}
+            onOpenThread={openTaskThread}
           />
         )}
 
@@ -498,16 +569,10 @@ function Workbench({
             active={active}
             onSelect={select}
             counts={counts}
-            {...(ALL_PAGES
-              ? {
-                  onMore: () => {
-                    moreRef.current?.showModal();
-                  },
-                }
-              : {})}
+            onMore={() => moreRef.current?.showModal()}
           />
 
-          {ALL_PAGES && (
+          {
             <dialog
               ref={moreRef}
               aria-label="More"
@@ -524,7 +589,7 @@ function Workbench({
               }}
             >
               <div style={{ display: "grid", gap: spacing.xs }}>
-                {HIDDEN_ITEMS.map((item) => (
+                {[...NAV_ITEMS.slice(4), ...(ALL_PAGES ? HIDDEN_ITEMS : [])].map((item) => (
                   <button
                     key={item}
                     type="button"
@@ -551,7 +616,7 @@ function Workbench({
                 </button>
               </div>
             </dialog>
-          )}
+          }
         </>
       )}
     </div>

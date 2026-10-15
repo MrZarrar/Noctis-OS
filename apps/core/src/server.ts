@@ -40,6 +40,7 @@ import type { SendPush, VapidKeys } from "./notify/push.js";
 import { digestLine, msUntilNext, readDigest } from "./notify/digest.js";
 import { createNotifier } from "./notify/push.js";
 import { resolveVaultRoot } from "./vault/root.js";
+import { createProductivityScheduler, type ProductivityScheduler } from "./productivity/tasks.js";
 
 /**
  * Resolves the same directory whether this module is running from `src` under
@@ -54,6 +55,7 @@ export interface StartCoreOptions {
   migrationsDirectory?: string;
   /** Overridden by tests that would rather call `dispatcher.pass()` themselves. */
   dispatchIntervalMs?: number;
+  productivityIntervalMs?: number;
   /**
    * Where the Vault environment is read from. Defaults to the real process
    * environment; a test passes its own so it can never pick up a developer's
@@ -74,6 +76,7 @@ export interface RunningCore {
   /** Token deltas on their way to clients. Ephemeral. */
   live: LiveBroker;
   conversation: ConversationService;
+  productivity: ProductivityScheduler;
   close: () => Promise<void>;
 }
 
@@ -177,6 +180,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
   });
   const conversation = createConversationService({
     kernel,
+    tasksEnabled:config.tasksEnabled===true,
     dispatcher,
     live,
     runtimeFrames,
@@ -256,6 +260,21 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
 
   scheduleDigest();
 
+  const taskExecution = { conversation, dispatcher, enabled: config.tasksEnabled === true };
+  const productivity = createProductivityScheduler(kernel, taskExecution, { recover: true });
+  const sweepProductivity = (): void => {
+    try {
+      productivity.pass();
+    } catch (error) {
+      logger.log("error", "productivity sweep failed", {
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  };
+  sweepProductivity();
+  const productivityTimer = setInterval(sweepProductivity, options.productivityIntervalMs ?? 1000);
+  productivityTimer.unref();
+
   const deps: ApiDeps = {
     kernel,
     config,
@@ -267,6 +286,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     screen,
     live,
     notifier,
+    taskExecution,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     vaultEnv: env,
   };
@@ -357,8 +377,11 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     runtimeFrames,
     live,
     conversation,
+    productivity,
     async close() {
       clearTimeout(digestTimer);
+      clearInterval(productivityTimer);
+      productivity.close();
       conversation.close();
       files.close();
       screen.close();

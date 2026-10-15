@@ -355,6 +355,36 @@ describe("the Codex App Server runtime", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
+      for (const kind of ["reminder", "task", "note", "task_action"])
+        expect(tools.tools.some((tool) => tool.name === `noctis_propose_${kind}`)).toBe(true);
+      for (const [kind, args] of [
+        ["reminder", { text: "Tax", trigger: null }],
+        [
+          "task",
+          {
+            name: "Review",
+            prompt: "Review repo",
+            model: { providerId: "codex", model: "gpt-5.4" },
+            nodeId: "0199a000-0000-7000-8000-0000000000e1",
+            rootGrantId: "repo",
+            trigger: {
+              kind: "at_pc",
+              nodeId: "0199a000-0000-7000-8000-0000000000e1",
+              repeat: false,
+            },
+          },
+        ],
+        ["note", { title: "Thought", body: "Keep this" }],
+        ["task_action", { taskId: "0199a000-0000-7000-8000-0000000000e1", action: "run_now" }],
+      ] as const) {
+        const captured = await client.callTool({ name: `noctis_propose_${kind}`, arguments: args });
+        expect(captured.isError).not.toBe(true);
+        expect(
+          JSON.parse(
+            readFileSync(join(directory, "proposals.jsonl"), "utf8").trim().split("\n").at(-1)!,
+          ),
+        ).toMatchObject({ kind, ...args });
+      }
       const description = tools.tools.find(
         (tool) => tool.name === "noctis_propose_surface",
       )?.description;
@@ -494,7 +524,14 @@ describe("the Codex App Server runtime", () => {
     expect(s?.requests.get("turn/start")).toEqual([
       {
         threadId: "thread-1",
-        input: [{ type: "text", text: "say hello", text_elements: [] }],
+        input: [
+          { type: "text", text: "say hello", text_elements: [] },
+          {
+            type: "text",
+            text: expect.stringContaining("<noctis-clock>") as string,
+            text_elements: [],
+          },
+        ],
         sandboxPolicy: {
           type: "workspaceWrite",
           writableRoots: ["C:\\work"],
@@ -738,7 +775,17 @@ describe("the Codex App Server runtime", () => {
       id: prompt,
       status: "completed",
       items: [
-        { type: "userMessage", id: "u", content: [{ type: "text", text: prompt }] },
+        {
+          type: "userMessage",
+          id: "u",
+          content: [
+            { type: "text", text: prompt },
+            {
+              type: "text",
+              text: "<noctis-clock>\nCurrent time: 2026-10-14T09:00:00Z\n</noctis-clock>",
+            },
+          ],
+        },
         ...replies.map((text) => ({ type: "agentMessage", id: "a", text })),
       ],
     });

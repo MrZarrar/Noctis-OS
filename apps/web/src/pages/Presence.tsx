@@ -11,6 +11,7 @@ import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { ProductivityPresence } from "./ProductivityPresence.js";
 import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { PanelSheet, PanelTray, usePanelSheet } from "./PanelTray.js";
 import { PresenceSideColumn, usePresencePanels } from "./PresencePanels.js";
@@ -22,6 +23,8 @@ import type { DigestView } from "./digest-view.js";
 import { DigestSchema, localMidnight, todayLine } from "./digest-view.js";
 
 export interface PresenceProps {
+  onOpenTaskThread?: (id: string) => void;
+  onOpenReminders?: () => void;
   renderPage?: SurfaceContext["renderPage"];
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
@@ -67,6 +70,8 @@ export function Presence({
   onOpenThread,
   onSwitchIdentity,
   renderPage,
+  onOpenTaskThread,
+  onOpenReminders,
 }: PresenceProps): JSX.Element {
   // Only what was said from here, this visit: an exchange from yesterday is
   // history, which Threads keeps, not something to greet the owner with.
@@ -238,6 +243,11 @@ export function Presence({
             )}
           </time>
         </div>
+        <ProductivityPresence
+          transport={transport}
+          {...(onOpenTaskThread ? { onOpenThread: onOpenTaskThread } : {})}
+          {...(onOpenReminders ? { onOpenReminders } : {})}
+        />
         {/* The app's one core flies into this box; it is drawn above the page. */}
         <div
           data-core-slot="hero"

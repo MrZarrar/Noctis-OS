@@ -8,11 +8,13 @@ import {
 } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
+import { OperationClassSchema } from "@noctis/contracts";
 
 import { nextKey } from "../idempotency.js";
-import { Page, glass } from "../layout/Page.js";
+import { Page, glass, buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { isWaiting } from "./waiting.js";
+import { allowForThisTask, canRememberTaskApproval } from "./task-approval.js";
 
 /**
  * Everything waiting on the owner, from every thread and every PC: where a push
@@ -23,10 +25,12 @@ import { isWaiting } from "./waiting.js";
 
 const ApprovalSchema = z.object({
   id: z.string(),
+  taskId: z.string().optional(),
+  actorId: z.string(),
   consequenceSummary: z.string(),
-  operationClass: z.string(),
+  operationClass: OperationClassSchema,
   capability: z.string(),
-  target: z.object({ type: z.string(), id: z.string() }),
+  target: z.object({ type: z.string(), id: z.string(), hostId: z.string().optional() }),
   reversibility: z.enum(["reversible", "partially_reversible", "irreversible"]),
   outcome: z.enum(["allow", "deny", "require_confirmation", "require_typed_confirmation"]),
   reasonCodes: z.array(z.string()),
@@ -45,6 +49,7 @@ export function Approvals({ transport }: { transport: CoreTransport | undefined 
   const [approvals, setApprovals] = useState<readonly Approval[]>();
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
+  const [remembering, setRemembering] = useState<string>();
 
   useEffect(() => {
     if (transport === undefined) {
@@ -199,6 +204,29 @@ export function Approvals({ transport }: { transport: CoreTransport | undefined 
                   });
                 }}
               />
+              {canRememberTaskApproval(approval) && (
+                <button
+                  style={{ ...buttonStyle, marginTop: spacing.sm }}
+                  disabled={remembering !== undefined || transport === undefined}
+                  onClick={() => {
+                    if (transport === undefined) return;
+                    setRemembering(approval.id);
+                    setError(undefined);
+                    void allowForThisTask(transport, approval)
+                      .then(() => setRevision((current) => current + 1))
+                      .catch((failure: unknown) =>
+                        setError(
+                          failure instanceof Error
+                            ? failure.message
+                            : "Could not save task permission",
+                        ),
+                      )
+                      .finally(() => setRemembering(undefined));
+                  }}
+                >
+                  {remembering === approval.id ? "Saving permission…" : "Always for this task"}
+                </button>
+              )}
             </li>
           ))}
         </ul>

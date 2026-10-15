@@ -47,7 +47,11 @@ it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK", "exit"] as const)(
     const before = process.listenerCount(signal);
     const scratch = mkdtempSync(join(tmpdir(), "noctis-helper-shutdown-"));
     scratches.push(scratch);
-    const helper = await startHelper({ infoPath: join(scratch, "screen-helper.json") });
+    const stopPresence = vi.fn();
+    const helper = await startHelper({
+      infoPath: join(scratch, "screen-helper.json"),
+      watchPresence: () => stopPresence,
+    });
     helpers.push(helper);
     const request = get(
       `http://127.0.0.1:${String(helper.port)}/mirror?fps=15&width=1280`,
@@ -65,6 +69,7 @@ it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK", "exit"] as const)(
         process.listeners(signal)[before]?.(signal);
       }
       expect(children.active[0]?.kill).toHaveBeenCalledOnce();
+      expect(stopPresence).toHaveBeenCalledOnce();
       await helper.close();
       expect(process.listenerCount(signal)).toBe(before);
     } finally {

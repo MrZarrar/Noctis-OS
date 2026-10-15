@@ -36,6 +36,7 @@ async function helperWithFake(
   const helper = await startHelper({
     ffmpeg: ffmpeg ?? [process.execPath, FAKE_FFMPEG, log],
     infoPath: join(scratch, "screen-helper.json"),
+    watchPresence: () => () => undefined,
   });
 
   helpers.push(helper);
@@ -77,6 +78,29 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 2_00
 }
 
 describe("the screen helper", () => {
+  it("reports only its owner's session state through the authenticated presence path without capturing", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "noctis-presence-helper-"));
+    scratches.push(scratch);
+    let report: (present: boolean) => void = () => undefined;
+    const helper = await startHelper({
+      infoPath: join(scratch, "screen-helper.json"),
+      watchPresence: (onPresence) => {
+        report = onPresence;
+        return () => undefined;
+      },
+    });
+    helpers.push(helper);
+    const presence = () =>
+      fetch(`http://127.0.0.1:${helper.port}/presence`, {
+        headers: { [SCREEN_TOKEN_HEADER]: helper.token },
+      });
+    expect((await fetch(`http://127.0.0.1:${helper.port}/presence`)).status).toBe(401);
+    expect(await (await presence()).json()).toEqual({ present: false });
+    report(true);
+    expect(await (await presence()).json()).toEqual({ present: true });
+    report(false);
+    expect(await (await presence()).json()).toEqual({ present: false });
+  });
   it("kills fake ffmpeg when its helper process shuts down before any frame", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "noctis-helper-process-"));
     scratches.push(scratch);
@@ -86,8 +110,8 @@ describe("the screen helper", () => {
     writeFileSync(`${log}.stalled`, "");
     const script = `
       import { existsSync } from 'node:fs';
-      import { startHelper } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, "helper.ts")).href)};
-      await startHelper({ ffmpeg: ${JSON.stringify([process.execPath, FAKE_FFMPEG, log])}, infoPath: ${JSON.stringify(infoPath)} });
+      import { startHelper } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../../dist/screen/helper.js")).href)};
+      await startHelper({ ffmpeg: ${JSON.stringify([process.execPath, FAKE_FFMPEG, log])}, infoPath: ${JSON.stringify(infoPath)}, watchPresence: () => () => undefined });
       const timer = setInterval(() => {
         if (existsSync(${JSON.stringify(stop)})) {
           clearInterval(timer);

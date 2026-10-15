@@ -1,8 +1,50 @@
 import type { SurfaceOwner } from "@noctis/contracts";
+import {
+  createReminder,
+  updateReminder,
+  completeReminder,
+  snoozeReminder,
+  deleteReminder,
+  getReminder,
+  listReminders,
+  createNote,
+  updateNote,
+  deleteNote,
+  getNote,
+  listNotes,
+} from "../productivity/service.js";
+import {
+  createTask,
+  updateTask,
+  pauseTask,
+  resumeTask,
+  runTaskNow,
+  deleteTask,
+  getTask,
+  getTaskRun,
+  listTasks,
+  listTaskRuns,
+} from "../productivity/tasks.js";
+import type { TaskExecutionDeps } from "../productivity/tasks.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Readable } from "node:stream";
 
 import {
+  CreateReminderCommandSchema,
+  UpdateReminderCommandSchema,
+  CompleteReminderCommandSchema,
+  SnoozeReminderCommandSchema,
+  DeleteReminderCommandSchema,
+  CreateNoteCommandSchema,
+  UpdateNoteCommandSchema,
+  DeleteNoteCommandSchema,
+  CreateTaskCommandSchema,
+  UpdateTaskCommandSchema,
+  PauseTaskCommandSchema,
+  ResumeTaskCommandSchema,
+  RunTaskNowCommandSchema,
+  DeleteTaskCommandSchema,
+  ReminderStatusSchema,
   ActivateIdentityCommandSchema,
   BridgeEventSchema,
   AdoptRuntimeSessionCommandSchema,
@@ -250,6 +292,7 @@ const LoginBodySchema = z.object({ token: z.string().min(1) }).strict();
 const UnsubscribeBodySchema = z.object({ endpoint: z.url() }).strict();
 
 export interface ApiDeps {
+  taskExecution?: TaskExecutionDeps;
   kernel: Kernel;
   config: CoreConfig;
   /** Set once at startup; reported by /ready and /diagnostics. */
@@ -390,7 +433,7 @@ function conflictResponse(domainConflict: DomainConflict): { status: number; bod
       };
     case "unavailable":
       return {
-        status: 503,
+        status: domainConflict.entity === "trigger" ? 400 : 503,
         body: errorBody("unavailable", `${domainConflict.entity} is unavailable`, {
           reason: domainConflict.reason,
         }),
@@ -485,7 +528,50 @@ function vaultNotConfigured(): Result<never> {
   };
 }
 
+function replayDeletion(db: NoctisDatabase, id: string, type: string): unknown {
+  const row = db
+    .prepare(
+      "SELECT payload_json FROM orchestration_events WHERE stream_id=? AND type=? ORDER BY sequence DESC LIMIT 1",
+    )
+    .get(id, type) as { payload_json: string } | undefined;
+  return row === undefined ? undefined : (JSON.parse(row.payload_json) as unknown);
+}
+
 const COMMANDS: Readonly<Record<string, CommandRoute>> = {
+  "reminder.create": defineCommand(CreateReminderCommandSchema, createReminder, getReminder),
+  "reminder.update": defineCommand(UpdateReminderCommandSchema, updateReminder, getReminder),
+  "reminder.complete": defineCommand(CompleteReminderCommandSchema, completeReminder, getReminder),
+  "reminder.snooze": defineCommand(SnoozeReminderCommandSchema, snoozeReminder, getReminder),
+  "reminder.delete": defineCommand(DeleteReminderCommandSchema, deleteReminder, (db, id) =>
+    replayDeletion(db, id, "reminder.deleted.v1"),
+  ),
+  "note.create": defineCommand(CreateNoteCommandSchema, createNote, getNote),
+  "note.update": defineCommand(UpdateNoteCommandSchema, updateNote, getNote),
+  "note.delete": defineCommand(DeleteNoteCommandSchema, deleteNote, (db, id) =>
+    replayDeletion(db, id, "note.deleted.v1"),
+  ),
+  "task.create": defineCommand(CreateTaskCommandSchema, createTask, getTask),
+  "task.update": defineCommand(UpdateTaskCommandSchema, updateTask, getTask),
+  "task.pause": defineCommand(PauseTaskCommandSchema, pauseTask, getTask),
+  "task.resume": defineCommand(ResumeTaskCommandSchema, resumeTask, getTask),
+  "task.delete": defineCommand(DeleteTaskCommandSchema, deleteTask, (db, id) =>
+    replayDeletion(db, id, "task.deleted.v1"),
+  ),
+  "task.run_now": defineDepsCommand(
+    RunTaskNowCommandSchema,
+    (deps, context, command) =>
+      deps.taskExecution === undefined
+        ? {
+            ok: false,
+            conflict: {
+              kind: "unavailable",
+              entity: "task_execution",
+              reason: "Task execution is disabled",
+            },
+          }
+        : runTaskNow(deps.kernel, context, command, deps.taskExecution),
+    getTaskRun,
+  ),
   "objective.create": defineCommand(CreateObjectiveCommandSchema, createObjective, (db, id) =>
     getObjective(db, id),
   ),
@@ -827,6 +913,33 @@ function handleRead(
 
   if (segments.length === 1 && segments[0] === "objectives") {
     return { status: 200, body: { objectives: listObjectives(deps.kernel.db, limit) } };
+  }
+
+  if (segments.length === 1 && segments[0] === "reminders") {
+    const rawStatus = url.searchParams.get("status");
+    const parsed = rawStatus === null ? undefined : ReminderStatusSchema.safeParse(rawStatus);
+    if (parsed !== undefined && !parsed.success)
+      return { status: 400, body: errorBody("invalid_request", "Unknown reminder status") };
+    return {
+      status: 200,
+      body: {
+        reminders: listReminders(deps.kernel.db, limit, parsed?.success ? parsed.data : undefined),
+      },
+    };
+  }
+  if (segments.length === 1 && segments[0] === "notes") {
+    const query = url.searchParams.get("query") ?? "";
+    if (query.length > 500)
+      return { status: 400, body: errorBody("invalid_request", "Note search is too long") };
+    return { status: 200, body: { notes: listNotes(deps.kernel.db, limit, query) } };
+  }
+  if (segments.length === 1 && segments[0] === "tasks")
+    return { status: 200, body: { tasks: listTasks(deps.kernel.db, limit) } };
+  if (segments.length === 3 && segments[0] === "tasks" && segments[2] === "runs") {
+    const id = segments[1] ?? "";
+    if (!UuidSchema.safeParse(id).success || getTask(deps.kernel.db, id) === undefined)
+      return { status: 404, body: errorBody("not_found", "No such task") };
+    return { status: 200, body: { runs: listTaskRuns(deps.kernel.db, id, limit) } };
   }
 
   if (segments.length === 1 && segments[0] === "identities") {

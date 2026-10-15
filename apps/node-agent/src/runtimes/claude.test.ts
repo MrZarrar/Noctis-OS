@@ -288,7 +288,13 @@ describe("the Claude Agent SDK runtime", () => {
 
     expect(first?.value).toMatchObject({
       type: "user",
-      message: { role: "user", content: "say hello" },
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "say hello" },
+          { type: "text", text: expect.stringContaining("<noctis-clock>") as string },
+        ],
+      },
       parent_tool_use_id: null,
     });
     expect(options).toMatchObject({
@@ -377,6 +383,10 @@ describe("the Claude Agent SDK runtime", () => {
           message("user", [
             { type: "text", text: "<ide_opened_file>The user opened script.md</ide_opened_file>" },
             { type: "text", text: "Make it shorter" },
+            {
+              type: "text",
+              text: "<noctis-clock>\nCurrent time: 2026-10-14T09:00:00Z\n</noctis-clock>",
+            },
           ]),
           message("assistant", [{ type: "text", text: "Shorter now." }]),
           message("user", "<task-notification><task-id>x</task-id></task-notification>"),
@@ -796,8 +806,12 @@ describe("the Claude Agent SDK runtime", () => {
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "noctis_delegate",
+      "noctis_propose_note",
       "noctis_propose_objective",
+      "noctis_propose_reminder",
       "noctis_propose_surface",
+      "noctis_propose_task",
+      "noctis_propose_task_action",
       "noctis_remember_preference",
     ]);
 
@@ -815,6 +829,29 @@ describe("the Claude Agent SDK runtime", () => {
         proposal: { kind: "objective", title: "Suggested", intent: "later" },
       },
     ]);
+
+    for (const [kind, args] of [
+      ["reminder", { text: "Tax", trigger: null }],
+      [
+        "task",
+        {
+          name: "Review",
+          prompt: "Review repo",
+          model: { providerId: "codex", model: "gpt-5.4" },
+          nodeId: "0199a000-0000-7000-8000-0000000000e1",
+          rootGrantId: "repo",
+          trigger: { kind: "at_pc", nodeId: "0199a000-0000-7000-8000-0000000000e1", repeat: false },
+        },
+      ],
+      ["note", { title: "Thought", body: "Keep this" }],
+      ["task_action", { taskId: "0199a000-0000-7000-8000-0000000000e1", action: "pause" }],
+    ] as const) {
+      const captured = await client.callTool({ name: `noctis_propose_${kind}`, arguments: args });
+      expect(captured.isError).not.toBe(true);
+      const item = r.items.at(-1);
+      expect(item?.kind).toBe("proposal");
+      if (item?.kind === "proposal") expect(item.proposal).toMatchObject({ kind, ...args });
+    }
 
     await client.close();
     release();
@@ -910,7 +947,13 @@ describe("the Claude Agent SDK runtime", () => {
         yield init();
 
         for await (const message of params.prompt) {
-          const text = typeof message.message.content === "string" ? message.message.content : "";
+          const content = message.message.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : content[0]?.type === "text"
+                ? content[0].text
+                : "";
 
           prompts.push(text);
           yield assistant([{ type: "text", text: `re: ${text}` }]);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import type { ConversationalIdentityId, LiveSession } from "@noctis/contracts";
 import { ConversationSummarySchema, ExternalSessionSchema } from "@noctis/contracts";
@@ -10,7 +10,13 @@ import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { SectionHeading, buttonStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { LiveSessionList, LiveSessionView } from "./LiveSessions.js";
-import { agentName, ago, conversationLabel, pinnedTo } from "./conversations-view.js";
+import {
+  agentName,
+  ago,
+  conversationGroups,
+  conversationLabel,
+  pinnedTo,
+} from "./conversations-view.js";
 
 /**
  * Every conversation an identity has, and the two ways to start another: a
@@ -281,124 +287,132 @@ export function Conversations({
                 : "Nothing yet. Start a new conversation, or continue a session from one of your PCs."}
             </p>
           ) : (
-            <ul style={listStyle}>
-              {conversations.map((conversation) => {
-                const label = conversationLabel(conversation);
-                const where = pinnedTo(conversation, roots);
-                const open =
-                  conversation.id === currentThreadId ||
-                  (conversation.kind === "free" && currentThreadId === undefined);
+            conversationGroups(conversations).map((group) =>
+              group.conversations.length === 0 ? null : (
+                <Fragment key={group.taskId ?? "free"}>
+                  {group.taskId !== undefined && <SectionHeading>{group.label}</SectionHeading>}
+                  <ul style={listStyle}>
+                    {group.conversations.map((conversation) => {
+                      const label = conversationLabel(conversation);
+                      const where = pinnedTo(conversation, roots);
+                      const open =
+                        conversation.id === currentThreadId ||
+                        (conversation.kind === "free" && currentThreadId === undefined);
 
-                if (renaming?.id === conversation.id) {
-                  return (
-                    <li key={conversation.id}>
-                      <form
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          void change("conversation.rename_thread", {
-                            threadId: conversation.id,
-                            title: renaming.title,
-                          });
-                        }}
-                        style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
-                      >
-                        <input
-                          aria-label="Conversation name"
-                          value={renaming.title}
-                          maxLength={200}
-                          autoFocus
-                          onChange={(event) =>
-                            setRenaming({ id: conversation.id, title: event.target.value })
-                          }
-                          style={{ ...rowStyle, flex: "1 1 12rem", cursor: "text" }}
-                        />
-                        <button
-                          type="submit"
-                          disabled={busy || renaming.title.trim() === ""}
-                          style={buttonStyle}
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setRenaming(undefined)}
-                          style={buttonStyle}
-                        >
-                          Cancel
-                        </button>
-                      </form>
-                    </li>
-                  );
-                }
+                      if (renaming?.id === conversation.id) {
+                        return (
+                          <li key={conversation.id}>
+                            <form
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                void change("conversation.rename_thread", {
+                                  threadId: conversation.id,
+                                  title: renaming.title,
+                                });
+                              }}
+                              style={{ display: "flex", flexWrap: "wrap", gap: spacing.xs }}
+                            >
+                              <input
+                                aria-label="Conversation name"
+                                value={renaming.title}
+                                maxLength={200}
+                                autoFocus
+                                onChange={(event) =>
+                                  setRenaming({ id: conversation.id, title: event.target.value })
+                                }
+                                style={{ ...rowStyle, flex: "1 1 12rem", cursor: "text" }}
+                              />
+                              <button
+                                type="submit"
+                                disabled={busy || renaming.title.trim() === ""}
+                                style={buttonStyle}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRenaming(undefined)}
+                                style={buttonStyle}
+                              >
+                                Cancel
+                              </button>
+                            </form>
+                          </li>
+                        );
+                      }
 
-                return (
-                  <li
-                    key={conversation.id}
-                    style={{ display: "flex", gap: spacing.xs, alignItems: "stretch" }}
-                  >
-                    <button
-                      type="button"
-                      aria-label={label}
-                      aria-current={open ? "true" : undefined}
-                      onClick={() => {
-                        onOpen(conversation.kind === "free" ? undefined : conversation.id);
-                        onClose();
-                      }}
-                      style={{
-                        ...rowStyle,
-                        minWidth: 0,
-                        outline: open ? `2px solid ${identityAccent.vesper.primary}` : "none",
-                      }}
-                    >
-                      <span
-                        style={{
-                          ...detailStyle,
-                          fontSize: typography.scale.base,
-                          color: "inherit",
-                        }}
-                      >
-                        {label}
-                      </span>
-                      <span style={detailStyle}>
-                        {ago(conversation.lastActiveAt, now)}
-                        {where === undefined ? "" : ` · ${where}`}
-                        {conversation.preview === undefined || conversation.title === undefined
-                          ? ""
-                          : ` · ${conversation.preview}`}
-                      </span>
-                    </button>
-                    {/* Free chat is where a message with no thread goes: it keeps its name and place. */}
-                    {conversation.kind === "named" && (
-                      <>
-                        <button
-                          type="button"
-                          aria-label={`Rename ${label}`}
-                          disabled={busy}
-                          onClick={() => setRenaming({ id: conversation.id, title: label })}
-                          style={actionStyle}
+                      return (
+                        <li
+                          key={conversation.id}
+                          style={{ display: "flex", gap: spacing.xs, alignItems: "stretch" }}
                         >
-                          Rename
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`${archived ? "Restore" : "Archive"} ${label}`}
-                          disabled={busy}
-                          onClick={() =>
-                            void change("conversation.archive_thread", {
-                              threadId: conversation.id,
-                              archived: !archived,
-                            })
-                          }
-                          style={actionStyle}
-                        >
-                          {archived ? "Restore" : "Archive"}
-                        </button>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                          <button
+                            type="button"
+                            aria-label={label}
+                            aria-current={open ? "true" : undefined}
+                            onClick={() => {
+                              onOpen(conversation.kind === "free" ? undefined : conversation.id);
+                              onClose();
+                            }}
+                            style={{
+                              ...rowStyle,
+                              minWidth: 0,
+                              outline: open ? `2px solid ${identityAccent.vesper.primary}` : "none",
+                            }}
+                          >
+                            <span
+                              style={{
+                                ...detailStyle,
+                                fontSize: typography.scale.base,
+                                color: "inherit",
+                              }}
+                            >
+                              {label}
+                            </span>
+                            <span style={detailStyle}>
+                              {ago(conversation.lastActiveAt, now)}
+                              {where === undefined ? "" : ` · ${where}`}
+                              {conversation.preview === undefined ||
+                              conversation.title === undefined
+                                ? ""
+                                : ` · ${conversation.preview}`}
+                            </span>
+                          </button>
+                          {/* Free chat is where a message with no thread goes: it keeps its name and place. */}
+                          {conversation.kind === "named" && (
+                            <>
+                              <button
+                                type="button"
+                                aria-label={`Rename ${label}`}
+                                disabled={busy}
+                                onClick={() => setRenaming({ id: conversation.id, title: label })}
+                                style={actionStyle}
+                              >
+                                Rename
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`${archived ? "Restore" : "Archive"} ${label}`}
+                                disabled={busy}
+                                onClick={() =>
+                                  void change("conversation.archive_thread", {
+                                    threadId: conversation.id,
+                                    archived: !archived,
+                                  })
+                                }
+                                style={actionStyle}
+                              >
+                                {archived ? "Restore" : "Archive"}
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Fragment>
+              ),
+            )
           )}
           {!archived && (
             <LiveSessionList

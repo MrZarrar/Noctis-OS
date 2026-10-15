@@ -13,6 +13,8 @@ import { assertNoLegacyJarvisVariables } from "./environment.js";
 export class ConfigurationError extends Error {}
 
 export interface CoreConfig {
+  /** Unattended agent execution requires an explicit operator opt-in. */
+  tasksEnabled?: boolean;
   bindAddress: string;
   port: number;
   /** Bearer token for the client realm. Never logged, never sent to a WebView. */
@@ -426,7 +428,12 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     throw new ConfigurationError(`NOCTIS_LOG_LEVEL must be one of debug, info, warn, error`);
   }
 
+  if (env.NOCTIS_TASKS_ENABLED !== undefined && !["0", "1"].includes(env.NOCTIS_TASKS_ENABLED)) {
+    throw new ConfigurationError("NOCTIS_TASKS_ENABLED must be 0 or 1");
+  }
+
   return {
+    tasksEnabled: env.NOCTIS_TASKS_ENABLED === "1",
     bindAddress,
     port: parsePort(env.NOCTIS_CORE_PORT),
     token,

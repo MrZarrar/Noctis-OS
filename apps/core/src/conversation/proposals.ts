@@ -1,15 +1,29 @@
 import type { RuntimeProposal } from "@noctis/contracts";
-import { PANEL_PROPOSABLE_KINDS, SURFACE_PAYLOAD_SCHEMAS } from "@noctis/contracts";
+import {
+  PANEL_PROPOSABLE_KINDS,
+  SURFACE_PAYLOAD_SCHEMAS,
+  RuntimeProposalSchema,
+} from "@noctis/contracts";
 
 import type { CommandContext, Kernel } from "../kernel.js";
 import { createObjective, getObjective } from "../objectives/service.js";
 import { upsertSurfaceIntent } from "../objectives/surface-intents.js";
+import { createReminder, createNote } from "../productivity/service.js";
+import {
+  createTask,
+  proposeTaskUpdate,
+  getTask,
+  pauseTask,
+  runTaskNow,
+} from "../productivity/tasks.js";
+import type { TaskExecutionDeps } from "../productivity/tasks.js";
 import { rememberPreference } from "../vault/brain.js";
 import type { VaultRoot } from "../vault/root.js";
 import type { Turn } from "./service.js";
 
 /** What applying a proposal may reach beyond the kernel. Absent when no Vault is configured. */
 export interface ProposalDeps {
+  taskExecution?: TaskExecutionDeps;
   vaultRoot?: VaultRoot;
   vaultEnv?: Readonly<Record<string, string | undefined>>;
 }
@@ -31,7 +45,7 @@ export function applyProposal(
   proposal: RuntimeProposal,
   idempotencyKey: string,
   deps: ProposalDeps = {},
-): void {
+): string | undefined {
   const skip = (reason: string, fields: Record<string, unknown> = {}): void => {
     kernel.logger.log("warn", "runtime proposal skipped", {
       turnId: turn.id,
@@ -40,6 +54,77 @@ export function applyProposal(
       ...fields,
     });
   };
+
+  const validated = RuntimeProposalSchema.safeParse(proposal);
+  if (!validated.success) {
+    skip("invalid_proposal");
+    return;
+  }
+  proposal = validated.data;
+  if (proposal.kind === "task_action") {
+    const task = getTask(kernel.db, proposal.taskId);
+    if (task === undefined || task.identityId !== turn.identityId) {
+      skip("foreign_or_missing_task");
+      return;
+    }
+    const actor = { ...context, actorType: "identity" as const, actorId: turn.identityId };
+    const command = { idempotencyKey, taskId: task.id, expectedRevision: task.revision };
+    if (proposal.action === "run_now" && deps.taskExecution === undefined) {
+      skip("task_execution_disabled");
+      return;
+    }
+    const result =
+      proposal.action === "pause"
+        ? pauseTask(kernel, actor, command)
+        : runTaskNow(kernel, actor, command, deps.taskExecution!);
+    if (result.ok || result.conflict.kind === "idempotent_replay") return task.id;
+    skip(result.conflict.kind);
+    return;
+  }
+  if (proposal.kind === "reminder" || proposal.kind === "note" || proposal.kind === "task") {
+    const capture = { idempotencyKey, identityId: turn.identityId, threadId: turn.threadId };
+    const actor = { ...context, actorType: "identity" as const, actorId: turn.identityId };
+    let created;
+    if (proposal.kind === "reminder") {
+      created = createReminder(kernel, actor, {
+        ...capture,
+        text: proposal.text,
+        ...(proposal.note === undefined ? {} : { note: proposal.note }),
+        trigger: proposal.trigger,
+      });
+    } else if (proposal.kind === "note") {
+      created = createNote(kernel, actor, {
+        ...capture,
+        title: proposal.title,
+        body: proposal.body,
+      });
+    } else {
+      const fields = {
+        name: proposal.name,
+        prompt: proposal.prompt,
+        model: proposal.model,
+        nodeId: proposal.nodeId,
+        rootGrantId: proposal.rootGrantId,
+        trigger: proposal.trigger,
+        threadMode: proposal.threadMode,
+        maxRunMinutes: proposal.maxRunMinutes,
+      };
+      created =
+        proposal.taskId === undefined
+          ? createTask(kernel, actor, { ...capture, ...fields })
+          : proposeTaskUpdate(kernel, actor, {
+              idempotencyKey,
+              taskId: proposal.taskId,
+              ...fields,
+            });
+    }
+    if (!created.ok && created.conflict.kind !== "idempotent_replay") skip(created.conflict.kind);
+    return created.ok
+      ? created.value.id
+      : created.conflict.kind === "idempotent_replay"
+        ? created.conflict.existingId
+        : undefined;
+  }
 
   if (proposal.kind === "preference") {
     // No command and no event: the Agent Brain is a file in the owner's Vault,

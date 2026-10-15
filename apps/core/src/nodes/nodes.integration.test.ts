@@ -20,6 +20,36 @@ import { startCore } from "../server.js";
 import { enqueueJobInTransaction, LEASE_MS, MAX_ATTEMPTS } from "./jobs.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
+
+describe("authenticated owner presence frames", () => {
+  it("requires hello, uses the socket's identity and persists only state edges", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const early = await openFake(core, paired, { hello: false });
+    early.frame({ kind: "owner_presence", present: true });
+    await waitFor(() => early.closed() !== undefined, "presence refused before hello");
+    const node = await openFake(core, paired);
+    const state = () =>
+      core.core.kernel.db
+        .prepare("SELECT present FROM node_owner_presence WHERE node_id=?")
+        .get(paired.nodeId) as { present: number } | undefined;
+    expect(state()?.present ?? 0).toBe(0);
+    node.frame({ kind: "owner_presence", present: true });
+    await waitFor(() => state()?.present === 1, "authenticated presence");
+    node.frame({ kind: "owner_presence", present: true });
+    node.frame({ kind: "owner_presence", present: false });
+    await waitFor(() => state()?.present === 0, "locked owner");
+    const events = core.core.kernel.db
+      .prepare(
+        "SELECT payload_json FROM orchestration_events WHERE type='node.owner_present.v1' ORDER BY sequence",
+      )
+      .all();
+    expect(events).toEqual([
+      { payload_json: JSON.stringify({ nodeId: paired.nodeId, present: true }) },
+      { payload_json: JSON.stringify({ nodeId: paired.nodeId, present: false }) },
+    ]);
+  });
+});
 const START = Date.parse("2026-09-01T12:00:00.000Z");
 
 /** Long enough that only an explicit `dispatcher.pass()` ever runs a sweep. */

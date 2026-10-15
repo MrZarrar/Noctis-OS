@@ -91,6 +91,7 @@ export function CompanionCore({
   const slotKey = slots.join();
   const [place, setPlace] = useState<Place>();
   const [moving, setMoving] = useState(false);
+  const [panelCoversHero,setPanelCoversHero] = useState(false);
   const arrived = useRef<string>();
   const remeasure = useRef<() => void>();
   const size = cornerSize(mobile);
@@ -108,6 +109,7 @@ export function CompanionCore({
         [...document.querySelectorAll<HTMLElement>(selector)].find(
           (element) => element.getClientRects().length > 0,
         );
+      setPanelCoversHero(page === "Presence" && mobile && drawn('[aria-label="Panel sheet"]') !== undefined);
       const slot =
         slots.map((name) => drawn(`[data-core-slot="${name}"]`)).find(Boolean) ??
         drawn('[data-core-slot="corner"]') ??
@@ -162,7 +164,7 @@ export function CompanionCore({
       removeEventListener("resize", measure);
       document.removeEventListener("scroll", measure, true);
     };
-  }, [slotKey, target, page]);
+  }, [slotKey, target, page, mobile]);
 
   // A move that changes nothing on screen never ends in a transitionend.
   useEffect(() => {
@@ -175,7 +177,7 @@ export function CompanionCore({
     };
   }, [moving, place]);
 
-  const shown = target !== "hidden" && place !== undefined;
+  const shown = target !== "hidden" && place !== undefined && !panelCoversHero;
   const corner = shown && place.at === "corner";
 
   useLayoutEffect(() => {

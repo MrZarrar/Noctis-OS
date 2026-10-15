@@ -40,6 +40,7 @@ import { getObjective } from "../objectives/service.js";
  */
 
 type PermissionRow = {
+  task_id: string | null;
   id: string;
   actor_id: string;
   capability: string;
@@ -53,6 +54,7 @@ type PermissionRow = {
 };
 
 type ApprovalRow = {
+  task_id: string | null;
   id: string;
   objective_id: string | null;
   mission_id: string | null;
@@ -86,15 +88,16 @@ const APPROVAL_COLUMNS = `id, objective_id, mission_id, actor_id, operation_clas
                           outcome, policy_id, reason_codes_json, permission_id,
                           confirmation_phrase, requested_at, decided_at, confirmed_at,
                           confirmed_by, executed_at, execution_evidence_version,
-                          execution_evidence_json, declined_at, declined_by, node_job_id, ask_id`;
+                          execution_evidence_json, declined_at, declined_by, node_job_id, ask_id, task_id`;
 
 const PERMISSION_COLUMNS = `id, actor_id, capability, operation_class, constraints_json,
-                            granted_at, granted_by, expires_at, revoked_at, revoked_reason`;
+                            granted_at, granted_by, expires_at, revoked_at, revoked_reason, task_id`;
 
 function toPermission(row: PermissionRow): StandingPermission {
   return StandingPermissionSchema.parse({
     id: row.id,
     actorId: row.actor_id,
+    ...(row.task_id === null ? {} : { taskId: row.task_id }),
     capability: row.capability,
     operationClass: row.operation_class,
     constraints: JSON.parse(row.constraints_json) as unknown,
@@ -116,6 +119,7 @@ function toApproval(row: ApprovalRow): ApprovalRecord | undefined {
     ...(row.objective_id === null ? {} : { objectiveId: row.objective_id }),
     ...(row.mission_id === null ? {} : { missionId: row.mission_id }),
     actorId: row.actor_id,
+    ...(row.task_id === null ? {} : { taskId: row.task_id }),
     operationClass: row.operation_class,
     capability: row.capability,
     target: JSON.parse(row.target_json) as unknown,
@@ -243,6 +247,30 @@ export function requestAuthority(
     kernel,
     { scope: "authority.request", key: command.idempotencyKey, resultId: id },
     (tx) => {
+      const linkedTask =
+        command.nodeJobId === undefined
+          ? undefined
+          : (tx
+              .prepare(
+                `SELECT r.task_id FROM task_runs r JOIN identity_turns t ON t.id=json_extract(r.data_json,'$.turnId')
+         WHERE t.node_job_id=? AND r.status='running'`,
+              )
+              .get(command.nodeJobId) as { task_id: string } | undefined);
+      const taskId = command.nodeJobId === undefined ? command.taskId : linkedTask?.task_id;
+      if (command.taskId !== undefined && command.taskId !== taskId)
+        return conflict({
+          kind: "authority_refused",
+          requestId: id,
+          outcome: "deny",
+          reasonCodes: ["task_scope_mismatch"],
+        });
+      if (taskId !== undefined && command.nodeJobId === undefined && context.actorType !== "user")
+        return conflict({
+          kind: "authority_refused",
+          requestId: id,
+          outcome: "deny",
+          reasonCodes: ["task_scope_must_be_core_derived"],
+        });
       const objective =
         command.objectiveId === undefined ? undefined : getObjective(tx, command.objectiveId);
 
@@ -264,6 +292,7 @@ export function requestAuthority(
           : { estimatedCostGbp: command.estimatedCostGbp }),
         objectiveIsActive: objective?.status === "active",
         standingPermissions: loadStandingPermissionsFor(tx, command.actorId),
+        ...(taskId === undefined ? {} : { taskId }),
         now: kernel.clock.now(),
         ...(command.askedByRuntime === true ? { askedByRuntime: true } : {}),
       });
@@ -285,8 +314,8 @@ export function requestAuthority(
            (id, objective_id, mission_id, actor_id, operation_class, capability, target_json,
             consequence_summary, reversibility, estimated_cost_gbp, idempotency_key,
             outcome, policy_id, reason_codes_json, permission_id, confirmation_phrase,
-            requested_at, decided_at, node_job_id, ask_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            requested_at, decided_at, node_job_id, ask_id, task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         command.objectiveId ?? null,
@@ -310,6 +339,7 @@ export function requestAuthority(
         decision.decidedAt,
         command.nodeJobId ?? null,
         command.askId ?? null,
+        taskId ?? null,
       );
 
       return ok({
@@ -328,6 +358,7 @@ export function requestAuthority(
             payloadVersion: 1,
             payload: {
               requestId: id,
+              ...(taskId === undefined ? {} : { taskId }),
               ...(command.objectiveId === undefined ? {} : { objectiveId: command.objectiveId }),
               ...(command.missionId === undefined ? {} : { missionId: command.missionId }),
               actorId: command.actorId,
@@ -674,6 +705,13 @@ export function grantStandingPermission(
   context: CommandContext,
   command: GrantStandingPermissionCommand,
 ): Result<StandingPermission> {
+  if (context.actorType !== "user")
+    return conflict({
+      kind: "authority_refused",
+      requestId: context.correlationId,
+      outcome: "deny",
+      reasonCodes: ["owner_permission_grant_required"],
+    });
   const id = kernel.ids.nextId();
   const now = new Date(kernel.clock.now()).toISOString();
 
@@ -681,11 +719,27 @@ export function grantStandingPermission(
     kernel,
     { scope: "authority.grant_permission", key: command.idempotencyKey, resultId: id },
     (tx) => {
+      if (command.taskId !== undefined) {
+        const task = tx
+          .prepare(
+            "SELECT json_extract(data_json,'$.identityId') AS identity_id FROM scheduled_tasks WHERE id=?",
+          )
+          .get(command.taskId) as { identity_id: string } | undefined;
+        if (task === undefined)
+          return conflict({ kind: "not_found", entity: "task", id: command.taskId });
+        if (task.identity_id !== command.actorId)
+          return conflict({
+            kind: "authority_refused",
+            requestId: id,
+            outcome: "deny",
+            reasonCodes: ["task_identity_mismatch"],
+          });
+      }
       tx.prepare(
         `INSERT INTO standing_permissions
            (id, actor_id, capability, operation_class, constraints_json, granted_at, granted_by,
-            expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            expires_at, task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         command.actorId,
@@ -695,6 +749,7 @@ export function grantStandingPermission(
         now,
         context.actorId,
         command.expiresAt ?? null,
+        command.taskId ?? null,
       );
 
       const permission = getStandingPermission(tx, id);
@@ -716,6 +771,7 @@ export function grantStandingPermission(
             payloadVersion: 1,
             payload: {
               permissionId: id,
+              ...(command.taskId === undefined ? {} : { taskId: command.taskId }),
               actorId: command.actorId,
               capability: command.capability,
               operationClass: command.operationClass,

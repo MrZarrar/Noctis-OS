@@ -25,7 +25,7 @@ import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { resolveCodexCommand } from "./codex-command.js";
 import { installCodexRules } from "./codex-rules.js";
 import { childEnvironment } from "./env.js";
-import { identityCard } from "./identity.js";
+import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
 import { probeCodexInstalled } from "./probe.js";
@@ -830,6 +830,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             model: payload.model.model,
             env: input.env,
             readable: roots.readable,
+            timeZone: payload.ownerTimeZone,
           });
           // developerInstructions adds to Codex's own prompt; baseInstructions would replace it.
           const thread = {
@@ -872,7 +873,10 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
         turnId = TurnResponseSchema.parse(
           await rpc.request("turn/start", {
             threadId: proc.threadId,
-            input: [{ type: "text", text: payload.prompt, text_elements: [] }],
+            input: [
+              { type: "text", text: payload.prompt, text_elements: [] },
+              { type: "text", text: ownerClockBlock(payload.ownerTimeZone), text_elements: [] },
+            ],
             sandboxPolicy,
           }),
         ).turn.id;
@@ -1002,6 +1006,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
         .filter((item) => item.type === "userMessage")
         .flatMap((item) => item.content ?? [])
         .map((input) => input.text ?? "")
+        .filter((text) => !isOwnerClockBlock(text))
         .join("\n\n")
         .trim(),
       reply: turn.items.filter((item) => item.type === "agentMessage").at(-1)?.text ?? "",

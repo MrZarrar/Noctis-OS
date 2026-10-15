@@ -305,6 +305,7 @@ interface OpenDelegation {
 }
 
 export interface ConversationServiceDeps {
+  tasksEnabled?: boolean;
   kernel: Kernel;
   dispatcher: Dispatcher;
   live: LiveBroker;
@@ -559,6 +560,14 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
 
     if (selected !== undefined && primaryRootGrantId !== undefined) {
       const session = sessionOn(tx, thread.id, model.providerId, selected.nodeId);
+      const scheduledRun =
+        context.actorType === "identity" && context.actorId === identityId
+          ? (tx
+              .prepare(
+                "SELECT task_id FROM task_runs WHERE status='running' AND node_id=? AND json_extract(data_json,'$.threadId')=? LIMIT 1",
+              )
+              .get(selected.nodeId, thread.id) as { task_id: string } | undefined)
+          : undefined;
       const payload: RuntimeTurnPayload = {
         threadId: thread.id,
         identityId,
@@ -570,6 +579,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         ...(session?.forkPending === true ? { forkSession: true } : {}),
         ...(objectiveId === undefined ? {} : { objectiveId }),
         objectiveActive,
+        ...(scheduledRun === undefined ? {} : { scheduledTaskId: scheduledRun.task_id }),
         ...(attachments.length === 0 ? {} : { attachments }),
       };
       const enqueued = enqueueJobInTransaction(tx, kernel, context, {
@@ -910,6 +920,9 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
   }
 
   function onStreamItem(nodeId: string, jobId: string, sequence: number, item: RuntimeItem): void {
+    if (item.kind === "proposal") {
+      item = { itemId: item.itemId, kind: item.kind, status: item.status, proposal: item.proposal };
+    }
     const turn = getTurnByJobId(kernel.db, jobId);
 
     if (turn === undefined) {
@@ -993,17 +1006,63 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
 
     if (item.kind === "proposal" && item.status === "completed") {
       // A second, sequential command after the item committed — never nested.
-      applyProposal(
+      const appliedRecordId = applyProposal(
         kernel,
         context,
         recorded.value,
         item.proposal,
-        `proposal:${jobId}:${String(sequence)}`,
+        `proposal:${jobId}:${item.itemId}`,
         {
           ...(deps.vaultRoot === undefined ? {} : { vaultRoot: deps.vaultRoot }),
           ...(deps.vaultEnv === undefined ? {} : { vaultEnv: deps.vaultEnv }),
+          taskExecution: {
+            conversation: { sendMessage, cancelTurn },
+            dispatcher,
+            enabled: deps.tasksEnabled === true,
+          },
         },
       );
+      if (appliedRecordId !== undefined) {
+        const appliedItem = { ...item, appliedRecordId };
+        const receipt = runCommand<Turn>(
+          kernel,
+          {
+            scope: "conversation.proposal_result",
+            key: `${jobId}:${String(sequence)}`,
+            resultId: turn.id,
+          },
+          (tx) => {
+            const current = getTurn(tx, turn.id);
+            if (current === undefined)
+              return conflict({ kind: "not_found", entity: "turn", id: turn.id });
+            const items = current.items.map((existing) =>
+              existing.itemId === item.itemId ? appliedItem : existing,
+            );
+            tx.prepare("UPDATE identity_turns SET items_json=? WHERE id=?").run(
+              JSON.stringify(items),
+              current.id,
+            );
+            return ok({
+              value: { ...current, items },
+              events: [
+                draft(
+                  context,
+                  "identity",
+                  current.threadId,
+                  "identity.turn_item.v1",
+                  { turnId: current.id, jobId, sequence, item: appliedItem },
+                  nowIso(),
+                ),
+              ],
+            });
+          },
+        );
+        if (!receipt.ok && receipt.conflict.kind !== "idempotent_replay")
+          kernel.logger.log("warn", "could not record proposal receipt", {
+            turnId: turn.id,
+            conflict: receipt.conflict.kind,
+          });
+      }
     }
   }
 

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { NodeServerFrame, RuntimeAsk, ServerFrame } from "@noctis/contracts";
+import type { NodeServerFrame, RuntimeAsk, ServerFrame, RuntimeItem } from "@noctis/contracts";
 import {
   ENVELOPE_VERSION,
   NODE_ENVELOPE_VERSION,
@@ -15,6 +15,7 @@ import { WebSocket } from "ws";
 import type { CoreConfig } from "../config/server.js";
 import { createLogger } from "../logging.js";
 import { listSurfaceIntents, changeSurfaceLifecycle } from "../objectives/surface-intents.js";
+import { listReminders } from "../productivity/service.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
 
@@ -338,6 +339,46 @@ const ASK: RuntimeAsk = {
 };
 
 describe("conversation service", () => {
+  it("attaches only core-derived capture receipts and deduplicates later proposal frames", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-capture-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const sent = await send(core, "capture-receipt");
+    await waitFor(() => node.jobs().length === 1, "capture job");
+    const jobId = lastTurnJob(node).assignment.jobId;
+    const forged = "0199a000-0000-7000-8000-000000000bad";
+    const item = {
+      itemId: "reminder",
+      kind: "proposal",
+      status: "completed",
+      proposal: { kind: "reminder", text: "Renew tax", trigger: null },
+      appliedRecordId: forged,
+    } as RuntimeItem;
+    core.core.conversation.onStreamItem("node", jobId, 0, item);
+    const reminders = listReminders(core.core.kernel.db);
+    expect(reminders).toHaveLength(1);
+    const first = (await read(core, `/turns/${sent.body.id as string}`)).body.items as Body[];
+    expect(first[0]?.appliedRecordId).toBe(reminders[0]?.id);
+    expect(first[0]?.appliedRecordId).not.toBe(forged);
+    core.core.conversation.onStreamItem("node", jobId, 1, item);
+    expect(listReminders(core.core.kernel.db)).toHaveLength(1);
+    const later = (await read(core, `/turns/${sent.body.id as string}`)).body.items as Body[];
+    expect(later[0]?.appliedRecordId).toBe(reminders[0]?.id);
+    core.core.conversation.onStreamItem("node", jobId, 2, {
+      itemId: "bad",
+      kind: "proposal",
+      status: "completed",
+      proposal: {
+        kind: "reminder",
+        text: "Past",
+        trigger: { kind: "at", at: "2000-01-01T00:00:00Z" },
+      },
+    });
+    const refused = (await read(core, `/turns/${sent.body.id as string}`)).body.items as Body[];
+    expect(refused.find((entry) => entry.itemId === "bad")?.appliedRecordId).toBeUndefined();
+    rmSync(directory, { recursive: true, force: true });
+  });
   it.each([
     [
       "document",

@@ -71,6 +71,8 @@ export interface AuthorityEvaluationInput {
    * The agent wanted a person, so policy alone never answers for one.
    */
   askedByRuntime?: boolean;
+  /** Core-derived task scope, never supplied by a runtime. */
+  taskId?: string;
 }
 
 export interface AuthorityEvaluation {
@@ -90,6 +92,7 @@ export interface AuthorityEvaluation {
  * permission that names a host does not apply to a request on another one.
  */
 function covers(permission: StandingPermission, input: AuthorityEvaluationInput): boolean {
+  if (permission.taskId !== input.taskId) return false;
   if (permission.revokedAt !== undefined) {
     return false;
   }
@@ -167,7 +170,11 @@ export function isConfirmLevel(operationClass: OperationClass): boolean {
 export function evaluateAuthority(input: AuthorityEvaluationInput): AuthorityEvaluation {
   const evaluation = evaluatePolicy(input);
 
-  if (input.askedByRuntime === true && evaluation.outcome === "allow") {
+  if (
+    input.askedByRuntime === true &&
+    evaluation.outcome === "allow" &&
+    !(input.taskId !== undefined && evaluation.permissionId !== undefined)
+  ) {
     return decide("require_confirmation", [...evaluation.reasonCodes, "runtime_asked"], input);
   }
 

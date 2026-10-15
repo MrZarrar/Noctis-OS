@@ -45,6 +45,31 @@ export function conversationLabel(conversation: {
   return conversation.preview?.split("\n")[0]?.trim() || "New conversation";
 }
 
+/** Ordinary conversations first, then each scheduled task's runs under the task's name. */
+export function conversationGroups<
+  T extends { id: string; taskId?: string | undefined; taskName?: string | undefined },
+>(conversations: readonly T[]): { label: string; taskId?: string; conversations: T[] }[] {
+  const free: T[] = [];
+  const tasks = new Map<string, { label: string; taskId: string; conversations: T[] }>();
+
+  for (const conversation of conversations) {
+    if (conversation.taskId === undefined) {
+      free.push(conversation);
+      continue;
+    }
+
+    const group = tasks.get(conversation.taskId) ?? {
+      label: conversation.taskName ?? "Scheduled task",
+      taskId: conversation.taskId,
+      conversations: [],
+    };
+    group.conversations.push(conversation);
+    tasks.set(conversation.taskId, group);
+  }
+
+  return [{ label: "Conversations", conversations: free }, ...tasks.values()];
+}
+
 const AGENT_NAMES: Readonly<Record<string, string>> = {
   claude: "Claude",
   codex: "Codex",

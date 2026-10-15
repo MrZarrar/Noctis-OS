@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 
 import type { ScreenViewPayload } from "@noctis/contracts";
 import { ScreenViewPayloadSchema } from "@noctis/contracts";
+import { watchWindowsOwnerPresence } from "./presence.js";
 
 /**
  * The screen helper: a small loopback server in the signed-in owner's session
@@ -93,6 +94,7 @@ export async function startHelper(
     /** The command and any leading arguments. Tests put a fake here. */
     ffmpeg?: readonly string[];
     infoPath?: string;
+    watchPresence?: (onPresence: (present: boolean) => void) => () => void;
   } = {},
 ): Promise<ScreenHelper> {
   const configured = process.env.NOCTIS_FFMPEG?.trim();
@@ -103,7 +105,19 @@ export async function startHelper(
   const token = randomBytes(32).toString("hex");
   const expected = digest(token);
   const captures = new Set<ChildProcess>();
+  let ownerPresent = false;
+  const stopPresence = (
+    options.watchPresence ??
+    (process.env.NOCTIS_OWNER_PRESENCE === "1" ? watchWindowsOwnerPresence : () => () => undefined)
+  )((present) => {
+    ownerPresent = present;
+  });
+  let presenceStopped = false;
   const killCaptures = () => {
+    if (!presenceStopped) {
+      presenceStopped = true;
+      stopPresence();
+    }
     for (const capture of captures) {
       if (capture.exitCode === null && capture.signalCode === null) capture.kill();
     }
@@ -118,6 +132,11 @@ export async function startHelper(
     }
 
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+
+    if (req.method === "GET" && url.pathname === "/presence") {
+      json(res, 200, { present: ownerPresent });
+      return;
+    }
 
     if (req.method !== "GET" || url.pathname !== "/mirror") {
       json(res, 404, { error: "no such path" });

@@ -80,6 +80,9 @@ export const FileSourceSchema = z
   .strict();
 
 export const PAGE_PANEL_PAGES = [
+  "Reminders",
+  "To-dos",
+  "Notes",
   "Files",
   "Vault",
   "Approvals",

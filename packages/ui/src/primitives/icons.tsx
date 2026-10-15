@@ -44,6 +44,9 @@ const PATHS: Readonly<Record<RailItem | "More", readonly string[]>> = {
   Missions: ["M5 21V4", "M5 4h12l-2.5 4L17 12H5"],
   Artifacts: ["M12 3 20 7.5v9L12 21l-8-4.5v-9L12 3Z", "M4 7.5 12 12l8-4.5M12 12v9"],
   Automations: ["M13 2.5 5 13.5h6l-1 8 8-11h-6l1-8Z"],
+  Reminders: ["M12 3a6 6 0 0 0-6 6v5l-2 3h16l-2-3V9a6 6 0 0 0-6-6", "M10 21h4"],
+  "To-dos": ["M9 6h12M9 12h12M9 18h12", "m2 5 2 2 3-3m-5 7 2 2 3-3m-5 7 2 2 3-3"],
+  Notes: ["M5 3h14v18H5Z", "M8 8h8M8 12h8M8 16h5"],
   More: ["M6 12h.01M12 12h.01M18 12h.01"],
 };
 

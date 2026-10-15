@@ -19,6 +19,7 @@ import {
   getCredentialGeneration,
   getNode,
   listGrants,
+  recordOwnerPresence,
 } from "./registry.js";
 import type { RuntimeFrameHub } from "./runtime-frames.js";
 
@@ -359,6 +360,23 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
         case "hello":
           onHello(frame.agentVersion, frame.capabilities, frame.providers);
           return;
+        case "owner_presence": {
+          if (
+            connection === undefined ||
+            ws.readyState !== ws.OPEN ||
+            !deps.dispatcher.isConnected(nodeId)
+          ) {
+            closeWith(CLOSE_POLICY, "owner presence requires hello");
+            return;
+          }
+          const recorded = recordOwnerPresence(deps.kernel, context(), {
+            nodeId,
+            present: frame.present,
+            idempotencyKey: deps.kernel.ids.nextId(),
+          });
+          if (!recorded.ok) closeWith(CLOSE_POLICY, "owner presence refused");
+          return;
+        }
         case "progress":
           onProgress(frame.jobId, frame.percent, frame.note);
           return;

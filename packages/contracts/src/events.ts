@@ -9,6 +9,25 @@ import { SchemaVersionSchema, UtcTimestampSchema, UuidSchema } from "./primitive
  * See ADR-0009 and ADR-0011.
  */
 export const EVENT_NAMES = [
+  "reminder.created.v1",
+  "reminder.updated.v1",
+  "reminder.due.v1",
+  "reminder.done.v1",
+  "reminder.snoozed.v1",
+  "reminder.deleted.v1",
+  "note.created.v1",
+  "note.updated.v1",
+  "note.deleted.v1",
+  "task.created.v1",
+  "task.change_proposed.v1",
+  "task.updated.v1",
+  "task.paused.v1",
+  "task.resumed.v1",
+  "task.deleted.v1",
+  "task.run_started.v1",
+  "task.run_completed.v1",
+  "task.run_skipped.v1",
+  "node.owner_present.v1",
   "objective.created.v1",
   "objective.activated.v1",
   "objective.status_changed.v1",
@@ -81,6 +100,9 @@ export const EVENT_NAMES = [
 export const EventNameSchema = z.enum(EVENT_NAMES);
 
 export const StreamTypeSchema = z.enum([
+  "reminder",
+  "note",
+  "task",
   "objective",
   "mission",
   "identity",

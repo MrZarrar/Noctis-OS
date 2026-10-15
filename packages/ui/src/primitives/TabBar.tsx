@@ -139,7 +139,9 @@ function tabStyle(isActive: boolean): CSSProperties {
 export function TabBar({ active, onSelect, onMore, counts }: TabBarProps): JSX.Element {
   // A hidden page has no tab of its own, so More stands in for it: the bar
   // must always show where the owner is.
-  const moreActive = (HIDDEN_ITEMS as readonly RailItem[]).includes(active);
+  const moreActive = ([...NAV_ITEMS.slice(4), ...HIDDEN_ITEMS] as readonly RailItem[]).includes(
+    active,
+  );
 
   return (
     <nav
@@ -163,7 +165,7 @@ export function TabBar({ active, onSelect, onMore, counts }: TabBarProps): JSX.E
         zIndex: elevation.rail,
       }}
     >
-      {NAV_ITEMS.map((item) => {
+      {NAV_ITEMS.slice(0, 4).map((item) => {
         const isActive = item === active;
         const { props, badge } = counted(item, counts?.[item]);
 

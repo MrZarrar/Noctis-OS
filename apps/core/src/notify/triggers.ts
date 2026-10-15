@@ -89,6 +89,34 @@ export function pushFor(event: OrchestrationEvent): PushPayload | undefined {
   }
 
   switch (event.type) {
+    case "reminder.due.v1":
+      return {
+        title: "Reminder",
+        body: clip(text(payload.text) ?? "A reminder is due", MAX_BODY),
+        url: "/",
+        tag: event.streamId,
+      };
+    case "task.run_completed.v1": {
+      if (
+        payload.status !== "completed" &&
+        payload.status !== "needs_you" &&
+        payload.status !== "failed"
+      )
+        return undefined;
+      const name = text(payload.name) ?? "Scheduled task";
+      return {
+        title: payload.status === "needs_you" ? `${name} needs you` : name,
+        body: clip(
+          text(payload.result) ?? text(payload.reason) ?? String(payload.status),
+          MAX_BODY,
+        ),
+        url:
+          typeof payload.threadId === "string"
+            ? `/?thread=${encodeURIComponent(payload.threadId)}`
+            : "/",
+        tag: event.streamId,
+      };
+    }
     case "authority.decision_recorded.v1": {
       // `AuthorityOutcomeSchema` is allow | deny | require_confirmation |
       // require_typed_confirmation. The first two are already decided; a push

@@ -21,6 +21,7 @@ import type {
   RuntimeAsk,
   RuntimeItem,
   RuntimeProbe,
+  RuntimeProposal,
   RuntimeTurnEvidence,
   SessionExchange,
 } from "@noctis/contracts";
@@ -38,7 +39,8 @@ import { PANEL_TOOL_DESCRIPTION } from "../panel-tool.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
-import { identityCard } from "./identity.js";
+import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
+import { PRODUCTIVITY_TOOLS, proposalSchema } from "../proposal-tools.js";
 import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
 import { probeClaudeInstalled } from "./probe.js";
 import type { LiveProcess } from "./sessions.js";
@@ -153,7 +155,11 @@ function spokenText(content: unknown): string {
     .flatMap((block) => {
       const text = TextBlockSchema.safeParse(block);
 
-      return text.success && !NOT_A_PROMPT.test(text.data.text) ? [text.data.text.trim()] : [];
+      return text.success &&
+        !NOT_A_PROMPT.test(text.data.text) &&
+        !isOwnerClockBlock(text.data.text)
+        ? [text.data.text.trim()]
+        : [];
     })
     .filter((text) => text !== "")
     .join("\n\n");
@@ -417,14 +423,14 @@ interface ClaudeTurn {
   gate(toolName: string, toolInput: unknown, toolUseId: string): Promise<HookJSONOutput>;
   /** The CLI's own permission system asking. */
   canUseTool: CanUseTool;
-  propose(kind: "surface" | "objective" | "preference", args: unknown): void;
+  propose(kind: RuntimeProposal["kind"], args: unknown): void;
   delegate: RuntimeSink["delegate"];
   /** The CLI ended under the turn. */
   stop(error: Error): void;
 }
 
 interface ClaudeProcess extends LiveProcess {
-  send(prompt: string): void;
+  send(prompt: string, timeZone?: string): void;
   current: ClaudeTurn | undefined;
   failure: Error | undefined;
 }
@@ -448,10 +454,16 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       get alive() {
         return alive;
       },
-      send(prompt) {
+      send(prompt, timeZone) {
         inbox.push({
           type: "user",
-          message: { role: "user", content: prompt },
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "text", text: ownerClockBlock(timeZone) },
+            ],
+          },
           parent_tool_use_id: null,
         });
       },
@@ -470,9 +482,11 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       proc.current?.stop(error);
     }
 
-    const [surface, objective, preference] = RuntimeProposalSchema.options;
+    const surface = proposalSchema("surface");
+    const objective = proposalSchema("objective");
+    const preference = proposalSchema("preference");
 
-    function record(kind: "surface" | "objective" | "preference", args: unknown) {
+    function record(kind: RuntimeProposal["kind"], args: unknown) {
       proc.current?.propose(kind, args);
 
       return Promise.resolve({ content: [{ type: "text" as const, text: "recorded" }] });
@@ -482,6 +496,11 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       name: "noctis",
       version: AGENT_VERSION,
       tools: [
+        ...PRODUCTIVITY_TOOLS.map(({ kind, description, inputSchema }) =>
+          tool(`noctis_propose_${kind}`, description, inputSchema.shape, (args) =>
+            record(kind, args),
+          ),
+        ),
         tool(
           "noctis_propose_surface",
           PANEL_TOOL_DESCRIPTION,
@@ -550,6 +569,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       model: payload.model.model,
       env: input.env,
       readable: roots.readable,
+      timeZone: payload.ownerTimeZone,
     });
     const sdkOptions: Options = {
       cwd: roots.cwd,
@@ -899,7 +919,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
 
       proc.current = turn;
       signal.addEventListener("abort", cancel, { once: true });
-      proc.send(payload.prompt);
+      proc.send(payload.prompt, payload.ownerTimeZone);
 
       if (!proc.alive) {
         turn.stop(proc.failure ?? new Error("claude ended before the turn started"));

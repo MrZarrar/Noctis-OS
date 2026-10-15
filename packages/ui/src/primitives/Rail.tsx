@@ -47,6 +47,7 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
           justifyItems: "center",
           gap: spacing.xs,
           minHeight: 56,
+          flexShrink: 0,
           font: `${String(typography.scale.xs)}px ${typography.family}`,
           letterSpacing: typography.tracking.wide,
           color: isActive ? identityAccent.vesper.primary : typography.color.muted,
@@ -75,6 +76,8 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
       style={{
         display: "flex",
         flexDirection: "column",
+        overflowY: "auto",
+        minHeight: 0,
         gap: spacing.xs,
         width: 84,
         flexShrink: 0,

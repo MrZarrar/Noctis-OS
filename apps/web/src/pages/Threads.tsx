@@ -29,6 +29,7 @@ import type { SurfaceContext } from "../surfaces/renderers.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
 import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { ProductivityReceipt, type OpenProductivity } from "./ProductivityReceipt.js";
 import { BeforeNoctis } from "./BeforeNoctis.js";
 import { Conversations } from "./Conversations.js";
 import { conversationLabel, pinnedTo } from "./conversations-view.js";
@@ -50,6 +51,7 @@ function scrollerOf(element: HTMLElement | null): HTMLElement | undefined {
 }
 
 export interface ThreadsProps {
+  onOpenProductivity?: OpenProductivity;
   renderPage?: SurfaceContext["renderPage"];
   onOpenInVault?: (entityId: string) => void;
   identityId: ConversationalIdentityId;
@@ -180,7 +182,13 @@ export function ItemRow({
             ? `: ${item.proposal.title}`
             : item.proposal.kind === "preference"
               ? `: ${item.proposal.bullet}`
-              : `: ${item.proposal.surfaceKind}`}
+              : item.proposal.kind === "surface"
+                ? `: ${item.proposal.surfaceKind}`
+                : item.proposal.kind === "reminder"
+                  ? `: ${item.proposal.text}`
+                  : item.proposal.kind === "note"
+                    ? `: ${item.proposal.title}`
+                    : item.proposal.kind === "task" ? `: ${item.proposal.name}` : `: ${item.proposal.action}`}
         </span>
       );
     case "sub_agent":
@@ -216,12 +224,16 @@ export function ItemRow({
 }
 
 function TurnRow({
+  transport,
+  onOpenProductivity,
   turn,
   onCancel,
   outputUrl,
   written,
   onOpenFile,
 }: {
+  transport: CoreTransport | undefined;
+  onOpenProductivity: OpenProductivity | undefined;
   turn: Turn;
   onCancel: () => void;
   outputUrl: ((attachmentId: string) => string) | undefined;
@@ -277,6 +289,16 @@ function TurnRow({
           </button>
         )}
       </p>
+      {turn.items
+        .filter((item) => item.kind === "proposal")
+        .map((item) => (
+          <ProductivityReceipt
+            key={item.itemId}
+            item={item}
+            transport={transport}
+            onOpen={onOpenProductivity}
+          />
+        ))}
       {outputs.length > 0 && (
         <ul aria-label="Outputs" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
           {outputs.map((item) => (
@@ -369,6 +391,7 @@ function timelineOf(
  * Surface the canvas uses, so a typed phrase is typed here too.
  */
 export function Threads({
+  onOpenProductivity,
   identityId,
   conversation,
   connected,
@@ -630,6 +653,8 @@ export function Threads({
                   if (entry.kind === "turn") {
                     return (
                       <TurnRow
+                        transport={transport}
+                        onOpenProductivity={onOpenProductivity}
                         key={entry.turn.id}
                         turn={entry.turn}
                         outputUrl={outputUrl}

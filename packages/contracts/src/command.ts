@@ -107,6 +107,7 @@ export const ActivateIdentityCommandSchema = z
 
 export const RequestAuthorityCommandSchema = z
   .object({
+    taskId: UuidSchema.optional(),
     ...CommandBase,
     objectiveId: UuidSchema.optional(),
     missionId: UuidSchema.optional(),
@@ -423,6 +424,7 @@ export const ExecuteAuthorityCommandSchema = z
  */
 export const GrantStandingPermissionCommandSchema = z
   .object({
+    taskId: UuidSchema.optional(),
     ...CommandBase,
     actorId: z.string().trim().min(1).max(200),
     capability: z.string().trim().min(1).max(200),

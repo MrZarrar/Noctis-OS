@@ -89,6 +89,78 @@ export function getCredentialGeneration(db: NoctisDatabase, nodeId: string): num
   return row?.g;
 }
 
+export function getOwnerPresence(db: NoctisDatabase, nodeId: string): boolean {
+  const row = db
+    .prepare(
+      "SELECT p.present FROM node_owner_presence p JOIN nodes n ON n.id=p.node_id WHERE p.node_id=? AND n.status='online'",
+    )
+    .get(nodeId) as { present: number } | undefined;
+  return row?.present === 1;
+}
+
+function ownerPresenceEvents(
+  tx: NoctisDatabase,
+  kernel: Kernel,
+  context: CommandContext,
+  nodeId: string,
+  present: boolean,
+): EventDraft[] {
+  const previous = tx
+    .prepare("SELECT present FROM node_owner_presence WHERE node_id=?")
+    .get(nodeId) as { present: number } | undefined;
+  if (previous !== undefined && (previous.present === 1) === present) return [];
+  const occurredAt = new Date(kernel.clock.now()).toISOString();
+  tx.prepare(
+    "INSERT INTO node_owner_presence(node_id,present,updated_at) VALUES (?,?,?) ON CONFLICT(node_id) DO UPDATE SET present=excluded.present,updated_at=excluded.updated_at",
+  ).run(nodeId, present ? 1 : 0, occurredAt);
+  if (previous === undefined && !present) return [];
+  return [
+    {
+      id: kernel.ids.nextId(),
+      streamType: "node",
+      streamId: nodeId,
+      type: "node.owner_present.v1",
+      actorType: context.actorType,
+      actorId: context.actorId,
+      payloadVersion: 1,
+      payload: { nodeId, present },
+      correlationId: context.correlationId,
+      occurredAt,
+    },
+  ];
+}
+
+export function recordOwnerPresence(
+  kernel: Kernel,
+  context: CommandContext,
+  input: { nodeId: string; present: boolean; idempotencyKey: string },
+): Result<boolean> {
+  if (
+    context.actorType !== "node" ||
+    context.actorId !== input.nodeId ||
+    typeof input.present !== "boolean"
+  ) {
+    return conflict({
+      kind: "authority_refused",
+      requestId: context.correlationId,
+      outcome: "deny",
+      reasonCodes: ["owner_presence_requires_authenticated_node"],
+    });
+  }
+  return runCommand(
+    kernel,
+    { scope: "node.owner_presence", key: input.idempotencyKey, resultId: input.nodeId },
+    (tx) => {
+      if (getNode(tx, input.nodeId)?.status !== "online")
+        return conflict({ kind: "not_found", entity: "online_node", id: input.nodeId });
+      return ok({
+        value: input.present,
+        events: ownerPresenceEvents(tx, kernel, context, input.nodeId, input.present),
+      });
+    },
+  );
+}
+
 type GrantRow = {
   id: string;
   node_id: string;
@@ -621,6 +693,7 @@ export function connectNode(
             correlationId: context.correlationId,
             occurredAt: nowIso,
           },
+          ...ownerPresenceEvents(tx, kernel, context, input.nodeId, false),
         ],
       });
     },
@@ -686,6 +759,7 @@ export function disconnectNode(
             correlationId: context.correlationId,
             occurredAt: nowIso,
           },
+          ...ownerPresenceEvents(tx, kernel, context, input.nodeId, false),
         ],
       });
     },

@@ -32,6 +32,11 @@ function env(overrides: Record<string, string | undefined> = {}): Record<string,
 }
 
 describe("loadCoreConfig", () => {
+  it("keeps scheduled execution off unless explicitly enabled", () => {
+    expect(loadCoreConfig(env()).tasksEnabled).toBe(false);
+    expect(loadCoreConfig(env({ NOCTIS_TASKS_ENABLED: "1" })).tasksEnabled).toBe(true);
+    expect(() => loadCoreConfig(env({ NOCTIS_TASKS_ENABLED: "yes" }))).toThrow(ConfigurationError);
+  });
   it("binds loopback on the Noctis port by default", () => {
     const config = loadCoreConfig(env());
 

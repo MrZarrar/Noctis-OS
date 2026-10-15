@@ -29,9 +29,12 @@ describe("read-only panels and message choices", () => {
       "Missions",
       "Artifacts",
       "Settings",
+      "Reminders",
+      "To-dos",
+      "Notes",
     ])
       expect(schema?.safeParse({ page }).success).toBe(true);
-    for (const page of ["Presence", "Threads", "Login", "Command", "Reminders"])
+    for (const page of ["Presence", "Threads", "Login", "Command"])
       expect(schema?.safeParse({ page }).success).toBe(false);
     expect(PANEL_PROPOSABLE_KINDS.has("page")).toBe(false);
     expect(schema?.safeParse({ page: "Files", url: "https://example.com" }).success).toBe(false);

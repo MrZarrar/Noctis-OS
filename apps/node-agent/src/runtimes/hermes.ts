@@ -13,7 +13,13 @@ import type { ProposalChannel } from "../proposals-file.js";
 import { createProposalChannel } from "../proposals-file.js";
 import type { CodexSpawn } from "./codex.js";
 import { childEnvironment } from "./env.js";
-import { identityCard, mindVaultNote } from "./identity.js";
+import {
+  identityCard,
+  mindVaultNote,
+  ownerTimeContext,
+  ownerClockBlock,
+  PRODUCTIVITY_INSTRUCTIONS,
+} from "./identity.js";
 import type { ModelHost } from "./lmstudio.js";
 import { ensureModel } from "./local.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
@@ -229,13 +235,14 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     writeFileSync(join(home, "config.yaml"), hermesConfig(input.payload.model.model));
 
     const soul = jester
-      ? jesterSoul(input.roots.readable)
+      ? `${jesterSoul(input.roots.readable)}\n${ownerTimeContext(new Date(), input.payload.ownerTimeZone)}\n${PRODUCTIVITY_INSTRUCTIONS}`
       : identityCard({
           identityId: input.payload.identityId,
           runtime: "hermes",
           model: input.payload.model.model,
           env: input.env,
           readable: input.roots.readable,
+          timeZone: input.payload.ownerTimeZone,
         });
 
     if (soul === undefined) {
@@ -585,7 +592,10 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       const result = PromptResultSchema.parse(
         await proc.rpc.request("session/prompt", {
           sessionId,
-          prompt: [{ type: "text", text: payload.prompt }],
+          prompt: [
+            { type: "text", text: payload.prompt },
+            { type: "text", text: ownerClockBlock(payload.ownerTimeZone) },
+          ],
         }),
       );
 

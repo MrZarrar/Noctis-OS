@@ -427,6 +427,13 @@ const HexSignatureSchema = z.string().regex(/^[0-9a-f]{64}$/);
 export const NodeFrameSchema = z.discriminatedUnion("kind", [
   z
     .object({
+      kind: z.literal("owner_presence"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      present: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("hello"),
       envelopeVersion: NodeEnvelopeVersionSchema,
       agentVersion: z.string().trim().min(1).max(64),

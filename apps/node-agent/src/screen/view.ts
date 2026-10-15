@@ -24,7 +24,7 @@ const HelperInfoSchema = z.object({
 });
 
 /** The helper the file names, if its process is still there to answer. */
-function runningHelper(infoPath: string): z.infer<typeof HelperInfoSchema> | undefined {
+export function runningHelper(infoPath: string): z.infer<typeof HelperInfoSchema> | undefined {
   try {
     const info = HelperInfoSchema.parse(JSON.parse(readFileSync(infoPath, "utf8")));
 
@@ -61,7 +61,7 @@ export async function inInteractiveSession(): Promise<boolean> {
 }
 
 /** The built helper beside this file, outliving the node so a restart finds it again. */
-function startHelperProcess(): void {
+export function startHelperProcess(): void {
   spawn(process.execPath, [join(import.meta.dirname, "helper.js")], {
     detached: true,
     stdio: "ignore",

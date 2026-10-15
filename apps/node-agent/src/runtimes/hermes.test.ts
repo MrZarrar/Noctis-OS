@@ -265,7 +265,13 @@ describe("the Hermes runtime (ACP)", () => {
       { cwd: "C:\\work", mcpServers: noctisMcp() },
     ]);
     expect(spawned[0]?.requests.get("session/prompt")).toEqual([
-      { sessionId: "hs-1", prompt: [{ type: "text", text: "what does notes.txt say?" }] },
+      {
+        sessionId: "hs-1",
+        prompt: [
+          { type: "text", text: "what does notes.txt say?" },
+          { type: "text", text: expect.stringContaining("<noctis-clock>") as string },
+        ],
+      },
     ]);
     expect(r.deltas).toEqual(["It says ", "hello."]);
     expect(r.items).toEqual([

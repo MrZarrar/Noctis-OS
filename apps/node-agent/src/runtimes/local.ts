@@ -215,6 +215,7 @@ export function createLocalRuntime(options: LocalRuntimeOptions): Runtime {
       runtime: "local",
       model: payload.model.model,
       env: input.env,
+      timeZone: payload.ownerTimeZone,
     });
     const system = card === undefined ? SYSTEM_PROMPT : [card, NO_TOOLS].join("\n\n");
     const sessionRef = payload.sessionRef ?? randomUUID();

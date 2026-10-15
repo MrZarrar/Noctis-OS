@@ -12,6 +12,7 @@ export * from "./mission.js";
 export * from "./node.js";
 export * from "./noir.js";
 export * from "./objective.js";
+export * from "./productivity.js";
 export * from "./provider.js";
 export * from "./remote.js";
 export * from "./runtime.js";

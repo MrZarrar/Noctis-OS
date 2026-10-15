@@ -16,6 +16,7 @@ import {
   NODE_ENVELOPE_VERSION,
   NodeJobAssignmentSchema,
   NodeServerFrameSchema,
+  RuntimeTurnPayloadSchema,
   grantCovers,
 } from "@noctis/contracts";
 import { createIdFactory, systemClock } from "@noctis/domain";
@@ -26,6 +27,7 @@ import { ADAPTERS, AdapterRefused } from "./adapters.js";
 import type { Runtime } from "./runtimes/Runtime.js";
 import { APPROVAL_TIMEOUT_MS, ApprovalTimedOut } from "./runtimes/Runtime.js";
 import { probeInstalledProviders } from "./runtimes/probe.js";
+import { createOwnerPresenceReader } from "./screen/owner.js";
 
 export const AGENT_VERSION = "0.0.0";
 
@@ -63,6 +65,8 @@ export interface AgentOptions {
   env?: NodeJS.ProcessEnv;
   /** How long an ask waits for its answer before the turn fails. */
   approvalTimeoutMs?: number;
+  ownerPresence?: () => Promise<boolean>;
+  presencePollMs?: number;
 }
 
 interface PendingAsk {
@@ -117,6 +121,9 @@ export function startAgent(options: AgentOptions): RunningAgent {
   const maxBackoff = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
   const runtimes = options.runtimes ?? {};
   const env = options.env ?? process.env;
+  const ownerPresence =
+    options.ownerPresence ??
+    (env.NOCTIS_OWNER_PRESENCE === "1" ? createOwnerPresenceReader({ env }) : undefined);
   const probes = options.probes ?? (() => probeInstalledProviders(env));
   const approvalTimeoutMs = options.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;
   const ids = createIdFactory(systemClock);
@@ -138,6 +145,32 @@ export function startAgent(options: AgentOptions): RunningAgent {
   let retry: NodeJS.Timeout | undefined;
   let attempt = 0;
   let stopped = false;
+  let presenceTimer: NodeJS.Timeout | undefined;
+  let previousPresence: boolean | undefined;
+  let presenceInFlight = false;
+  let scheduledTail = Promise.resolve();
+
+  async function pollPresence(): Promise<void> {
+    if (
+      ownerPresence === undefined ||
+      presenceInFlight ||
+      sessionCredential === undefined ||
+      stopped
+    )
+      return;
+    const currentSocket = socket;
+    presenceInFlight = true;
+    try {
+      const present = (await ownerPresence().catch(() => false)) === true;
+      if (socket !== currentSocket || sessionCredential === undefined || stopped) return;
+      if (previousPresence !== present) {
+        send({ kind: "owner_presence", envelopeVersion: NODE_ENVELOPE_VERSION, present });
+        previousPresence = present;
+      }
+    } finally {
+      presenceInFlight = false;
+    }
+  }
 
   function send(frame: NodeFrame): void {
     if (socket?.readyState === WebSocket.OPEN) {
@@ -262,6 +295,17 @@ export function startAgent(options: AgentOptions): RunningAgent {
     const asks = new Map<string, PendingAsk>();
     const delegations = new Map<string, PendingDelegation>();
     let sequence = 0;
+    const payload =
+      assignment.capability === "runtime.turn"
+        ? RuntimeTurnPayloadSchema.safeParse(assignment.payload)
+        : undefined;
+    const scheduled = payload?.success === true && payload.data.scheduledTaskId !== undefined;
+    const previousScheduled = scheduledTail;
+    let releaseScheduled: (() => void) | undefined;
+    if (scheduled)
+      scheduledTail = new Promise<void>((resolve) => {
+        releaseScheduled = resolve;
+      });
 
     running.set(jobId, controller);
     pendingAsks.set(jobId, asks);
@@ -347,6 +391,10 @@ export function startAgent(options: AgentOptions): RunningAgent {
     };
 
     try {
+      if (scheduled) await previousScheduled;
+      if (controller.signal.aborted) throw new AdapterRefused("job was cancelled before execution");
+      if (Date.parse(assignment.leaseExpiresAt) <= Date.now())
+        throw new AdapterRefused("job lease expired before execution");
       const adapter = adapters[assignment.capability];
 
       if (adapter === undefined) {
@@ -375,6 +423,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
         failureReason: (error instanceof Error ? error.message : "unknown").slice(0, 500),
       });
     } finally {
+      releaseScheduled?.();
       running.delete(jobId);
       pendingAsks.delete(jobId);
       pendingDelegations.delete(jobId);
@@ -527,6 +576,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
 
       switch (frame.kind) {
         case "welcome": {
+          const firstWelcome = sessionCredential === undefined;
           sessionCredential = frame.credential;
           grants = frame.grants;
           attempt = 0;
@@ -554,6 +604,14 @@ export function startAgent(options: AgentOptions): RunningAgent {
             nodeId: frame.nodeId,
             granted: frame.grants.map((grant) => grant.capability),
           });
+          if (firstWelcome && ownerPresence !== undefined) {
+            previousPresence = undefined;
+            void pollPresence();
+            presenceTimer = setInterval(() => {
+              void pollPresence();
+            }, options.presencePollMs ?? 2_000);
+            presenceTimer.unref();
+          }
           return;
         }
         case "job":
@@ -572,6 +630,11 @@ export function startAgent(options: AgentOptions): RunningAgent {
     });
 
     ws.on("close", () => {
+      if (presenceTimer !== undefined) {
+        clearInterval(presenceTimer);
+        presenceTimer = undefined;
+      }
+      previousPresence = undefined;
       sessionCredential = undefined;
       grants = [];
 
@@ -616,6 +679,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
   return {
     close() {
       stopped = true;
+      if (presenceTimer !== undefined) clearInterval(presenceTimer);
 
       if (retry !== undefined) {
         clearTimeout(retry);

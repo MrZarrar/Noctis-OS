@@ -82,7 +82,11 @@ export function listConversations(
               (SELECT MAX(m.created_at) FROM identity_messages m WHERE m.thread_id = t.id) AS last_at,
               (SELECT c.body FROM identity_messages m
                  JOIN identity_message_content c ON c.message_id = m.id
-                WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_body
+                WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_body,
+              (SELECT json_object('taskId',r.task_id,'taskName',json_extract(s.data_json,'$.name'))
+                 FROM task_runs r JOIN scheduled_tasks s ON s.id=r.task_id
+                WHERE json_extract(r.data_json,'$.threadId')=t.id
+                ORDER BY r.started_at DESC,r.id DESC LIMIT 1) AS task_json
          FROM identity_threads t
         WHERE identity_id = ? AND objective_id IS NULL AND parent_thread_id IS NULL
           AND (archived_at IS NOT NULL) = ?
@@ -90,7 +94,7 @@ export function listConversations(
         LIMIT ?`,
     )
     .all(identityId, archived ? 1 : 0, MAX_CONVERSATIONS) as Array<
-    ThreadRow & { last_at: string | null; last_body: string | null }
+    ThreadRow & { last_at: string | null; last_body: string | null; task_json:string|null }
   >;
 
   return rows.map((row) =>
@@ -98,6 +102,7 @@ export function listConversations(
       ...toThread(row),
       lastActiveAt: row.last_at ?? row.created_at,
       ...(row.last_body === null ? {} : { preview: row.last_body.slice(0, 200) }),
+      ...(row.task_json===null?{}:JSON.parse(row.task_json) as {taskId:string;taskName:string}),
     }),
   );
 }

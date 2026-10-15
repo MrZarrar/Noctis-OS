@@ -7,6 +7,7 @@ import { RuntimeProposalSchema } from "@noctis/contracts";
 
 import { AGENT_VERSION } from "./agent.js";
 import { PANEL_TOOL_DESCRIPTION } from "./panel-tool.js";
+import { PRODUCTIVITY_TOOLS, proposalSchema } from "./proposal-tools.js";
 
 /**
  * The Noctis tools a spawned runtime can call. Codex starts this as a stdio
@@ -25,7 +26,9 @@ if (flag === -1 || target === undefined) {
 
 // Narrowed here; a closure below would not see the guard.
 const file: string = target;
-const [surface, objective, preference] = RuntimeProposalSchema.options;
+const surface = proposalSchema("surface");
+const objective = proposalSchema("objective");
+const preference = proposalSchema("preference");
 
 function record(proposal: RuntimeProposal): { content: Array<{ type: "text"; text: string }> } {
   appendFileSync(file, `${JSON.stringify(proposal)}\n`);
@@ -63,5 +66,16 @@ server.registerTool(
   },
   (args) => record(RuntimeProposalSchema.parse({ kind: "preference", ...args })),
 );
+
+for (const { kind, description, inputSchema } of PRODUCTIVITY_TOOLS) {
+  server.registerTool(
+    `noctis_propose_${kind}`,
+    {
+      description,
+      inputSchema,
+    },
+    (args: unknown) => record(RuntimeProposalSchema.parse({ kind, ...(args as object) })),
+  );
+}
 
 await server.connect(new StdioServerTransport());

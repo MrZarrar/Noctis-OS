@@ -59,6 +59,8 @@ export type ConversationThread = z.infer<typeof ConversationThreadSchema>;
 
 /** One conversation as the thread list shows it: when it last moved, and what was said last. */
 export const ConversationSummarySchema = ConversationThreadSchema.extend({
+  taskId: UuidSchema.optional(),
+  taskName: z.string().max(200).optional(),
   lastActiveAt: UtcTimestampSchema,
   /** The newest message, cut short. Absent until anything has been said. */
   preview: z.string().max(200).optional(),

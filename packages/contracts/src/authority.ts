@@ -22,6 +22,7 @@ export const AuthorityOutcomeSchema = z.enum([
 
 export const AuthorityRequestSchema = z
   .object({
+    taskId: UuidSchema.optional(),
     id: UuidSchema,
     objectiveId: UuidSchema.optional(),
     missionId: UuidSchema.optional(),
@@ -74,6 +75,7 @@ export const AuthorityConstraintSchema = z
 
 export const StandingPermissionSchema = z
   .object({
+    taskId: UuidSchema.optional(),
     id: UuidSchema,
     actorId: z.string().trim().min(1),
     capability: z.string().trim().min(1),
@@ -95,6 +97,7 @@ export const StandingPermissionSchema = z
  */
 export const ApprovalRecordSchema = z
   .object({
+    taskId: UuidSchema.optional(),
     id: UuidSchema,
     objectiveId: UuidSchema.optional(),
     missionId: UuidSchema.optional(),

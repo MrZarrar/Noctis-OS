@@ -3900,3 +3900,18 @@ On a desktop each panel is now a `position: fixed` window: drag the title anywhe
 | Browser `workbench.keyboard`, `presence-panels`                 | 1/1, 1/1                                                                                                       |
 
 Repairs found during verification: translucent windows showed through each other (now backed by `depth.layers[0]`, gate red then green); a 32px cascade hid the controls of panels behind (tiling placement); stacking was per Workbench (now one page-wide order); two Workbenches whose new-panel saves failed raised each other forever ("Maximum update depth exceeded", reproduced by the A→B→A gate; each panel now raised once); an in-place owner switch rendered one frame with an empty place map (now read immediately). Known limits: two owners whose first panels arrive in one commit can share a spot; only the 16 most recently raised windows keep their order. `phone`, `chat`, `jester`, `presence`, `tokenless` and other browser suites were not rerun.
+
+## 2026-10-15 Reminders, scheduled tasks, to-dos and notes (first pass)
+
+Core-local reminders, to-dos and notes (migration `0019_productivity.sql`), the shared trigger engine (one-time, weekly, interval, owner-at-PC; repeat, catch-up, Done, snooze), scheduled tasks (created paused, owner activation, proposed edits held for review, pinned runtime threads, history, timeouts, pause after three failures), task-scoped standing permissions, Claude/Codex/Hermes capture tools, owner-presence reporting through the Windows helper, the Reminders/To-dos/Notes pages and panels, capture receipts (including `task_action`: "Run requested", "Task paused", "Proposed only", never an activation button) and Conversations grouped by scheduled task. Execution and presence stay default-off (`NOCTIS_TASKS_ENABLED`, `NOCTIS_OWNER_PRESENCE`). See `docs/PRODUCTIVITY-HANDOFF.md`.
+
+| Command/check                                                                 | Result                                   |
+| ----------------------------------------------------------------------------- | ---------------------------------------- |
+| `npm run typecheck`                                                           | exit 0                                   |
+| ESLint on every changed/new `.ts`/`.tsx`                                      | exit 0                                   |
+| Focused Vitest: core productivity/conversation/notify, contracts, domain authority, web productivity + grouping | 17 files, 172/172          |
+| `conversation-groups.test.ts`                                                 | red (missing export) then green          |
+| `ProductivityReceipt.test.ts` (task_action receipts)                          | red then green                           |
+| Browser `productivity.test.mjs`, `productivity-app.test.mjs`                  | 2/2                                      |
+
+Not yet done: natural-language target discovery (tools still need node, grant and task IDs; "when I get home" cannot resolve a PC), and the cancellation guarantee (Codex/Hermes `kill()` is not awaited and does not take down the Windows process tree), which must be fixed before `NOCTIS_TASKS_ENABLED` is turned on. "Always for this task" on Approvals has unit coverage only; no browser check. No real phone push, live agent execution, Windows lock/unlock or deployment.
