@@ -67,6 +67,15 @@ export function applyProposal(
     proposal.kind === "vault_note" ||
     proposal.kind === "vault_revision"
   ) {
+    // Only a promoter run may file into the Vault. Any other turn, Jester's or a
+    // chat that read something hostile, is refused before anything is written.
+    const promoterThread = kernel.db
+      .prepare(`SELECT thread_id FROM vault_promoter WHERE id = 1`)
+      .get() as { thread_id: string } | undefined;
+    if (promoterThread?.thread_id !== turn.threadId) {
+      skip("not_a_promoter_turn");
+      return;
+    }
     const promote = { kernel, root: deps.vaultRoot, env: deps.vaultEnv ?? {} };
     const from = { path: proposal.path, source: proposal.source, turnId: turn.id };
     const edit =

@@ -168,14 +168,18 @@ it("captures proposed tasks paused and refuses a model-supplied activation field
   expect(listTaskRuns(kernel.db, id)).toHaveLength(1);
   dispatcher.stop();
 });
-it("hands a Vault fact to the promoter, which records it against the turn", () => {
-  applyProposal(
-    kernel,
-    context,
-    turn,
-    { kind: "vault_fact", path: "people/alex-kerr.md", fact: "Likes tea.", source: "inbox/a.md" },
-    "v",
-  );
+it("hands a promoter turn's Vault fact to the promoter, and refuses any other turn's", () => {
+  const fact = {
+    kind: "vault_fact" as const,
+    path: "people/alex-kerr.md",
+    fact: "Likes tea.",
+    source: "inbox/a.md",
+  };
+  applyProposal(kernel, context, turn, fact, "v1");
+  expect(listEdits(kernel.db, 5)).toEqual([]);
+
+  kernel.db.prepare(`INSERT INTO vault_promoter (id, thread_id) VALUES (1, ?)`).run(turn.threadId);
+  applyProposal(kernel, context, turn, fact, "v2");
   expect(listEdits(kernel.db, 5)).toMatchObject([
     { kind: "fact", status: "refused", reason: "no_vault", turnId: turn.id },
   ]);

@@ -1004,10 +1004,6 @@ function handleRead(
     return { status: 200, body: { hosts: listRemoteHosts(remoteFor(deps)) } };
   }
 
-  if (segments.length === 2 && segments[0] === "vault" && segments[1] === "edits") {
-    return { status: 200, body: { edits: listEdits(deps.kernel.db, limit) } };
-  }
-
   if (segments.length === 1 && segments[0] === "objectives") {
     return { status: 200, body: { objectives: listObjectives(deps.kernel.db, limit) } };
   }
@@ -1061,6 +1057,14 @@ function handleRead(
 
   // Sensitive notes are read only by a credential that holds a passcode unlock.
   const unlocked = (): boolean => isUnlocked(deps.kernel.db, deps.kernel.clock.now(), principal);
+
+  if (segments.length === 2 && segments[0] === "vault" && segments[1] === "edits") {
+    // A refusal on a sensitive note can quote it, so those wait for the passcode too.
+    const edits = listEdits(deps.kernel.db, limit).filter(
+      (edit) => edit.reason !== "sensitive" || unlocked(),
+    );
+    return { status: 200, body: { edits } };
+  }
 
   // What the agents did. The page passes its own midnight, so "today" is the
   // owner's day, not the core's; without one it is the last 24 hours.
