@@ -384,6 +384,12 @@ export const RecallVaultCommandSchema = z
   })
   .strict();
 
+/** Give Vesper the next batch of unfiled inbox notes now, not at the nightly time. */
+export const PromoteVaultCommandSchema = z.object({ ...CommandBase }).strict();
+
+/** Undo a promoted edit, or apply or decline a revision that waits for the owner. */
+export const VaultEditCommandSchema = z.object({ ...CommandBase, editId: UuidSchema }).strict();
+
 /* -------------------------------------------------------------------------- */
 /* Phase 8: confirmation, execution, permissions, sources, and artifacts.     */
 /* -------------------------------------------------------------------------- */
@@ -585,6 +591,10 @@ export const COMMAND_NAMES = [
   "surface.compose",
   "vault.reindex",
   "vault.recall",
+  "vault.promote_now",
+  "vault.undo_edit",
+  "vault.apply_revision",
+  "vault.decline_revision",
   "settings.set",
   "settings.reset",
   "node.issue_pairing_code",
@@ -615,6 +625,8 @@ export type ReleaseSurfaceOverrideCommand = z.infer<typeof ReleaseSurfaceOverrid
 export type ComposeSurfacesCommand = z.infer<typeof ComposeSurfacesCommandSchema>;
 export type ReindexVaultCommand = z.infer<typeof ReindexVaultCommandSchema>;
 export type RecallVaultCommand = z.infer<typeof RecallVaultCommandSchema>;
+export type PromoteVaultCommand = z.infer<typeof PromoteVaultCommandSchema>;
+export type VaultEditCommand = z.infer<typeof VaultEditCommandSchema>;
 export type CommandName = z.infer<typeof CommandNameSchema>;
 
 /* -------------------------------------------------------------------------- */

@@ -331,7 +331,7 @@ describe("headless kernel loop", () => {
     // the session a thread adopted; 0013 archived conversations; 0014 the
     // Vault passcode; 0015 the live bridge's sessions; 0016 Surface owners;
     // 0017 Vault tags; 0018 manual Surface override order; 0019 productivity.
-    expect(diagnostics.body.schemaVersion).toBe(19);
+    expect(diagnostics.body.schemaVersion).toBe(20);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {

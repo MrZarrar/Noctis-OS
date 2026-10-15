@@ -39,6 +39,7 @@ import { createLogger } from "./logging.js";
 import type { SendPush, VapidKeys } from "./notify/push.js";
 import { ownerSetting, onSettingChange, readSetting } from "./config/settings.js";
 import { createDailyTimer } from "./notify/daily.js";
+import { promoteNow } from "./vault/promoter.js";
 import { digestLine, readDigest } from "./notify/digest.js";
 import { createNotifier } from "./notify/push.js";
 import { resolveVaultRoot } from "./vault/root.js";
@@ -264,13 +265,33 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
         });
     },
   });
+  // The Vault promoter: off unless the owner sets "File the inbox nightly".
+  // One run a day; its key is the date, so a restart the same day cannot run it twice.
+  const promoterTimer = createDailyTimer({
+    clock,
+    at: () => readSetting(db, env, "promoterAt"),
+    run: () => {
+      const outcome = promoteNow(
+        { kernel, conversations: conversation, root: vaultRoot },
+        { correlationId: kernel.ids.nextId(), actorType: "system", actorId: "promoter" },
+        `promoter-${new Date(clock.now()).toISOString().slice(0, 10)}`,
+      );
+      logger.log(outcome.ok ? "info" : "warn", "vault promoter run", {
+        ...(outcome.ok ? outcome.value : { conflict: outcome.conflict.kind }),
+      });
+    },
+  });
   const stopFollowingSettings = onSettingChange((key) => {
     if (key === "digestAt") {
       digestTimer.restart();
     }
+    if (key === "promoterAt") {
+      promoterTimer.restart();
+    }
   });
 
   digestTimer.start();
+  promoterTimer.start();
 
   const taskExecution = { conversation, dispatcher, enabled: config.tasksEnabled === true };
   const productivity = createProductivityScheduler(kernel, taskExecution, { recover: true });
@@ -400,6 +421,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     productivity,
     async close() {
       digestTimer.stop();
+      promoterTimer.stop();
       stopFollowingSettings();
       clearInterval(productivityTimer);
       productivity.close();

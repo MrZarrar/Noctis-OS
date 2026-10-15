@@ -18,6 +18,7 @@ import {
 } from "../productivity/tasks.js";
 import type { TaskExecutionDeps } from "../productivity/tasks.js";
 import { rememberPreference } from "../vault/brain.js";
+import { addFact, createNote as createVaultNote, proposeRevision } from "../vault/promote.js";
 import type { VaultRoot } from "../vault/root.js";
 import type { Turn } from "./service.js";
 
@@ -61,6 +62,32 @@ export function applyProposal(
     return;
   }
   proposal = validated.data;
+  if (
+    proposal.kind === "vault_fact" ||
+    proposal.kind === "vault_note" ||
+    proposal.kind === "vault_revision"
+  ) {
+    const promote = { kernel, root: deps.vaultRoot, env: deps.vaultEnv ?? {} };
+    const from = { path: proposal.path, source: proposal.source, turnId: turn.id };
+    const edit =
+      proposal.kind === "vault_fact"
+        ? addFact(promote, { ...from, fact: proposal.fact })
+        : proposal.kind === "vault_note"
+          ? createVaultNote(promote, { ...from, title: proposal.title, body: proposal.body })
+          : proposeRevision(promote, {
+              ...from,
+              find: proposal.find,
+              replace: proposal.replace,
+              reason: proposal.reason,
+            });
+    kernel.logger.log(edit.status === "refused" ? "warn" : "info", "vault edit", {
+      turnId: turn.id,
+      kind: edit.kind,
+      status: edit.status,
+      reason: edit.reason,
+    });
+    return;
+  }
   if (proposal.kind === "task_action") {
     const task = getTask(kernel.db, proposal.taskId);
     if (task === undefined || task.identityId !== turn.identityId) {

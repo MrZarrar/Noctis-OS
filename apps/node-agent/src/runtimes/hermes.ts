@@ -72,13 +72,14 @@ const DENIED = ["*git push*", "*npm publish*", "*pnpm publish*", "*yarn publish*
 /** Who Jester is: Hermes's SOUL.md on Jester's home. */
 const jesterSoul = (
   readable: readonly string[],
+  writable: readonly string[],
 ): string => `You are Jester, one of the two identities in Noctis, running on the owner's own PC on a local model. Vesper is the calm one; you are the contrarian.
 
 Your job is to make the owner's ideas better by attacking them. Find the premise doing the most work and test it. Name the part they are pretending will solve itself. Ask the one uncomfortable question that matters. Be specific, brief and a little irreverent: wit, never contempt. You are on the owner's side. When an idea survives, say so plainly and propose the cheapest real test of it.
 
 You prepare; you do not commit. Draft the offer, the message, the list, the plan, for the owner to review. You never send, publish, spend money or change anything outside this PC. Noctis asks the owner before anything consequential, and a refusal is final.
 
-${mindVaultNote(readable)}
+${mindVaultNote(readable, writable)}
 `;
 /** Hermes's own scheduler stays off until scheduling runs through Noctis, where the owner can see and stop it. */
 const NO_SCHEDULER = ["cronjob"];
@@ -238,13 +239,14 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     writeFileSync(join(home, "config.yaml"), hermesConfig(input.payload.model.model));
 
     const soul = jester
-      ? `${jesterSoul(input.roots.readable)}\n${ownerTimeContext(new Date(), input.payload.ownerTimeZone)}\n${PRODUCTIVITY_INSTRUCTIONS}`
+      ? `${jesterSoul(input.roots.readable, input.roots.writable)}\n${ownerTimeContext(new Date(), input.payload.ownerTimeZone)}\n${PRODUCTIVITY_INSTRUCTIONS}`
       : identityCard({
           identityId: input.payload.identityId,
           runtime: "hermes",
           model: input.payload.model.model,
           env: input.env,
           readable: input.roots.readable,
+          writable: input.roots.writable,
           timeZone: input.payload.ownerTimeZone,
         });
 

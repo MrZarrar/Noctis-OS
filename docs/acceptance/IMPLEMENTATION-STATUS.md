@@ -3995,3 +3995,16 @@ Every `runtime.turn` now carries core-derived `targets` (PCs with this-PC/online
 | Focused Vitest: node-agent, core conversation + productivity, contracts           | 58 files, 1019/1019                    |
 
 Limits: PCs are known only by hostname, so "home" resolves when the hostname says so or the owner answers the question. Off Windows the orphan reap does not check the image name. Not exercised live: a real node crash, a real scheduled run, or the Approvals "Always for this task" button in a browser (owner to check).
+
+## 2026-10-15 Vault promoter
+
+Vesper files inbox notes into the MindVault. A promoter run is an ordinary Vesper turn in a "Vault upkeep" thread, given up to eight unfiled inbox notes; it answers through three new tools (`noctis_propose_vault_fact`, `_vault_note`, `_vault_revision`). The core decides (`vault/promote.ts`): a fact goes inside a `<!-- noctis:facts -->` block at the end of a note under `people/`, `reference/` or `projects/`, a new note is created only where none exists, and both apply at once and can be undone. A change to the owner's own words waits on the Vault page for Apply or Decline. Every write is hash-checked, so a note saved in Obsidian meanwhile refuses the write; Undo refuses if the owner edited the note since. Sensitive notes and paths outside those folders are refused and recorded. A note is offered again only if its last run failed or its text changed. Agents with write access to `MindVault\inbox` are told to capture durable facts there. The digest reports what was filed and what waits. Migration `0020_vault_edits.sql`.
+
+| Command/check                                                                            | Result                |
+| ---------------------------------------------------------------------------------------- | --------------------- |
+| `promote.test.ts` (apply, conflict, undo, revisions, batch, prompt)                      | red then green, 12/12 |
+| Contract paths, proposal routing, digest line, inbox capture (Codex), VaultEdits (Codex) | red then green        |
+| `npx vitest run apps/core apps/node-agent apps/web/src/pages packages/contracts`         | exit 0; 1721 tests    |
+| `npm run typecheck`; ESLint and Prettier on the changed files                            | exit 0                |
+
+**Owner steps:** deploy the work-PC core (migration 0020), then restart the nodes. On the Settings page turn on **Let Noctis write to the Vault** and set **File the inbox nightly** to a time. Share `MindVault\inbox` with **write** for every agent on each PC. Press **Promote now** on the Vault page once and read what it filed. Not exercised live: a real promoter turn against the real Vault, or the Vault page in a browser.

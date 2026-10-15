@@ -115,6 +115,66 @@ describe("the MindVault among a turn's folders", () => {
     return vault;
   }
 
+  it("tells the agent to capture to the inbox when it may write there", () => {
+    const vault = sharedVault();
+    mkdirSync(join(vault, "inbox"));
+    const card = identityCard({
+      identityId: "vesper",
+      runtime: "claude",
+      model: "sonnet",
+      env: {},
+      readable: [vault],
+      writable: [join(vault, "inbox")],
+    });
+
+    expect(card).toContain(`write new notes to ${join(vault, "inbox")}`);
+    expect(card).toContain("source:");
+  });
+
+  it("recognizes an equivalent writable inbox path", () => {
+    const vault = sharedVault();
+    const card = identityCard({
+      identityId: "vesper",
+      runtime: "claude",
+      model: "sonnet",
+      env: {},
+      readable: [vault],
+      writable: [`${join(vault, "inbox")}/../inbox/`],
+    });
+
+    expect(card).toContain(`write new notes to ${join(vault, "inbox")}`);
+  });
+
+  it("only offers capture for the exact inbox of a readable MindVault", () => {
+    const vault = sharedVault();
+    for (const writable of [
+      [],
+      [vault],
+      [join(vault, "inbox", "nested")],
+      [join(vault, "inbox-other")],
+    ]) {
+      expect(
+        identityCard({
+          identityId: "vesper",
+          runtime: "claude",
+          model: "sonnet",
+          env: {},
+          readable: [vault],
+          writable,
+        }),
+      ).not.toContain("write new notes to");
+    }
+    expect(
+      identityCard({
+        identityId: "vesper",
+        runtime: "claude",
+        model: "sonnet",
+        env: {},
+        writable: [join(vault, "inbox")],
+      }),
+    ).not.toContain("write new notes to");
+  });
+
   it("tells the agent where the shared MindVault is, and to use it without being asked", () => {
     const vault = sharedVault();
     const card = identityCard({
@@ -127,6 +187,7 @@ describe("the MindVault among a turn's folders", () => {
 
     expect(card).toContain(`shared with you, read only, at ${vault}`);
     expect(card).toContain("without waiting to be asked");
+    expect(card).not.toContain("write new notes to");
     expect(mindVaultIn([vault])).toBe(vault);
   });
 

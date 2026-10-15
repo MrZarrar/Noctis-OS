@@ -839,6 +839,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             model: payload.model.model,
             env: input.env,
             readable: roots.readable,
+            writable: roots.writable,
             timeZone: payload.ownerTimeZone,
           });
           // developerInstructions adds to Codex's own prompt; baseInstructions would replace it.

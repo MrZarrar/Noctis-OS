@@ -24,6 +24,24 @@ export const PRODUCTIVITY_TOOLS = [
     description:
       "Request Run now for an existing owner-enabled scheduled task, or pause an existing task. The core enforces the task's existing authority and run limits; this never activates a task or widens what it may do.",
   },
+  {
+    kind: "vault_fact",
+    inputSchema: proposalSchema("vault_fact").omit({ kind: true }),
+    description:
+      "Add one fact to a MindVault note under people/, reference/ or projects/, with [[wikilinks]] for every name. Noctis adds it to the note's Noctis block and the owner can undo it. Name the inbox note it came from.",
+  },
+  {
+    kind: "vault_note",
+    inputSchema: proposalSchema("vault_note").omit({ kind: true }),
+    description:
+      "Create a MindVault note that does not exist yet, under people/, reference/ or projects/, named in kebab-case. Refused if the note exists: add a fact to it instead.",
+  },
+  {
+    kind: "vault_revision",
+    inputSchema: proposalSchema("vault_revision").omit({ kind: true }),
+    description:
+      "Propose changing text the owner wrote in a MindVault note: quote it exactly in `find`. Nothing changes until the owner approves it.",
+  },
 ] as const;
 
 export function proposalSchema<

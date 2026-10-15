@@ -27,7 +27,8 @@ export class VaultWriteRefused extends Error {}
  *
  * Even when it is on, nothing here rewrites a note the owner wrote: the
  * conflict check below refuses a file that changed since it was read, and the
- * only caller that appends is `vault/brain.ts`, under the Agent Brain's rules.
+ * callers that append are `vault/brain.ts`, under the Agent Brain's rules, and
+ * `vault/promote.ts`, inside its own Noctis block.
  */
 const ACTIVATION = "true";
 
@@ -104,7 +105,7 @@ export class VaultConflict extends Error {
 export function writeNoteAtomically(context: VaultWriteContext, write: AtomicWrite): string {
   if (!writesEnabled(context.env)) {
     throw new VaultWriteRefused(
-      "Vault writes are disabled. Automated writes stay off by default; NOCTIS_VAULT_ALLOW_WRITES=true opens exactly two things and nothing else — the inbox grant a runtime writes through, and the Agent Brain append in vault/brain.ts.",
+      "Vault writes are disabled. Automated writes stay off by default; NOCTIS_VAULT_ALLOW_WRITES=true opens exactly three things and nothing else — the inbox grant a runtime writes through, the Agent Brain append in vault/brain.ts, and the promoter's add-only edits in vault/promote.ts.",
     );
   }
 

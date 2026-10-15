@@ -121,6 +121,22 @@ describe("the daily digest", () => {
     );
   });
 
+  it("says how much was filed from the inbox and how much waits", () => {
+    const named = thread("vesper", "Vault upkeep");
+    turn(named, "claude", "completed", "2026-10-09T03:00:00.000Z");
+    const edit = db.prepare(
+      `INSERT INTO vault_edits (id, kind, path, source, text, status, created_at)
+       VALUES (?, ?, 'people/a.md', 'inbox/a.md', 'x', ?, '2026-10-09T03:00:00.000Z')`,
+    );
+    edit.run("e1", "fact", "applied");
+    edit.run("e2", "note", "applied");
+    edit.run("e3", "revision", "pending");
+
+    expect(digestLine(readDigest(db, DAY_FROM, DAY_TO))).toContain(
+      "filed 2 facts from the inbox, 1 change waits for you",
+    );
+  });
+
   it("waits until the next time of day, tomorrow if it has passed", () => {
     const at = (iso: string) => new Date(iso);
 

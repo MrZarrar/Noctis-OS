@@ -81,6 +81,8 @@ import {
   RecordArtifactCommandSchema,
   RegisterSourceCommandSchema,
   ReindexVaultCommandSchema,
+  PromoteVaultCommandSchema,
+  VaultEditCommandSchema,
   ReleaseSurfaceOverrideCommandSchema,
   RequestAuthorityCommandSchema,
   RevokeNodeCommandSchema,
@@ -97,7 +99,7 @@ import {
   UuidSchema,
 } from "@noctis/contracts";
 import type { DomainConflict, Result } from "@noctis/domain";
-import { MAX_TEXT_PREVIEW_BYTES, viewerKind } from "@noctis/domain";
+import { MAX_TEXT_PREVIEW_BYTES, conflict, ok, viewerKind } from "@noctis/domain";
 import { z } from "zod";
 
 import {
@@ -234,7 +236,10 @@ import {
   unlockPasscode,
 } from "../vault/passcode.js";
 import type { PasscodeResult } from "../vault/passcode.js";
-import { writesEnabled } from "../vault/writes.js";
+import { writesEnabled, VaultWriteRefused } from "../vault/writes.js";
+import { applyRevision, declineRevision, getEdit, listEdits, undoEdit } from "../vault/promote.js";
+import type { VaultEdit } from "../vault/promote.js";
+import { promoteNow } from "../vault/promoter.js";
 import type { CoreConfig } from "../config/server.js";
 import type { Notifier } from "../notify/push.js";
 import { PushSubscriptionSchema } from "../notify/push.js";
@@ -545,6 +550,29 @@ function remoteFor(deps: ApiDeps): CoreConfig["remoteDesktop"] {
 }
 
 /** Refusal for a Vault command when no Vault is configured. Off is the default. */
+/** Runs one decision on a promoted edit; a decision its status does not allow is a 409. */
+function decideVaultEdit(
+  deps: ApiDeps,
+  editId: string,
+  decide: typeof undoEdit,
+): Result<VaultEdit> {
+  const edit = getEdit(deps.kernel.db, editId);
+  if (edit === undefined) return conflict({ kind: "not_found", entity: "vault_edit", id: editId });
+  try {
+    return ok(
+      decide({ kernel: deps.kernel, root: deps.vaultRoot, env: deps.vaultEnv ?? {} }, editId),
+    );
+  } catch (error) {
+    if (!(error instanceof VaultWriteRefused)) throw error;
+    return conflict({
+      kind: "forbidden_transition",
+      machine: "vault_edit",
+      from: edit.status,
+      to: decide === declineRevision ? "declined" : decide === undoEdit ? "undone" : "applied",
+    });
+  }
+}
+
 function vaultNotConfigured(): Result<never> {
   return {
     ok: false,
@@ -694,6 +722,31 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     RecallVaultCommandSchema,
     (deps, context, command) => recordRecall(deps.kernel, context, command, deps.vaultRoot),
     (db, id) => getRecall(db, id),
+  ),
+  "vault.promote_now": defineDepsCommand(
+    PromoteVaultCommandSchema,
+    (deps, context, command) =>
+      promoteNow(
+        { kernel: deps.kernel, conversations: deps.conversation, root: deps.vaultRoot },
+        context,
+        command.idempotencyKey,
+      ),
+    () => undefined,
+  ),
+  "vault.undo_edit": defineDepsCommand(
+    VaultEditCommandSchema,
+    (deps, _context, command) => decideVaultEdit(deps, command.editId, undoEdit),
+    () => undefined,
+  ),
+  "vault.apply_revision": defineDepsCommand(
+    VaultEditCommandSchema,
+    (deps, _context, command) => decideVaultEdit(deps, command.editId, applyRevision),
+    () => undefined,
+  ),
+  "vault.decline_revision": defineDepsCommand(
+    VaultEditCommandSchema,
+    (deps, _context, command) => decideVaultEdit(deps, command.editId, declineRevision),
+    () => undefined,
   ),
   "settings.set": defineDepsCommand(
     SetSettingCommandSchema,
@@ -949,6 +1002,10 @@ function handleRead(
 
   if (segments.length === 2 && segments[0] === "remote" && segments[1] === "hosts") {
     return { status: 200, body: { hosts: listRemoteHosts(remoteFor(deps)) } };
+  }
+
+  if (segments.length === 2 && segments[0] === "vault" && segments[1] === "edits") {
+    return { status: 200, body: { edits: listEdits(deps.kernel.db, limit) } };
   }
 
   if (segments.length === 1 && segments[0] === "objectives") {

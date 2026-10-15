@@ -171,7 +171,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 50 tables", () => {
+  it("applies every migration and creates all 53 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -199,7 +199,7 @@ describe("migrate", () => {
     };
     db.close();
 
-    expect(row.c).toBe(50);
+    expect(row.c).toBe(53);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -219,6 +219,9 @@ describe("migrate", () => {
         "scheduled_tasks",
         "task_runs",
         "node_owner_presence",
+        "vault_edits",
+        "vault_promotions",
+        "vault_promoter",
       ]),
     );
     expect(indexes).toEqual(
@@ -258,7 +261,7 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(19);
+    expect(version.v).toBe(20);
     expect(vaultItems).toContain("sensitive");
     expect(vaultItems).toContain("tags");
   });

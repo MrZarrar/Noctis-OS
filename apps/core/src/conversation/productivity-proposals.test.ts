@@ -8,6 +8,7 @@ import { createLogger } from "../logging.js";
 import type { Kernel } from "../kernel.js";
 import type { Turn } from "./service.js";
 import { applyProposal } from "./proposals.js";
+import { listEdits } from "../vault/promote.js";
 import { listReminders, listNotes } from "../productivity/service.js";
 import { listTasks, resumeTask, getTask, listTaskRuns } from "../productivity/tasks.js";
 import { createDispatcher } from "../nodes/dispatch.js";
@@ -166,4 +167,16 @@ it("captures proposed tasks paused and refuses a model-supplied activation field
   ).toBe(id);
   expect(listTaskRuns(kernel.db, id)).toHaveLength(1);
   dispatcher.stop();
+});
+it("hands a Vault fact to the promoter, which records it against the turn", () => {
+  applyProposal(
+    kernel,
+    context,
+    turn,
+    { kind: "vault_fact", path: "people/alex-kerr.md", fact: "Likes tea.", source: "inbox/a.md" },
+    "v",
+  );
+  expect(listEdits(kernel.db, 5)).toMatchObject([
+    { kind: "fact", status: "refused", reason: "no_vault", turnId: turn.id },
+  ]);
 });

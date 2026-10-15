@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
 import { ModelRefSchema } from "@noctis/contracts";
@@ -67,14 +67,23 @@ export function mindVaultIn(readable: readonly string[] = []): string | undefine
  * agent's to search on its own: the owner set it up so every agent knows what
  * they know without being asked.
  */
-export function mindVaultNote(readable?: readonly string[]): string {
+export function mindVaultNote(readable?: readonly string[], writable?: readonly string[]): string {
   const vault = mindVaultIn(readable);
 
-  return vault === undefined
-    ? MINDVAULT_NOTE
-    : `${MINDVAULT_NOTE}
+  if (vault === undefined) return MINDVAULT_NOTE;
+
+  const inbox = join(vault, "inbox");
+  const capture = writable?.some((root) => relative(inbox, root) === "")
+    ? `
+When you learn something durable about the owner's world, write new notes to ${inbox}: one Markdown file per fact,
+named YYYY-MM-DD-short-title.md, with frontmatter title, tags: [], created: <ISO date> and source: noctis-<your runtime>,
+literal dates, and [[wikilinks]] for every person, project and topic. Never edit notes outside the inbox; Noctis files
+them into the Vault.`
+    : "";
+
+  return `${MINDVAULT_NOTE}
 It is shared with you, read only, at ${vault}. Search and read it yourself whenever the owner's people, projects,
-history or preferences could matter, without waiting to be asked. Start with agent/brain.md there.`;
+history or preferences could matter, without waiting to be asked. Start with agent/brain.md there.${capture}`;
 }
 
 const RUNTIME_NAMES: Record<IdentityRuntime, string> = {
@@ -96,6 +105,7 @@ export function identityCard(input: {
   env: NodeJS.ProcessEnv;
   /** The turn's read-only folders; the MindVault among them is named in the card. */
   readable?: readonly string[];
+  writable?: readonly string[];
   now?: Date;
   timeZone?: string | undefined;
 }): string | undefined {
@@ -115,7 +125,7 @@ phone and desktop. Right now you are running as ${runtimeName} on ${model.data},
 this conversation, shows the owner what you produce, and asks them before anything consequential; an approval is how
 anything that leaves this PC happens, and a refusal is final. Be calm, precise and brief, and lead with the answer.
 If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.
-${mindVaultNote(input.readable)}
+${mindVaultNote(input.readable, input.writable)}
 ${ownerTimeContext(input.now, input.timeZone)}
 ${input.runtime === "local" ? "" : PRODUCTIVITY_INSTRUCTIONS}`;
 }

@@ -821,6 +821,9 @@ describe("the Claude Agent SDK runtime", () => {
       "noctis_propose_surface",
       "noctis_propose_task",
       "noctis_propose_task_action",
+      "noctis_propose_vault_fact",
+      "noctis_propose_vault_note",
+      "noctis_propose_vault_revision",
       "noctis_remember_preference",
     ]);
 

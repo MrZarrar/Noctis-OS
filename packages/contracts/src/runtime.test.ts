@@ -9,6 +9,7 @@ import {
   NodeServerFrameSchema,
   RuntimeGrantConstraintsSchema,
   RuntimeItemSchema,
+  RuntimeProposalSchema,
   RuntimeTurnPayloadSchema,
   RuntimeWarmPayloadSchema,
   ServerFrameSchema,
@@ -244,6 +245,56 @@ describe("waking an agent", () => {
         idempotencyKey: "wake-3",
         identityId: "jester",
         text: "hello",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("Vault edit proposals", () => {
+  it("accepts a fact, a new note and a revision under people, reference and projects", () => {
+    expect(
+      RuntimeProposalSchema.parse({
+        kind: "vault_fact",
+        path: "people/tolga.md",
+        fact: "Moved to the Istanbul office in October 2026. [[Travel Vogue]]",
+        source: "inbox/2026-10-13-tolga.md",
+      }).kind,
+    ).toBe("vault_fact");
+    expect(
+      RuntimeProposalSchema.parse({
+        kind: "vault_note",
+        path: "reference/hyperframes.md",
+        title: "Hyperframes",
+        body: "A short-form video template.",
+        source: "inbox/2026-10-06-hyperframes.md",
+      }).kind,
+    ).toBe("vault_note");
+    expect(
+      RuntimeProposalSchema.parse({
+        kind: "vault_revision",
+        path: "people/tolga.md",
+        find: "Works in London.",
+        replace: "Works in Istanbul.",
+        reason: "inbox note of 13 October says he moved",
+        source: "inbox/2026-10-13-tolga.md",
+      }).kind,
+    ).toBe("vault_revision");
+  });
+
+  it.each([
+    "inbox/x.md",
+    "agent/brain.md",
+    "people/../agent/brain.md",
+    "/people/x.md",
+    "C:/people/x.md",
+    "people/x.txt",
+  ])("refuses a path the promoter may not write: %s", (path) => {
+    expect(
+      RuntimeProposalSchema.safeParse({
+        kind: "vault_fact",
+        path,
+        fact: "A fact.",
+        source: "inbox/a.md",
       }).success,
     ).toBe(false);
   });

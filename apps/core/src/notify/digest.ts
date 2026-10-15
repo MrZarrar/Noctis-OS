@@ -21,6 +21,8 @@ export interface Digest {
   files: number;
   outputs: number;
   approvals: { asked: number; approved: number; declined: number; unanswered: number };
+  /** What the Vault promoter filed, and the changes to the owner's words that wait for them. */
+  vault?: { filed: number; waiting: number };
 }
 
 /** The classes that wait for the owner; the rest were decided by policy. */
@@ -79,6 +81,13 @@ export function readDigest(db: NoctisDatabase, from: string, to: string): Digest
     )
     .get(from, to) as { asked: number; approved: number; declined: number; unanswered: number };
 
+  const vault = db
+    .prepare(
+      `SELECT SUM(status = 'applied' AND kind IN ('fact', 'note')) AS filed, SUM(status = 'pending') AS waiting
+         FROM vault_edits WHERE created_at >= ? AND created_at < ?`,
+    )
+    .get(from, to) as { filed: number | null; waiting: number | null };
+
   return {
     from,
     to,
@@ -97,6 +106,7 @@ export function readDigest(db: NoctisDatabase, from: string, to: string): Digest
     files,
     outputs,
     approvals: { ...approvals, unanswered: approvals.unanswered ?? 0 },
+    vault: { filed: vault.filed ?? 0, waiting: vault.waiting ?? 0 },
   };
 }
 
@@ -142,6 +152,20 @@ export function digestLine(digest: Digest): string {
       unanswered > 0 ? `${String(unanswered)} unanswered` : "",
     ].filter((part) => part !== "");
     parts.push(`${plural(digest.approvals.asked, "approval")} asked: ${answers.join(", ")}`);
+  }
+
+  const { filed = 0, waiting = 0 } = digest.vault ?? {};
+  if (filed > 0 || waiting > 0) {
+    parts.push(
+      [
+        filed > 0 ? `filed ${plural(filed, "fact")} from the inbox` : "",
+        waiting > 0
+          ? `${plural(waiting, "change")} ${waiting === 1 ? "waits" : "wait"} for you`
+          : "",
+      ]
+        .filter((part) => part !== "")
+        .join(", "),
+    );
   }
 
   return `${parts.join(". ")}.`;

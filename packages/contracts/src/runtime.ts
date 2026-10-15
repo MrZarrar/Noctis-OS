@@ -183,6 +183,20 @@ export const RuntimeWarmEvidenceSchema = z.object({ warmed: z.boolean() }).stric
 
 export const RuntimeItemStatusSchema = z.enum(["in_progress", "completed", "failed", "declined"]);
 
+/** Where promotion may write: the structured folders, never inbox/, agent/ or daily/. */
+export const VaultEditPathSchema = z
+  .string()
+  .trim()
+  .max(300)
+  .regex(/^(people|reference|projects)\/[^\\:]+\.md$/)
+  .refine((path) => !path.split("/").includes(".."), "may not leave its folder");
+
+const InboxSourceSchema = z
+  .string()
+  .trim()
+  .max(300)
+  .regex(/^inbox\/[^\\:]+\.md$/);
+
 /** What a runtime may propose. Proposals are data until the core turns them into commands. */
 export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
   z
@@ -253,6 +267,36 @@ export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("preference"),
       bullet: z.string().trim().min(8).max(300),
+    })
+    .strict(),
+  /** One line added to a note's Noctis block. Add-only, so it applies without asking. */
+  z
+    .object({
+      kind: z.literal("vault_fact"),
+      path: VaultEditPathSchema,
+      fact: z.string().trim().min(3).max(500),
+      source: InboxSourceSchema,
+    })
+    .strict(),
+  /** A Vault note that does not exist yet. Refused if it does. */
+  z
+    .object({
+      kind: z.literal("vault_note"),
+      path: VaultEditPathSchema,
+      title: z.string().trim().min(1).max(200),
+      body: z.string().trim().min(1).max(8000),
+      source: InboxSourceSchema,
+    })
+    .strict(),
+  /** A change to the owner's own words. Never applied without the owner. */
+  z
+    .object({
+      kind: z.literal("vault_revision"),
+      path: VaultEditPathSchema,
+      find: z.string().min(1).max(2000),
+      replace: z.string().max(2000),
+      reason: z.string().trim().min(3).max(500),
+      source: InboxSourceSchema,
     })
     .strict(),
 ]);

@@ -586,6 +586,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       model: payload.model.model,
       env: input.env,
       readable: roots.readable,
+      writable: roots.writable,
       timeZone: payload.ownerTimeZone,
     });
     const sdkOptions: Options = {

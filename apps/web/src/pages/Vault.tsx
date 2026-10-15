@@ -8,6 +8,8 @@ import { Markdown } from "../conversation/Markdown.js";
 import { Page, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
+import type { VaultEdit } from "./VaultEdits.js";
+import { VaultEditSchema, VaultEdits } from "./VaultEdits.js";
 import { VaultLock } from "./VaultLock.js";
 
 /**
@@ -68,6 +70,7 @@ const RecallSchema = z.object({
 });
 
 const NoteSchema = z.object({ path: z.string(), title: z.string(), text: z.string() });
+const EditsSchema = z.object({ edits: z.array(VaultEditSchema) });
 
 /** The opened node's note: being read, read, or a name nobody has written a note for. */
 export type NoteState =
@@ -111,6 +114,8 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
   const [query, setQuery] = useState("");
   const [recall, setRecall] = useState<z.infer<typeof RecallSchema> & { query: string }>();
   const [error, setError] = useState<string>();
+  const [commandError, setCommandError] = useState<string>();
+  const [edits, setEdits] = useState<readonly VaultEdit[]>([]);
   const [truncated, setTruncated] = useState<{ shown: number; total: number }>();
   const [revision, setRevision] = useState(0);
   const [note, setNote] = useState<NoteState>();
@@ -128,9 +133,10 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
     void (async () => {
       try {
-        const [statusResponse, graphResponse] = await Promise.all([
+        const [statusResponse, graphResponse, editsResponse] = await Promise.all([
           transport.request("GET", "/vault"),
           transport.request("GET", "/vault/graph"),
+          transport.request("GET", "/vault/edits"),
         ]);
 
         if (cancelled) {
@@ -139,6 +145,7 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
         const parsedStatus = StatusSchema.safeParse(statusResponse.body);
         const parsedGraph = GraphSchema.safeParse(graphResponse.body);
+        const parsedEdits = EditsSchema.safeParse(editsResponse.body);
 
         if (!parsedStatus.success || !parsedGraph.success) {
           setError("The core returned a Vault shape that does not match its contract");
@@ -146,6 +153,8 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
         }
 
         setStatus(parsedStatus.data);
+        // The filed list is extra: the graph still draws without it.
+        setEdits(parsedEdits.success ? parsedEdits.data.edits : []);
         setNodes(
           parsedGraph.data.nodes.map((node) => ({
             id: node.id,
@@ -213,6 +222,39 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
   const focusName = nodes.find((node) => node.id === focus)?.name;
 
+  const editCommand = useCallback(
+    async (
+      command: "undo_edit" | "apply_revision" | "decline_revision" | "promote_now",
+      editId?: string,
+    ) => {
+      if (transport === undefined) {
+        return;
+      }
+
+      try {
+        const response = await transport.request("POST", `/commands/vault.${command}`, {
+          idempotencyKey: nextKey(),
+          ...(editId === undefined ? {} : { editId }),
+        });
+
+        if (response.status === 200) {
+          setCommandError(undefined);
+        } else {
+          const body = response.body as { error?: { message?: unknown }; message?: unknown } | null;
+          const message = body?.error?.message ?? body?.message;
+          setCommandError(
+            typeof message === "string" ? message : "The core refused the Vault change.",
+          );
+        }
+      } catch (failure: unknown) {
+        setCommandError(failure instanceof Error ? failure.message : "Could not change the Vault.");
+      } finally {
+        setRevision((current) => current + 1);
+      }
+    },
+    [transport],
+  );
+
   const reindex = useCallback(async () => {
     if (transport === undefined) {
       return;
@@ -266,6 +308,16 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
               Return to the Objective
             </button>
           )}
+          <button
+            type="button"
+            disabled={transport === undefined}
+            onClick={() => {
+              void editCommand("promote_now");
+            }}
+            style={buttonStyle}
+          >
+            Promote now
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -338,7 +390,24 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
       {note !== undefined && focusName !== undefined && <VaultNote name={focusName} state={note} />}
 
-      {error !== undefined && <p style={{ color: semantic.error, margin: 0 }}>{error}</p>}
+      <VaultEdits
+        edits={edits}
+        onUndo={(editId) => {
+          void editCommand("undo_edit", editId);
+        }}
+        onApply={(editId) => {
+          void editCommand("apply_revision", editId);
+        }}
+        onDecline={(editId) => {
+          void editCommand("decline_revision", editId);
+        }}
+      />
+
+      {(commandError ?? error) !== undefined && (
+        <p role="alert" style={{ color: semantic.error, margin: 0 }}>
+          {commandError ?? error}
+        </p>
+      )}
     </Page>
   );
 }
