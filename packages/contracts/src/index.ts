@@ -7,6 +7,8 @@ export * from "./bridge.js";
 export * from "./authority.js";
 export * from "./command.js";
 export * from "./events.js";
+export * from "./health.js";
+export * from "./health-fixture.js";
 export * from "./identity.js";
 export * from "./mission.js";
 export * from "./node.js";

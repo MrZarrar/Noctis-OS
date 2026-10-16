@@ -83,6 +83,7 @@ export const PAGE_PANEL_PAGES = [
   "Reminders",
   "To-dos",
   "Notes",
+  "Health",
   "Files",
   "Vault",
   "Approvals",

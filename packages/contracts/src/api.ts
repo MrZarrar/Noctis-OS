@@ -38,6 +38,7 @@ export const API_SEGMENTS = [
   "digest",
   "events",
   "files",
+  "glucose",
   "health",
   "identities",
   "jobs",

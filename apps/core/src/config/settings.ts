@@ -48,6 +48,14 @@ const REGISTRY: Record<SettingKey, Entry> = {
     label: "File the inbox nightly",
     help: "When Vesper files new inbox notes into the Vault. Empty is off.",
   },
+  healthRunAt: {
+    env: "NOCTIS_HEALTH_RUN_AT",
+    fromEnv: (raw) => raw.trim(),
+    fallback: "",
+    kind: "time",
+    label: "Weekly health run (Sundays)",
+    help: "When glycolens refreshes your Health report each Sunday, catching up if the PC was off. Empty is off.",
+  },
   vaultWrites: {
     env: "NOCTIS_VAULT_ALLOW_WRITES",
     fromEnv: (raw) => raw === "true",

@@ -308,6 +308,8 @@ function Workbench({
             {...(payload.focusId === undefined ? {} : { focusId: payload.focusId })}
           />
         );
+      case "Health":
+        return null;
       case "Reminders":
       case "To-dos":
       case "Notes":

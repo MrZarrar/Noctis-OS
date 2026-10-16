@@ -34,6 +34,7 @@ export const RemoteDesktopTargetsSettingSchema = z
 export const SETTING_VALUE_SCHEMAS = {
   digestAt: SettingTimeSchema,
   promoterAt: SettingTimeSchema,
+  healthRunAt: SettingTimeSchema,
   vaultWrites: z.boolean(),
   sessionTtlHours: z.int().min(1).max(8760),
   logLevel: z.enum(["debug", "info", "warn", "error"]),
