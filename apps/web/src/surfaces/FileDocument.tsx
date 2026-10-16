@@ -2,7 +2,7 @@ import type { DocumentPayload } from "@noctis/contracts";
 import { typography } from "@noctis/ui";
 import { useFileText } from "../pages/useFileText.js";
 import { filesQuery } from "../pages/files-view.js";
-import { buttonStyle } from "../layout/Page.js";
+import { Skeleton, buttonStyle } from "../layout/Page.js";
 import { Markdown } from "../conversation/Markdown.js";
 import type { SurfaceContext } from "./renderers.js";
 
@@ -29,7 +29,7 @@ export function FileDocument({
   const url = context.fileTransport?.contentUrl?.(path);
   return (
     <div>
-      {file.loading && <p role="status">Opening…</p>}
+      {file.loading && <Skeleton label="Opening…" lines={6} />}
       {file.error !== undefined && (
         <p role="alert">
           {file.error}{" "}

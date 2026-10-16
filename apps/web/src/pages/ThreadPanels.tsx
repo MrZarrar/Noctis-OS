@@ -1,6 +1,5 @@
-import type { CSSProperties } from "react";
 import { useEffect } from "react";
-import { motion, spacing } from "@noctis/ui";
+import { spacing } from "@noctis/ui";
 import {
   DocumentPayloadSchema,
   MediaPayloadSchema,
@@ -239,16 +238,7 @@ export function ThreadPanels({
     <aside
       aria-label="Thread panels"
       className="thread-panels"
-      style={
-        {
-          minWidth: 0,
-          display: "grid",
-          alignContent: "start",
-          gap: spacing.md,
-          "--panel-enter-duration": `${motion.durationMs.normal}ms`,
-          "--panel-enter-easing": motion.easing.standard,
-        } as CSSProperties
-      }
+      style={{ minWidth: 0, display: "grid", alignContent: "start", gap: spacing.md }}
     >
       {panels.sources
         .filter(

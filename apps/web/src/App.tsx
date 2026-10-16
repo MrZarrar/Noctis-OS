@@ -587,6 +587,7 @@ function Workbench({
           {
             <dialog
               ref={moreRef}
+              className="noctis-sheet"
               aria-label="More"
               style={{
                 margin: "auto auto 0",

@@ -147,3 +147,23 @@ export const PANEL_MIN_WIDTH: Readonly<Record<string, number>> = {
   external_tool: 320,
   source_state: 240,
 };
+
+/**
+ * The stacking order after some windows have just opened. Each goes on top, as
+ * a new window would, except under a window that opened after it and has not
+ * been touched since. Two owners announce their new windows in whichever order
+ * their renders land, and the newest must still end up highest.
+ */
+export function stackOpened(
+  order: readonly string[],
+  openedAt: ReadonlyMap<string, string>,
+  opened: readonly { id: string; at: string }[],
+): string[] {
+  const next = order.filter((id) => !opened.some((entry) => entry.id === id));
+  for (const { id, at } of opened) {
+    let index = next.length;
+    while (index > 0 && (openedAt.get(next[index - 1] ?? "") ?? "") > at) index -= 1;
+    next.splice(index, 0, id);
+  }
+  return next;
+}

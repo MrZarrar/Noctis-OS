@@ -7,6 +7,8 @@ import {
   spacing,
   typography,
 } from "../tokens/index.js";
+import { motion } from "motion/react";
+
 import { NavIcon, NoctisMark } from "./icons.js";
 import type { RailItem } from "./rail-items.js";
 import { railItems } from "./rail-items.js";
@@ -51,18 +53,33 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
           font: `${String(typography.scale.xs)}px ${typography.family}`,
           letterSpacing: typography.tracking.wide,
           color: isActive ? identityAccent.vesper.primary : typography.color.muted,
-          background: isActive ? material.fillElevated : "transparent",
+          background: "transparent",
+          // The marker sits behind the icon and label without leaving the button.
+          isolation: "isolate",
           border: "none",
           borderRadius: corner.md,
           padding: `${String(spacing.sm)}px ${String(spacing.xs)}px`,
           cursor: "pointer",
-          // The lit edge is the one place the rail spends any glow, so the eye
-          // finds where it is without the column turning into a light strip.
-          boxShadow: isActive
-            ? `inset 2px 0 0 ${identityAccent.vesper.primary}, -6px 0 14px -6px ${identityAccent.vesper.primary}`
-            : "none",
         }}
       >
+        {isActive && (
+          // One marker that travels to the page chosen, rather than one lighting
+          // up as another goes dark.
+          <motion.span
+            layoutId="noctis-rail-current"
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: -1,
+              borderRadius: corner.md,
+              background: material.fillElevated,
+              // The lit edge is the one place the rail spends any glow, so the eye
+              // finds where it is without the column turning into a light strip.
+              boxShadow: `inset 2px 0 0 ${identityAccent.vesper.primary}, -6px 0 14px -6px ${identityAccent.vesper.primary}`,
+            }}
+          />
+        )}
         <NavIcon item={name} />
         {name}
         {badge}

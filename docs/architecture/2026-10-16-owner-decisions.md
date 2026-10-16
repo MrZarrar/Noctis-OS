@@ -46,7 +46,31 @@ old.
 5. local Inter fonts (`@fontsource/inter`) and consistent shell navigation motion.
 
 It also suggests `sonner` for save/copy toasts, and `@tanstack/react-virtual` only once long lists are measured
-to need it. Waiting on the owner's go-ahead.
+to need it.
+
+**Decided:** the owner asked for all five.
+
+**Built:**
+
+1. Panels rise into place once when they open. Focusing a floating panel, and leaving focus, glides it from where
+   it was to where it lands, instead of jumping. Newly opened windows now stack newest on top whichever owner
+   announces first, which also fixed a flaky two-owner panel test.
+2. Reminders read as a time-led agenda (Overdue, Due now, Due soon, Upcoming, with a symbol as well as colour),
+   snoozed rows are dashed and done ones sit in a Done group. A to-do shows "Completed" when the core confirms it.
+   Notes have a stronger title, a three-line preview and edit in place. Scheduled tasks show On / Paused /
+   Suggested changes with a symbol, and run history is a compact strip. The editor sits under the list (Codex).
+3. Messages, turns, approvals and the streaming reply come in once, when they arrive. History, a thread loading
+   and the committed message that replaces a stream do not replay.
+4. Files holds the folder's shape while it loads, marks the open file like the current page, fades a newly opened
+   preview in, reveals images once decoded, and the phone viewer rises from the bottom. File panels use the same
+   loading shapes.
+5. Inter is bundled locally (`@fontsource/inter` 5.2.6, weights 400 to 700). Pages fade in on arrival (Nodes is
+   left out because the remote screen lives there), the rail and tab bar have one marker that travels to the chosen
+   page, and the More sheet rises.
+
+Everything honours reduced motion: CSS animations stop, and every Motion default becomes instant.
+
+**Deferred:** `sonner` toasts and list virtualisation, until something needs them.
 
 ## 3. Codex
 

@@ -4,6 +4,7 @@ import { usePopouts } from "./PopoutProvider.js";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import type { PanelUpdateState } from "@noctis/ui";
 import { buttonStyle } from "../layout/Page.js";
+import { playMove } from "../layout/motion.js";
 import { PanelControls } from "./PanelControls.js";
 import type { CompositionPlan, SurfaceIntent, SurfaceRegion } from "@noctis/contracts";
 import {
@@ -30,6 +31,7 @@ import {
   presetRect,
   readWindows,
   resizeRect,
+  stackOpened,
   writeWindows,
   type PanelWindows,
   type ResizeEdge,
@@ -72,8 +74,18 @@ const onScreen = new Map<string, readonly WindowRect[]>();
 // ponytail: only the 16 most recently raised keep their order, so z-index stays under the modal layer.
 let stacking: readonly string[] = [];
 const stackingListeners = new Set<() => void>();
+/** When each window that came up on its own opened; a window the owner raises leaves it. */
+const openedAt = new Map<string, string>();
 function raiseWindows(ids: readonly string[]): void {
-  const next = [...stacking.filter((id) => !ids.includes(id)), ...ids].slice(-16);
+  ids.forEach((id) => openedAt.delete(id));
+  publishStacking([...stacking.filter((id) => !ids.includes(id)), ...ids]);
+}
+function raiseOpened(opened: readonly { id: string; at: string }[]): void {
+  publishStacking(stackOpened(stacking, openedAt, opened));
+  opened.forEach(({ id, at }) => openedAt.set(id, at));
+}
+function publishStacking(order: readonly string[]): void {
+  const next = order.slice(-16);
   if (next.length === stacking.length && next.every((id, index) => id === stacking[index])) return;
   stacking = next;
   stackingListeners.forEach((listener) => listener());
@@ -212,6 +224,22 @@ export function Workbench({
     onScreen.set(owner, drawn.current);
   });
   useEffect(() => () => void onScreen.delete(owner), [owner]);
+  const boxOf = (id: string): HTMLElement | null =>
+    root.current?.querySelector<HTMLElement>(`[data-panel-window="${CSS.escape(id)}"]`) ??
+    root.current?.querySelector<HTMLElement>(`[data-surface-id="${CSS.escape(id)}"]`) ??
+    null;
+  /** Where a panel was just before the owner focused it or put it back, so it can travel from there. */
+  const moving = useRef<{ id: string; from: DOMRect; floating: boolean; at: number }>();
+  const floatingNow = !mobile && composition.focusedSurfaceId === undefined;
+  useLayoutEffect(() => {
+    const pending = moving.current;
+    if (pending === undefined || pending.floating === floatingNow) return;
+    moving.current = undefined;
+    // A focus the core refused, followed much later by some other change of layout, is not this move.
+    if (performance.now() - pending.at > 4000) return;
+    const element = boxOf(pending.id);
+    if (element !== null) playMove(element, pending.from);
+  });
   const cancel = (): void => {
     gesture.current = undefined;
     setPreview(undefined);
@@ -240,7 +268,13 @@ export function Workbench({
     // two Workbenches re-raising their own would re-render each other forever.
     const opened = Object.keys(unsaved.current).filter((id) => !announced.current.has(id));
     opened.forEach((id) => announced.current.add(id));
-    if (opened.length > 0) raiseWindows(opened);
+    if (opened.length > 0)
+      raiseOpened(
+        opened.map((id) => ({
+          id,
+          at: latest.current.intents.find((intent) => intent.id === id)?.requestedAt ?? "",
+        })),
+      );
   });
   useEffect(() => {
     cancel();
@@ -431,9 +465,18 @@ export function Workbench({
                     else void coordinator.open(owner, slot.surfaceId);
                   }
             }
-            onFocus={() =>
-              composition.focus(focusedSurfaceId === slot.surfaceId ? undefined : slot.surfaceId)
-            }
+            onFocus={() => {
+              const box = popped ? null : boxOf(slot.surfaceId);
+              if (box !== null) {
+                moving.current = {
+                  id: slot.surfaceId,
+                  from: box.getBoundingClientRect(),
+                  floating,
+                  at: performance.now(),
+                };
+              }
+              composition.focus(focusedSurfaceId === slot.surfaceId ? undefined : slot.surfaceId);
+            }}
             onPin={() => {
               void (overriddenIds.has(slot.surfaceId)
                 ? composition.release(slot.surfaceId)

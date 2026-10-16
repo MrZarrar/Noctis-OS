@@ -18,6 +18,17 @@
 
 body {
   margin: 0;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Controls do not inherit the page's face by default. */
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
 }
 
 /* The Home Screen app must never zoom: there is no browser chrome to zoom back
@@ -89,22 +100,70 @@ body {
   }
 }
 
-.thread-panels section[data-surface-region] {
-  animation: panel-enter var(--panel-enter-duration) var(--panel-enter-easing) both;
+/* A panel arrives once, when its frame first goes into the page. A floating
+   window carries its own background and shadow, so the window arrives rather
+   than the frame inside it. `backwards`, never `both`: a transform left on the
+   frame after the animation would become the containing block for anything
+   fixed inside it. Moving between floating and focused replaces this with the
+   move from where the panel was. */
+[data-panel-window],
+section[data-surface-region] {
+  animation: panel-enter 220ms cubic-bezier(0, 0, 0.2, 1) backwards;
+}
+[data-panel-window] > section[data-surface-region] {
+  animation: none;
 }
 @keyframes panel-enter {
   from {
     opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+    transform: translateY(10px);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .thread-panels section[data-surface-region] {
-    animation: none;
+
+/* A page's content fades in when the page is arrived at. Opacity only: a
+   transform here would pull the fixed panel windows inside the page off the
+   viewport for as long as it ran. */
+.noctis-fade-in {
+  animation: noctis-fade-in 180ms cubic-bezier(0, 0, 0.2, 1) backwards;
+}
+@keyframes noctis-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Space held for something still loading, in the shape it will take. */
+.noctis-skeleton {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  animation: noctis-skeleton 1.6s ease-in-out infinite;
+}
+@keyframes noctis-skeleton {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* An image shows once it has decoded, not in strips as it downloads. */
+.noctis-reveal {
+  transition: opacity 220ms cubic-bezier(0, 0, 0.2, 1);
+}
+.noctis-reveal[data-loaded="false"] {
+  opacity: 0;
+}
+
+/* A sheet rises from the bottom edge it is attached to. */
+dialog.noctis-sheet[open],
+.noctis-rise {
+  animation: noctis-sheet-up 220ms cubic-bezier(0, 0, 0.2, 1) backwards;
+}
+dialog.noctis-sheet::backdrop {
+  background: rgba(5, 4, 9, 0.55);
+}
+@keyframes noctis-sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
   }
 }
 

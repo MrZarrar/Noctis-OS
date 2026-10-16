@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { MediaPayload, SurfaceSize } from "@noctis/contracts";
 import { MediaSurface } from "@noctis/ui";
 
+import { Skeleton } from "../layout/Page.js";
+
 /**
  * Accepted bytes of a file-backed image, kept per panel. The core serves files
  * `no-store` and keeps no old versions, so a remounted `<img>` (pop-out, Return,
@@ -67,7 +69,7 @@ export function FileMedia({
     return (
       <MediaSurface title={payload.title} mediaType={payload.mediaType} url={url} size={size} />
     );
-  if (current === undefined) return <p role="status">Opening…</p>;
+  if (current === undefined) return <Skeleton label="Opening…" lines={1} lineHeight={180} />;
   return (
     <MediaSurface title={payload.title} mediaType={payload.mediaType} url={current} size={size} />
   );

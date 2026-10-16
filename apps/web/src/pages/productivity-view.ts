@@ -1,5 +1,31 @@
-import type { Trigger } from "@noctis/contracts";
+import type { Trigger, Reminder } from "@noctis/contracts";
 export const OWNER_ZONE = "Europe/London";
+export function reminderDueAt(reminder: Reminder): string | undefined {
+  return reminder.nextDueAt ?? (reminder.trigger?.kind === "at" ? reminder.trigger.at : undefined);
+}
+export function compareReminders(a: Reminder, b: Reminder): number {
+  const group = Number(a.status === "done") - Number(b.status === "done");
+  if (group) return group;
+  const aDue = reminderDueAt(a),
+    bDue = reminderDueAt(b);
+  if (!aDue) return bDue ? 1 : 0;
+  if (!bDue) return -1;
+  return Date.parse(aDue) - Date.parse(bDue);
+}
+export function reminderDueLabel(reminder: Reminder, now = Date.now()): string {
+  if (reminder.status === "done" || reminder.status === "snoozed") return reminder.status;
+  const due = reminderDueAt(reminder);
+  if (due) {
+    const remaining = Date.parse(due) - now;
+    if (remaining < 0) return "Overdue";
+    if (reminder.status === "due" || remaining === 0) return "Due now";
+    if (remaining <= 3600000) return "Due soon";
+    return "Upcoming";
+  }
+  if (reminder.status === "due") return "Due now";
+  if (reminder.trigger?.kind === "at_pc") return "At your PC";
+  return reminder.trigger ? "Scheduled" : "To do";
+}
 export function localToInstant(value: string): string {
   const naive = Date.parse(`${value}:00Z`);
   if (!Number.isFinite(naive)) throw new Error("Choose a valid date and time.");

@@ -179,6 +179,8 @@ export function Nodes({ transport }: { transport: CoreTransport | undefined }): 
   return (
     <Page
       title="Nodes"
+      // The remote screen mounts inside this page, so it is kept out of page effects.
+      still
       subtitle={
         nodes === undefined
           ? "Your PCs"

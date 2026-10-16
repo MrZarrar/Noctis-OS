@@ -15,6 +15,7 @@ export function Page({
   children,
   label,
   maxWidth = 1200,
+  still = false,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -24,6 +25,8 @@ export function Page({
   label?: string;
   /** How wide the content may grow on a large screen; a conversation wants less. */
   maxWidth?: number;
+  /** Arrives without the fade, for a page whose content must not sit under one. */
+  still?: boolean;
 }): JSX.Element {
   const mobile = useIsMobile();
 
@@ -57,6 +60,7 @@ export function Page({
       }}
     >
       <div
+        className={still ? undefined : "noctis-fade-in"}
         style={{
           flex: 1,
           display: "flex",
@@ -159,3 +163,55 @@ export const fieldStyle = {
   borderRadius: corner.md,
   padding: `0 ${String(spacing.md)}px`,
 } as const;
+
+/** Read out, not drawn. */
+export const visuallyHidden = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+} as const;
+
+/** Uneven line lengths, so held space reads as text rather than as bars. */
+const SKELETON_WIDTHS = [92, 78, 86, 64, 88, 72];
+
+/**
+ * Space held for something still loading, in roughly the shape it will take,
+ * so nothing jumps when it arrives. The words are still there for a screen
+ * reader; the shapes are not announced.
+ */
+export function Skeleton({
+  label,
+  lines = 3,
+  lineHeight = 12,
+  gap = spacing.sm,
+}: {
+  label: string;
+  lines?: number;
+  lineHeight?: number;
+  gap?: number;
+}): JSX.Element {
+  return (
+    <div role="status" style={{ display: "grid", gap, minWidth: 0 }}>
+      <span style={visuallyHidden}>{label}</span>
+      {Array.from({ length: lines }, (_, index) => (
+        <span
+          key={index}
+          aria-hidden="true"
+          className="noctis-skeleton"
+          style={{
+            display: "block",
+            height: lineHeight,
+            width:
+              lineHeight >= 32
+                ? "100%"
+                : `${String(SKELETON_WIDTHS[index % SKELETON_WIDTHS.length])}%`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}

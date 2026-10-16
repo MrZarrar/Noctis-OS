@@ -10,7 +10,8 @@ import {
   spacing,
   typography,
 } from "@noctis/ui";
-import type { CSSProperties } from "react";
+import type { MotionStyle } from "motion/react";
+import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "../conversation/Markdown.js";
@@ -21,6 +22,8 @@ import type {
   Turn,
 } from "../conversation/useConversation.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
+import type { ARRIVE } from "../layout/motion.js";
+import { SETTLED, entrance, useArrivals } from "../layout/motion.js";
 import { PanelTray, PanelSheet, usePanelSheet } from "./PanelTray.js";
 import { ThreadPanels, useThreadPanels, pagePanelContext } from "./ThreadPanels.js";
 import { AddPanel } from "./AddPanel.js";
@@ -237,6 +240,7 @@ function TurnRow({
   outputUrl,
   written,
   onOpenFile,
+  arriving,
 }: {
   transport: CoreTransport | undefined;
   onOpenProductivity: OpenProductivity | undefined;
@@ -245,13 +249,16 @@ function TurnRow({
   outputUrl: ((attachmentId: string) => string) | undefined;
   written: ReadonlyArray<FileTarget<RuntimeRootOption>>;
   onOpenFile: ((target: FileTarget<RuntimeRootOption>) => void) | undefined;
+  arriving: typeof ARRIVE | false;
 }): JSX.Element {
   const running = turn.status === "queued" || turn.status === "running";
   const outputs = turn.items.filter((item) => item.kind === "output");
   const rawItems = turn.items.filter((item) => item.kind !== "output");
 
   return (
-    <li
+    <motion.li
+      initial={arriving}
+      animate={SETTLED}
       data-entry="turn"
       data-turn-status={turn.status}
       style={{
@@ -351,7 +358,7 @@ function TurnRow({
           </ul>
         )}
       </details>
-    </li>
+    </motion.li>
   );
 }
 
@@ -388,6 +395,18 @@ function timelineOf(
     })),
   ].sort((left, right) => left.at.localeCompare(right.at));
 }
+
+/** One key per row across every kind, so a message and a turn never share one. */
+function entryKey(entry: Entry): string {
+  if (entry.kind === "message") return `${entry.message.role}:${entry.message.id}`;
+  return entry.kind === "turn" ? `turn:${entry.turn.id}` : `approval:${entry.approval.id}`;
+}
+const streamKey = (itemId: string): string => `streaming-${itemId}`;
+/** A streamed reply arrives once: the message it commits to takes its place without coming in again. */
+const STREAM_HANDOFF = {
+  from: (key: string) => key.startsWith("streaming-"),
+  to: (key: string) => key.startsWith("identity:"),
+};
 
 /**
  * Threads: the identity's thread — free chat, or the active Objective's (0.12).
@@ -470,6 +489,12 @@ export function Threads({
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
   const roleLabel = (role: string): string =>
     role === "user" ? "You" : role === "identity" ? displayName : "System";
+  const timeline = timelineOf(messages, turns, pendingApprovals);
+  const arrived = useArrivals(
+    [...timeline.map(entryKey), ...[...streaming.keys()].map(streamKey)],
+    thread?.id,
+    STREAM_HANDOFF,
+  );
 
   const pinned = thread === undefined ? undefined : pinnedTo(thread, conversation.roots);
   const subtitle =
@@ -627,11 +652,13 @@ export function Threads({
                 )}
 
               <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
-                {timelineOf(messages, turns, pendingApprovals).map((entry) => {
+                {timeline.map((entry) => {
                   if (entry.kind === "message") {
                     return (
-                      <li
+                      <motion.li
                         key={entry.message.id}
+                        initial={entrance(arrived, entryKey(entry))}
+                        animate={SETTLED}
                         data-entry="message"
                         data-role={entry.message.role}
                         style={bubbleStyle(entry.message.role === "user")}
@@ -652,7 +679,7 @@ export function Threads({
                           <span style={spoken}>: </span>
                         </span>
                         <Markdown text={entry.message.body} />
-                      </li>
+                      </motion.li>
                     );
                   }
 
@@ -662,6 +689,7 @@ export function Threads({
                         transport={transport}
                         onOpenProductivity={onOpenProductivity}
                         key={entry.turn.id}
+                        arriving={entrance(arrived, entryKey(entry))}
                         turn={entry.turn}
                         outputUrl={outputUrl}
                         written={writtenFiles(entry.turn, conversation.roots)}
@@ -678,8 +706,10 @@ export function Threads({
                   const { approval } = entry;
 
                   return (
-                    <li
+                    <motion.li
                       key={approval.id}
+                      initial={entrance(arrived, entryKey(entry))}
+                      animate={SETTLED}
                       data-entry="approval"
                       style={{
                         ...glass,
@@ -711,14 +741,16 @@ export function Threads({
                           void conversation.decline(approval.id);
                         }}
                       />
-                    </li>
+                    </motion.li>
                   );
                 })}
 
                 {/* In progress, so always last: it is the newest thing on the page. */}
                 {[...streaming.entries()].map(([itemId, text]) => (
-                  <li
-                    key={`streaming-${itemId}`}
+                  <motion.li
+                    key={streamKey(itemId)}
+                    initial={entrance(arrived, streamKey(itemId))}
+                    animate={SETTLED}
                     data-entry="streaming"
                     data-streaming={itemId}
                     aria-live="polite"
@@ -734,7 +766,7 @@ export function Threads({
                       {displayName} (typing)<span style={spoken}>: </span>
                     </span>
                     <Markdown text={text} />
-                  </li>
+                  </motion.li>
                 ))}
               </ul>
 
@@ -824,7 +856,7 @@ export function Threads({
   );
 }
 
-function bubbleStyle(own: boolean): CSSProperties {
+function bubbleStyle(own: boolean): MotionStyle {
   return {
     justifySelf: own ? "end" : "start",
     maxWidth: `min(${String(typography.measurePx)}px, 88%)`,

@@ -6,6 +6,7 @@ import {
   presetRect,
   readWindows,
   resizeRect,
+  stackOpened,
   writeWindows,
   type WindowRect,
 } from "./arrange.js";
@@ -89,5 +90,30 @@ describe("floating panel windows", () => {
         windows,
       ),
     ).toBe(false);
+  });
+});
+
+describe("stacking newly opened windows", () => {
+  it("puts a newly opened window on top of every window already open", () => {
+    expect(stackOpened(["a", "b"], new Map(), [{ id: "c", at: "2026-10-16T10:00:00Z" }])).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("keeps the newest window highest when an older one is announced after it", () => {
+    const openedAt = new Map([["new", "2026-10-16T10:00:02Z"]]);
+    expect(
+      stackOpened(["a", "new"], openedAt, [{ id: "old", at: "2026-10-16T10:00:01Z" }]),
+    ).toEqual(["a", "old", "new"]);
+  });
+
+  it("does not hold back a window behind one the owner has since raised", () => {
+    // `a` was opened later but clicked since, so it no longer carries an opened time.
+    expect(stackOpened(["a"], new Map(), [{ id: "b", at: "2026-10-16T10:00:00Z" }])).toEqual([
+      "a",
+      "b",
+    ]);
   });
 });

@@ -5,7 +5,7 @@ import { NavIcon, elevation, identityAccent, semantic, spacing, typography } fro
 import { folderName } from "../conversation/PromptForm.js";
 import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
-import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
+import { Page, SectionHeading, Skeleton, buttonStyle, glass } from "../layout/Page.js";
 import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { FileTarget } from "./files-view.js";
@@ -70,6 +70,14 @@ const rowStyle = {
   color: typography.color.primary,
   textAlign: "left",
   cursor: "pointer",
+} as const;
+
+/** The open file: lit like the navigation's current page, with the same edge, not by colour alone. */
+const selectedRowStyle = {
+  ...rowStyle,
+  background: "rgba(91, 79, 224, 0.18)",
+  border: `1px solid ${identityAccent.vesper.secondary}`,
+  boxShadow: `inset 3px 0 0 ${identityAccent.vesper.primary}`,
 } as const;
 
 const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
@@ -279,7 +287,7 @@ export function Files({
         </div>
 
         {listing.state === "loading" && (
-          <p style={{ margin: 0, color: typography.color.muted }}>Asking {place.hostId}…</p>
+          <Skeleton label={`Asking ${place.hostId}…`} lines={5} lineHeight={52} gap={6} />
         )}
         {listing.state === "failed" && (
           <p role="alert" style={{ margin: 0, color: semantic.error }}>
@@ -289,6 +297,7 @@ export function Files({
         {listing.state === "ready" && (
           <ul
             aria-label="Folder contents"
+            className="noctis-fade-in"
             style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}
           >
             {listing.entries.length === 0 && (
@@ -314,10 +323,7 @@ export function Files({
                         }
                       }
                     }}
-                    style={{
-                      ...rowStyle,
-                      outline: selected ? `2px solid ${identityAccent.vesper.primary}` : "none",
-                    }}
+                    style={selected ? selectedRowStyle : rowStyle}
                   >
                     <span
                       style={{
@@ -358,6 +364,7 @@ export function Files({
   if (isMobile && opened !== undefined && place !== undefined && transport !== undefined) {
     return (
       <div
+        className="noctis-rise"
         style={{
           position: "fixed",
           inset: 0,
@@ -408,7 +415,13 @@ export function Files({
             }}
           >
             {opened !== undefined && place !== undefined && transport !== undefined ? (
-              <Viewer place={place} file={opened} transport={transport} onClose={viewer.dismiss} />
+              <Viewer
+                key={opened.path}
+                place={place}
+                file={opened}
+                transport={transport}
+                onClose={viewer.dismiss}
+              />
             ) : (
               <EmptyViewer />
             )}
@@ -487,6 +500,7 @@ function Viewer({
 
   return (
     <div
+      className={fullScreen ? undefined : "noctis-fade-in"}
       data-region={fullScreen ? "viewer" : undefined}
       aria-label={fullScreen ? "Viewer" : undefined}
       role={fullScreen ? "dialog" : undefined}
@@ -535,7 +549,7 @@ function Viewer({
       >
         {kind === "text" && (
           <div>
-            {text.loading && <p role="status">Opening...</p>}
+            {text.loading && <Skeleton label="Opening..." lines={10} />}
             {text.error !== undefined && (
               <p role="alert">
                 {text.error}{" "}
@@ -560,15 +574,7 @@ function Viewer({
           </div>
         )}
         {kind === "image" &&
-          (url === undefined ? (
-            unreachable
-          ) : (
-            <img
-              src={url}
-              alt={file.name}
-              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-            />
-          ))}
+          (url === undefined ? unreachable : <RevealImage src={url} alt={file.name} />)}
         {kind === "video" &&
           (url === undefined ? (
             unreachable
@@ -589,6 +595,33 @@ function Viewer({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/** An image that shows once it has decoded, over held space until then. */
+function RevealImage({ src, alt }: { src: string; alt: string }): JSX.Element {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <div style={{ display: "grid", placeItems: "center", width: "100%", height: "100%" }}>
+      {!loaded && (
+        <span
+          aria-hidden="true"
+          className="noctis-skeleton"
+          style={{ gridArea: "1 / 1", width: "min(100%, 420px)", aspectRatio: "4 / 3" }}
+        />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        className="noctis-reveal"
+        data-loaded={String(loaded)}
+        onLoad={() => setLoaded(true)}
+        // A broken image still shows its name rather than staying invisible.
+        onError={() => setLoaded(true)}
+        style={{ gridArea: "1 / 1", maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+      />
     </div>
   );
 }

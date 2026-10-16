@@ -10,6 +10,8 @@ import {
   spacing,
   typography,
 } from "../tokens/index.js";
+import { motion } from "motion/react";
+
 import { NavIcon } from "./icons.js";
 import type { RailItem } from "./rail-items.js";
 import { HIDDEN_ITEMS, NAV_ITEMS } from "./rail-items.js";
@@ -128,12 +130,29 @@ function tabStyle(isActive: boolean): CSSProperties {
   return {
     ...buttonStyle,
     color: isActive ? identityAccent.vesper.primary : typography.color.muted,
-    background: isActive ? material.fill : "transparent",
-    // A short lit line on top of the active tab, the bar's one bit of glow.
-    boxShadow: isActive
-      ? `inset 0 2px 0 ${identityAccent.vesper.primary}, 0 -8px 16px -10px ${identityAccent.vesper.primary}`
-      : "none",
+    position: "relative",
+    isolation: "isolate",
   };
+}
+
+/** The current tab's ground, one element that travels to whichever tab is chosen. */
+function TabMarker(): JSX.Element {
+  return (
+    <motion.span
+      layoutId="noctis-tab-current"
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: -1,
+        borderRadius: corner.md,
+        // A short lit line on top of the active tab, the bar's one bit of glow.
+        // The glow falls inward: the tab clips anything outside it.
+        background: `linear-gradient(180deg, ${identityAccent.vesper.primary}2e, transparent 70%), ${material.fill}`,
+        boxShadow: `inset 0 2px 0 ${identityAccent.vesper.primary}`,
+      }}
+    />
+  );
 }
 
 export function TabBar({ active, onSelect, onMore, counts }: TabBarProps): JSX.Element {
@@ -178,8 +197,9 @@ export function TabBar({ active, onSelect, onMore, counts }: TabBarProps): JSX.E
             onClick={() => {
               onSelect(item);
             }}
-            style={{ ...tabStyle(isActive), position: "relative" }}
+            style={tabStyle(isActive)}
           >
+            {isActive && <TabMarker />}
             <NavIcon item={item} />
             {item}
             {badge}
@@ -194,6 +214,7 @@ export function TabBar({ active, onSelect, onMore, counts }: TabBarProps): JSX.E
           onClick={onMore}
           style={tabStyle(moreActive)}
         >
+          {moreActive && <TabMarker />}
           <NavIcon item="More" />
           More
         </button>

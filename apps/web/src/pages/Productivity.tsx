@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from "react";
+import { Fragment, useEffect, useState, useRef } from "react";
+import { motion } from "motion/react";
 import { z } from "zod";
 import {
   ReminderSchema,
@@ -11,13 +12,22 @@ import {
   type ScheduledTask,
   type ModelRef,
 } from "@noctis/contracts";
-import { material, corner, semantic, spacing, typography } from "@noctis/ui";
-import { Page, buttonStyle, fieldStyle } from "../layout/Page.js";
+import { material, corner, semantic, spacing, typography, identityAccent } from "@noctis/ui";
+import { Page, buttonStyle, fieldStyle, glass, SectionHeading } from "../layout/Page.js";
+import { useArrivals, entrance, SETTLED } from "../layout/motion.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { RuntimeRootOption } from "../conversation/useConversation.js";
 import { SnoozeChoices } from "./SnoozeChoices.js";
 import { TaskPermissions } from "./TaskPermissions.js";
-import { ownerDate, localToInstant, triggerLabel, searchNotes } from "./productivity-view.js";
+import {
+  ownerDate,
+  localToInstant,
+  triggerLabel,
+  searchNotes,
+  compareReminders,
+  reminderDueAt,
+  reminderDueLabel,
+} from "./productivity-view.js";
 
 export type ProductivityPage = "Reminders" | "To-dos" | "Notes";
 interface Props {
@@ -31,6 +41,7 @@ interface Props {
 }
 const row = { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } as const;
 const card = {
+  ...glass,
   display: "grid",
   gap: 12,
   padding: 16,
@@ -39,6 +50,16 @@ const card = {
   background: material.fill,
   minWidth: 0,
   overflowWrap: "anywhere",
+} as const;
+const titleStyle = { margin: 0, fontSize: typography.scale.md, fontWeight: 600 } as const;
+const metaStyle = { color: typography.color.muted, fontSize: typography.scale.sm } as const;
+const previewStyle = {
+  margin: 0,
+  whiteSpace: "pre-wrap",
+  display: "-webkit-box",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 3,
+  overflow: "hidden",
 } as const;
 interface Draft {
   id?: string;
@@ -241,7 +262,7 @@ function TriggerFields({
         <>
           <div style={row}>
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, index) => (
-              <label key={day} style={row}>
+              <label key={day} style={{ ...row, minHeight: 44 }}>
                 <input
                   type="checkbox"
                   checked={value.rule.kind === "weekly" && value.rule.daysOfWeek.includes(index)}
@@ -310,7 +331,7 @@ function TriggerFields({
               ))}
             </select>
           </label>
-          <label>
+          <label style={{ ...row, minHeight: 44 }}>
             <input
               type="checkbox"
               checked={value.repeat}
@@ -324,6 +345,17 @@ function TriggerFields({
     </div>
   );
 }
+/** The chosen view is lit and edged, like the navigation's current page. */
+const tabStyle = (selected: boolean) =>
+  selected
+    ? {
+        ...buttonStyle,
+        color: identityAccent.vesper.primary,
+        background: "rgba(91, 79, 224, 0.18)",
+        border: `1px solid ${identityAccent.vesper.secondary}`,
+        boxShadow: `inset 0 -2px 0 ${identityAccent.vesper.primary}`,
+      }
+    : buttonStyle;
 export function Productivity(props: Props) {
   const [tab, setTab] = useState<"reminders" | "tasks">(props.task ? "tasks" : "reminders");
   return (
@@ -341,7 +373,7 @@ export function Productivity(props: Props) {
       {props.page === "Reminders" && (
         <div style={row} role="tablist" aria-label="Reminder views">
           <button
-            style={buttonStyle}
+            style={tabStyle(tab === "reminders")}
             role="tab"
             aria-selected={tab === "reminders"}
             onClick={() => setTab("reminders")}
@@ -349,7 +381,7 @@ export function Productivity(props: Props) {
             Reminders
           </button>
           <button
-            style={buttonStyle}
+            style={tabStyle(tab === "tasks")}
             role="tab"
             aria-selected={tab === "tasks"}
             onClick={() => setTab("tasks")}
@@ -395,10 +427,35 @@ function ProductivityContent({
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [revision, setRevision] = useState(0);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const editorRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (draft.id) editorRef.current?.querySelector("input")?.focus();
+  }, [draft.id]);
+  const [recentlyCompleted, setRecentlyCompleted] = useState<string>();
+  const completedRef = useRef<HTMLElement>(null);
+  const completionVisible = reminders.some(
+    (r) => r.id === recentlyCompleted && r.status === "done",
+  );
+  useEffect(() => {
+    if (!completionVisible) return;
+    completedRef.current?.focus({ preventScroll: true });
+    const timer = window.setTimeout(() => setRecentlyCompleted(undefined), 1600);
+    return () => window.clearTimeout(timer);
+  }, [recentlyCompleted, completionVisible]);
+  const fresh = useArrivals(
+    (kind === "notes" ? notes : kind === "tasks" ? tasks : reminders).map((r) => r.id),
+    loaded ? transport : undefined,
+  );
   const focused = useRef(false);
   useEffect(() => {
     if (!focusId || focused.current) return;
@@ -432,6 +489,7 @@ function ProductivityContent({
           setReminders(
             z.object({ reminders: z.array(ReminderSchema) }).parse(response.body).reminders,
           );
+        setLoaded(true);
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Could not load this list.");
@@ -446,6 +504,8 @@ function ProductivityContent({
     setError("");
     try {
       await productivityCommand(transport, name, payload);
+      if (name === "reminder.complete" && "id" in payload && typeof payload.id === "string")
+        setRecentlyCompleted(payload.id);
       if (reset) setDraft(freshDraft(kind));
       setRevision((v) => v + 1);
     } catch (e) {
@@ -456,244 +516,257 @@ function ProductivityContent({
   }
   const existing = draft.id ? { id: draft.id, expectedRevision: draft.revision } : {};
   const update = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch });
-  return (
-    <>
-      <form
-        style={card}
-        onSubmit={(e) => {
-          e.preventDefault();
-          const suffix = draft.id ? "update" : "create";
-          if (kind === "notes")
-            void command(
-              `note.${suffix}`,
-              { ...existing, title: draft.title, body: draft.body },
-              true,
-            );
-          else if (kind === "tasks") {
-            const root = roots[draft.root],
-              model = models[draft.model];
-            if (!root || !model) {
-              setError("Choose an available model and shared folder.");
-              return;
-            }
-            void command(
-              `task.${suffix}`,
-              {
-                ...existing,
-                name: draft.name,
-                prompt: draft.prompt,
-                identityId: draft.identityId,
-                model,
-                nodeId: root.nodeId,
-                rootGrantId: root.grantId,
-                trigger: draft.trigger,
-                threadMode: draft.threadMode,
-                maxRunMinutes: draft.maxRunMinutes,
-              },
-              true,
-            );
-          } else
-            void command(
-              `reminder.${suffix}`,
-              {
-                ...existing,
-                text: draft.text,
-                note: draft.note,
-                trigger: kind === "todos" ? null : draft.trigger,
-              },
-              true,
-            );
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 18 }}>
-          {draft.id
-            ? "Edit"
-            : kind === "tasks"
-              ? "Create a scheduled task"
-              : kind === "notes"
-                ? "Capture a note"
-                : `Add ${kind === "todos" ? "a to-do" : "a reminder"}`}
-        </h2>
-        {kind === "notes" ? (
-          <>
-            <label>
-              Title
-              <input
-                required
-                maxLength={200}
-                style={fieldStyle}
-                value={draft.title}
-                onChange={(e) => update({ title: e.target.value })}
-              />
-            </label>
-            <label>
-              Note
-              <textarea
-                aria-label="Note"
-                required
-                rows={5}
-                style={{ ...fieldStyle, padding: 12 }}
-                value={draft.body}
-                onChange={(e) => update({ body: e.target.value })}
-              />
-            </label>
-          </>
-        ) : kind === "tasks" ? (
-          <>
-            <label>
-              Task name
-              <input
-                required
-                style={fieldStyle}
-                value={draft.name}
-                onChange={(e) => update({ name: e.target.value })}
-              />
-            </label>
-            <label>
-              Prompt
-              <textarea
-                aria-label="Prompt"
-                required
-                rows={3}
-                style={{ ...fieldStyle, padding: 12 }}
-                value={draft.prompt}
-                onChange={(e) => update({ prompt: e.target.value })}
-              />
-            </label>
-            <label>
-              Model
-              <select
-                required
-                style={fieldStyle}
-                value={draft.model}
-                onChange={(e) => update({ model: Number(e.target.value) })}
-              >
-                {models.map((m, i) => (
-                  <option key={i} value={i}>
-                    {m.label ?? m.model}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              PC and shared folder
-              <select
-                required
-                style={fieldStyle}
-                value={draft.root}
-                onChange={(e) => update({ root: Number(e.target.value) })}
-              >
-                {roots.map((r, i) => (
-                  <option key={i} value={i}>
-                    {r.hostId}: {r.path}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Each run
-              <select
-                style={fieldStyle}
-                value={draft.threadMode}
-                onChange={(e) => update({ threadMode: e.target.value as Draft["threadMode"] })}
-              >
-                <option value="new">Start a new thread</option>
-                <option value="continue">Continue the same thread</option>
-              </select>
-            </label>
-            <label>
-              Maximum minutes
-              <input
-                required
-                type="number"
-                min="1"
-                max="240"
-                style={fieldStyle}
-                value={draft.maxRunMinutes}
-                onChange={(e) => update({ maxRunMinutes: Number(e.target.value) })}
-              />
-            </label>
-          </>
-        ) : (
-          <>
-            <label>
-              {kind === "todos" ? "To-do" : "Reminder"}
-              <input
-                required
-                style={fieldStyle}
-                value={draft.text}
-                onChange={(e) => update({ text: e.target.value })}
-              />
-            </label>
-            <label>
-              Extra note (optional)
-              <textarea
-                aria-label="Extra note (optional)"
-                rows={2}
-                style={{ ...fieldStyle, padding: 12 }}
-                value={draft.note}
-                onChange={(e) => update({ note: e.target.value })}
-              />
-            </label>
-          </>
-        )}
-        {(kind === "reminders" || kind === "tasks") && (
-          <TriggerFields
-            key={`${draft.id ?? "new"}:${draft.trigger?.kind ?? "none"}`}
-            value={draft.trigger}
-            onChange={(trigger) => update({ trigger })}
-            nodes={
-              nodes.length
-                ? nodes
-                : [
-                    ...new Map(
-                      roots.map((r) => [r.nodeId, { id: r.nodeId, hostId: r.hostId }]),
-                    ).values(),
-                  ]
-            }
-            allowNone={kind !== "tasks"}
-          />
-        )}
-        {kind === "tasks" && (
+  const agenda = reminders
+    .filter((r) => (kind === "todos" ? r.trigger === null : r.trigger !== null))
+    .sort(compareReminders);
+  const editor = (
+    <form
+      ref={editorRef}
+      aria-label={draft.id ? "Edit record" : "New record"}
+      style={{
+        display: "grid",
+        gap: spacing.md,
+        paddingBlock: spacing.md,
+        borderTop: `1px solid ${material.border}`,
+        minWidth: 0,
+      }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        const suffix = draft.id ? "update" : "create";
+        if (kind === "notes")
+          void command(
+            `note.${suffix}`,
+            { ...existing, title: draft.title, body: draft.body },
+            true,
+          );
+        else if (kind === "tasks") {
+          const root = roots[draft.root],
+            model = models[draft.model];
+          if (!root || !model) {
+            setError("Choose an available model and shared folder.");
+            return;
+          }
+          void command(
+            `task.${suffix}`,
+            {
+              ...existing,
+              name: draft.name,
+              prompt: draft.prompt,
+              identityId: draft.identityId,
+              model,
+              nodeId: root.nodeId,
+              rootGrantId: root.grantId,
+              trigger: draft.trigger,
+              threadMode: draft.threadMode,
+              maxRunMinutes: draft.maxRunMinutes,
+            },
+            true,
+          );
+        } else
+          void command(
+            `reminder.${suffix}`,
+            {
+              ...existing,
+              text: draft.text,
+              note: draft.note,
+              trigger: kind === "todos" ? null : draft.trigger,
+            },
+            true,
+          );
+      }}
+    >
+      <h2 style={{ ...titleStyle, color: typography.color.muted }}>
+        {draft.id
+          ? "Edit"
+          : kind === "tasks"
+            ? "Create a scheduled task"
+            : kind === "notes"
+              ? "Capture a note"
+              : `Add ${kind === "todos" ? "a to-do" : "a reminder"}`}
+      </h2>
+      {kind === "notes" ? (
+        <>
           <label>
-            Runs as
-            <select
+            Title
+            <input
+              required
+              maxLength={200}
               style={fieldStyle}
-              disabled={draft.id !== undefined}
-              value={draft.identityId}
-              onChange={(e) => update({ identityId: e.target.value as Draft["identityId"] })}
+              value={draft.title}
+              onChange={(e) => update({ title: e.target.value })}
+            />
+          </label>
+          <label>
+            Note
+            <textarea
+              aria-label="Note"
+              required
+              rows={5}
+              style={{ ...fieldStyle, padding: 12 }}
+              value={draft.body}
+              onChange={(e) => update({ body: e.target.value })}
+            />
+          </label>
+        </>
+      ) : kind === "tasks" ? (
+        <>
+          <label>
+            Task name
+            <input
+              required
+              style={fieldStyle}
+              value={draft.name}
+              onChange={(e) => update({ name: e.target.value })}
+            />
+          </label>
+          <label>
+            Prompt
+            <textarea
+              aria-label="Prompt"
+              required
+              rows={3}
+              style={{ ...fieldStyle, padding: 12 }}
+              value={draft.prompt}
+              onChange={(e) => update({ prompt: e.target.value })}
+            />
+          </label>
+          <label>
+            Model
+            <select
+              required
+              style={fieldStyle}
+              value={draft.model}
+              onChange={(e) => update({ model: Number(e.target.value) })}
             >
-              <option value="vesper">Vesper</option>
-              <option value="jester">Jester</option>
+              {models.map((m, i) => (
+                <option key={i} value={i}>
+                  {m.label ?? m.model}
+                </option>
+              ))}
             </select>
           </label>
-        )}
-        {kind === "tasks" && !draft.id && (
-          <p style={{ margin: 0, color: typography.color.muted }}>
-            Saved paused. Review it, then Turn on when you are ready.
-          </p>
-        )}
-        <div style={row}>
-          <button disabled={busy || !transport} style={buttonStyle}>
-            {busy
-              ? "Saving..."
-              : draft.id
-                ? "Save changes"
-                : kind === "notes"
-                  ? "Save note"
-                  : kind === "tasks"
-                    ? "Create paused task"
-                    : kind === "todos"
-                      ? "Add to-do"
-                      : "Add reminder"}
+          <label>
+            PC and shared folder
+            <select
+              required
+              style={fieldStyle}
+              value={draft.root}
+              onChange={(e) => update({ root: Number(e.target.value) })}
+            >
+              {roots.map((r, i) => (
+                <option key={i} value={i}>
+                  {r.hostId}: {r.path}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Each run
+            <select
+              style={fieldStyle}
+              value={draft.threadMode}
+              onChange={(e) => update({ threadMode: e.target.value as Draft["threadMode"] })}
+            >
+              <option value="new">Start a new thread</option>
+              <option value="continue">Continue the same thread</option>
+            </select>
+          </label>
+          <label>
+            Maximum minutes
+            <input
+              required
+              type="number"
+              min="1"
+              max="240"
+              style={fieldStyle}
+              value={draft.maxRunMinutes}
+              onChange={(e) => update({ maxRunMinutes: Number(e.target.value) })}
+            />
+          </label>
+        </>
+      ) : (
+        <>
+          <label>
+            {kind === "todos" ? "To-do" : "Reminder"}
+            <input
+              required
+              style={fieldStyle}
+              value={draft.text}
+              onChange={(e) => update({ text: e.target.value })}
+            />
+          </label>
+          <label>
+            Extra note (optional)
+            <textarea
+              aria-label="Extra note (optional)"
+              rows={2}
+              style={{ ...fieldStyle, padding: 12 }}
+              value={draft.note}
+              onChange={(e) => update({ note: e.target.value })}
+            />
+          </label>
+        </>
+      )}
+      {(kind === "reminders" || kind === "tasks") && (
+        <TriggerFields
+          key={`${draft.id ?? "new"}:${draft.trigger?.kind ?? "none"}`}
+          value={draft.trigger}
+          onChange={(trigger) => update({ trigger })}
+          nodes={
+            nodes.length
+              ? nodes
+              : [
+                  ...new Map(
+                    roots.map((r) => [r.nodeId, { id: r.nodeId, hostId: r.hostId }]),
+                  ).values(),
+                ]
+          }
+          allowNone={kind !== "tasks"}
+        />
+      )}
+      {kind === "tasks" && (
+        <label>
+          Runs as
+          <select
+            style={fieldStyle}
+            disabled={draft.id !== undefined}
+            value={draft.identityId}
+            onChange={(e) => update({ identityId: e.target.value as Draft["identityId"] })}
+          >
+            <option value="vesper">Vesper</option>
+            <option value="jester">Jester</option>
+          </select>
+        </label>
+      )}
+      {kind === "tasks" && !draft.id && (
+        <p style={{ margin: 0, color: typography.color.muted }}>
+          Saved paused. Review it, then Turn on when you are ready.
+        </p>
+      )}
+      <div style={row}>
+        <button disabled={busy || !transport} style={buttonStyle}>
+          {busy
+            ? "Saving..."
+            : draft.id
+              ? "Save changes"
+              : kind === "notes"
+                ? "Save note"
+                : kind === "tasks"
+                  ? "Create paused task"
+                  : kind === "todos"
+                    ? "Add to-do"
+                    : "Add reminder"}
+        </button>
+        {draft.id && (
+          <button type="button" style={buttonStyle} onClick={() => setDraft(freshDraft(kind))}>
+            Cancel edit
           </button>
-          {draft.id && (
-            <button type="button" style={buttonStyle} onClick={() => setDraft(freshDraft(kind))}>
-              Cancel edit
-            </button>
-          )}
-        </div>
-      </form>
+        )}
+      </div>
+    </form>
+  );
+  return (
+    <>
       {error && (
         <p role="alert" style={{ color: semantic.error }}>
           {error}
@@ -710,43 +783,75 @@ function ProductivityContent({
           />
         </label>
       )}
-      <div aria-label={`${page} list`} style={{ display: "grid", gap: spacing.md }}>
+      <div aria-label={`${page} list`} style={{ display: "grid", gap: spacing.md, minWidth: 0 }}>
+        <SectionHeading>
+          {kind === "tasks" ? "Scheduled tasks" : kind === "reminders" ? "Agenda" : page}
+        </SectionHeading>
         {kind === "notes"
           ? searchNotes(notes, query).map((n) => (
-              <article key={n.id} style={card}>
-                <h2 style={{ margin: 0, fontSize: 18 }}>{n.title}</h2>
-                <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{n.body}</p>
-                <small>
+              <motion.article
+                key={n.id}
+                initial={entrance(fresh, n.id)}
+                animate={SETTLED}
+                style={{
+                  ...card,
+                  borderLeft:
+                    draft.id === n.id ? `3px solid ${identityAccent.vesper.primary}` : card.border,
+                }}
+              >
+                <h2 style={{ ...titleStyle, fontSize: typography.scale.lg }}>{n.title}</h2>
+                {draft.id !== n.id && <p style={previewStyle}>{n.body}</p>}
+                <small style={metaStyle}>
                   {n.identityId ?? "You"} · {ownerDate(n.updatedAt)}
                 </small>
-                <div style={row}>
-                  <button
-                    style={buttonStyle}
-                    onClick={() => setDraft({ ...blank(), ...n, identityId: "vesper" })}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    disabled={busy}
-                    style={buttonStyle}
-                    onClick={() =>
-                      void command("note.delete", { id: n.id, expectedRevision: n.revision })
-                    }
-                  >
-                    Delete
-                  </button>
-                </div>
-              </article>
+                {draft.id === n.id ? (
+                  editor
+                ) : (
+                  <div style={row}>
+                    <button
+                      style={buttonStyle}
+                      onClick={() => setDraft({ ...blank(), ...n, identityId: "vesper" })}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      disabled={busy}
+                      style={buttonStyle}
+                      onClick={() =>
+                        void command("note.delete", { id: n.id, expectedRevision: n.revision })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </motion.article>
             ))
           : kind === "tasks"
             ? tasks.map((t) => (
-                <article key={t.id} style={card}>
-                  <h2 style={{ margin: 0, fontSize: 18 }}>{t.name}</h2>
-                  <p style={{ margin: 0 }}>{t.prompt}</p>
-                  <small>
-                    {t.paused ? "Paused" : "On"} · {triggerLabel(t.trigger)} · {t.identityId}
+                <motion.article
+                  key={t.id}
+                  initial={entrance(fresh, t.id)}
+                  animate={SETTLED}
+                  style={card}
+                >
+                  <div style={{ ...row, justifyContent: "space-between" }}>
+                    <h2 style={titleStyle}>{t.name}</h2>
+                    <span style={{ ...metaStyle, ...row, gap: spacing.xs }}>
+                      <span aria-hidden="true">{t.paused ? "Ⅱ" : "●"}</span>
+                      {t.paused ? "Paused" : "On"}
+                    </span>
+                  </div>
+                  {t.proposedUpdate && (
+                    <strong style={{ color: semantic.warning }}>
+                      <span aria-hidden="true">◇ </span>Suggested changes
+                    </strong>
+                  )}
+                  <p style={previewStyle}>{t.prompt}</p>
+                  <small style={metaStyle}>
+                    {triggerLabel(t.trigger)} · {t.identityId}
                   </small>
-                  <small>
+                  <small style={metaStyle}>
                     {t.model.model} ·{" "}
                     {roots.find((r) => r.grantId === t.rootGrantId)?.path ?? t.rootGrantId} ·{" "}
                     {t.maxRunMinutes} minute limit
@@ -831,104 +936,215 @@ function ProductivityContent({
                     revision={revision}
                     onOpenThread={onOpenThread}
                   />
-                </article>
+                </motion.article>
               ))
-            : reminders
-                .filter((r) => (kind === "todos" ? r.trigger === null : r.trigger !== null))
-                .map((r) => (
-                  <article key={r.id} style={card}>
-                    <strong
-                      style={{ textDecoration: r.status === "done" ? "line-through" : undefined }}
+            : agenda.map((r, index) => {
+                const dueLabel = reminderDueLabel(r, now);
+                const dueAt = reminderDueAt(r);
+                const quiet = r.status === "done" || r.status === "snoozed";
+                const urgent =
+                  dueLabel === "Overdue" || dueLabel === "Due now" || dueLabel === "Due soon";
+                const acknowledged = r.status === "done" && r.id === recentlyCompleted;
+                return (
+                  <Fragment key={r.id}>
+                    {r.status === "done" && agenda[index - 1]?.status !== "done" && (
+                      <SectionHeading>Done</SectionHeading>
+                    )}
+                    <motion.article
+                      key={r.id}
+                      ref={acknowledged ? completedRef : undefined}
+                      tabIndex={-1}
+                      initial={entrance(fresh, r.id)}
+                      animate={SETTLED}
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: spacing.md,
+                        minWidth: 0,
+                        padding: kind === "todos" ? spacing.md : spacing.lg,
+                        border: `1px ${r.status === "snoozed" ? "dashed" : "solid"} ${acknowledged ? semantic.success : material.border}`,
+                        borderRadius: corner.md,
+                        background: acknowledged
+                          ? material.fillElevated
+                          : quiet
+                            ? "transparent"
+                            : material.fill,
+                      }}
                     >
-                      {r.text}
-                    </strong>
-                    {r.note && <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{r.note}</p>}
-                    <small>
-                      {r.status} ·{" "}
-                      {r.snoozedUntilPcId
-                        ? `Next time at ${nodes.find((n) => n.id === r.snoozedUntilPcId)?.hostId ?? r.snoozedUntilPcId}`
-                        : r.status === "snoozed" && r.nextDueAt
-                          ? ownerDate(r.nextDueAt)
-                          : triggerLabel(r.trigger)}{" "}
-                      · {r.identityId ?? "You"}
-                    </small>
-                    <div style={row}>
-                      {r.status !== "done" && (
-                        <>
+                      {kind !== "todos" && (
+                        <div
+                          style={{
+                            flex: "0 1 7rem",
+                            display: "grid",
+                            alignContent: "start",
+                            gap: spacing.xs,
+                          }}
+                        >
+                          <strong
+                            style={{
+                              color: urgent ? semantic.warning : typography.color.primary,
+                              fontSize: typography.scale.sm,
+                            }}
+                          >
+                            <span aria-hidden="true">
+                              {r.status === "done"
+                                ? "✓"
+                                : r.status === "snoozed"
+                                  ? "◷"
+                                  : urgent
+                                    ? "!"
+                                    : "○"}{" "}
+                            </span>
+                            {dueLabel === "snoozed"
+                              ? "Snoozed"
+                              : dueLabel === "done"
+                                ? "Done"
+                                : dueLabel}
+                          </strong>
+                          {dueAt && !r.snoozedUntilPcId && r.status !== "done" && (
+                            <time
+                              dateTime={dueAt}
+                              style={{ ...metaStyle, fontVariantNumeric: "tabular-nums" }}
+                            >
+                              {r.status === "due" && Date.parse(dueAt) > now && "Next due: "}
+                              {ownerDate(dueAt)}
+                            </time>
+                          )}
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: spacing.sm,
+                          flex: "1 1 14rem",
+                          minWidth: 0,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        <div style={{ display: "flex", gap: spacing.sm, alignItems: "baseline" }}>
+                          {kind === "todos" && (
+                            <span aria-hidden="true">{r.status === "done" ? "☑" : "□"}</span>
+                          )}
+                          <strong
+                            style={{
+                              ...titleStyle,
+                              minWidth: 0,
+                              color:
+                                quiet && !acknowledged
+                                  ? typography.color.muted
+                                  : typography.color.primary,
+                            }}
+                          >
+                            {r.text}
+                          </strong>
+                        </div>
+                        {acknowledged && (
+                          <motion.p
+                            key="completion"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            role="status"
+                            style={{ margin: 0, color: semantic.success }}
+                          >
+                            ✓ Completed
+                          </motion.p>
+                        )}
+                        {r.note && <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{r.note}</p>}
+                        <small style={metaStyle}>
+                          {r.status} ·{" "}
+                          {r.snoozedUntilPcId
+                            ? `Next time at ${nodes.find((n) => n.id === r.snoozedUntilPcId)?.hostId ?? r.snoozedUntilPcId}`
+                            : r.status === "snoozed" && r.nextDueAt
+                              ? ownerDate(r.nextDueAt)
+                              : triggerLabel(r.trigger)}{" "}
+                          · {r.identityId ?? "You"}
+                        </small>
+                        <div style={row}>
+                          {r.status !== "done" && (
+                            <>
+                              <button
+                                disabled={busy}
+                                style={buttonStyle}
+                                onClick={() =>
+                                  void command("reminder.complete", {
+                                    id: r.id,
+                                    expectedRevision: r.revision,
+                                  })
+                                }
+                              >
+                                Done
+                              </button>
+                              {kind !== "todos" && (
+                                <>
+                                  {" "}
+                                  <button
+                                    disabled={busy}
+                                    style={buttonStyle}
+                                    onClick={() =>
+                                      void command("reminder.snooze", {
+                                        id: r.id,
+                                        expectedRevision: r.revision,
+                                        until: new Date(Date.now() + 3600000).toISOString(),
+                                      })
+                                    }
+                                  >
+                                    Snooze 1 hour
+                                  </button>
+                                  <SnoozeChoices
+                                    disabled={busy}
+                                    nodes={nodes}
+                                    onSnooze={(until) =>
+                                      void command("reminder.snooze", {
+                                        id: r.id,
+                                        expectedRevision: r.revision,
+                                        until,
+                                      })
+                                    }
+                                    onPc={(atPcNodeId) =>
+                                      void command("reminder.snooze", {
+                                        id: r.id,
+                                        expectedRevision: r.revision,
+                                        atPcNodeId,
+                                      })
+                                    }
+                                  />
+                                </>
+                              )}
+                            </>
+                          )}
+                          <button
+                            style={buttonStyle}
+                            onClick={() =>
+                              setDraft({
+                                ...blank(),
+                                ...r,
+                                identityId: "vesper",
+                                note: r.note ?? "",
+                              })
+                            }
+                          >
+                            Edit
+                          </button>
                           <button
                             disabled={busy}
                             style={buttonStyle}
                             onClick={() =>
-                              void command("reminder.complete", {
+                              void command("reminder.delete", {
                                 id: r.id,
                                 expectedRevision: r.revision,
                               })
                             }
                           >
-                            Done
+                            Delete
                           </button>
-                          {kind !== "todos" && (
-                            <>
-                              {" "}
-                              <button
-                                disabled={busy}
-                                style={buttonStyle}
-                                onClick={() =>
-                                  void command("reminder.snooze", {
-                                    id: r.id,
-                                    expectedRevision: r.revision,
-                                    until: new Date(Date.now() + 3600000).toISOString(),
-                                  })
-                                }
-                              >
-                                Snooze 1 hour
-                              </button>
-                              <SnoozeChoices
-                                disabled={busy}
-                                nodes={nodes}
-                                onSnooze={(until) =>
-                                  void command("reminder.snooze", {
-                                    id: r.id,
-                                    expectedRevision: r.revision,
-                                    until,
-                                  })
-                                }
-                                onPc={(atPcNodeId) =>
-                                  void command("reminder.snooze", {
-                                    id: r.id,
-                                    expectedRevision: r.revision,
-                                    atPcNodeId,
-                                  })
-                                }
-                              />
-                            </>
-                          )}
-                        </>
-                      )}
-                      <button
-                        style={buttonStyle}
-                        onClick={() =>
-                          setDraft({ ...blank(), ...r, identityId: "vesper", note: r.note ?? "" })
-                        }
-                      >
-                        Edit
-                      </button>
-                      <button
-                        disabled={busy}
-                        style={buttonStyle}
-                        onClick={() =>
-                          void command("reminder.delete", {
-                            id: r.id,
-                            expectedRevision: r.revision,
-                          })
-                        }
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                        </div>
+                      </div>
+                    </motion.article>
+                  </Fragment>
+                );
+              })}
       </div>
+      {!(kind === "notes" && searchNotes(notes, query).some((n) => n.id === draft.id)) && editor}
     </>
   );
 }
@@ -944,13 +1160,21 @@ function RunHistory({
   onOpenThread: ((id: string) => void) | undefined;
 }) {
   const [runs, setRuns] = useState<z.infer<typeof TaskRunSchema>[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
+  const fresh = useArrivals(
+    runs.map((r) => r.id),
+    loaded ? taskId : undefined,
+  );
   useEffect(() => {
     let cancelled = false;
     void transport
       ?.request("GET", `/tasks/${taskId}/runs`)
       .then((r) => {
-        if (!cancelled) setRuns(z.object({ runs: z.array(TaskRunSchema) }).parse(r.body).runs);
+        if (!cancelled) {
+          setRuns(z.object({ runs: z.array(TaskRunSchema) }).parse(r.body).runs);
+          setLoaded(true);
+        }
       })
       .catch(() => {
         if (!cancelled) setError("Could not load run history.");
@@ -965,17 +1189,43 @@ function RunHistory({
       {error && <p role="alert">{error}</p>}
       {runs.length === 0 && <p>No runs yet.</p>}
       {runs.map((r) => (
-        <div key={r.id} style={{ ...card, marginTop: 8 }}>
-          <strong>{r.status.replaceAll("_", " ")}</strong>
-          <time>{ownerDate(r.startedAt)}</time>
-          {r.reason && <p>{r.reason}</p>}
-          {r.result && <p>{r.result}</p>}
+        <motion.article
+          key={r.id}
+          initial={entrance(fresh, r.id)}
+          animate={SETTLED}
+          style={{
+            display: "grid",
+            gap: spacing.sm,
+            paddingBlock: spacing.md,
+            borderTop: `1px solid ${material.border}`,
+            borderLeft: `2px solid ${material.highlight}`,
+            paddingLeft: spacing.md,
+            minWidth: 0,
+          }}
+        >
+          <div style={{ ...row, justifyContent: "space-between" }}>
+            <strong>
+              <span aria-hidden="true">
+                {
+                  { completed: "✓", running: "○", failed: "!", needs_you: "◇", skipped: "–" }[
+                    r.status
+                  ]
+                }{" "}
+              </span>
+              {r.status.replaceAll("_", " ")}
+            </strong>
+            <time dateTime={r.startedAt} style={metaStyle}>
+              {ownerDate(r.startedAt)}
+            </time>
+          </div>
+          {r.reason && <p style={{ margin: 0 }}>{r.reason}</p>}
+          {r.result && <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{r.result}</p>}
           {r.threadId && onOpenThread && (
             <button style={buttonStyle} onClick={() => onOpenThread(r.threadId!)}>
               Open thread
             </button>
           )}
-        </div>
+        </motion.article>
       ))}
     </details>
   );
