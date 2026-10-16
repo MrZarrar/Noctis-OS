@@ -608,6 +608,117 @@ describe("conversation service", () => {
     expect(panels.find((panel) => panel.id !== firstPanel.id)?.sourceIds).toEqual([second.body.id]);
     rmSync(directory, { recursive: true, force: true });
   });
+  it("a named panel is the same panel in later turns, so live work updates one place", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const proposal = (label: string) => ({
+      kind: "surface" as const,
+      surfaceKind: "list",
+      panelId: "readme-drafts",
+      role: "primary" as const,
+      persistence: "restorable" as const,
+      priority: 20,
+      payloadVersion: 1,
+      payload: { items: [{ id: "a", label }] },
+    });
+    const first = await send(core, "named-first");
+    const threadId = first.body.threadId as string;
+    await waitFor(() => node.jobs().length === 1, "first job");
+    const firstJob = lastTurnJob(node).assignment.jobId;
+    node.frame({
+      kind: "stream",
+      jobId: firstJob,
+      sequence: 0,
+      item: { itemId: "p", kind: "proposal", status: "completed", proposal: proposal("Drafting") },
+    });
+    await waitFor(
+      () => listSurfaceIntents(core.core.kernel.db, { threadId }).length === 1,
+      "named panel",
+    );
+    node.frame({
+      kind: "result",
+      jobId: firstJob,
+      outcome: "succeeded",
+      evidence: { model: MODEL, sessionRef: "named", itemCount: 1, stoppedReason: "completed" },
+    });
+    await waitFor(
+      async () =>
+        (await read(core, `/turns/${first.body.id as string}`)).body.status === "completed",
+      "first turn completed",
+    );
+    await send(core, "named-second", { threadId });
+    await waitFor(() => node.jobs().length === 2, "second job");
+    node.frame({
+      kind: "stream",
+      jobId: lastTurnJob(node).assignment.jobId,
+      sequence: 0,
+      item: { itemId: "p", kind: "proposal", status: "completed", proposal: proposal("Ready") },
+    });
+    await waitFor(
+      () =>
+        (
+          listSurfaceIntents(core.core.kernel.db, { threadId })[0]?.payload as {
+            items: Array<{ label: string }>;
+          }
+        ).items[0]?.label === "Ready",
+      "named panel updated",
+    );
+    expect(listSurfaceIntents(core.core.kernel.db, { threadId })).toHaveLength(1);
+    rmSync(directory, { recursive: true, force: true });
+  });
+  it("a visual panel shows an HTML or SVG file from the turn's shared folder and nothing else", async () => {
+    const logs: string[] = [];
+    const core = await startTestCore(logs);
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const sent = await send(core, "visual");
+    const threadId = sent.body.threadId as string;
+    await waitFor(() => node.jobs().length === 1, "visual job");
+    const jobId = lastTurnJob(node).assignment.jobId;
+    const visual = (path: string) => ({
+      kind: "surface" as const,
+      surfaceKind: "visual",
+      role: "primary" as const,
+      persistence: "restorable" as const,
+      priority: 20,
+      payloadVersion: 1,
+      payload: { title: "Rate limiter", path },
+    });
+    for (const [index, path] of [
+      join(tmpdir(), "elsewhere.html"),
+      join(directory, "photo.png"),
+      join(directory, "figures", "limiter.html"),
+    ].entries()) {
+      node.frame({
+        kind: "stream",
+        jobId,
+        sequence: index,
+        item: {
+          itemId: `v${String(index)}`,
+          kind: "proposal",
+          status: "completed",
+          proposal: visual(path),
+        },
+      });
+    }
+    await waitFor(
+      () => listSurfaceIntents(core.core.kernel.db, { threadId }).length === 1,
+      "visual panel",
+    );
+    expect(listSurfaceIntents(core.core.kernel.db, { threadId })[0]).toMatchObject({
+      kind: "visual",
+      payload: {
+        title: "Rate limiter",
+        source: { from: "file", relativePath: "figures/limiter.html" },
+      },
+    });
+    expect(logs.some((line) => line.includes("visual_outside_shared_folders"))).toBe(true);
+    expect(logs.some((line) => line.includes("visual_must_be_html_or_svg"))).toBe(true);
+    rmSync(directory, { recursive: true, force: true });
+  });
   it("a free-chat prompt uses the free thread; an Objective prompt uses that Objective's thread, created once", async () => {
     const core = await startTestCore();
     const objectiveId = await activeObjective(core, "threads");

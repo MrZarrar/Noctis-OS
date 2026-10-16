@@ -36,7 +36,7 @@ describe("identityCard", () => {
       expect(card).toContain(`noctis_propose_${kind}`);
     expect(card).toContain("paused");
   });
-  it("tells Vesper to show drafts in a panel and to go and get what is missing", () => {
+  it("tells Vesper to show its work live in visual panels and to go and get what is missing", () => {
     const card = identityCard({
       identityId: "vesper",
       runtime: "claude",
@@ -45,6 +45,9 @@ describe("identityCard", () => {
     });
 
     expect(card).toContain("noctis_propose_surface");
+    expect(card).toContain("panelId");
+    expect(card).toContain("mermaid");
+    expect(card).toContain("anatomy");
     expect(card).toContain("screenshot");
     expect(card).not.toBeUndefined();
     expect(

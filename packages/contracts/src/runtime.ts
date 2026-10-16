@@ -239,6 +239,14 @@ export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("surface"),
       surfaceKind: z.string().trim().min(1).max(64),
+      /**
+       * The agent's own name for a panel it keeps updating. Without one a
+       * panel belongs to the turn that proposed it, and the next turn's is new.
+       */
+      panelId: z
+        .string()
+        .regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
+        .optional(),
       role: SurfaceRoleSchema,
       persistence: SurfacePersistenceSchema,
       priority: z.int().min(-1000).max(1000),

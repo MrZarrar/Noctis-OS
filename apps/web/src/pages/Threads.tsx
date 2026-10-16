@@ -15,6 +15,7 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "../conversation/Markdown.js";
+import { MarkdownFiles } from "../conversation/MarkdownFiles.js";
 import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
 import type {
   ConversationState,
@@ -562,7 +563,7 @@ export function Threads({
             ? `${displayName} · free chat`
             : `${displayName} · Objective thread`;
 
-  return (
+  const content = (
     <Page
       title="Threads"
       // Panels float over the page; only a focused one takes a column beside the thread.
@@ -914,6 +915,7 @@ export function Threads({
       )}
     </Page>
   );
+  return <MarkdownFiles.Provider value={panels.imageUrl}>{content}</MarkdownFiles.Provider>;
 }
 
 function bubbleStyle(own: boolean): MotionStyle {

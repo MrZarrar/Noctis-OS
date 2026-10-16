@@ -1999,6 +1999,75 @@ async function handleFiles(
 }
 
 /**
+ * What a visual page may do: run its own scripts, styles, images and fonts, and
+ * nothing else. The sandbox without `allow-same-origin` gives it an opaque
+ * origin, so it cannot read the session or call the core, `default-src 'none'`
+ * leaves it no network, and only a Noctis page may frame it.
+ */
+const VISUAL_POLICY =
+  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' blob:; " +
+  "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; " +
+  "worker-src blob:; frame-ancestors 'self'";
+const VISUAL_TYPES: Readonly<Record<string, string>> = {
+  html: "text/html; charset=utf-8",
+  htm: "text/html; charset=utf-8",
+  svg: "image/svg+xml",
+};
+
+/**
+ * `GET /visuals/content`: an HTML or SVG page an agent built, from a shared
+ * folder, served to run inside a visual panel's iframe. The one route that
+ * serves something that runs, and only under the policy above.
+ */
+async function handleVisual(
+  deps: ApiDeps,
+  res: ServerResponse,
+  url: URL,
+  correlationId: string,
+): Promise<void> {
+  const at = fileLocation(url);
+  const extension = at?.relativePath.split(".").at(-1)?.toLowerCase() ?? "";
+  const mediaType = Object.hasOwn(VISUAL_TYPES, extension) ? VISUAL_TYPES[extension] : undefined;
+
+  if (at === undefined || mediaType === undefined) {
+    send(
+      res,
+      400,
+      errorBody("invalid_request", "Name an .html or .svg file in a shared folder"),
+      correlationId,
+    );
+    return;
+  }
+
+  const context: CommandContext = { correlationId, actorType: "user", actorId: "local" };
+  let file;
+
+  try {
+    file = await deps.files.open(context, { ...at, offset: 0, length: MAX_TEXT_PREVIEW_BYTES });
+  } catch (error) {
+    sendUnavailable(res, error, correlationId);
+    return;
+  }
+
+  if (file.sizeBytes > MAX_TEXT_PREVIEW_BYTES) {
+    file.body.destroy();
+    send(res, 413, errorBody("invalid_request", "A visual page is at most 2 MB"), correlationId);
+    return;
+  }
+
+  res.writeHead(200, {
+    "content-type": mediaType,
+    "content-length": file.length,
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": VISUAL_POLICY,
+    "x-correlation-id": correlationId,
+  });
+  res.once("close", () => file.body.destroy());
+  file.body.pipe(res);
+}
+
+/**
  * `GET /sessions?node=&root=`: the agent sessions a shared folder has, asked
  * of the node that holds it, for the owner to pick one up and continue it.
  */
@@ -2690,6 +2759,11 @@ export async function handleRequest(
       (segments[1] === "list" || segments[1] === "content")
     ) {
       await handleFiles(deps, segments[1], req, res, url, correlationId);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/visuals/content") {
+      await handleVisual(deps, res, url, correlationId);
       return;
     }
 

@@ -17,6 +17,7 @@ import {
   TimelinePayloadSchema,
   VerificationPayloadSchema,
   VaultRecallPayloadSchema,
+  VisualPayloadSchema,
 } from "@noctis/contracts";
 import type { z } from "zod";
 
@@ -67,6 +68,12 @@ export const REGISTRY = {
     schema: DocumentPayloadSchema,
     sizes: ALL_SIZES,
     title: "Document",
+  },
+  visual: {
+    payloadVersion: 1,
+    schema: VisualPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Visual",
   },
   timeline: {
     payloadVersion: 1,
@@ -263,6 +270,7 @@ export function resolveSurface(
         : kind === "media" ||
             kind === "live_brief" ||
             kind === "document" ||
+            kind === "visual" ||
             kind === "timeline" ||
             kind === "verification"
           ? (parsed.data as MediaPayload | LiveBriefPayload).title

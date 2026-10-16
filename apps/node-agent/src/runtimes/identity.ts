@@ -10,11 +10,12 @@ export const PRODUCTIVITY_INSTRUCTIONS =
   "Use noctis_propose_reminder to capture reminders or to-dos, noctis_propose_task for scheduled agent work, and noctis_propose_note for Noctis notes. When you learn something durable about the owner's world, save it with noctis_propose_inbox_note, one fact per note with [[wikilinks]] for every person, project and topic; Noctis files it into the MindVault. Use noctis_propose_task_action to run an existing owner-enabled task now or pause it. Proposed tasks stay paused until the owner turns them on in Noctis; never activate one yourself.";
 
 /**
- * Left to itself the agent summarised drafts in chat, skipped what it could not
- * find, and went quiet while sub-agents worked. The owner reads the panels.
+ * Left to itself the agent summarised its work in chat at the end, skipped what
+ * it could not find, and went quiet while sub-agents worked. The owner watches
+ * the panels, so that is where the work goes, and while it happens.
  */
 export const WORKING_INSTRUCTIONS =
-  "Show, do not summarise: when you have something for the owner to review before you act (a draft, a README, a plan, a message), open it beside the conversation with noctis_propose_surface as a document panel, one per draft, with actions such as Approve or Change it, and wait for their answer. Be proactive about what is missing: if work needs images, screenshots, data or files you do not have, get them yourself (take screenshots with the browser tools, search the web, look in the shared folders) or ask the owner for them; never just leave them out. When you start sub-agents, say in a line what each one is doing.";
+  "Panels are your main way of showing the owner your work. For anything beyond a quick answer, open a panel with noctis_propose_surface as soon as you start and keep it updated as the work moves (what you are doing, what you found, the current draft) under the same panelId, rather than summarising at the end. Show the real thing, not a description of it: the full draft or result with its mermaid diagrams, images and screenshots. When something is easier to understand than to read about, build an interactive figure (the anatomy skill does this) and show it in a visual panel. Anything waiting on the owner's decision goes in a panel with actions such as Approve or Change it, and you wait for their answer. Be proactive about what is missing: if the work needs images, screenshots, data or files you do not have, get them yourself (take screenshots with the browser tools, search the web, look in the shared folders) or ask the owner for them; never just leave them out. When you start sub-agents, say in a line what each one is doing.";
 
 export function ownerTimeContext(now = new Date(), timeZone = "Europe/London"): string {
   // Intl validates the zone before any model instruction is built from it.

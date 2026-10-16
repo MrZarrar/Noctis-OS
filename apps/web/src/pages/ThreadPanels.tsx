@@ -7,6 +7,11 @@ import {
   type SurfaceOwner,
 } from "@noctis/contracts";
 import type { ConversationState } from "../conversation/useConversation.js";
+import {
+  MarkdownFiles,
+  markdownImageUrl,
+  type MarkdownImageUrl,
+} from "../conversation/MarkdownFiles.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { Workbench } from "../workbench/Workbench.js";
@@ -21,6 +26,7 @@ export interface ThreadPanelsState {
   sources: readonly ThreadPanelSource[];
   hasPanels: boolean;
   handoffs: SurfaceContext;
+  imageUrl?: MarkdownImageUrl;
 }
 
 export async function sendPanelChoice(
@@ -109,6 +115,7 @@ export function useThreadPanels(
 
   return {
     sources,
+    imageUrl: (path) => markdownImageUrl(path, conversation.roots, transport),
     hasPanels: sources.some(
       (source) =>
         (source.composition.plan?.slots.length ?? 0) +
@@ -142,6 +149,10 @@ export function useThreadPanels(
           : transport?.contentUrl?.(
               `/files/content?${filesQuery(source, source.relativePath)}&revision=${encodeURIComponent(revision ?? "")}`,
             ),
+      visualUrl: (source, revision) =>
+        transport?.contentUrl?.(
+          `/visuals/content?${filesQuery(source, source.relativePath)}&revision=${encodeURIComponent(revision ?? "")}`,
+        ),
       onConfirm: (id, typed) => {
         void conversation.confirm(id, typed);
       },
@@ -205,8 +216,8 @@ export function ThreadPanels({
   mobile: boolean;
 }): JSX.Element | null {
   if (!panels.hasPanels) return null;
-  if (mobile)
-    return (
+  if (mobile) {
+    const content = (
       <aside aria-label="Panel attention">
         {panels.sources
           .filter((source) =>
@@ -234,7 +245,9 @@ export function ThreadPanels({
           ))}
       </aside>
     );
-  return (
+    return <MarkdownFiles.Provider value={panels.imageUrl}>{content}</MarkdownFiles.Provider>;
+  }
+  const content = (
     <aside
       aria-label="Thread panels"
       className="thread-panels"
@@ -258,4 +271,5 @@ export function ThreadPanels({
         ))}
     </aside>
   );
+  return <MarkdownFiles.Provider value={panels.imageUrl}>{content}</MarkdownFiles.Provider>;
 }

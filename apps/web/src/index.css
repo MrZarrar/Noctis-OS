@@ -230,6 +230,24 @@ dialog::backdrop {
   background: none;
 }
 
+.noctis-md .noctis-md-diagram {
+  max-width: 100%;
+  margin: 0.5em 0;
+  overflow-x: auto;
+  white-space: normal;
+}
+
+.noctis-md .noctis-md-diagram img {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
+.noctis-md .noctis-md-diagram-status {
+  color: #9b98ae;
+  font-size: 0.88em;
+}
+
 .noctis-md a {
   color: #a99cf8;
 }

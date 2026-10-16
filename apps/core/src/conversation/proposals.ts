@@ -3,10 +3,14 @@ import {
   PANEL_PROPOSABLE_KINDS,
   SURFACE_PAYLOAD_SCHEMAS,
   RuntimeProposalSchema,
+  VisualProposalSchema,
 } from "@noctis/contracts";
+import { locateInRoots } from "@noctis/domain";
 
 import type { CommandContext, Kernel } from "../kernel.js";
+import { listRuntimeRoots } from "../nodes/registry.js";
 import { createObjective, getObjective } from "../objectives/service.js";
+import { stableSourceId } from "../objectives/source-ids.js";
 import { upsertSurfaceIntent } from "../objectives/surface-intents.js";
 import { createReminder, createNote } from "../productivity/service.js";
 import {
@@ -226,7 +230,54 @@ export function applyProposal(
     return;
   }
 
-  const payload = contract.schema.safeParse(proposal.payload);
+  let raw = proposal.payload;
+
+  if (proposal.surfaceKind === "visual") {
+    const asked = VisualProposalSchema.safeParse(proposal.payload);
+
+    if (!asked.success) {
+      skip("invalid_surface_payload", { surfaceKind: "visual" });
+      return;
+    }
+
+    // A page that runs is only ever one the agent wrote, read from a folder the
+    // owner shared on the PC the turn ran on.
+    if (!/\.(?:html?|svg)$/i.test(asked.data.path)) {
+      skip("visual_must_be_html_or_svg");
+      return;
+    }
+
+    const located =
+      turn.nodeId === undefined
+        ? undefined
+        : locateInRoots(
+            asked.data.path,
+            turn.nodeId,
+            listRuntimeRoots(kernel.db, () => true, kernel.clock.now()),
+          );
+
+    if (
+      turn.nodeId === undefined ||
+      located === undefined ||
+      located.relativePath.split(/[\\/]/).includes("..")
+    ) {
+      skip("visual_outside_shared_folders");
+      return;
+    }
+
+    raw = {
+      title: asked.data.title,
+      source: {
+        from: "file",
+        nodeId: turn.nodeId,
+        grantId: located.root.grantId,
+        relativePath: located.relativePath,
+      },
+      ...(asked.data.actions === undefined ? {} : { actions: asked.data.actions }),
+    };
+  }
+
+  const payload = contract.schema.safeParse(raw);
 
   if (!payload.success) {
     skip("invalid_surface_payload", { surfaceKind: proposal.surfaceKind });
@@ -262,7 +313,11 @@ export function applyProposal(
     priority: proposal.priority,
     // The runtime never says how big: the smallest size, and composition decides.
     minSize: "compact",
-    sourceIds: [turn.id],
+    sourceIds: [
+      proposal.panelId === undefined
+        ? turn.id
+        : stableSourceId("panel", objectiveId ?? turn.threadId, proposal.panelId),
+    ],
     artifactIds: [],
     payloadVersion: proposal.payloadVersion,
     payload: payload.data,

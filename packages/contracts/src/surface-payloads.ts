@@ -137,6 +137,30 @@ export const DocumentPayloadSchema = z
   })
   .strict();
 
+/**
+ * What an agent proposes for a visual: a page it built, by the path it wrote it
+ * to. The core finds the shared folder that holds it, so the agent never names
+ * a node or a grant.
+ */
+export const VisualProposalSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    path: z.string().trim().min(1).max(1024),
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
+/** An interactive page, run sandboxed with no network, from a file in a shared folder. */
+export const VisualPayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    source: FileSourceSchema,
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
+export type VisualPayload = z.infer<typeof VisualPayloadSchema>;
+
 export const TimelinePayloadSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
@@ -189,6 +213,7 @@ export const PANEL_PROPOSABLE_KINDS: ReadonlySet<string> = new Set([
   "detail",
   "evidence",
   "attention",
+  "visual",
 ]);
 
 /** What an agent is doing right now. Built by the core from the job, so it never carries the prompt. */
@@ -286,6 +311,7 @@ export const SURFACE_PAYLOAD_SCHEMAS: Record<
   evidence: { payloadVersion: 1, schema: EvidencePayloadSchema },
   attention: { payloadVersion: 1, schema: AttentionPayloadSchema },
   media: { payloadVersion: 1, schema: MediaPayloadSchema },
+  visual: { payloadVersion: 1, schema: VisualPayloadSchema },
   live_brief: { payloadVersion: 1, schema: LiveBriefPayloadSchema },
   approval: { payloadVersion: 1, schema: ApprovalPayloadSchema },
   artifact: { payloadVersion: 1, schema: ArtifactPayloadSchema },

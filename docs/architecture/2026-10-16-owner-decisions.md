@@ -159,3 +159,45 @@ sub-agents still running.
 
 **Open:** a background task that never ends (a dev server left running) keeps the turn Working until the owner sends
 a message or presses Cancel.
+
+## 8. Panels as the main way work is shown
+
+The owner's worry: the earlier panel instruction only covered reviews. Vesper should always show its work in
+panels, live while it happens rather than at the end, and a panel should be the real visual thing (diagrams,
+images, interactive figures), not the same text summary. The owner also asked for the Anatomy skill
+(github.com/wheresryan22/anatomy), which explains ideas as interactive isometric figures.
+
+**Decided (owner, from three options each):**
+
+- **Interactive figures run in a sandboxed panel.** A new `visual` panel kind shows an `.html` or `.svg` page the
+  agent built. The core serves it from `/visuals/content` with `sandbox allow-scripts` and `default-src 'none'`,
+  and the panel frames it with `sandbox="allow-scripts"`. Scripts run, but the page has an opaque origin and no
+  network, so it cannot reach the session, the core or the owner's files. Rejected: static SVG only (nothing
+  moves) and a link to a new tab (not in the panel).
+- **The agent can keep updating one panel across turns.** A proposal can carry a `panelId`. The same kind and
+  `panelId` in a thread is the same panel, so live work updates one place. Without one, each turn still gets its
+  own panel.
+- **Anatomy is installed for Claude Code and Codex,** cloned at a pinned commit and reviewed before it was
+  enabled, not through its npx installer.
+
+**Built:**
+
+- Vesper's card and the panel tool now say, for any work beyond a quick answer: open a panel when you start, keep
+  it updated under one `panelId`, show the full result with its diagrams, images and screenshots, build
+  interactive figures (Anatomy) as visual panels, and put decisions in panels with actions.
+- The agent names a visual by its absolute path. The core finds the shared folder holding it on the turn's PC and
+  refuses a path outside every shared folder, a `..` path, or anything but `.html`, `.htm` and `.svg`. A page is at
+  most 2 MB.
+- Mermaid diagrams draw in messages and document panels, as a `blob:` image so the page CSP stays as it is
+  (Codex built this, pinned at mermaid 12.1.0). Mermaid's measuring step logs CSP errors in the console while it
+  draws; the diagram itself is right. 12.1.0 carries a low KaTeX advisory that 12.2.0 fixes, but 12.2.0 is under
+  two weeks old.
+- Images in messages and document panels load when given by absolute path inside a shared folder (Codex built
+  this). Anything else shows its alt text.
+- Anatomy was installed with its gallery publishing removed (`scripts/publish.mjs`, `scripts/session.mjs`,
+  `scripts/fingerprint.mjs`, their tests, `references/publish.md`, `.github/`), after a Codex security review:
+  publishing read Claude session logs and could force-push to GitHub. Nothing else reaches the network, and its
+  figures are self-contained pages of 130 KB to 1.5 MB. The source commit is in `.source-commit` in the skill
+  folder.
+- Checked in Chrome under the real policies: a Mermaid diagram draws under the page CSP, and an Anatomy figure
+  runs inside the sandboxed visual frame.

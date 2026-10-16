@@ -370,3 +370,28 @@ describe("live briefs", () => {
     expect(markup).toContain('dateTime="2026-09-01T11:56:00.000Z"');
   });
 });
+
+describe("visual panels", () => {
+  const payload = {
+    title: "Rate limiter",
+    source: { from: "file", nodeId: "node-1", grantId: "grant-1", relativePath: "figs/a.html" },
+  };
+
+  it("runs the agent's page in a sandboxed frame that cannot reach Noctis", () => {
+    const resolved = resolveSurface("visual", 1, payload, "standard");
+    const markup = renderToStaticMarkup(
+      createElement(
+        "div",
+        null,
+        renderSurface(resolved, {
+          visualUrl: (source) => `/visuals/content?path=${source.relativePath}`,
+        }),
+      ),
+    );
+
+    expect(resolved).toMatchObject({ status: "ok", title: "Rate limiter" });
+    expect(markup).toMatch(/<iframe[^>]*sandbox="allow-scripts"/);
+    expect(markup).not.toContain("allow-same-origin");
+    expect(markup).toContain('src="/visuals/content?path=figs/a.html"');
+  });
+});

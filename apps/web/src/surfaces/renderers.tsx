@@ -28,7 +28,9 @@ import type {
   PanelAction,
   SurfaceOwner,
   PagePanelPayload,
+  VisualPayload,
 } from "@noctis/contracts";
+import { corner, depth, typography } from "@noctis/ui";
 import { PANEL_PROPOSABLE_KINDS } from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
@@ -59,6 +61,8 @@ export interface SurfaceContext {
   panelActionsDisabled?: boolean;
   panelActionsError?: string;
   mediaUrl?: (source: MediaSource, revision?: string) => string | undefined;
+  /** Where a visual panel's page is served to run, sandboxed. */
+  visualUrl?: (source: VisualPayload["source"], revision?: string) => string | undefined;
   onOpenInVault?: (evidence: RecallEvidenceView) => void;
   /** Phase 8 handoffs. Each one crosses a boundary the Surface may not cross itself. */
   onConfirm?: (approvalId: string, typedConfirmation?: string) => void;
@@ -125,6 +129,33 @@ const RENDERERS: Record<
       />
     </div>
   ),
+  visual: (payload: VisualPayload, context: SurfaceContext) => {
+    const url = context.visualUrl?.(payload.source, context.contentRevision);
+
+    // `allow-scripts` alone: without `allow-same-origin` the page gets an
+    // opaque origin, so it cannot read the session cookie or call the core.
+    return url === undefined ? (
+      <p style={{ margin: 0, color: typography.color.muted }}>
+        {payload.source.relativePath} can be opened from Files.
+      </p>
+    ) : (
+      <iframe
+        title={payload.title}
+        src={url}
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        style={{
+          display: "block",
+          width: "100%",
+          height: "min(640px, 65dvh)",
+          border: 0,
+          borderRadius: corner.sm,
+          background: depth.layers[0],
+        }}
+      />
+    );
+  },
   timeline: (payload: Parameters<typeof TimelineSurface>[0]) => <TimelineSurface {...payload} />,
   verification: (payload: Parameters<typeof VerificationSurface>[0]) => (
     <VerificationSurface {...payload} />

@@ -6,7 +6,6 @@ import type {
 } from "@noctis/contracts";
 import { ApprovalPayloadSchema, RuntimeItemSchema } from "@noctis/contracts";
 import { isWindowsPath, locateInRoots, viewerKind } from "@noctis/domain";
-import { createHash } from "node:crypto";
 import { getTurn } from "../conversation/service.js";
 import { recallForPrompt } from "../conversation/recall-context.js";
 import { listRuntimeRoots } from "../nodes/registry.js";
@@ -18,6 +17,7 @@ import { recallFor } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
 import { placeLiveBrief } from "./live-briefs.js";
 import { getObjective } from "./service.js";
+import { stableSourceId } from "./source-ids.js";
 import { upsertSurfaceIntent } from "./surface-intents.js";
 
 /**
@@ -282,17 +282,6 @@ const NEEDS_A_PERSON: ReadonlySet<string> = new Set([
   "require_typed_confirmation",
 ]);
 
-function fileSourceId(threadId: string, nodeId: string, grantId: string, path: string): string {
-  const bytes = createHash("sha256")
-    .update(JSON.stringify([threadId, nodeId, grantId, path]))
-    .digest()
-    .subarray(0, 16);
-  bytes[6] = (bytes[6]! & 15) | 128;
-  bytes[8] = (bytes[8]! & 63) | 128;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 function placeWrittenFiles(
   deps: ProposedSurfaceDeps,
   event: OrchestrationEvent,
@@ -315,7 +304,7 @@ function placeWrittenFiles(
       grantId: located.root.grantId,
       relativePath: located.relativePath,
     };
-    const sourceId = fileSourceId(
+    const sourceId = stableSourceId(
       turn.threadId,
       turn.nodeId,
       source.grantId,
