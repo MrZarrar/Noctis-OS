@@ -9,6 +9,13 @@ export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 export const PRODUCTIVITY_INSTRUCTIONS =
   "Use noctis_propose_reminder to capture reminders or to-dos, noctis_propose_task for scheduled agent work, and noctis_propose_note for Noctis notes. When you learn something durable about the owner's world, save it with noctis_propose_inbox_note, one fact per note with [[wikilinks]] for every person, project and topic; Noctis files it into the MindVault. Use noctis_propose_task_action to run an existing owner-enabled task now or pause it. Proposed tasks stay paused until the owner turns them on in Noctis; never activate one yourself.";
 
+/**
+ * Left to itself the agent summarised drafts in chat, skipped what it could not
+ * find, and went quiet while sub-agents worked. The owner reads the panels.
+ */
+export const WORKING_INSTRUCTIONS =
+  "Show, do not summarise: when you have something for the owner to review before you act (a draft, a README, a plan, a message), open it beside the conversation with noctis_propose_surface as a document panel, one per draft, with actions such as Approve or Change it, and wait for their answer. Be proactive about what is missing: if work needs images, screenshots, data or files you do not have, get them yourself (take screenshots with the browser tools, search the web, look in the shared folders) or ask the owner for them; never just leave them out. When you start sub-agents, say in a line what each one is doing.";
+
 export function ownerTimeContext(now = new Date(), timeZone = "Europe/London"): string {
   // Intl validates the zone before any model instruction is built from it.
   const local = new Intl.DateTimeFormat("en-GB", {
@@ -117,5 +124,10 @@ anything that leaves this PC happens, and a refusal is final. Be calm, precise a
 If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.
 ${mindVaultNote(input.readable)}
 ${ownerTimeContext(input.now, input.timeZone)}
-${input.runtime === "local" ? "" : PRODUCTIVITY_INSTRUCTIONS}`;
+${
+  input.runtime === "local"
+    ? ""
+    : `${PRODUCTIVITY_INSTRUCTIONS}
+${WORKING_INSTRUCTIONS}`
+}`;
 }

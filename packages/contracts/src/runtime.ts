@@ -390,7 +390,15 @@ export const RuntimeItemSchema = z.discriminatedUnion("kind", [
       appliedRecordId: UuidSchema.optional(),
     })
     .strict(),
-  z.object({ ...ItemBase, kind: z.literal("sub_agent"), label: z.string().max(200) }).strict(),
+  z
+    .object({
+      ...ItemBase,
+      kind: z.literal("sub_agent"),
+      label: z.string().max(200),
+      /** What a running sub-agent is doing now, in a line. */
+      activity: z.string().max(200).optional(),
+    })
+    .strict(),
   z.object({ ...ItemBase, kind: z.literal("output"), ...RuntimeOutputSchema.shape }).strict(),
 ]);
 

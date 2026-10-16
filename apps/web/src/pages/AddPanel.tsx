@@ -5,8 +5,8 @@ import {
   type PagePanelPayload,
   type SurfaceOwner,
 } from "@noctis/contracts";
-import { corner, semantic, spacing, typography } from "@noctis/ui";
-import { buttonStyle, glass } from "../layout/Page.js";
+import { corner, depth, material, semantic, spacing, typography } from "@noctis/ui";
+import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { openPagePanel } from "./page-panels.js";
 
@@ -88,7 +88,10 @@ export function AddPanel({
         aria-label="Add panel"
         disabled={transport === undefined || busy}
         style={buttonStyle}
-        onClick={() => dialog.current?.showModal()}
+        onClick={() => {
+          if (dialog.current?.open === true) dialog.current.close();
+          else dialog.current?.showModal();
+        }}
       >
         +
       </button>
@@ -100,17 +103,23 @@ export function AddPanel({
       <dialog
         ref={dialog}
         aria-label="Add panel"
+        // A click that lands on the dialog itself landed on the backdrop, the +
+        // included: the modal covers it, so this is how it closes the menu again.
+        onClick={(event) => {
+          if (event.target === event.currentTarget) dialog.current?.close();
+        }}
         style={{
-          ...glass,
+          background: depth.layers[1],
+          border: `1px solid ${material.border}`,
           color: typography.color.primary,
           borderRadius: corner.md,
           width: "min(320px, 90vw)",
           maxHeight: "70dvh",
           overflow: "auto",
-          padding: spacing.md,
+          padding: 0,
         }}
       >
-        <div style={{ display: "grid", gap: spacing.sm }}>
+        <div style={{ display: "grid", gap: spacing.sm, padding: spacing.md }}>
           {PAGE_PANEL_PAGES.map((page) => (
             <button
               key={page}
@@ -122,7 +131,16 @@ export function AddPanel({
               {page}
             </button>
           ))}
-          <button type="button" style={buttonStyle} onClick={() => dialog.current?.close()}>
+          <button
+            type="button"
+            style={{
+              ...buttonStyle,
+              background: semantic.error,
+              border: `1px solid ${semantic.error}`,
+              color: "#fff",
+            }}
+            onClick={() => dialog.current?.close()}
+          >
             Cancel
           </button>
         </div>

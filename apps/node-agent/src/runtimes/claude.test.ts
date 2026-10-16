@@ -769,6 +769,119 @@ describe("the Claude Agent SDK runtime", () => {
     ]);
   });
 
+  describe("background sub-agents", () => {
+    const system = (subtype: string, fields: Record<string, unknown>): unknown => ({
+      type: "system",
+      subtype,
+      session_id: SESSION,
+      ...fields,
+    });
+    const tasks = (...ids: string[]): unknown =>
+      system("background_tasks_changed", {
+        tasks: ids.map((id) => ({ task_id: id, task_type: "local_agent", description: "x" })),
+      });
+    const launch = [
+      assistant([toolUse("a1", "Agent", { description: "explore LVL", run_in_background: true })]),
+      system("task_started", { task_id: "k1", tool_use_id: "a1", is_backgrounded: true }),
+      tasks("k1"),
+      toolResult("a1", "Async agent launched"),
+      assistant([{ type: "text", text: "started" }]),
+      result({ result: "started" }),
+    ];
+    const reportBack = [
+      system("task_progress", {
+        task_id: "k1",
+        tool_use_id: "a1",
+        description: "explore LVL",
+        last_tool_name: "Read",
+        summary: "Reading the diary",
+        usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+      }),
+      tasks(),
+      system("task_notification", {
+        task_id: "k1",
+        tool_use_id: "a1",
+        status: "completed",
+        summary: "done",
+        output_file: "",
+      }),
+      init(),
+      assistant([{ type: "text", text: "finished" }]),
+      result({ result: "finished" }),
+    ];
+
+    it("keeps the turn open until the sub-agents report back, showing what each is doing", async () => {
+      let release = (): void => undefined;
+      const later = new Promise<void>((resolve) => (release = resolve));
+      const { query } = scripted(async function* () {
+        yield init();
+        yield* launch;
+        await later;
+        yield* reportBack;
+      });
+      const r = recorder();
+      let settled = false;
+      const turn = createClaudeRuntime({ query })
+        .turn(input(), r.sink)
+        .finally(() => (settled = true));
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(settled).toBe(false);
+
+      release();
+      const evidence = await turn;
+
+      expect(evidence.finalText).toBe("finished");
+      expect(
+        r.items
+          .filter((item) => item.kind === "sub_agent")
+          .map((item) => [item.status, item.kind === "sub_agent" ? item.activity : undefined]),
+      ).toEqual([
+        ["in_progress", undefined],
+        ["in_progress", "Reading the diary"],
+        ["completed", undefined],
+      ]);
+    });
+
+    it("hands the background work to the owner's next message rather than queueing it", async () => {
+      const { query } = scripted(async function* (params) {
+        yield init();
+        let turn = 0;
+
+        for await (const message of params.prompt) {
+          turn += message.type === "user" ? 1 : 0;
+
+          if (turn === 1) {
+            yield* launch;
+          } else {
+            yield assistant([{ type: "text", text: "still exploring" }]);
+            yield result({ result: "still exploring" });
+            yield* reportBack;
+          }
+        }
+      });
+      const runtime = createClaudeRuntime({ query });
+      const first = runtime.turn(input(), recorder().sink);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const r = recorder();
+      const second = runtime.turn(
+        input({ prompt: "how is it going?", sessionRef: SESSION }),
+        r.sink,
+      );
+
+      await expect(first).resolves.toMatchObject({
+        finalText: "started",
+        stoppedReason: "completed",
+      });
+      await expect(second).resolves.toMatchObject({ finalText: "finished" });
+      expect(
+        r.items.filter((item) => item.kind === "sub_agent").map((item) => item.status),
+      ).toEqual(["in_progress", "completed"]);
+    });
+  });
+
   it("marks a tool the core declined as declined when its result comes back as an error", async () => {
     const { query } = scripted(async function* (params) {
       yield init();

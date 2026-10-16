@@ -259,6 +259,9 @@ function TurnRow({
   const running = turn.status === "queued" || turn.status === "running";
   const outputs = turn.items.filter((item) => item.kind === "output");
   const rawItems = turn.items.filter((item) => item.kind !== "output");
+  const agents = turn.items.filter(
+    (item): item is Extract<RuntimeItem, { kind: "sub_agent" }> => item.kind === "sub_agent",
+  );
 
   return (
     <motion.li
@@ -331,6 +334,37 @@ function TurnRow({
           )
         );
       })}
+      {agents.length > 0 && (
+        <ul aria-label="Sub-agents" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
+          {agents.map((item) => (
+            <li
+              key={item.itemId}
+              data-item-status={item.status}
+              style={{ display: "flex", gap: spacing.sm, alignItems: "baseline", minWidth: 0 }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 8,
+                  height: 8,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  background:
+                    item.status === "in_progress"
+                      ? identityAccent.vesper.primary
+                      : item.status === "completed"
+                        ? semantic.success
+                        : semantic.error,
+                }}
+              />
+              <span style={{ color: typography.color.primary }}>{item.label}</span>
+              <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                {item.status === "in_progress" ? (item.activity ?? "working") : item.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {outputs.length > 0 && (
         <ul aria-label="Outputs" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
           {outputs.map((item) => (

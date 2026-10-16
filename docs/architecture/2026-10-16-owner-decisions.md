@@ -132,3 +132,30 @@ on with its own defaults.
 - Only the newest turn's questions can be answered, so an old one is not answered twice.
 
 **Built:** the node change and the question card in Threads. The node on each PC needs a restart to pick it up.
+
+## 7. Seeing sub-agents, background work, panels and readability
+
+The owner could not see what sub-agents were doing. Agents that ran in the background and reported back while
+nobody was chatting hit "no Noctis turn is running", and the owner had to send a message to revive the chat. Vesper
+promised a review before pushing READMEs but gave a chat summary and no panel, and it said there were no images to
+use instead of taking screenshots or asking. The panel menu's glass let the thread show through it.
+
+**Found:** the turn ended when Vesper's message ended, while its background sub-agents kept going. Claude Code wakes
+itself when a background task finishes and answers again, but with no turn open that answer had nowhere to go and
+every tool call in it was refused. A thread with no turn for 10 minutes also had its CLI closed, which killed any
+sub-agents still running.
+
+**Decided and built:**
+
+- **A turn stays open while its background work runs.** It ends with the answer that follows the last task. A new
+  message from the owner takes over the background work, so a question mid-work is answered straight away rather
+  than queued.
+- **Sub-agents are listed on the turn,** outside Details: each one's label, a status dot and a line on what it is
+  doing now (Claude Code's progress summaries are switched on).
+- **Vesper's card says to show and not summarise:** drafts for review open as a document panel with actions, and
+  missing images, screenshots or data are fetched (browser screenshots, search, shared folders) or asked for.
+- **Readability:** cards and menus are nearly solid, the panel menu closes when the + (or anywhere outside it) is
+  clicked, every dialog dims what is behind it, and the menu's Cancel is red.
+
+**Open:** a background task that never ends (a dev server left running) keeps the turn Working until the owner sends
+a message or presses Cancel.

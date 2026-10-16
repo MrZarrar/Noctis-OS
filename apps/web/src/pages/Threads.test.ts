@@ -125,4 +125,32 @@ describe("Threads timeline", () => {
     expect(outside).toContain("Which repos should I cover?");
     expect(outside).toContain("Public portfolio");
   });
+
+  it("shows each sub-agent and what it is doing without opening the details", () => {
+    const delegating: Turn = {
+      ...turn,
+      items: [
+        {
+          itemId: "a1",
+          kind: "sub_agent",
+          status: "in_progress",
+          label: "explore LVL Unbound",
+          activity: "Reading the diary",
+        },
+        { itemId: "a2", kind: "sub_agent", status: "completed", label: "explore glycolens" },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(Threads, {
+        identityId: "vesper",
+        conversation: conversationWith([delegating]),
+        connected: true,
+      }),
+    );
+    const outside = markup.replace(/<details[^>]*>[\s\S]*?<\/details>/g, "");
+
+    expect(outside).toContain("explore LVL Unbound");
+    expect(outside).toContain("Reading the diary");
+    expect(outside).toContain("explore glycolens");
+  });
 });

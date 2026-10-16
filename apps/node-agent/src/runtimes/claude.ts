@@ -442,11 +442,19 @@ interface ClaudeProcess extends LiveProcess {
   send(prompt: string, timeZone?: string, targets?: RuntimeTargets): void;
   current: ClaudeTurn | undefined;
   failure: Error | undefined;
+  /** Sub-agent labels by the tool call that started them, kept across turns. */
+  agents: Map<string, string>;
+  /** The sub-agent calls running in the background, whose tool result is only a placeholder. */
+  background: Set<string>;
+  /** Background tasks the CLI says are running, ambient ones left out. */
+  liveTasks: number;
 }
 
 export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime {
   const query: ClaudeQuery = options.query ?? sdkQuery;
   const pool = createProcessPool<ClaudeProcess>(options.idleMs);
+  /** Per thread, how to end a turn that is only staying open for background work. */
+  const holds = new Map<string, () => void>();
 
   /** One CLI for one thread, opened with the roots and model of the turn that needed it. */
   function open(input: RuntimeTurnInput, key: string): ClaudeProcess {
@@ -462,6 +470,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       sessionRef: undefined,
       current: undefined,
       failure: undefined,
+      agents: new Map(),
+      background: new Set(),
+      liveTasks: 0,
       get alive() {
         return alive;
       },
@@ -607,6 +618,8 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
             systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: card },
           }),
       includePartialMessages: true,
+      // A line on what each sub-agent is doing, so the owner is not watching a spinner.
+      agentProgressSummaries: true,
       abortController: controller,
       spawnClaudeCodeProcess(spawnOptions) {
         const spawned = spawn(spawnOptions.command, spawnOptions.args, {
@@ -703,6 +716,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     let fresh = false;
     let finalText: string | undefined;
     let usage: RuntimeTurnEvidence["usage"];
+    let held: RuntimeTurnEvidence | undefined;
 
     function emit(item: RuntimeItem): void {
       if (item.status !== "in_progress") {
@@ -738,6 +752,10 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         settled = true;
         signal.removeEventListener("abort", cancel);
 
+        if (holds.get(payload.threadId) === release) {
+          holds.delete(payload.threadId);
+        }
+
         if (proc.current === turn) {
           proc.current = undefined;
         }
@@ -748,6 +766,11 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           if (outcome instanceof Error) reject(outcome);
           else resolve(outcome);
         });
+      }
+
+      /** The owner's next message takes over whatever background work is still running. */
+      function release(): void {
+        if (held !== undefined) settle(held);
       }
 
       /** Asks the core and waits. A timeout fails the turn in its own words. */
@@ -888,9 +911,19 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                   });
                 } else if (block.type === "tool_use") {
                   pending.set(block.id, { name: block.name, input: block.input });
-                  emit(
-                    toolItem(clip(block.id, 128), block.name, block.input, roots, "in_progress"),
+                  const item = toolItem(
+                    clip(block.id, 128),
+                    block.name,
+                    block.input,
+                    roots,
+                    "in_progress",
                   );
+
+                  if (item.kind === "sub_agent") {
+                    proc.agents.set(block.id, item.label);
+                  }
+
+                  emit(item);
                 }
               }
 
@@ -915,6 +948,13 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                 }
 
                 pending.delete(block.tool_use_id);
+
+                // "Async agent launched": the sub-agent has only just started.
+                if (proc.background.has(block.tool_use_id)) {
+                  continue;
+                }
+
+                proc.agents.delete(block.tool_use_id);
 
                 const status =
                   block.is_error === true
@@ -948,15 +988,72 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                   finalText = message.result;
                 }
 
-                settle(evidence(message.is_error ? "failed" : "completed"));
+                const outcome = evidence(message.is_error ? "failed" : "completed");
+
+                // The CLI wakes itself when a background task settles and answers
+                // again; without a turn open, that answer had nowhere to go and
+                // every tool call in it was refused.
+                if (!message.is_error && proc.liveTasks > 0) {
+                  held = outcome;
+                  holds.set(payload.threadId, release);
+                } else {
+                  settle(outcome);
+                }
               } else {
                 settle(evidence(signal.aborted ? "cancelled" : "failed"));
               }
 
               break;
             }
+            case "system": {
+              if (message.subtype === "background_tasks_changed") {
+                proc.liveTasks = message.tasks.filter((task) => task.ambient !== true).length;
+                break;
+              }
+
+              if (message.subtype === "task_started") {
+                if (message.is_backgrounded === true && message.tool_use_id !== undefined) {
+                  proc.background.add(message.tool_use_id);
+                }
+                break;
+              }
+
+              if (message.subtype !== "task_progress" && message.subtype !== "task_notification") {
+                // Init, hooks, rate limits, status: the CLI's bookkeeping, not evidence.
+                break;
+              }
+
+              const id = message.tool_use_id;
+              const label = id === undefined ? undefined : proc.agents.get(id);
+
+              if (id === undefined || label === undefined) {
+                break;
+              }
+
+              const base = { itemId: clip(id, 128), kind: "sub_agent", label } as const;
+
+              if (message.subtype === "task_progress") {
+                const activity =
+                  message.summary ??
+                  (message.last_tool_name === undefined
+                    ? undefined
+                    : `using ${toolLabel(message.last_tool_name)}`);
+
+                emit({
+                  ...base,
+                  status: "in_progress",
+                  ...(activity === undefined ? {} : { activity: clip(activity, 200) }),
+                });
+              } else if (proc.background.delete(id)) {
+                // A foreground sub-agent ends with its tool result instead.
+                proc.agents.delete(id);
+                emit({ ...base, status: message.status === "completed" ? "completed" : "failed" });
+              }
+
+              break;
+            }
             default:
-              // Init, hooks, tasks, rate limits, status: the CLI's bookkeeping, not evidence.
+              // Rate limits, tool progress: the CLI's bookkeeping, not evidence.
               break;
           }
         },
@@ -1017,6 +1114,8 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           new AdapterRefused(`billing key ${leaked} in the runtime environment`),
         );
       }
+
+      holds.get(payload.threadId)?.();
 
       const key = processKey(payload, roots);
 
