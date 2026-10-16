@@ -10,6 +10,7 @@ import { fileURLToPath, URL } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const deploy = join(here, "work-pc.ps1");
 const keygen = join(here, "gateway-key.mjs");
+const startHidden = join(here, "start-hidden.ps1");
 
 function runDeploy(...args) {
   return spawnSync(
@@ -58,12 +59,13 @@ test("plans pull, stop, install, build, page, start and health check, in that or
 
   const steps = [
     "git pull --ff-only",
-    "stop the running core",
+    "stop the running core and node",
     "npm ci",
     "npm run build",
     "npm run build:web",
     "start the core",
     "/health",
+    "start the node",
   ];
   const positions = steps.map((step) => result.stdout.indexOf(step));
 
@@ -99,4 +101,29 @@ test("the Gateway key pair is RSA-2048, and the private half is never overwritte
 
   assert.equal(second.status, 1);
   assert.equal(readFileSync(join(directory, "gateway-provisioner.key"), "utf8"), privatePem);
+});
+
+test("a process it starts does not hold the caller's output open, so the caller can finish", () => {
+  const directory = mkdtempSync(join(tmpdir(), "noctis-hidden-"));
+  const script = [
+    `. '${startHidden}'`,
+    `$started = Start-Hidden -File '${process.execPath}' -Arguments @('-e', 'setTimeout(()=>{},20000)') -WorkingDirectory '${directory}' -Out '${join(directory, "out.log")}' -Err '${join(directory, "err.log")}'`,
+    'Write-Output "started $($started.Id)"',
+  ].join("; ");
+  const begun = Date.now();
+  // Piped, as a tool or CI runs it: an inherited pipe kept this open until the child exited.
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+  const pid = Number(/started (\d+)/.exec(result.stdout)?.[1]);
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(Date.now() - begun < 10_000, "the caller waited for the child");
+    assert.ok(process.kill(pid, 0), "the child is still running");
+  } finally {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+  }
 });

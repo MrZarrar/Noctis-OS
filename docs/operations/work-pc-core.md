@@ -79,13 +79,17 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy\work-pc.ps1
 ```
 
 `scripts\deploy\work-pc.ps1` refuses unless the host is `mushafzarrar`, the branch is `main` and
-the tree is clean. It then runs `git pull --ff-only`, stops the running core (any `node` running
-`apps\core\dist\main.js`), and runs `npm ci`, `npm run build` and `npm run build:web` with
-`VITE_CORE_TOKEN` removed. It starts the core **hidden**, with stdout/stderr in
-`%LOCALAPPDATA%\Noctis\core.out.log` / `core.err.log`, and waits for `/health`. Before starting it
-re-reads every `NOCTIS_*` variable from the registry, so a variable set after this terminal opened is
-not silently missing. It registers no service or task: the core is an ordinary process, the last line
-prints its PID and the `Stop-Process` that ends it, and a reboot does not bring it back.
+the tree is clean. It then runs `git pull --ff-only`, stops the running core and this PC's node agent
+(any `node` running `apps\core\dist\main.js` or `apps\node-agent\dist`), and runs `npm ci`,
+`npm run build` and `npm run build:web` with `VITE_CORE_TOKEN` removed. It starts the core **hidden**,
+with stdout/stderr in `%LOCALAPPDATA%\Noctis\core.out.log` / `core.err.log`, waits for `/health`, then
+starts the node agent the same way (`node.out.log` / `node.err.log`). A node that will not start is a
+warning, since the core is already up. Before starting either it re-reads every `NOCTIS_*` variable
+from the registry, so a variable set after this terminal opened is not silently missing. Both are
+started through `start-hidden.ps1`, which inherits none of the script's handles, so a tool or CI job
+that runs the deploy gets its prompt back instead of waiting for the core to exit. It registers no
+service or task: the core and node are ordinary processes, the script prints their PIDs and the
+`Stop-Process` that ends each, and a reboot does not bring them back.
 `-DryRun` prints the plan and changes nothing.
 
 Stop any `vite` or `tauri dev` running from this checkout first. Their native binaries are the only

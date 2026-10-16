@@ -65,6 +65,8 @@ export const API_SEGMENTS = [
   "tasks",
   "turns",
   "vault",
+  /** Agent-built pages, served to run sandboxed inside a visual panel. */
+  "visuals",
   "ws",
 ] as const;
 

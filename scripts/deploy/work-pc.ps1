@@ -8,14 +8,20 @@
 
     1. refuse unless this is the work PC, on main, with a clean working tree;
     2. git pull --ff-only (never a merge, never a reset);
-    3. stop the running core (the node process running apps\core\dist\main.js),
-       because npm ci cannot replace node_modules under a live process;
+    3. stop the running core and this PC's node agent (the node processes running
+       apps\core\dist and apps
+ode-agent\dist), because npm ci cannot replace
+       node_modules under a live process;
     4. npm ci, npm run build, npm run build:web, with VITE_CORE_TOKEN removed
        from this process so it cannot be inlined into the page;
     5. start the core again, hidden, logging to %LOCALAPPDATA%\Noctis, with
        every NOCTIS_* variable re-read from the registry, because a terminal
        opened before a variable was set does not have it;
-    6. wait for /health.
+    6. wait for /health;
+    7. start the node agent again, the same way, and check it stays up.
+
+  Both are started detached from this script's output (start-hidden.ps1), so
+  a tool or terminal that runs the deploy gets its prompt back.
 
   It registers nothing: no service, no scheduled task, no autostart. The core
   it starts is an ordinary user process that the next deploy replaces.
@@ -31,6 +37,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'start-hidden.ps1')
 
 # Here, not as the parameter default: Windows PowerShell 5.1 leaves $PSScriptRoot
 # empty while it binds parameters.
@@ -108,9 +116,9 @@ $logDirectory = Join-Path $env:LOCALAPPDATA 'Noctis'
 Invoke-Checked 'git pull --ff-only' 'git' @('pull', '--ff-only')
 
 # 3. Stop.
-Write-Step 'stop the running core'
+Write-Step 'stop the running core and node'
 $running = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-    Where-Object { $_.CommandLine -like '*apps?core?dist?main.js*' })
+    Where-Object { $_.CommandLine -like '*apps?core?dist?main.js*' -or $_.CommandLine -like '*apps?node-agent?dist?*' })
 foreach ($process in $running) {
   Write-Host "    stopping PID $($process.ProcessId)"
   if (-not $DryRun) {
@@ -133,32 +141,57 @@ Write-Host "    remote desktop: $(if ($env:NOCTIS_REMOTE_DESKTOPS) { 'configured
 # 6. Check.
 Write-Step "wait for http://127.0.0.1:$port/health"
 
+if (-not $DryRun) {
+  New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+  $core = Start-Hidden -File (Get-Command node).Source -Arguments @('apps\core\dist\main.js') `
+    -WorkingDirectory $RepoRoot -Out $out -Err $err
+
+  $healthy = $false
+  $deadline = (Get-Date).AddSeconds(30)
+  while (-not $healthy -and (Get-Date) -lt $deadline) {
+    if ($core.HasExited) {
+      Get-Content $err -Tail 20 -ErrorAction SilentlyContinue
+      Stop-Deploy "the core exited; the last lines of $err are above"
+    }
+
+    try {
+      $healthy = (Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2).status -eq 'ok'
+    } catch {
+      Start-Sleep -Milliseconds 500
+    }
+  }
+
+  if (-not $healthy) {
+    Stop-Deploy "the core did not answer /health within 30 s; see $out and $err"
+  }
+
+  Write-Host "core is up: PID $($core.Id), port $port. Stop it with: Stop-Process -Id $($core.Id)"
+}
+
+# 7. The node agent. The core is already up, so a node that will not start is
+# a warning to read, not a failed deploy.
+Write-Step 'start the node'
+$nodeOut = Join-Path $logDirectory 'node.out.log'
+$nodeErr = Join-Path $logDirectory 'node.err.log'
+Write-Host "    logs: $nodeOut, $nodeErr"
+
 if ($DryRun) {
   Write-Host 'dry run: nothing was changed'
   exit 0
 }
 
-New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
-$core = Start-Process -FilePath (Get-Command node).Source -ArgumentList 'apps\core\dist\main.js' `
-  -WorkingDirectory $RepoRoot -RedirectStandardOutput $out -RedirectStandardError $err `
-  -WindowStyle Hidden -PassThru
-
-$deadline = (Get-Date).AddSeconds(30)
-while ((Get-Date) -lt $deadline) {
-  if ($core.HasExited) {
-    Get-Content $err -Tail 20 -ErrorAction SilentlyContinue
-    Stop-Deploy "the core exited with code $($core.ExitCode); the last lines of $err are above"
+try {
+  $node = Start-Hidden -File (Get-Command node).Source -Arguments @('apps\node-agent\dist\main.js') `
+    -WorkingDirectory $RepoRoot -Out $nodeOut -Err $nodeErr
+  Start-Sleep -Seconds 5
+  if ($node.HasExited) {
+    Get-Content $nodeErr -Tail 20 -ErrorAction SilentlyContinue
+    Write-Warning "the node agent exited; the last lines of $nodeErr are above"
+  } else {
+    Write-Host "node is up: PID $($node.Id). Stop it with: Stop-Process -Id $($node.Id)"
   }
-
-  try {
-    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2
-    if ($health.status -eq 'ok') {
-      Write-Host "core is up: PID $($core.Id), port $port. Stop it with: Stop-Process -Id $($core.Id)"
-      exit 0
-    }
-  } catch {
-    Start-Sleep -Milliseconds 500
-  }
+} catch {
+  Write-Warning "the node agent did not start: $($_.Exception.Message)"
 }
 
-Stop-Deploy "the core did not answer /health within 30 s; see $out and $err"
+exit 0

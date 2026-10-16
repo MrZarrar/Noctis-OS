@@ -201,3 +201,18 @@ images, interactive figures), not the same text summary. The owner also asked fo
   folder.
 - Checked in Chrome under the real policies: a Mermaid diagram draws under the page CSP, and an Anatomy figure
   runs inside the sandboxed visual frame.
+
+## 9. The deploy that never handed back
+
+The owner saw the restart finish while the agent kept waiting on it. The deploy script started the core with
+`Start-Process -RedirectStandardOutput`, which starts the child with handle inheritance on, so the core also
+inherited the pipe the script's own output went to. Whatever ran the deploy then waited for that pipe to close,
+which only happens when the core exits.
+
+**Built:** `scripts/deploy/start-hidden.ps1` starts a program through `cmd` by the shell, which inherits no
+handles, and lets `cmd` write the log files. The deploy starts the core and, new, restarts this PC's node agent
+through it, after stopping both before `npm ci`. A test runs it under a pipe, as a tool does, and fails if the
+caller has to wait for the child.
+
+**Also found while checking:** `/visuals/content` was not in the core's API path list, so on the real core it
+answered with the app's own page instead of the figure. It is in the list now.
