@@ -1,5 +1,6 @@
-import type { RuntimeProviderId } from "@noctis/contracts";
+import type { HealthStatus, RuntimeProviderId } from "@noctis/contracts";
 import {
+  HealthStatusSchema,
   NodeDescriptorSchema,
   RUNTIME_PROVIDERS,
   RemoteDesktopTargetSchema,
@@ -239,6 +240,7 @@ export function Nodes({ transport }: { transport: CoreTransport | undefined }): 
         </div>
 
         {mode === "mirror" && <Mirror transport={transport} nodes={nodes} />}
+        <Health transport={transport} nodes={nodes} />
       </section>
 
       {/* Hidden rather than unmounted, so a session survives a look at the mirror. */}
@@ -993,6 +995,142 @@ function mirrorLine(state: MirrorState, host: string, online: boolean): string {
     case "unavailable":
       return state.message;
   }
+}
+
+function Health({
+  transport,
+  nodes,
+}: {
+  transport: CoreTransport | undefined;
+  nodes: readonly NodeView[] | undefined;
+}): JSX.Element {
+  const [status, setStatus] = useState<HealthStatus>();
+  const [repos, setRepos] = useState<Record<string, string>>({});
+  const [allowing, setAllowing] = useState(false);
+  const [problem, setProblem] = useState<string>();
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    setStatus(undefined);
+    if (transport === undefined) return;
+
+    let cancelled = false;
+    void transport.request("GET", "/glucose").then(
+      (response) => {
+        if (cancelled) return;
+        const parsed = HealthStatusSchema.safeParse(response.body);
+        if (response.status === 200 && parsed.success) {
+          setStatus(parsed.data);
+        } else {
+          setProblem(`The core could not read health status (HTTP ${String(response.status)}).`);
+        }
+      },
+      () => {
+        if (!cancelled) setProblem("Noctis could not reach the core.");
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, revision]);
+
+  const change = async (nodeId: string, granted: boolean): Promise<void> => {
+    const repo = repos[nodeId]?.trim() ?? "";
+    if (transport === undefined || status === undefined || allowing || (!granted && repo === "")) {
+      return;
+    }
+
+    setAllowing(true);
+    setProblem(undefined);
+    const command = granted ? "health.disallow" : "health.allow";
+
+    try {
+      const response = await transport.request("POST", `/commands/${command}`, {
+        idempotencyKey: nextKey(command),
+        nodeId,
+        ...(granted ? {} : { repo }),
+      });
+      if (response.status !== 200) {
+        setProblem(`The core refused (HTTP ${String(response.status)}).`);
+      }
+    } catch {
+      setProblem("Noctis could not reach the core.");
+    } finally {
+      setRevision((current) => current + 1);
+      setAllowing(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: spacing.md }}>
+      {(nodes ?? [])
+        .filter((node) => node.connected)
+        .map((node) => {
+          const granted = status?.granted === true && status.nodeId === node.id;
+          const repo = repos[node.id] ?? "";
+
+          return (
+            <form
+              key={node.id}
+              aria-label={`Health on ${node.hostId}`}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void change(node.id, granted);
+              }}
+              style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}
+            >
+              <p style={{ margin: 0 }}>
+                <strong>Health (glycolens)</strong> · {node.hostId}
+              </p>
+              {granted ? (
+                <>
+                  <span style={chipStyle}>Allowed</span>
+                  <button type="submit" disabled={allowing} style={buttonStyle}>
+                    Stop
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label style={labelStyle}>
+                    <span>glycolens folder</span>
+                    <input
+                      value={repo}
+                      placeholder="C:\Users\you\Documents\glycolens"
+                      required
+                      spellCheck={false}
+                      disabled={allowing}
+                      onChange={(event) => {
+                        setRepos((current) => ({ ...current, [node.id]: event.target.value }));
+                      }}
+                      style={fieldStyle}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={allowing || status === undefined || repo.trim() === ""}
+                    style={primaryButton}
+                  >
+                    Allow health on this PC
+                  </button>
+                </>
+              )}
+              <p
+                style={{ margin: 0, color: typography.color.muted, fontSize: typography.scale.sm }}
+              >
+                Runs glycolens on this PC weekly and when you press Run now. The report stays on
+                your machines.
+              </p>
+            </form>
+          );
+        })}
+      {problem !== undefined && (
+        <p role="alert" style={{ margin: 0 }}>
+          {problem}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function NodeCard({ node }: { node: NodeView }): JSX.Element {
