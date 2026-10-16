@@ -43,5 +43,10 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.67.0",
     "vitest": "4.1.11"
+  },
+  "overrides": {
+    "framer-motion": "13.5.0",
+    "motion-dom": "13.5.0",
+    "motion-utils": "13.5.0"
   }
 }
