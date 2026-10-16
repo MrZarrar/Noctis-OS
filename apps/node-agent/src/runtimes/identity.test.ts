@@ -50,6 +50,7 @@ describe("identityCard", () => {
     expect(card).toContain("anatomy");
     expect(card).toContain("screenshot");
     expect(card).toContain("by path");
+    expect(card).toContain("noctis-show/");
     expect(card).toContain("not Claude artifacts");
     expect(card).not.toBeUndefined();
     expect(

@@ -166,6 +166,11 @@ describe("files and recall proposed on threads", () => {
     expect(listSurfaceIntents(kernel.db, { threadId: THREAD })).toHaveLength(0);
     expect(listSurfaceIntents(kernel.db, { threadId: OTHER })).toHaveLength(0);
   });
+  it("leaves files in the show folder to the show folder, so a page opens once and runs", () => {
+    fixture();
+    proposeFor({ kernel }, event(THREAD, "node-a", ["C:/shared/noctis-show/figure.html"]));
+    expect(listSurfaceIntents(kernel.db, { threadId: THREAD })).toHaveLength(0);
+  });
   it("names in a prompt yield a recall panel; no Vault or no match yields nothing", () => {
     fixture();
     const written = event();

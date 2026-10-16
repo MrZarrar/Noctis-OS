@@ -333,6 +333,49 @@ describe("runtime.turn", () => {
     });
   });
 
+  it("opens what the runtime saves in the show folder as panels, while the turn runs", async () => {
+    const { root } = treeWithEscape();
+    const items: RuntimeItem[] = [];
+    const fake = createFakeRuntime();
+
+    await ADAPTERS["runtime.turn"](
+      PAYLOAD,
+      context({
+        grants: [turnGrant(root)],
+        runtimes: {
+          codex: {
+            ...fake,
+            async turn(input, sink) {
+              mkdirSync(join(input.roots.cwd, "noctis-show"), { recursive: true });
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              writeFileSync(join(input.roots.cwd, "noctis-show", "figure.html"), "<p>hi");
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              return fake.turn(input, sink);
+            },
+          },
+        },
+        ask: () =>
+          Promise.resolve({
+            askId: "0199a000-0000-7000-8000-0000000000a5",
+            decision: "allow",
+            approvalId: "0199a000-0000-7000-8000-0000000000a6",
+          }),
+        stream: (item) => items.push(item),
+      }),
+    );
+
+    expect(items.find((item) => item.itemId === "show-1")).toMatchObject({
+      kind: "proposal",
+      proposal: {
+        surfaceKind: "visual",
+        payload: {
+          title: "figure.html",
+          path: join(realpathSync.native(root), "noctis-show", "figure.html"),
+        },
+      },
+    });
+  });
+
   it("refuses when no runtime answers for the requested provider", async () => {
     const { root } = treeWithEscape();
 

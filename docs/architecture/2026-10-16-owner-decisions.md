@@ -242,3 +242,20 @@ Claude Code's own instructions push it to publish artifacts, which is why it rea
 - Vesper's card now says: work on real files in a shared folder, let written files open as panels, show other
   files by path, never retype a file into a panel or build a separate review page, and use inline documents only
   for text that is not a file.
+
+## 11. The show folder
+
+Interactive pages did not open by themselves. Noctis only opened panels for files Claude's own Write and Edit tools
+changed, an `.html` written that way opened as source text, and an Anatomy figure is built by a script, so Noctis
+saw a command and no file. The owner chose a show folder over three alternatives (leave it, run every written
+page, watch every command), one per working folder.
+
+**Built:** while a turn runs, the node watches `noctis-show/` in the turn's working folder, including one created
+mid-turn. Every file saved there, by any means, is proposed by its path once its writes stop for 300 ms: `.html`,
+`.htm` and `.svg` as a running visual, text and markdown as a document, images, video and audio as media. Saving
+it again updates the same panel. The core leaves files in that folder out of its written-file panels, so a page
+opens once and as a page. Vesper is told to build Anatomy figures and save screenshots there and never to commit
+the folder. At most 100 files a turn.
+
+**Open:** old files in the folder do not reopen on their own; only what is saved during a turn opens. The folder
+shows in `git status` unless it is ignored, for example in a global gitignore.
