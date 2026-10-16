@@ -4,6 +4,7 @@ import {
   DisallowHealthCommandSchema,
   HealthCommandSchema,
   HealthDecideCommandSchema,
+  PlaceEventBodySchema,
 } from "@noctis/contracts";
 import type { SetSettingCommand, SurfaceOwner } from "@noctis/contracts";
 import {
@@ -222,10 +223,18 @@ import { readDigest } from "../notify/digest.js";
 import {
   listSettings,
   ownerSetting,
+  readSetting,
   resetSetting,
   setSetting,
   startUpSettings,
 } from "../config/settings.js";
+import {
+  linkToken,
+  placesView,
+  recordPlaceEvent,
+  rotateLink,
+  verifyLink,
+} from "../places/places.js";
 import { indexVault, listVaultItems } from "../vault/indexer.js";
 import {
   VISIBLE_ENTITY,
@@ -1184,6 +1193,16 @@ function handleRead(
 
   if (segments.length === 1 && segments[0] === "glucose")
     return { status: 200, body: deps.health.status() };
+
+  if (segments.length === 1 && segments[0] === "places") {
+    const minutes = readSetting(deps.kernel.db, deps.env ?? {}, "placeVisitMinutes");
+
+    return { status: 200, body: placesView(deps.kernel.db, minutes, deps.kernel.clock.now()) };
+  }
+
+  if (segments.length === 2 && segments[0] === "places" && segments[1] === "link") {
+    return { status: 200, body: { token: linkToken(deps.kernel.db, deps.config.token) } };
+  }
 
   if (segments.length === 1 && segments[0] === "approvals") {
     return { status: 200, body: { approvals: listApprovals(deps.kernel.db, limit) } };
@@ -2368,6 +2387,46 @@ export async function handleRequest(
       return;
     }
 
+    // The phone's Shortcuts automations. Before the client gate for the same
+    // reason as the node realm: the phone presents its own link, which that
+    // gate would reject as a bad core token. The place goes in no log line.
+    if (req.method === "POST" && url.pathname === "/places/events") {
+      const linked = verifyLink(
+        deps.kernel.db,
+        deps.config.token,
+        headerValue(req.headers.authorization),
+      );
+      const raw = linked ? await readBody(req, MAX_BODY_BYTES) : undefined;
+      const body =
+        raw === undefined || raw === "too_large"
+          ? undefined
+          : PlaceEventBodySchema.safeParse(jsonOf(raw));
+      const now = deps.kernel.clock.now();
+      const at =
+        body?.success === true ? Date.parse(body.data.at ?? new Date(now).toISOString()) : NaN;
+
+      if (!linked) {
+        send(
+          res,
+          401,
+          errorBody("unauthorized", "The phone's place link is required"),
+          correlationId,
+        );
+      } else if (body?.success !== true || at > now + 5 * 60_000) {
+        send(res, 400, errorBody("invalid_place_event", "Not a place event"), correlationId);
+      } else if (!readSetting(deps.kernel.db, deps.env ?? {}, "places").includes(body.data.place)) {
+        send(res, 404, errorBody("unknown_place", "That place is not in Settings"), correlationId);
+      } else {
+        const event = { ...body.data, at: new Date(at).toISOString() };
+
+        recordPlaceEvent(deps.kernel.db, event, new Date(now).toISOString());
+        logger.log("info", "place event recorded", { transition: event.transition });
+        send(res, 200, { recorded: true }, correlationId);
+      }
+
+      return;
+    }
+
     const isPair = req.method === "POST" && url.pathname === PAIR_PATH;
     // `/session/login` runs before the credential check, because presenting the
     // token in the body is how a browser obtains one. It is a POST with no
@@ -2640,6 +2699,12 @@ export async function handleRequest(
           ? verifySession(sessionDeps(deps), headerValue(req.headers.cookie)) !== undefined
           : true,
       );
+      return;
+    }
+
+    // A new link for the phone; every Shortcut holding the old one stops working.
+    if (req.method === "POST" && url.pathname === "/places/link") {
+      send(res, 200, { token: rotateLink(deps.kernel.db, deps.config.token) }, correlationId);
       return;
     }
 

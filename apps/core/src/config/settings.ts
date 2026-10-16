@@ -26,9 +26,11 @@ interface Entry {
   env: string;
   fromEnv: (raw: string) => unknown;
   fallback: unknown;
-  kind: "time" | "boolean" | "integer" | "choice" | "list";
+  kind: "time" | "boolean" | "integer" | "choice" | "list" | "places";
   label: string;
   help: string;
+  /** Shown in the Settings page's Automations section rather than How Noctis runs. */
+  automation?: true;
 }
 
 const REGISTRY: Record<SettingKey, Entry> = {
@@ -104,6 +106,24 @@ const REGISTRY: Record<SettingKey, Entry> = {
     label: "Remote desktops",
     help: "Hosts the Nodes page can open. The gateway key stays a start-up setting.",
   },
+  places: {
+    env: "NOCTIS_PLACES",
+    fromEnv: (raw) => raw.split(",").map((place) => place.trim()),
+    fallback: [],
+    kind: "places",
+    label: "Places",
+    help: "Where your phone tells Noctis you arrived or left. Each one needs its Shortcuts automations, below.",
+    automation: true,
+  },
+  placeVisitMinutes: {
+    env: "NOCTIS_PLACE_VISIT_MINUTES",
+    fromEnv: (raw) => Number(raw),
+    fallback: 20,
+    kind: "integer",
+    label: "Count a visit after (minutes)",
+    help: "Shorter stays, like driving past, are not counted as a visit.",
+    automation: true,
+  },
 };
 
 const storageKey = (key: SettingKey): string => `setting:${key}`;
@@ -175,6 +195,7 @@ export interface SettingView {
   label: string;
   help: string;
   kind: Entry["kind"];
+  automation?: true;
   choices?: readonly string[];
   value: unknown;
   source: "ui" | "start-up" | "default";
@@ -192,6 +213,7 @@ export function listSettings(db: NoctisDatabase, env: Env): SettingView[] {
       label: entry.label,
       help: entry.help,
       kind: entry.kind,
+      ...(entry.automation === true ? { automation: true as const } : {}),
       ...(key === "logLevel" ? { choices: SETTING_VALUE_SCHEMAS.logLevel.options } : {}),
       ...(startUp !== undefined && "ignored" in startUp ? { ignoredStartUp: startUp.ignored } : {}),
     };

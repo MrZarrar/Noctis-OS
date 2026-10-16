@@ -59,3 +59,35 @@ models. `~/.codex/config.toml` was left unchanged.
 **Open:** the work-PC core is not redeployed. The deploy script was blocked in this session (the permission
 classifier refused `-ExecutionPolicy Bypass`). The owner runs `scripts/deploy/work-pc.ps1`, then restarts the
 home node. Owner steps for Health are at the end of the status entry.
+
+## 5. Knowing when a glucose swing was the gym
+
+The question: did a high or low come from insulin and carbs, or from the gym? Options weighed: guess from the
+usual 19:00 to 22:00, log it by hand, the pump's Exercise Activity, an Apple Watch workout, or the phone's
+location.
+
+**Decided:**
+
+- **Location.** The phone's Shortcuts app runs an "Arrive" and a "Leave" automation for each place and POSTs
+  `{ place, transition }` to `POST /places/events`. The geofence stays on the phone; the core only hears the name.
+- **Not the pump's Exercise Activity.** The owner trains anaerobic then cardio and is not sure how the mode
+  behaves, so it stays off for now. No pump reminder either.
+- **Not the Apple Watch.** It is often flat, and starting a workout by hand will not happen.
+- **No time-of-day guess.** It would mark every evening swing as gym, rest days included.
+- **Places beyond the gym.** Home, work and gym to start, named in Settings, so other automations can use them later
+  (Phase 13 Sense / Automations).
+
+**Built:**
+
+- Settings has an **Automations** section: the places, "Count a visit after (minutes)" (default 20, so driving past
+  is not a visit), the phone setup steps with the link, and recent visits.
+- The phone's link is its own bearer, derived from the core token and a counter like a node credential, so nothing
+  secret is stored. It can only report arrivals. "New link" rotates it; rotating the core token does too.
+- A visit is an arrive and the next leave. A stay over 12 hours is treated as a lost leave and dropped.
+
+**Open:**
+
+- Sending gym visits to glycolens. glycolens needs a way to take them (a file or a CLI argument) and rules that
+  leave gym-affected windows out of the ratio and sensitivity checks. That is a glycolens change first.
+- An undo for a wrong visit, if false visits turn up.
+- If arrivals get lost while Tailscale is off, OwnTracks (buffers offline) is the fallback.

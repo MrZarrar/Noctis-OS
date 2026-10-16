@@ -199,7 +199,7 @@ describe("migrate", () => {
     };
     db.close();
 
-    expect(row.c).toBe(55);
+    expect(row.c).toBe(56);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -261,8 +261,10 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(21);
-    expect(tables).toEqual(expect.arrayContaining(["health_report", "health_runs"]));
+    expect(version.v).toBe(22);
+    expect(tables).toEqual(
+      expect.arrayContaining(["health_report", "health_runs", "place_events"]),
+    );
     expect(vaultItems).toContain("sensitive");
     expect(vaultItems).toContain("tags");
   });

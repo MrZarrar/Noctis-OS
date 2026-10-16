@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { PlacesSettingSchema } from "./places.js";
 import { RemoteHostNameSchema } from "./remote.js";
 
 /**
@@ -41,6 +42,8 @@ export const SETTING_VALUE_SCHEMAS = {
   showAllPages: z.boolean(),
   wakeWhileTyping: z.boolean(),
   remoteDesktops: RemoteDesktopTargetsSettingSchema,
+  places: PlacesSettingSchema,
+  placeVisitMinutes: z.int().min(1).max(600),
 } as const;
 
 export type SettingKey = keyof typeof SETTING_VALUE_SCHEMAS;

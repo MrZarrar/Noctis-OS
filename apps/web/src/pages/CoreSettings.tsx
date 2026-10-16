@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { AutomationSettings } from "./AutomationSettings.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 /**
@@ -15,7 +16,8 @@ const SettingViewSchema = z.object({
   key: z.string(),
   label: z.string(),
   help: z.string(),
-  kind: z.enum(["time", "boolean", "integer", "choice", "list"]),
+  kind: z.enum(["time", "boolean", "integer", "choice", "list", "places"]),
+  automation: z.literal(true).optional(),
   choices: z.array(z.string()).optional(),
   value: z.unknown(),
   source: z.enum(["ui", "start-up", "default"]),
@@ -47,7 +49,7 @@ const SOURCE: Record<SettingView["source"], string> = {
 
 const muted = { margin: 0, color: typography.color.muted, fontSize: typography.scale.sm } as const;
 
-function Control({
+export function Control({
   setting,
   onSet,
 }: {
@@ -119,6 +121,16 @@ function Control({
           ))}
         </select>
       );
+    case "places":
+      return (
+        <Places
+          key={key}
+          places={z.array(z.string()).safeParse(setting.value).data ?? []}
+          onSave={(places) => {
+            onSet(setting.key, places);
+          }}
+        />
+      );
     case "list":
       return (
         <RemoteHosts
@@ -130,6 +142,65 @@ function Control({
         />
       );
   }
+}
+
+/** The owner's places: one name a row, saved together. Lowercase, as the core wants them. */
+function Places({
+  places,
+  onSave,
+}: {
+  places: readonly string[];
+  onSave: (places: string[]) => void;
+}): JSX.Element {
+  const [rows, setRows] = useState<string[]>([...places]);
+
+  return (
+    <div style={{ display: "grid", gap: spacing.sm }}>
+      {rows.map((place, index) => (
+        <div key={index} style={{ display: "flex", gap: spacing.sm, minWidth: 0 }}>
+          <input
+            aria-label={`Place ${String(index + 1)}`}
+            placeholder="gym"
+            value={place}
+            onChange={(event) => {
+              const value = event.target.value.toLowerCase().replace(/\s+/g, "-");
+              setRows((current) => current.map((row, at) => (at === index ? value : row)));
+            }}
+            style={{ ...fieldStyle, minWidth: 0, flex: 1 }}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setRows((current) => current.filter((__, at) => at !== index));
+            }}
+            style={buttonStyle}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: spacing.sm }}>
+        <button
+          type="button"
+          onClick={() => {
+            setRows((current) => [...current, ""]);
+          }}
+          style={buttonStyle}
+        >
+          Add a place
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onSave(rows.filter((row) => row !== ""));
+          }}
+          style={buttonStyle}
+        >
+          Save places
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** The remote-desktop hosts: three fields a row, saved together. */
@@ -206,6 +277,41 @@ function RemoteHosts({
   );
 }
 
+export function SettingRow({
+  setting,
+  onSet,
+  onReset,
+}: {
+  setting: SettingView;
+  onSet: (key: string, value: unknown) => void;
+  onReset: (key: string) => void;
+}): JSX.Element {
+  return (
+    <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+      <label htmlFor={`setting-${setting.key}`}>{setting.label}</label>
+      <Control setting={setting} onSet={onSet} />
+      <p style={muted}>
+        {setting.help} · {SOURCE[setting.source]}
+        {setting.ignoredStartUp !== undefined &&
+          ` · the start-up value ${setting.ignoredStartUp} was ignored, it is not a valid value`}
+      </p>
+      {setting.source === "ui" && (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              onReset(setting.key);
+            }}
+            style={buttonStyle}
+          >
+            Reset
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CoreSettingsView({
   settings,
   startUp,
@@ -225,30 +331,11 @@ export function CoreSettingsView({
       <p style={{ ...muted, maxWidth: typography.measurePx }}>
         These take effect straight away. Reset goes back to the start-up value, or the default.
       </p>
-      {settings.map((setting) => (
-        <div key={setting.key} style={{ display: "grid", gap: 4, minWidth: 0 }}>
-          <label htmlFor={`setting-${setting.key}`}>{setting.label}</label>
-          <Control setting={setting} onSet={onSet} />
-          <p style={muted}>
-            {setting.help} · {SOURCE[setting.source]}
-            {setting.ignoredStartUp !== undefined &&
-              ` · the start-up value ${setting.ignoredStartUp} was ignored, it is not a valid value`}
-          </p>
-          {setting.source === "ui" && (
-            <div>
-              <button
-                type="button"
-                onClick={() => {
-                  onReset(setting.key);
-                }}
-                style={buttonStyle}
-              >
-                Reset
-              </button>
-            </div>
-          )}
-        </div>
-      ))}
+      {settings
+        .filter((setting) => setting.automation !== true)
+        .map((setting) => (
+          <SettingRow key={setting.key} setting={setting} onSet={onSet} onReset={onReset} />
+        ))}
       {error !== undefined && <p style={{ margin: 0, color: semantic.error }}>{error}</p>}
 
       <SectionHeading>Set at start-up</SectionHeading>
@@ -356,14 +443,25 @@ export function CoreSettings({ transport }: { transport: CoreTransport | undefin
     );
   }
 
+  const onSet = (key: string, value: unknown) => void send("settings.set", { key, value });
+  const onReset = (key: string) => void send("settings.reset", { key });
+
   return (
-    <CoreSettingsView
-      settings={configuration.settings}
-      startUp={configuration.startUp}
-      onSet={(key, value) => void send("settings.set", { key, value })}
-      onReset={(key) => void send("settings.reset", { key })}
-      {...(error === undefined ? {} : { error })}
-    />
+    <>
+      <AutomationSettings
+        transport={transport}
+        settings={configuration.settings}
+        onSet={onSet}
+        onReset={onReset}
+      />
+      <CoreSettingsView
+        settings={configuration.settings}
+        startUp={configuration.startUp}
+        onSet={onSet}
+        onReset={onReset}
+        {...(error === undefined ? {} : { error })}
+      />
+    </>
   );
 }
 

@@ -16,6 +16,7 @@ export * from "./noir.js";
 export * from "./objective.js";
 export * from "./productivity.js";
 export * from "./provider.js";
+export * from "./places.js";
 export * from "./remote.js";
 export * from "./runtime.js";
 export * from "./settings.js";

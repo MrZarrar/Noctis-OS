@@ -101,6 +101,29 @@ describe("How Noctis runs", () => {
     expect(markup).toContain("noon was ignored");
   });
 
+  it("leaves automation settings to the Automations section", () => {
+    const markup = renderToStaticMarkup(
+      createElement(CoreSettingsView, {
+        settings: [
+          {
+            key: "placeVisitMinutes",
+            label: "Count a visit after (minutes)",
+            help: "",
+            kind: "integer",
+            automation: true,
+            value: 20,
+            source: "default",
+          },
+        ],
+        startUp: [],
+        onSet: () => undefined,
+        onReset: () => undefined,
+      }),
+    );
+
+    expect(markup).not.toContain("Count a visit after");
+  });
+
   it("lists the start-up settings read only, with secrets as set", () => {
     const markup = render();
 
