@@ -11,7 +11,7 @@ const RectSchema = z
   })
   .strict();
 export type WindowRect = z.infer<typeof RectSchema>;
-/** Saved windows, keyed by panel kind so a new panel of a kind opens where the last one was left. */
+/** Saved windows stay with the panel the owner arranged. */
 const WindowsSchema = z.record(z.string(), RectSchema);
 export type PanelWindows = z.infer<typeof WindowsSchema>;
 export interface Viewport {
@@ -66,6 +66,20 @@ export function defaultRect(
   }
   const step = placed.length * 32;
   return fitRect({ x: viewport.width - w - 24 - step, y: top + step, w, h }, viewport, 0);
+}
+
+export function openingRect(
+  size: SurfaceSize,
+  saved: WindowRect | undefined,
+  placed: readonly WindowRect[],
+  viewport: Viewport,
+  minWidth: number,
+): WindowRect {
+  if (saved !== undefined) {
+    const fitted = fitRect(saved, viewport, minWidth);
+    if (!placed.some((other) => overlaps(fitted, other))) return fitted;
+  }
+  return fitRect(defaultRect(size, placed, viewport), viewport, minWidth);
 }
 
 export function presetRect(

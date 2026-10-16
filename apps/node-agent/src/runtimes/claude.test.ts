@@ -212,7 +212,13 @@ const HAPPY = list(
     toolUse("t2", "Edit", { file_path: "C:\\work\\a.ts", old_string: "", new_string: "1" }),
   ]),
   toolResult("t2", [{ type: "text", text: "The file C:\\work\\a.ts has been updated." }]),
-  assistant([toolUse("t3", "Agent", { description: "look around", subagent_type: "Explore" })]),
+  assistant([
+    toolUse("t3", "Agent", {
+      description: "look around",
+      subagent_type: "Explore",
+      prompt: "Find where the turn ends",
+    }),
+  ]),
   assistant([toolUse("t4", "Read", { file_path: "C:\\work\\b.ts" })], "t3"),
   toolResult("t3", "done"),
   assistant([toolUse("t5", "mcp__noctis__noctis_propose_objective", { title: "x", intent: "y" })]),
@@ -252,15 +258,29 @@ describe("the Claude Agent SDK runtime", () => {
         paths: ["C:\\work\\a.ts"],
         summary: "The file C:\\work\\a.ts has been updated.",
       },
-      { itemId: "t3", kind: "sub_agent", status: "in_progress", label: "look around" },
+      {
+        itemId: "t3",
+        kind: "sub_agent",
+        status: "in_progress",
+        label: "look around",
+        task: "Find where the turn ends",
+      },
       {
         itemId: "t4",
         kind: "tool_call",
         status: "in_progress",
         tool: "Read",
         input: { file_path: "C:\\work\\b.ts" },
+        parentItemId: "t3",
       },
-      { itemId: "t3", kind: "sub_agent", status: "completed", label: "look around" },
+      {
+        itemId: "t3",
+        kind: "sub_agent",
+        status: "completed",
+        label: "look around",
+        task: "Find where the turn ends",
+        report: "done",
+      },
       {
         itemId: "t5",
         kind: "tool_call",
@@ -816,8 +836,9 @@ describe("the Claude Agent SDK runtime", () => {
         task_id: "k1",
         tool_use_id: "a1",
         status: "completed",
-        summary: "done",
+        summary: "LVL Unbound is a SvelteKit game",
         output_file: "",
+        usage: { total_tokens: 8200, tool_uses: 12, duration_ms: 64000 },
       }),
       init(),
       assistant([{ type: "text", text: "finished" }]),
@@ -855,6 +876,12 @@ describe("the Claude Agent SDK runtime", () => {
         ["in_progress", "Reading the diary"],
         ["completed", undefined],
       ]);
+      expect(r.items.filter((item) => item.kind === "sub_agent").at(-1)).toMatchObject({
+        report: "LVL Unbound is a SvelteKit game",
+        tokens: 8200,
+        toolUses: 12,
+        durationMs: 64000,
+      });
     });
 
     it("hands the background work to the owner's next message rather than queueing it", async () => {

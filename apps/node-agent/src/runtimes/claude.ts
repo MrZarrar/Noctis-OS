@@ -251,6 +251,7 @@ const ToolInputSchema = z
     notebook_path: z.string().optional(),
     description: z.string().optional(),
     subagent_type: z.string().optional(),
+    prompt: z.string().optional(),
     url: z.string().optional(),
     query: z.string().optional(),
   })
@@ -379,6 +380,8 @@ function toolItem(
       ...base,
       kind: "sub_agent",
       label: clip(input.description ?? input.subagent_type ?? "sub-agent", 200),
+      ...(input.prompt === undefined ? {} : { task: clip(input.prompt, 2000) }),
+      ...(output === undefined ? {} : { report: clip(output, 4000) }),
     };
   }
 
@@ -389,6 +392,11 @@ function toolItem(
     ...(raw === undefined ? {} : { input: raw }),
     ...(output === undefined ? {} : { output: clip(output, 4000) }),
   };
+}
+
+/** Marks a sub-agent's own step with the sub-agent it belongs to. */
+function withParent(item: RuntimeItem, parent: string | null): RuntimeItem {
+  return parent === null ? item : { ...item, parentItemId: clip(parent, 128) };
 }
 
 /** The text of a tool_result: a string, or the text blocks joined. */
@@ -468,7 +476,7 @@ interface ClaudeProcess extends LiveProcess {
   current: ClaudeTurn | undefined;
   failure: Error | undefined;
   /** Sub-agent labels by the tool call that started them, kept across turns. */
-  agents: Map<string, string>;
+  agents: Map<string, { label: string; task?: string }>;
   /** The sub-agent calls running in the background, whose tool result is only a placeholder. */
   background: Set<string>;
   /** Background tasks the CLI says are running, ambient ones left out. */
@@ -734,7 +742,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     sink: RuntimeSink,
   ): Promise<RuntimeTurnEvidence> {
     const { payload, roots, signal } = input;
-    const pending = new Map<string, { name: string; input: unknown }>();
+    const pending = new Map<string, { name: string; input: unknown; parent: string | null }>();
     const denied = new Set<string>();
     let itemCount = 0;
     let proposals = 0;
@@ -936,17 +944,18 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                     text: clip(block.text, 20_000),
                   });
                 } else if (block.type === "tool_use") {
-                  pending.set(block.id, { name: block.name, input: block.input });
-                  const item = toolItem(
-                    clip(block.id, 128),
-                    block.name,
-                    block.input,
-                    roots,
-                    "in_progress",
+                  const parent = message.parent_tool_use_id;
+                  pending.set(block.id, { name: block.name, input: block.input, parent });
+                  const item = withParent(
+                    toolItem(clip(block.id, 128), block.name, block.input, roots, "in_progress"),
+                    parent,
                   );
 
                   if (item.kind === "sub_agent") {
-                    proc.agents.set(block.id, item.label);
+                    proc.agents.set(block.id, {
+                      label: item.label,
+                      ...(item.task === undefined ? {} : { task: item.task }),
+                    });
                   }
 
                   emit(item);
@@ -990,13 +999,16 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                     : "completed";
 
                 emit(
-                  toolItem(
-                    clip(block.tool_use_id, 128),
-                    started.name,
-                    started.input,
-                    roots,
-                    status,
-                    resultText(block.content),
+                  withParent(
+                    toolItem(
+                      clip(block.tool_use_id, 128),
+                      started.name,
+                      started.input,
+                      roots,
+                      status,
+                      resultText(block.content),
+                    ),
+                    started.parent,
                   ),
                 );
               }
@@ -1050,13 +1062,24 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
               }
 
               const id = message.tool_use_id;
-              const label = id === undefined ? undefined : proc.agents.get(id);
+              const agent = id === undefined ? undefined : proc.agents.get(id);
 
-              if (id === undefined || label === undefined) {
+              if (id === undefined || agent === undefined) {
                 break;
               }
 
-              const base = { itemId: clip(id, 128), kind: "sub_agent", label } as const;
+              const base = {
+                itemId: clip(id, 128),
+                kind: "sub_agent",
+                ...agent,
+                ...(message.usage === undefined
+                  ? {}
+                  : {
+                      tokens: message.usage.total_tokens,
+                      toolUses: message.usage.tool_uses,
+                      durationMs: message.usage.duration_ms,
+                    }),
+              } as const;
 
               if (message.subtype === "task_progress") {
                 const activity =
@@ -1073,7 +1096,11 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
               } else if (proc.background.delete(id)) {
                 // A foreground sub-agent ends with its tool result instead.
                 proc.agents.delete(id);
-                emit({ ...base, status: message.status === "completed" ? "completed" : "failed" });
+                emit({
+                  ...base,
+                  status: message.status === "completed" ? "completed" : "failed",
+                  ...(message.summary === "" ? {} : { report: clip(message.summary, 4000) }),
+                });
               }
 
               break;

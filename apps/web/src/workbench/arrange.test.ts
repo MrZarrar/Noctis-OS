@@ -3,6 +3,7 @@ import {
   defaultRect,
   fitRect,
   geometryKey,
+  openingRect,
   presetRect,
   readWindows,
   resizeRect,
@@ -14,6 +15,16 @@ import {
 const viewport = { width: 1600, height: 900 };
 
 describe("floating panel windows", () => {
+  it("uses a saved position only when its fitted rectangle is free", () => {
+    const saved = { x: 1100, y: 72, w: 460, h: 560 };
+    expect(openingRect("standard", saved, [], viewport, 240)).toEqual(saved);
+    expect(openingRect("standard", saved, [saved], viewport, 240)).toEqual(
+      defaultRect("standard", [saved], viewport),
+    );
+    const offscreen = { ...saved, x: 3000 };
+    const fitted = fitRect(offscreen, viewport, 240);
+    expect(openingRect("standard", offscreen, [fitted], viewport, 240)).not.toEqual(fitted);
+  });
   it("opens new panels side by side from the right, clear of every open window", () => {
     const overlaps = (a: WindowRect, b: WindowRect): boolean =>
       a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;

@@ -168,7 +168,13 @@ describe("files and recall proposed on threads", () => {
   });
   it("leaves files in the show folder to the show folder, so a page opens once and runs", () => {
     fixture();
-    proposeFor({ kernel }, event(THREAD, "node-a", ["C:/shared/noctis-show/figure.html"]));
+    proposeFor(
+      { kernel },
+      event(THREAD, "node-a", [
+        "C:/shared/noctis-show/figure.html",
+        "C:/shared/Noctis-OS/noctis-show/rate-limiter/build.mjs",
+      ]),
+    );
     expect(listSurfaceIntents(kernel.db, { threadId: THREAD })).toHaveLength(0);
   });
   it("names in a prompt yield a recall panel; no Vault or no match yields nothing", () => {

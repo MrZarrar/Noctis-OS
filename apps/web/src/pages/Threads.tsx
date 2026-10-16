@@ -40,6 +40,8 @@ import { AgentQuestions, questionsOf } from "./AgentQuestions.js";
 import { conversationLabel, pinnedTo } from "./conversations-view.js";
 import type { FileTarget } from "./files-view.js";
 import { locateInRoots } from "./files-view.js";
+import { AgentMap } from "./AgentMap.js";
+import { isTurnRunning, messageTime, turnActivity, turnTiming } from "./turn-activity.js";
 
 /** How near the end still counts as being at it: a thumb rarely lands on the last pixel. */
 const FOLLOW_SLACK_PX = 80;
@@ -245,6 +247,7 @@ function TurnRow({
   arriving,
   answerable,
   onAnswer,
+  now,
 }: {
   transport: CoreTransport | undefined;
   onOpenProductivity: OpenProductivity | undefined;
@@ -256,6 +259,7 @@ function TurnRow({
   arriving: typeof ARRIVE | false;
   answerable: boolean;
   onAnswer: (text: string) => void;
+  now: number;
 }): JSX.Element {
   const running = turn.status === "queued" || turn.status === "running";
   const outputs = turn.items.filter((item) => item.kind === "output");
@@ -263,6 +267,7 @@ function TurnRow({
   const agents = turn.items.filter(
     (item): item is Extract<RuntimeItem, { kind: "sub_agent" }> => item.kind === "sub_agent",
   );
+  const activity = running ? turnActivity(turn.items) : undefined;
 
   return (
     <motion.li
@@ -293,15 +298,7 @@ function TurnRow({
         }}
       >
         <span style={{ color: typography.color.muted, minWidth: 0 }}>
-          {turn.status === "queued"
-            ? "Waiting to start"
-            : turn.status === "running"
-              ? "Working"
-              : turn.status === "completed"
-                ? "Finished"
-                : turn.status === "failed"
-                  ? "Failed"
-                  : "Cancelled"}
+          {turnTiming(turn, now)}
           {turn.failureReason === undefined ? "" : ` — ${turn.failureReason}`}
         </span>
         <span style={{ flex: 1 }} />
@@ -311,6 +308,7 @@ function TurnRow({
           </button>
         )}
       </p>
+      {activity !== undefined && <p style={{ margin: 0, overflowWrap: "anywhere" }}>{activity}</p>}
       {turn.items
         .filter((item) => item.kind === "proposal")
         .map((item) => (
@@ -505,6 +503,14 @@ export function Threads({
     error,
   } = conversation;
   const delegated = thread?.parentThreadId !== undefined;
+  const [now, setNow] = useState(Date.now);
+  const running = turns.some(isTurnRunning);
+  useEffect(() => {
+    setNow(Date.now());
+    if (!running) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running, thread?.id]);
   const end = useRef<HTMLDivElement>(null);
   const streamedLength = [...streaming.values()].reduce((total, text) => total + text.length, 0);
 
@@ -593,6 +599,15 @@ export function Threads({
               Conversations
             </button>
           )}
+          <AgentMap
+            key={`${identityId}:${thread?.id ?? ""}`}
+            identityId={identityId}
+            turns={turns}
+            children={children}
+            now={now}
+            onOpenThread={onOpenThread}
+            outputUrl={outputUrl}
+          />
           {/* An Objective being active used to mean every question went into
               it. A question that has nothing to do with the work in progress
               now has somewhere to go that does not require pausing it. */}
@@ -709,6 +724,7 @@ export function Threads({
               <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
                 {timeline.map((entry) => {
                   if (entry.kind === "message") {
+                    const time = messageTime(entry.message.createdAt, now);
                     return (
                       <motion.li
                         key={entry.message.id}
@@ -732,6 +748,17 @@ export function Threads({
                         >
                           {roleLabel(entry.message.role)}
                           <span style={spoken}>: </span>
+                          <time
+                            dateTime={entry.message.createdAt}
+                            title={time.title}
+                            style={{
+                              marginLeft: spacing.sm,
+                              color: typography.color.muted,
+                              letterSpacing: "normal",
+                            }}
+                          >
+                            {time.label}
+                          </time>
                         </span>
                         <Markdown text={entry.message.body} />
                       </motion.li>
@@ -746,6 +773,7 @@ export function Threads({
                         key={entry.turn.id}
                         arriving={entrance(arrived, entryKey(entry))}
                         turn={entry.turn}
+                        now={now}
                         outputUrl={outputUrl}
                         written={writtenFiles(entry.turn, conversation.roots)}
                         onOpenFile={onOpenFile}

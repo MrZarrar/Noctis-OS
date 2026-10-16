@@ -51,6 +51,10 @@ describe("identityCard", () => {
     expect(card).toContain("screenshot");
     expect(card).toContain("by path");
     expect(card).toContain("noctis-show/");
+    // Panels keep the owner in the loop cheaply; heavy figures are only on request.
+    expect(card).toContain("a few panels");
+    expect(card).toContain("only when the owner asks");
+    expect(card).toContain("Never take screenshots to check");
     expect(card).toContain("not Claude artifacts");
     expect(card).not.toBeUndefined();
     expect(

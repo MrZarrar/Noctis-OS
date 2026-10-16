@@ -247,6 +247,8 @@ export const RuntimeProposalSchema = z.discriminatedUnion("kind", [
         .string()
         .regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
         .optional(),
+      /** The file a panel showed by path is gone, so the panel closes. */
+      withdrawn: z.literal(true).optional(),
       role: SurfaceRoleSchema,
       persistence: SurfacePersistenceSchema,
       priority: z.int().min(-1000).max(1000),
@@ -356,7 +358,12 @@ export const RuntimeDelegationResultSchema = z
   })
   .strict();
 
-const ItemBase = { itemId: ShortId, status: RuntimeItemStatusSchema };
+const ItemBase = {
+  itemId: ShortId,
+  status: RuntimeItemStatusSchema,
+  /** The sub-agent whose step this is; absent for the main agent's own. */
+  parentItemId: ShortId.optional(),
+};
 
 /** One thing the runtime did during a turn, bounded so a node cannot flood the core. */
 export const RuntimeItemSchema = z.discriminatedUnion("kind", [
@@ -405,6 +412,13 @@ export const RuntimeItemSchema = z.discriminatedUnion("kind", [
       label: z.string().max(200),
       /** What a running sub-agent is doing now, in a line. */
       activity: z.string().max(200).optional(),
+      /** What it was asked to do. */
+      task: z.string().max(2000).optional(),
+      /** What it reported back when it finished. */
+      report: z.string().max(4000).optional(),
+      tokens: z.int().nonnegative().optional(),
+      toolUses: z.int().nonnegative().optional(),
+      durationMs: z.int().nonnegative().optional(),
     })
     .strict(),
   z.object({ ...ItemBase, kind: z.literal("output"), ...RuntimeOutputSchema.shape }).strict(),

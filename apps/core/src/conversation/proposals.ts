@@ -13,7 +13,11 @@ import type { CommandContext, Kernel } from "../kernel.js";
 import { listRuntimeRoots } from "../nodes/registry.js";
 import { createObjective, getObjective } from "../objectives/service.js";
 import { stableSourceId } from "../objectives/source-ids.js";
-import { upsertSurfaceIntent } from "../objectives/surface-intents.js";
+import {
+  changeSurfaceLifecycle,
+  listSurfaceIntents,
+  upsertSurfaceIntent,
+} from "../objectives/surface-intents.js";
 import { createReminder, createNote } from "../productivity/service.js";
 import {
   createTask,
@@ -354,9 +358,36 @@ export function applyProposal(
     return;
   }
 
+  const owner = objectiveId === undefined ? { threadId: turn.threadId } : { objectiveId };
+  const sourceId =
+    proposal.panelId !== undefined
+      ? stableSourceId("panel", objectiveId ?? turn.threadId, proposal.panelId)
+      : (fileSourceId ?? turn.id);
+
+  if (proposal.withdrawn === true) {
+    // Only a panel the agent can name again is withdrawn: one for a file or a panelId.
+    const shown = listSurfaceIntents(kernel.db, owner).find(
+      (intent) =>
+        sourceId !== turn.id &&
+        intent.kind === proposal.surfaceKind &&
+        intent.sourceIds[0] === sourceId,
+    );
+    if (shown !== undefined && shown.lifecycle !== "dismissed") {
+      const closed = changeSurfaceLifecycle(kernel, context, {
+        idempotencyKey,
+        surfaceId: shown.id,
+        lifecycle: "dismissed",
+      });
+      if (!closed.ok && closed.conflict.kind !== "idempotent_replay") {
+        skip(closed.conflict.kind, { surfaceKind: proposal.surfaceKind });
+      }
+    }
+    return;
+  }
+
   const upserted = upsertSurfaceIntent(kernel, context, {
     idempotencyKey,
-    ...(objectiveId === undefined ? { threadId: turn.threadId } : { objectiveId }),
+    ...owner,
     kind: proposal.surfaceKind,
     role: proposal.role,
     persistence: proposal.persistence,
@@ -365,11 +396,7 @@ export function applyProposal(
     minSize: "compact",
     // A shown file is the same panel the file gets when the agent writes it, so
     // editing it afterwards updates what the owner is already looking at.
-    sourceIds: [
-      proposal.panelId !== undefined
-        ? stableSourceId("panel", objectiveId ?? turn.threadId, proposal.panelId)
-        : (fileSourceId ?? turn.id),
-    ],
+    sourceIds: [sourceId],
     artifactIds: [],
     payloadVersion: proposal.payloadVersion,
     payload: payload.data,

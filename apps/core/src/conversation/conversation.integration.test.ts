@@ -795,6 +795,24 @@ describe("conversation service", () => {
       "media only by path",
     );
     expect(listSurfaceIntents(core.core.kernel.db, { threadId })).toHaveLength(2);
+    node.frame({
+      kind: "stream",
+      jobId,
+      sequence: 4,
+      item: {
+        itemId: "gone",
+        kind: "proposal",
+        status: "completed",
+        proposal: { ...show("media", join(directory, "docs", "shot.png")), withdrawn: true },
+      },
+    });
+    await waitFor(
+      () =>
+        listSurfaceIntents(core.core.kernel.db, { threadId }).find(
+          (panel) => panel.kind === "media",
+        )?.lifecycle === "dismissed",
+      "a deleted file closes its panel",
+    );
     rmSync(directory, { recursive: true, force: true });
   });
   it("a free-chat prompt uses the free thread; an Objective prompt uses that Objective's thread, created once", async () => {

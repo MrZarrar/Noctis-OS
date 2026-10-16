@@ -6,6 +6,8 @@ import type { PanelUpdateState } from "@noctis/ui";
 import { buttonStyle } from "../layout/Page.js";
 import { playMove } from "../layout/motion.js";
 import { PanelControls } from "./PanelControls.js";
+import { MorePanels } from "./MorePanels.js";
+import { floatingPanels, floatingSlots } from "./floating.js";
 import type { CompositionPlan, SurfaceIntent, SurfaceRegion } from "@noctis/contracts";
 import {
   SurfaceFrame,
@@ -25,7 +27,6 @@ import { resolveSurface } from "../surfaces/registry.js";
 import type { CompositionState } from "./useComposition.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import {
-  defaultRect,
   fitRect,
   PANEL_MIN_WIDTH,
   presetRect,
@@ -59,13 +60,6 @@ const EDGES: Readonly<Record<ResizeEdge, CSSProperties>> = {
   se: { bottom: -4, right: -4, width: 14, height: 14, cursor: "nwse-resize" },
   sw: { bottom: -4, left: -4, width: 14, height: 14, cursor: "nesw-resize" },
 };
-/**
- * Every mounted Workbench's committed windows, so a panel opening for one owner
- * (the thread) lands clear of another's (its Objective). Written after commit,
- * never during render: React may discard a render, and its entry would linger.
- */
-// ponytail: two owners whose first panels arrive in the same commit can still share a spot; drag one.
-const onScreen = new Map<string, readonly WindowRect[]>();
 /**
  * One stacking order for every floating window on the page, last on top, so a
  * thread's window and its Objective's can be raised over each other.
@@ -201,6 +195,64 @@ export function Workbench({
   const [arrangeError, setArrangeError] = useState<string>();
   const [viewport, setViewport] = useState(viewportSize);
   const front = useSyncExternalStore(subscribeStacking, () => stacking);
+  const shelf = useSyncExternalStore(floatingPanels.subscribe, floatingPanels.snapshot);
+  const shelfScope = scope ?? owner;
+  const ownShelf = shelf.filter((entry) => entry.scope === shelfScope);
+  const floatingShelf = shelf.filter((entry) => entry.floating);
+  const pinnedIds = new Set(
+    composition.overrides
+      .filter((entry) => entry.releasedAt === undefined)
+      .map((entry) => entry.surfaceId),
+  );
+  const floatingNow = !mobile && composition.focusedSurfaceId === undefined;
+  const displayedSlots =
+    composition.plan === undefined
+      ? []
+      : floatingNow
+        ? floatingSlots(
+            composition.plan,
+            composition.intents,
+            ownShelf.map((entry) => entry.id),
+          )
+        : composition.plan.slots;
+  useLayoutEffect(() => {
+    if (composition.plan === undefined) {
+      floatingPanels.remove(owner);
+      return;
+    }
+    floatingPanels.sync(owner, {
+      scope: shelfScope,
+      panels: composition.intents
+        .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+        .map((intent) => {
+          const slot = displayedSlots.find((value) => value.surfaceId === intent.id);
+          const resolved = resolveSurface(
+            intent.kind,
+            intent.payloadVersion,
+            intent.payload,
+            slot?.size ?? intent.minSize,
+            capabilities,
+          );
+          return {
+            id: intent.id,
+            title: resolved.status === "ok" ? resolved.title : intent.kind,
+            revision: intent.requestedAt,
+            requestedAt: Date.parse(intent.requestedAt),
+            pinned: pinnedIds.has(intent.id),
+            pendingPrimary: updates[intent.id]?.pendingPrimary === true,
+            size: poppedIds.has(intent.id) ? undefined : slot?.size,
+            minWidth: PANEL_MIN_WIDTH[intent.kind] ?? 240,
+          };
+        }),
+      liveIds: composition.intents
+        .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+        .map((intent) => intent.id),
+      windows,
+      viewport,
+      floating: floatingNow,
+    });
+  });
+  useLayoutEffect(() => () => floatingPanels.remove(owner), [owner]);
   const gesture = useRef<{
     pointerId: number;
     x: number;
@@ -214,23 +266,13 @@ export function Workbench({
   /** The latest saved windows and live panels, for saves that land after an await. */
   const latest = useRef({ windows, intents: composition.intents });
   latest.current = { windows, intents: composition.intents };
-  /** Panels drawn at a default place this render, written down after it so they never jump. */
-  const unsaved = useRef<PanelWindows>({});
-  /** Panels already raised as new, so one whose place cannot be saved is not raised every render. */
-  const announced = useRef(new Set<string>());
-  /** This render's windows, published to `onScreen` once committed. */
-  const drawn = useRef<readonly WindowRect[]>([]);
-  useLayoutEffect(() => {
-    onScreen.set(owner, drawn.current);
-  });
-  useEffect(() => () => void onScreen.delete(owner), [owner]);
+  const announced = useRef(new Map<string, number>());
   const boxOf = (id: string): HTMLElement | null =>
     root.current?.querySelector<HTMLElement>(`[data-panel-window="${CSS.escape(id)}"]`) ??
     root.current?.querySelector<HTMLElement>(`[data-surface-id="${CSS.escape(id)}"]`) ??
     null;
   /** Where a panel was just before the owner focused it or put it back, so it can travel from there. */
   const moving = useRef<{ id: string; from: DOMRect; floating: boolean; at: number }>();
-  const floatingNow = !mobile && composition.focusedSurfaceId === undefined;
   useLayoutEffect(() => {
     const pending = moving.current;
     if (pending === undefined || pending.floating === floatingNow) return;
@@ -259,22 +301,32 @@ export function Workbench({
     return saved;
   };
   const saveWindow = (id: string, rect: WindowRect): void => {
+    floatingPanels.touch(shelfScope, id);
     setPreview(undefined);
     setArrangeError(write({ [id]: rect }) ? undefined : SAVE_FAILED);
   };
   useEffect(() => {
-    if (Object.keys(unsaved.current).length > 0) write(unsaved.current);
-    // A panel that has just opened comes up on top, as a new window would. Once:
-    // two Workbenches re-raising their own would re-render each other forever.
-    const opened = Object.keys(unsaved.current).filter((id) => !announced.current.has(id));
-    opened.forEach((id) => announced.current.add(id));
+    if (scopeRef.current !== scope) return;
+    // Layout effects may have acknowledged a move since this render read the shelf.
+    const visible = floatingPanels
+      .snapshot()
+      .filter((entry) => entry.scope === shelfScope && entry.rect !== undefined);
+    const changes = Object.fromEntries(
+      visible.flatMap(({ id, geometry }) =>
+        JSON.stringify(geometry) === JSON.stringify(windows[id]) || geometry === undefined
+          ? []
+          : [[id, geometry]],
+      ),
+    );
+    if (Object.keys(changes).length > 0) write(changes);
+    const opened = visible.filter(
+      (entry) => announced.current.get(JSON.stringify([shelfScope, entry.id])) !== entry.openedAt,
+    );
+    opened.forEach(({ id, openedAt }) =>
+      announced.current.set(JSON.stringify([shelfScope, id]), openedAt),
+    );
     if (opened.length > 0)
-      raiseOpened(
-        opened.map((id) => ({
-          id,
-          at: latest.current.intents.find((intent) => intent.id === id)?.requestedAt ?? "",
-        })),
-      );
+      raiseOpened(opened.map(({ id, openedAt }) => ({ id, at: new Date(openedAt).toISOString() })));
   });
   useEffect(() => {
     cancel();
@@ -324,40 +376,26 @@ export function Workbench({
     }
   };
 
-  unsaved.current = {};
-  drawn.current = [];
   if (plan === undefined) {
     return <p style={{ padding: spacing.xl }}>Composing…</p>;
   }
 
   const byId = new Map<string, SurfaceIntent>(intents.map((intent) => [intent.id, intent]));
-  for (const slot of plan.slots) lastSlots.current.set(slot.surfaceId, slot);
+  for (const slot of displayedSlots) lastSlots.current.set(slot.surfaceId, slot);
   const canvasPlan = {
     ...plan,
-    slots: plan.slots.filter((slot) => !poppedIds.has(slot.surfaceId)),
+    slots: displayedSlots.filter((slot) => !poppedIds.has(slot.surfaceId)),
   };
   const compact = plan.reasonCodes.includes("display.compact");
   const floating = !mobile && focusedSurfaceId === undefined;
   const minWidthOf = (id: string): number => PANEL_MIN_WIDTH[byId.get(id)?.kind ?? ""] ?? 240;
   const rects = new Map<string, WindowRect>();
   if (floating) {
-    const placed = [...onScreen].flatMap(([key, list]) => (key === owner ? [] : list));
-    for (const slot of canvasPlan.slots) {
-      // A slot with no live intent draws nothing, and `write` would drop its id on every save.
-      if (!byId.has(slot.surfaceId)) continue;
-      const saved =
-        windows[slot.surfaceId] ??
-        (unsaved.current[slot.surfaceId] = defaultRect(slot.size, placed, viewport));
-      const rect = fitRect(
-        preview?.id === slot.surfaceId ? preview.rect : saved,
-        viewport,
-        minWidthOf(slot.surfaceId),
-      );
-      rects.set(slot.surfaceId, rect);
-      placed.push(rect);
+    for (const entry of ownShelf) {
+      if (entry.rect === undefined) continue;
+      rects.set(entry.id, preview?.id === entry.id ? preview.rect : entry.rect);
     }
   }
-  drawn.current = [...rects.values()];
   const start = (event: ReactPointerEvent<HTMLElement>, id: string, edge?: ResizeEdge): void => {
     const rect = rects.get(id);
     if (event.button !== 0 || rect === undefined) return;
@@ -466,6 +504,7 @@ export function Workbench({
                   }
             }
             onFocus={() => {
+              floatingPanels.touch(shelfScope, slot.surfaceId);
               const box = popped ? null : boxOf(slot.surfaceId);
               if (box !== null) {
                 moving.current = {
@@ -532,7 +571,14 @@ export function Workbench({
       <div
         key={id}
         data-panel-window={id}
-        onPointerDownCapture={() => raiseWindows([id])}
+        onPointerDownCapture={() => {
+          floatingPanels.touch(shelfScope, id);
+          raiseWindows([id]);
+        }}
+        onFocusCapture={() => {
+          floatingPanels.touch(shelfScope, id);
+          raiseWindows([id]);
+        }}
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
         onPointerCancel={cancel}
@@ -597,10 +643,30 @@ export function Workbench({
         </div>
       )}
 
+      {floating && floatingShelf[0]?.scope === shelfScope && (
+        <MorePanels
+          panels={floatingShelf.filter((entry) => entry.tucked)}
+          onShow={(entry) => {
+            if (!floatingPanels.reopen(entry.scope, entry.id)) {
+              setArrangeError("Pin or close an open panel to make room, then try again.");
+              return;
+            }
+            setArrangeError(undefined);
+            requestAnimationFrame(() => {
+              document
+                .querySelector<HTMLElement>(`[data-panel-window="${CSS.escape(entry.id)}"] h2`)
+                ?.focus({ preventScroll: true });
+            });
+          }}
+        />
+      )}
+
       <Overflow
         plan={{
           ...plan,
-          overflowSurfaceIds: plan.overflowSurfaceIds.filter((id) => !poppedIds.has(id)),
+          overflowSurfaceIds: plan.overflowSurfaceIds.filter(
+            (id) => !poppedIds.has(id) && (!floating || !ownShelf.some((entry) => entry.id === id)),
+          ),
         }}
         intents={byId}
         composition={composition}

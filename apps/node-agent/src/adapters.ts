@@ -41,7 +41,7 @@ import { childEnvironment } from "./runtimes/env.js";
 import { resolveRoots } from "./runtimes/roots.js";
 import { createHealthAdapters } from "./health/glycolens.js";
 import { createScreenView } from "./screen/view.js";
-import { showItem, watchShowFolder } from "./show-folder.js";
+import { showItem, watchShowFolder, withdrawItem } from "./show-folder.js";
 
 export { AdapterRefused };
 
@@ -341,10 +341,17 @@ const runtimeTurn: Adapter = async (payload, context) => {
   const heartbeat = setInterval(() => context.progress(0, "turn in progress"), TURN_HEARTBEAT_MS);
   heartbeat.unref();
   let shown = 0;
-  const stopShowing = watchShowFolder(roots.cwd, (path) => {
-    const item = showItem(path, (shown += 1));
-    if (item !== undefined) sink.item(item);
-  });
+  const stopShowing = watchShowFolder(
+    roots.cwd,
+    (path) => {
+      const item = showItem(path, (shown += 1));
+      if (item !== undefined) sink.item(item);
+    },
+    (path) => {
+      const item = withdrawItem(path, (shown += 1));
+      if (item !== undefined) sink.item(item);
+    },
+  );
 
   try {
     return RuntimeTurnEvidenceSchema.parse(

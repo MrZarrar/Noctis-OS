@@ -71,6 +71,71 @@ function conversationWith(turns: Turn[]): ConversationState {
 }
 
 describe("Threads timeline", () => {
+  it("shows semantic message times, live activity and an agent map action", () => {
+    const markup = renderToStaticMarkup(
+      createElement(Threads, {
+        identityId: "vesper",
+        conversation: conversationWith([turn]),
+        connected: true,
+      }),
+    );
+    expect(markup).toContain('<time dateTime="2026-10-07T10:00:00Z"');
+    expect(markup).toMatch(/<time[^>]*title="[^"]+"/);
+    expect(markup).toContain("Working · ");
+    expect(markup).toContain("ran private raw command");
+    expect(markup).toContain("Agents · 1");
+  });
+
+  it("shows completed turn duration outside Details", () => {
+    const done: Turn = { ...turn, status: "completed", completedAt: "2026-10-07T10:07:31Z" };
+    const markup = renderToStaticMarkup(
+      createElement(Threads, {
+        identityId: "vesper",
+        conversation: conversationWith([done]),
+        connected: true,
+      }),
+    );
+    expect(markup.replace(/<details[^>]*>[\s\S]*?<\/details>/g, "")).toContain("Worked 7m 30s");
+  });
+
+  it("places a local timestamp beside each message role with a full hover date", () => {
+    const markup = renderToStaticMarkup(
+      createElement(Threads, {
+        identityId: "vesper",
+        conversation: conversationWith([]),
+        connected: true,
+      }),
+    );
+    expect(markup).toMatch(
+      /Vesper[\s\S]*?<time dateTime="2026-10-07T10:00:00Z" title="[^"]+2026[^"]*"/,
+    );
+    expect(markup).toContain("Agents · 1");
+  });
+
+  it("shows current activity outside Details and the finished turn's fixed duration", () => {
+    const running: Turn = {
+      ...turn,
+      items: [{ itemId: "cmd", kind: "command", status: "in_progress", command: "npm test" }],
+    };
+    const completed: Turn = {
+      ...turn,
+      id: "turn-2",
+      status: "completed",
+      completedAt: "2026-10-07T10:07:31Z",
+    };
+    const markup = renderToStaticMarkup(
+      createElement(Threads, {
+        identityId: "vesper",
+        conversation: conversationWith([running, completed]),
+        connected: true,
+      }),
+    );
+    const outside = markup.replace(/<details[^>]*>[\s\S]*?<\/details>/g, "");
+    expect(outside).toContain("Working · ");
+    expect(outside).toContain("running npm test");
+    expect(outside).toContain("Worked 7m 30s");
+  });
+
   it("keeps replies, outputs and cancel visible while raw turn events start collapsed", () => {
     const conversation = conversationWith([turn]);
 

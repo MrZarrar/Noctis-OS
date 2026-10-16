@@ -295,7 +295,7 @@ function placeWrittenFiles(
     const located = locateInRoots(path, turn.nodeId, roots);
     if (located === undefined || located.relativePath.split(/[\\/]/).includes("..")) continue;
     // The node shows these itself, as the panel each file's kind needs.
-    if (/^noctis-show[\\/]/i.test(located.relativePath)) continue;
+    if (/(?:^|[\\/])noctis-show[\\/]/i.test(located.relativePath)) continue;
     const title = located.relativePath.split("/").at(-1)?.trim().slice(0, 200);
     if (!title) continue;
     const kind = viewerKind(title, 0);

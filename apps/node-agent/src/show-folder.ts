@@ -22,8 +22,13 @@ const MAX_SHOWN = 100;
  * created after the watch starts. Returns the stop. A folder that cannot be
  * watched is not an error: the turn runs without it.
  */
-export function watchShowFolder(cwd: string, onFile: (path: string) => void): () => void {
+export function watchShowFolder(
+  cwd: string,
+  onFile: (path: string) => void,
+  onRemoved: (path: string) => void = () => undefined,
+): () => void {
   const pending = new Map<string, NodeJS.Timeout>();
+  const shownPaths = new Set<string>();
   let shown = 0;
   let watcher: ReturnType<typeof watch>;
 
@@ -37,12 +42,20 @@ export function watchShowFolder(cwd: string, onFile: (path: string) => void): ()
         path,
         setTimeout(() => {
           pending.delete(path);
+          let isFile: boolean;
           try {
-            if (!statSync(path).isFile() || shown >= MAX_SHOWN) return;
+            isFile = statSync(path).isFile();
           } catch {
+            // Gone: a panel showing it would be empty, so it closes.
+            if (shownPaths.delete(path)) onRemoved(path);
             return;
           }
-          shown += 1;
+          if (!isFile || panelKind(path) === undefined) return;
+          if (!shownPaths.has(path)) {
+            if (shown >= MAX_SHOWN) return;
+            shown += 1;
+            shownPaths.add(path);
+          }
           onFile(path);
         }, QUIET_MS),
       );
@@ -59,17 +72,21 @@ export function watchShowFolder(cwd: string, onFile: (path: string) => void): ()
   };
 }
 
-/** The panel a shown file opens as, proposed by its path like any other. */
-export function showItem(path: string, index: number): RuntimeItem | undefined {
-  const title = basename(path).slice(0, 200);
-  const viewer = viewerKind(title, 0);
-  const surfaceKind = /\.(?:html?|svg)$/i.test(title)
-    ? "visual"
-    : viewer === "text"
-      ? "document"
-      : viewer === "image" || viewer === "video" || viewer === "audio"
-        ? "media"
-        : undefined;
+/**
+ * The panel a file in the show folder opens as, or undefined for anything that
+ * is not meant to be looked at. Code is how a figure was made, so a build
+ * script saved beside its page stays out of the way.
+ */
+function panelKind(path: string): "visual" | "document" | "media" | undefined {
+  const name = basename(path);
+  if (/\.(?:html?|svg)$/i.test(name)) return "visual";
+  if (/\.(?:md|txt)$/i.test(name)) return "document";
+  const viewer = viewerKind(name, 0);
+  return viewer === "image" || viewer === "video" || viewer === "audio" ? "media" : undefined;
+}
+
+function surfaceItem(path: string, index: number, withdrawn: boolean): RuntimeItem | undefined {
+  const surfaceKind = panelKind(path);
 
   if (surfaceKind === undefined) {
     return undefined;
@@ -86,7 +103,18 @@ export function showItem(path: string, index: number): RuntimeItem | undefined {
       persistence: "restorable",
       priority: 30,
       payloadVersion: 1,
-      payload: { title, path },
+      payload: { title: basename(path).slice(0, 200), path },
+      ...(withdrawn ? { withdrawn: true as const } : {}),
     },
   };
+}
+
+/** The panel a shown file opens as, proposed by its path like any other. */
+export function showItem(path: string, index: number): RuntimeItem | undefined {
+  return surfaceItem(path, index, false);
+}
+
+/** Closes the panel a deleted file had. */
+export function withdrawItem(path: string, index: number): RuntimeItem | undefined {
+  return surfaceItem(path, index, true);
 }

@@ -260,3 +260,43 @@ the folder. At most 100 files a turn.
 **Open:** old files in the folder do not reopen on their own; only what is saved during a turn opens. The folder
 is in the global git ignore on the work PC (owner's yes, 2026-10-16), and `docs/operations/HOME-SETUP.md`
 step 4 does the same at the home PC, with the node update and the Anatomy install.
+
+## 12. Lightweight panels, times, a live activity line and an agent map
+
+The owner asked for an interactive visual and Vesper spent seven and a half minutes on it: an Anatomy build script,
+dark and light builds, browser screenshots to check them, then deleting most of the screenshots. The panels showed
+the build script as code and four empty image panels, all opened on top of each other, burying the figure. The owner
+also saw no sub-agent dots; the turn's records show none ran, and the turn card said only "Working" throughout.
+
+**Decided (owner):**
+
+- Panels are a lightweight way to keep the owner in the loop, "only a few core panels with actually useful things",
+  not a build of their own. A visual defaults to a Mermaid diagram or a small hand-written page; Anatomy only when
+  the owner asks for a detailed figure or names it. No screenshots to check panels.
+- Panels never open on top of each other, and only a few stay open (at most 4 agent-opened ones); older ones tuck
+  into a "+N more" control.
+- Clock times on messages ("14:32", "Yesterday 14:32") and a worked-for duration on each turn.
+- A live activity line in the running turn card, saying what the agent is doing now.
+- An agent map from a button in the thread header, like Claude's, with each sub-agent's task, steps and final
+  report (not its full output).
+
+**Found:** placement remembered one spot per panel kind, so every new image panel opened exactly on the last one.
+The show folder opened everything saved there, code included, and the core's check that kept written files in it
+from opening twice only matched a show folder at the top of the shared folder.
+
+**Built:**
+
+- Vesper's card and the panel tool: a few useful panels (progress under one `panelId`, the result, decisions),
+  update rather than open another, Mermaid by default, Anatomy on request, no checking screenshots, and only
+  finished things in `noctis-show/`.
+- The show folder only opens what is meant to be looked at: pages, `.md` and `.txt`, images, video and audio.
+  Deleting a shown file closes its panel (a `withdrawn` surface proposal). The core's written-file check now finds a
+  `noctis-show` folder at any depth.
+- The node keeps what the agent map needs: each sub-agent's task, its final report, tokens, tool uses and time, and
+  marks every step a sub-agent takes with `parentItemId`.
+- A new panel reuses its saved spot only when that spot is free, otherwise it takes the next free one. At most 4
+  unpinned floating panels stay open; the oldest one the owner has not moved, resized or focused tucks into
+  "+N more", which lists hidden panels by title, marks ones the agent has updated, and brings one back on top. If all
+  4 are in use, a new panel waits in "+N more" rather than displacing one.
+- Message times, a live "Working · 2m 10s" count and "Worked 7m 30s" on each turn, the activity line ("running ...",
+  "editing ...", "N sub-agents working"), and an "Agents · N" header button opening the agent map.
