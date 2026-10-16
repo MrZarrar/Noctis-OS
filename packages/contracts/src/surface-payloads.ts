@@ -138,11 +138,12 @@ export const DocumentPayloadSchema = z
   .strict();
 
 /**
- * What an agent proposes for a visual: a page it built, by the path it wrote it
- * to. The core finds the shared folder that holds it, so the agent never names
- * a node or a grant.
+ * A file an agent shows by the path it is at: a page it built (visual), a
+ * README it edited (document), a screenshot (media). The core finds the shared
+ * folder that holds it, so the agent never names a node or a grant, and the
+ * file's text never travels through the tool call.
  */
-export const VisualProposalSchema = z
+export const PathPanelProposalSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
     path: z.string().trim().min(1).max(1024),
@@ -160,6 +161,7 @@ export const VisualPayloadSchema = z
   .strict();
 
 export type VisualPayload = z.infer<typeof VisualPayloadSchema>;
+export type PathPanelProposal = z.infer<typeof PathPanelProposalSchema>;
 
 export const TimelinePayloadSchema = z
   .object({
@@ -214,6 +216,7 @@ export const PANEL_PROPOSABLE_KINDS: ReadonlySet<string> = new Set([
   "evidence",
   "attention",
   "visual",
+  "media",
 ]);
 
 /** What an agent is doing right now. Built by the core from the job, so it never carries the prompt. */

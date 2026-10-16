@@ -14,6 +14,8 @@ export function markdownImageUrl(
   roots: readonly FileTarget["root"][],
   transport: Pick<CoreTransport, "contentUrl"> | undefined,
 ): string | undefined {
+  if (!/^(?:[a-z]:[\\/]|\/|\\\\)/i.test(path)) return undefined;
+
   for (const nodeId of new Set(roots.map((root) => root.nodeId))) {
     const target = locateInRoots(path, nodeId, roots);
     if (target === undefined) continue;

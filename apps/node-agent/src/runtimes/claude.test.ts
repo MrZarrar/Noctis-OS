@@ -3,6 +3,7 @@ import type * as ChildProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -321,6 +322,10 @@ describe("the Claude Agent SDK runtime", () => {
     expect(options?.resume).toBe(undefined);
     expect(options?.abortController).toBeInstanceOf(AbortController);
     expect(options?.canUseTool).toBeTypeOf("function");
+    // Noctis panels are where work is shown; claude.ai artifacts competed with them.
+    expect(options?.disallowedTools).toEqual(
+      expect.arrayContaining(["Artifact", "ArtifactComments", "ArtifactData", "DesignSync"]),
+    );
     expect(options?.mcpServers?.noctis).toMatchObject({ type: "sdk", name: "noctis" });
     expect(Object.keys(options?.env ?? {})).not.toContain("ANTHROPIC_API_KEY");
   });
@@ -707,6 +712,15 @@ describe("the Claude Agent SDK runtime", () => {
         behavior: "deny",
         message: expect.stringContaining("End your turn now") as unknown as string,
       });
+      expect(r.asks).toEqual([]);
+    });
+
+    it("leaves edits in the CLI's own scratchpad to the agent, as it does the working folder", async () => {
+      const { r, gate } = await held("allow");
+      const scratch = join(tmpdir(), "claude", "C--work", "session", "scratchpad", "draft.md");
+
+      await expect(gate("Write", { file_path: scratch })).resolves.toEqual({});
+      await expect(gate("Edit", { file_path: scratch.toUpperCase() })).resolves.toEqual({});
       expect(r.asks).toEqual([]);
     });
 

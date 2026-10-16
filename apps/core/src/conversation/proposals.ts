@@ -3,10 +3,12 @@ import {
   PANEL_PROPOSABLE_KINDS,
   SURFACE_PAYLOAD_SCHEMAS,
   RuntimeProposalSchema,
-  VisualProposalSchema,
+  PathPanelProposalSchema,
 } from "@noctis/contracts";
-import { locateInRoots } from "@noctis/domain";
+import type { PathPanelProposal } from "@noctis/contracts";
+import { isWindowsPath, locateInRoots, viewerKind } from "@noctis/domain";
 
+import { fileMediaType } from "../files/gateway.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { listRuntimeRoots } from "../nodes/registry.js";
 import { createObjective, getObjective } from "../objectives/service.js";
@@ -30,6 +32,77 @@ import {
 } from "../vault/promote.js";
 import type { VaultRoot } from "../vault/root.js";
 import type { Turn } from "./service.js";
+
+const FILE_PANEL_KINDS: ReadonlySet<string> = new Set(["document", "media", "visual"]);
+
+/**
+ * A panel for a file the agent names by path: the shared folder holding it on
+ * the turn's PC, and the payload that kind takes. A string is why it cannot be.
+ */
+function fromPath(
+  kernel: Kernel,
+  turn: Turn,
+  kind: string,
+  asked: PathPanelProposal,
+): { payload: unknown; sourceId: string } | string {
+  const located =
+    turn.nodeId === undefined
+      ? undefined
+      : locateInRoots(
+          asked.path,
+          turn.nodeId,
+          listRuntimeRoots(kernel.db, () => true, kernel.clock.now()),
+        );
+
+  if (
+    turn.nodeId === undefined ||
+    located === undefined ||
+    located.relativePath.split(/[\\/]/).includes("..")
+  ) {
+    return "file_outside_shared_folders";
+  }
+
+  const source = {
+    from: "file",
+    nodeId: turn.nodeId,
+    grantId: located.root.grantId,
+    relativePath: located.relativePath,
+  };
+  const name = located.relativePath.split("/").at(-1) ?? "";
+  const viewer = viewerKind(name, 0);
+  const actions = asked.actions === undefined ? {} : { actions: asked.actions };
+  const payload =
+    kind === "visual"
+      ? /\.(?:html?|svg)$/i.test(name)
+        ? { title: asked.title, source, ...actions }
+        : undefined
+      : kind === "document"
+        ? viewer === "text"
+          ? {
+              title: asked.title,
+              format: /\.md$/i.test(name) ? "markdown" : "text",
+              content: source,
+              ...actions,
+            }
+          : undefined
+        : viewer === "image" || viewer === "video" || viewer === "audio"
+          ? { title: asked.title, mediaType: fileMediaType(name), source }
+          : undefined;
+
+  if (payload === undefined) {
+    return "file_does_not_fit_panel";
+  }
+
+  return {
+    payload,
+    sourceId: stableSourceId(
+      turn.threadId,
+      turn.nodeId,
+      source.grantId,
+      isWindowsPath(located.root.path) ? source.relativePath.toLowerCase() : source.relativePath,
+    ),
+  };
+}
 
 /** What applying a proposal may reach beyond the kernel. Absent when no Vault is configured. */
 export interface ProposalDeps {
@@ -231,50 +304,26 @@ export function applyProposal(
   }
 
   let raw = proposal.payload;
+  let fileSourceId: string | undefined;
+  const byPath = FILE_PANEL_KINDS.has(proposal.surfaceKind)
+    ? PathPanelProposalSchema.safeParse(proposal.payload)
+    : undefined;
 
-  if (proposal.surfaceKind === "visual") {
-    const asked = VisualProposalSchema.safeParse(proposal.payload);
+  if (byPath?.success === true) {
+    const shown = fromPath(kernel, turn, proposal.surfaceKind, byPath.data);
 
-    if (!asked.success) {
-      skip("invalid_surface_payload", { surfaceKind: "visual" });
+    if (typeof shown === "string") {
+      skip(shown, { surfaceKind: proposal.surfaceKind });
       return;
     }
 
-    // A page that runs is only ever one the agent wrote, read from a folder the
-    // owner shared on the PC the turn ran on.
-    if (!/\.(?:html?|svg)$/i.test(asked.data.path)) {
-      skip("visual_must_be_html_or_svg");
-      return;
-    }
-
-    const located =
-      turn.nodeId === undefined
-        ? undefined
-        : locateInRoots(
-            asked.data.path,
-            turn.nodeId,
-            listRuntimeRoots(kernel.db, () => true, kernel.clock.now()),
-          );
-
-    if (
-      turn.nodeId === undefined ||
-      located === undefined ||
-      located.relativePath.split(/[\\/]/).includes("..")
-    ) {
-      skip("visual_outside_shared_folders");
-      return;
-    }
-
-    raw = {
-      title: asked.data.title,
-      source: {
-        from: "file",
-        nodeId: turn.nodeId,
-        grantId: located.root.grantId,
-        relativePath: located.relativePath,
-      },
-      ...(asked.data.actions === undefined ? {} : { actions: asked.data.actions }),
-    };
+    raw = shown.payload;
+    fileSourceId = shown.sourceId;
+  } else if (proposal.surfaceKind === "visual" || proposal.surfaceKind === "media") {
+    // A page that runs, or bytes from a PC, only ever come from a path the core
+    // resolved itself, never from a node and grant the model named.
+    skip("file_panel_needs_a_path", { surfaceKind: proposal.surfaceKind });
+    return;
   }
 
   const payload = contract.schema.safeParse(raw);
@@ -288,6 +337,7 @@ export function applyProposal(
 
   if (
     proposal.surfaceKind === "document" &&
+    fileSourceId === undefined &&
     (payload.data as { content: { from: string } }).content.from !== "inline"
   ) {
     skip("document_must_be_inline");
@@ -313,10 +363,12 @@ export function applyProposal(
     priority: proposal.priority,
     // The runtime never says how big: the smallest size, and composition decides.
     minSize: "compact",
+    // A shown file is the same panel the file gets when the agent writes it, so
+    // editing it afterwards updates what the owner is already looking at.
     sourceIds: [
-      proposal.panelId === undefined
-        ? turn.id
-        : stableSourceId("panel", objectiveId ?? turn.threadId, proposal.panelId),
+      proposal.panelId !== undefined
+        ? stableSourceId("panel", objectiveId ?? turn.threadId, proposal.panelId)
+        : (fileSourceId ?? turn.id),
     ],
     artifactIds: [],
     payloadVersion: proposal.payloadVersion,

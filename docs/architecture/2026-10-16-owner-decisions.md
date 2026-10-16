@@ -216,3 +216,29 @@ caller has to wait for the child.
 
 **Also found while checking:** `/visuals/content` was not in the core's API path list, so on the real core it
 answered with the app's own page instead of the figure. It is in the list now.
+
+## 10. Panels too slow, too many asks, and a Claude artifact instead of a panel
+
+The owner tried the README review. Vesper built a separate review page, resized images, asked for approval seven
+times, and in the end published a claude.ai artifact instead of a Noctis panel. Using Noctis felt like a chore.
+
+**Found (from the core's approvals):** all seven asks were two kinds. Two were edits in Claude Code's own
+scratchpad, which lives under the temp folder, outside every shared folder, so each was stopped as an external
+write. Five were calls to Claude's `Artifact` tool, which Noctis did not know, so each was treated as external.
+Claude Code's own instructions push it to publish artifacts, which is why it reached for one.
+
+**Built:**
+
+- Claude's artifact tools (`Artifact`, `ArtifactComments`, `ArtifactData`, `DesignSync`) are switched off in Noctis
+  sessions. Panels are the one place work is shown.
+- Edits in the CLI's scratchpad (`<temp>\claude`) are left to the agent, like edits in the working folder.
+  Commands and tool calls from there are still classified on their own.
+- **Show a file by path.** `document`, `media` and `visual` panels take `{title, path}`. The core finds the shared
+  folder holding the file and picks the payload, so nothing is copied through the tool call. A shown file is the
+  same panel the file gets when the agent writes it, so editing it updates what the owner is already looking at.
+  `media` became proposable, but only by path, never with a node and grant the model names.
+- A markdown file in a panel resolves its relative images against its own folder, so a README shows as it will on
+  GitHub (Codex built this).
+- Vesper's card now says: work on real files in a shared folder, let written files open as panels, show other
+  files by path, never retype a file into a panel or build a separate review page, and use inline documents only
+  for text that is not a file.

@@ -8,11 +8,12 @@ import { MermaidDiagram } from "./MermaidDiagram.js";
 
 function Image({ src, alt }: ComponentProps<"img">): JSX.Element {
   const imageUrl = useContext(MarkdownFiles);
+  const path = src?.split(/[?#]/, 1)[0];
   const url =
-    src !== undefined &&
-    /^(?:[a-z]:[\\/]|\/(?!\/))/i.test(src) &&
-    /\.(?:png|jpe?g|gif|webp)$/i.test(src)
-      ? imageUrl?.(src)
+    path !== undefined &&
+    !/^(?:https?:|data:|blob:|\/\/)/i.test(path) &&
+    /\.(?:png|jpe?g|gif|webp)$/i.test(path)
+      ? imageUrl?.(path)
       : undefined;
 
   return url === undefined ? (

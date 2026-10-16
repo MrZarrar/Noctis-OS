@@ -49,6 +49,8 @@ describe("identityCard", () => {
     expect(card).toContain("mermaid");
     expect(card).toContain("anatomy");
     expect(card).toContain("screenshot");
+    expect(card).toContain("by path");
+    expect(card).toContain("not Claude artifacts");
     expect(card).not.toBeUndefined();
     expect(
       identityCard({ identityId: "vesper", runtime: "local", model: "qwen", env: {} }),

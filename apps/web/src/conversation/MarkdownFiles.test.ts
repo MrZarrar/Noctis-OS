@@ -77,20 +77,51 @@ describe("Markdown images", () => {
     expect(markup).toContain('style="max-width:100%"');
   });
 
-  it("never asks the resolver for remote, relative or SVG sources", () => {
+  it("never asks the resolver for remote, blob or SVG sources", () => {
     const imageUrl = vi.fn(() => "/must-not-load");
     const markup = renderToStaticMarkup(
       createElement(
         MarkdownFiles.Provider,
         { value: imageUrl },
         createElement(Markdown, {
-          text: "![remote](https://example.com/a.png) ![relative](shots/a.png) ![vector](/repo/a.svg)",
+          text: "![remote](https://example.com/a.png) ![blob](blob:preview/a.png) ![vector](/repo/a.svg)",
         }),
       ),
     );
 
     expect(imageUrl).not.toHaveBeenCalled();
     expect(markup).not.toContain("<img");
+  });
+
+  it.each(["docs/health/day.png", "./shots/a.webp", "../art/b.jpg"])(
+    "lets the context resolve a relative source: %s",
+    (src) => {
+      const imageUrl = vi.fn(() => "/resolved-image");
+      const markup = renderToStaticMarkup(
+        createElement(
+          MarkdownFiles.Provider,
+          { value: imageUrl },
+          createElement(Markdown, { text: `![preview](${src})` }),
+        ),
+      );
+
+      expect(imageUrl).toHaveBeenCalledWith(src);
+      expect(markup).toContain('src="/resolved-image"');
+    },
+  );
+
+  it("removes URL queries and fragments from the file path", () => {
+    const imageUrl = vi.fn(() => "/resolved-image");
+    const markup = renderToStaticMarkup(
+      createElement(
+        MarkdownFiles.Provider,
+        { value: imageUrl },
+        createElement(Markdown, { text: "![preview](shots/a.PNG?version=2#large)" }),
+      ),
+    );
+
+    expect(imageUrl).toHaveBeenCalledWith("shots/a.PNG");
+    expect(markup).toContain('src="/resolved-image"');
   });
 
   it("keeps unresolved alt text muted and escaped", () => {
@@ -154,6 +185,16 @@ describe("Markdown file URLs", () => {
     ).toBeUndefined();
     expect(markdownImageUrl("/repo/login.png", roots, undefined)).toBeUndefined();
     expect(markdownImageUrl("/repo/login.png", roots, {})).toBeUndefined();
+  });
+
+  it("refuses relative paths even when a root is relative", () => {
+    const contentUrl = vi.fn((path: string) => path);
+    expect(
+      markdownImageUrl("repo/shots/a.png", [{ nodeId: "work", grantId: "repo", path: "repo" }], {
+        contentUrl,
+      }),
+    ).toBeUndefined();
+    expect(contentUrl).not.toHaveBeenCalled();
   });
 });
 

@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type {
   CanUseTool,
@@ -205,6 +208,25 @@ const NOCTIS_PREFIX = "mcp__noctis__";
 const DECLINED = "declined by Noctis authority";
 const NO_TURN = "no Noctis turn is running";
 const HOOK_TIMEOUT_SECONDS = 24 * 60 * 60;
+/**
+ * Claude Code keeps its scratchpad under the temp folder, outside every root
+ * the owner granted, so each draft written there was stopped as an external
+ * write. It is the CLI's own working space on this PC; reaching out from it is
+ * still classified on its own, as a command or a tool call.
+ */
+const SCRATCH_ROOTS = [...new Set([tmpdir(), realTmpdir()])].map((dir) => join(dir, "claude"));
+
+function realTmpdir(): string {
+  try {
+    return realpathSync.native(tmpdir());
+  } catch {
+    return tmpdir();
+  }
+}
+
+/** Claude's artifact publishing, which competed with Noctis's own panels for showing work. */
+const DISALLOWED_TOOLS = ["Artifact", "ArtifactComments", "ArtifactData", "DesignSync"];
+
 const QUESTIONS_IN_THREAD =
   "Noctis has shown these questions and their options to the owner in the thread. " +
   "End your turn now: do not pick an answer yourself or carry on with a default. " +
@@ -258,7 +280,10 @@ function describeCall(
   roots: ResolvedRoots,
 ): Omit<RuntimeAsk, "askId"> {
   const input = fields(raw);
-  const scope = { writableRoots: roots.writable, readableRoots: roots.readable };
+  const scope = {
+    writableRoots: [...roots.writable, ...SCRATCH_ROOTS],
+    readableRoots: roots.readable,
+  };
 
   if (COMMAND_TOOLS.has(toolName)) {
     const command = input.command ?? "";
@@ -609,6 +634,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       env: input.env,
       model: payload.model.model,
       permissionMode: "auto",
+      disallowedTools: DISALLOWED_TOOLS,
       settingSources: ["user", "project", "local"],
       skills: "all",
       // The preset keeps Claude Code's own prompt, so the owner's setup still loads.

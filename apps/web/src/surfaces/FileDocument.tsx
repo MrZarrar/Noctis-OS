@@ -1,10 +1,37 @@
 import type { DocumentPayload } from "@noctis/contracts";
 import { typography } from "@noctis/ui";
+import { useContext } from "react";
 import { useFileText } from "../pages/useFileText.js";
 import { filesQuery } from "../pages/files-view.js";
 import { Skeleton, buttonStyle } from "../layout/Page.js";
 import { Markdown } from "../conversation/Markdown.js";
+import { MarkdownFiles, type MarkdownImageUrl } from "../conversation/MarkdownFiles.js";
 import type { SurfaceContext } from "./renderers.js";
+
+function relativeImagePath(document: string, src: string): string | undefined {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(src).replaceAll("\\", "/");
+  } catch {
+    return undefined;
+  }
+  const slashed = document.replaceAll("\\", "/");
+  if (decoded.startsWith("/") || /^[a-z]:\//i.test(decoded) || slashed.startsWith("/")) {
+    return undefined;
+  }
+
+  const folder = slashed.slice(0, slashed.lastIndexOf("/") + 1);
+  const parts: string[] = [];
+  for (const part of `${folder}${decoded}`.split("/")) {
+    if (part === "..") {
+      if (parts.length === 0) return undefined;
+      parts.pop();
+    } else if (part !== "" && part !== ".") {
+      parts.push(part);
+    }
+  }
+  return parts.length === 0 ? undefined : parts.join("/");
+}
 
 export function FileDocument({
   payload,
@@ -13,6 +40,7 @@ export function FileDocument({
   payload: DocumentPayload;
   context: SurfaceContext;
 }): JSX.Element | null {
+  const outerImageUrl = useContext(MarkdownFiles);
   const source = payload.content;
   const path =
     source.from === "file"
@@ -26,6 +54,13 @@ export function FileDocument({
     context.fileText,
   );
   if (source.from !== "file" || path === undefined) return null;
+  const imageUrl: MarkdownImageUrl = (src) => {
+    if (/^(?:[a-z]:[\\/]|\/|\\\\)/i.test(src)) return outerImageUrl?.(src);
+    const joined = relativeImagePath(source.relativePath, src);
+    return joined === undefined
+      ? undefined
+      : context.fileTransport?.contentUrl?.(`/files/content?${filesQuery(source, joined)}`);
+  };
   const url = context.fileTransport?.contentUrl?.(path);
   return (
     <div>
@@ -62,7 +97,9 @@ export function FileDocument({
       )}
       {file.text !== undefined &&
         (payload.format === "markdown" ? (
-          <Markdown text={file.text} readOnlyTasks />
+          <MarkdownFiles.Provider value={imageUrl}>
+            <Markdown text={file.text} readOnlyTasks />
+          </MarkdownFiles.Provider>
         ) : (
           <pre
             style={{

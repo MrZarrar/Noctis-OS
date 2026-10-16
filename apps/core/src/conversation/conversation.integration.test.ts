@@ -554,7 +554,6 @@ describe("conversation service", () => {
     for (const [index, surfaceKind] of [
       "approval",
       "vault_recall",
-      "media",
       "native_application",
       "external_tool",
     ].entries()) {
@@ -571,7 +570,7 @@ describe("conversation service", () => {
       });
     }
     await waitFor(
-      () => logs.filter((line) => line.includes("kind_not_proposable")).length === 5,
+      () => logs.filter((line) => line.includes("kind_not_proposable")).length === 4,
       "forbidden kinds logged",
     );
     expect(listSurfaceIntents(core.core.kernel.db, { threadId })).toHaveLength(1);
@@ -715,8 +714,87 @@ describe("conversation service", () => {
         source: { from: "file", relativePath: "figures/limiter.html" },
       },
     });
-    expect(logs.some((line) => line.includes("visual_outside_shared_folders"))).toBe(true);
-    expect(logs.some((line) => line.includes("visual_must_be_html_or_svg"))).toBe(true);
+    expect(logs.some((line) => line.includes("file_outside_shared_folders"))).toBe(true);
+    expect(logs.some((line) => line.includes("file_does_not_fit_panel"))).toBe(true);
+    rmSync(directory, { recursive: true, force: true });
+  });
+  it("shows an existing file by its path: a document for text, media for an image, no copy in the call", async () => {
+    const logs: string[] = [];
+    const core = await startTestCore(logs);
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const sent = await send(core, "by-path");
+    const threadId = sent.body.threadId as string;
+    await waitFor(() => node.jobs().length === 1, "path job");
+    const jobId = lastTurnJob(node).assignment.jobId;
+    const show = (surfaceKind: string, path: string) => ({
+      kind: "surface" as const,
+      surfaceKind,
+      role: "primary" as const,
+      persistence: "restorable" as const,
+      priority: 20,
+      payloadVersion: 1,
+      payload: { title: "README", path },
+    });
+    for (const [index, [kind, path]] of [
+      ["document", join(directory, "README.md")],
+      ["media", join(directory, "docs", "shot.png")],
+      ["document", join(directory, "docs", "shot.png")],
+    ].entries()) {
+      node.frame({
+        kind: "stream",
+        jobId,
+        sequence: index,
+        item: {
+          itemId: `f${String(index)}`,
+          kind: "proposal",
+          status: "completed",
+          proposal: show(kind!, path!),
+        },
+      });
+    }
+    await waitFor(
+      () => listSurfaceIntents(core.core.kernel.db, { threadId }).length === 2,
+      "file panels",
+    );
+    const panels = listSurfaceIntents(core.core.kernel.db, { threadId });
+    expect(panels.find((panel) => panel.kind === "document")?.payload).toMatchObject({
+      title: "README",
+      format: "markdown",
+      content: { from: "file", relativePath: "README.md" },
+    });
+    expect(panels.find((panel) => panel.kind === "media")?.payload).toMatchObject({
+      mediaType: "image/png",
+      source: { from: "file", relativePath: "docs/shot.png" },
+    });
+    await waitFor(
+      () => logs.some((line) => line.includes("file_does_not_fit_panel")),
+      "an image is not a document",
+    );
+    node.frame({
+      kind: "stream",
+      jobId,
+      sequence: 3,
+      item: {
+        itemId: "raw",
+        kind: "proposal",
+        status: "completed",
+        proposal: {
+          ...show("media", "unused"),
+          payload: {
+            title: "Named source",
+            mediaType: "image/png",
+            source: { from: "file", nodeId: "node", grantId: "grant", relativePath: "a.png" },
+          },
+        },
+      },
+    });
+    await waitFor(
+      () => logs.some((line) => line.includes("file_panel_needs_a_path")),
+      "media only by path",
+    );
+    expect(listSurfaceIntents(core.core.kernel.db, { threadId })).toHaveLength(2);
     rmSync(directory, { recursive: true, force: true });
   });
   it("a free-chat prompt uses the free thread; an Objective prompt uses that Objective's thread, created once", async () => {
