@@ -32,6 +32,8 @@ import type { HistoryEntry } from "./navigation/back.js";
 import { entryPage, pushPage, useBackLayer } from "./navigation/back.js";
 import { Productivity } from "./pages/Productivity.js";
 import { Approvals } from "./pages/Approvals.js";
+import { Health } from "./pages/Health.js";
+import { useHealth } from "./health/useHealth.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Files } from "./pages/Files.js";
 import type { FileTarget } from "./pages/files-view.js";
@@ -209,8 +211,11 @@ function Workbench({
     threadLayer.dismiss();
     void identity.activate(next);
   };
-  /** What waits on the owner, on the Approvals tab wherever they are. */
-  const counts = { Approvals: useWaitingCount(transport) };
+  /** What waits on the owner, on the Approvals tab wherever they are, and new health suggestions. */
+  const counts = {
+    Approvals: useWaitingCount(transport),
+    Health: useHealth(transport).status?.proposed ?? 0,
+  };
   const allPages = useShowAllPages(transport) ?? ALL_PAGES_AT_BUILD;
 
   // Every move to another page is a history entry, so back lands on the page before.
@@ -309,7 +314,7 @@ function Workbench({
           />
         );
       case "Health":
-        return null;
+        return <Health transport={transport} />;
       case "Reminders":
       case "To-dos":
       case "Notes":
@@ -509,6 +514,8 @@ function Workbench({
         )}
 
         {active === "Approvals" && <Approvals transport={transport} />}
+
+        {active === "Health" && <Health transport={transport} />}
 
         {active === "Vault" && (
           <Vault

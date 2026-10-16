@@ -2,7 +2,8 @@
  * The v1 destinations: what the owner opens Noctis for, from the phone first.
  * Threads is where an agent is started or continued on any PC, Files is what
  * the agents produced, Nodes is the PCs themselves, Approvals is what is
- * waiting on the owner, and Vault is the shared memory.
+ * waiting on the owner, Health is the weekly glucose report, and Vault is the
+ * shared memory.
  */
 export const NAV_ITEMS = [
   "Presence",
@@ -10,6 +11,8 @@ export const NAV_ITEMS = [
   "Files",
   "Nodes",
   "Approvals",
+  /** glycolens's weekly report from the home PC. */
+  "Health",
   "Vault",
   "Reminders",
   "To-dos",

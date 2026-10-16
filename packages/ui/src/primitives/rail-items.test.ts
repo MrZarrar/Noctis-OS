@@ -10,6 +10,7 @@ describe("v1 navigation", () => {
       "Files",
       "Nodes",
       "Approvals",
+      "Health",
       "Vault",
       "Reminders",
       "To-dos",
