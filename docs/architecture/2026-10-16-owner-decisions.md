@@ -258,4 +258,5 @@ opens once and as a page. Vesper is told to build Anatomy figures and save scree
 the folder. At most 100 files a turn.
 
 **Open:** old files in the folder do not reopen on their own; only what is saved during a turn opens. The folder
-shows in `git status` unless it is ignored, for example in a global gitignore.
+is in the global git ignore on the work PC (owner's yes, 2026-10-16), and `docs/operations/HOME-SETUP.md`
+step 4 does the same at the home PC, with the node update and the Anatomy install.

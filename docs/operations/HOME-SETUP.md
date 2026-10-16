@@ -155,3 +155,72 @@ does not report until it is started again.
 credential, so the hook says nothing for them. Ask before setting it up for that account.
 
 To remove it: `& $node apps\node-agent\dist\main.js bridge uninstall` removes only the Noctis hooks.
+
+## 4. Panels, the show folder and Anatomy
+
+Added 16 October 2026, and already done at the work PC. Agents now show their work in panels while they work:
+interactive pages, Mermaid diagrams, READMEs with their own images, and anything saved in a `noctis-show/` folder in
+the working folder. Claude's own artifacts are switched off in Noctis, and edits in Claude's scratchpad no longer
+ask. The decisions are in `docs/architecture/2026-10-16-owner-decisions.md`, sections 6 to 11.
+
+The work PC's core is already updated, so the node can restart straight away.
+
+**Pull, build and restart the node.** `npm ci` matters this time: the page gained a package (Mermaid).
+
+```powershell
+cd $env:USERPROFILE\Documents\Jarvis\Noctis-OS
+git pull --ff-only
+npm ci
+npm run build
+Stop-ScheduledTask -TaskName "Noctis node agent"
+Start-ScheduledTask -TaskName "Noctis node agent"
+```
+
+Check: `(Get-ScheduledTask -TaskName "Noctis node agent").State` is `Running`, and Nodes in Noctis shows `zarrarpc`
+online.
+
+**Keep `noctis-show/` out of every repo.** Agents save figures and screenshots there for Noctis to show, so it must
+never be committed. One line in your global git ignore covers every repo on this PC:
+
+```powershell
+$ignore = git config --global core.excludesFile
+if (-not $ignore) { $ignore = "$env:USERPROFILE\.config\git\ignore" }
+$ignore = $ignore -replace '^~', $env:USERPROFILE
+New-Item -ItemType Directory -Force (Split-Path $ignore) | Out-Null
+if (-not (Test-Path $ignore) -or -not (Select-String -Path $ignore -SimpleMatch 'noctis-show/' -Quiet)) {
+  Add-Content -Path $ignore -Value "`n# Files Noctis shows as panels while an agent works; never part of a repo.`nnoctis-show/"
+}
+```
+
+Check, inside any repo: `git check-ignore -v noctis-show/x.md` prints the ignore file and `noctis-show/`.
+
+**Install the Anatomy skill** for Claude Code and Codex. It explains ideas as interactive isometric figures, which
+agents build into `noctis-show/`. It is installed from one reviewed commit with its gallery publishing removed:
+that part read Claude's session logs and could force-push to GitHub. Nothing else in it reaches the network.
+
+```powershell
+$skill = "$env:USERPROFILE\.claude\skills\anatomy"
+git clone --quiet https://github.com/wheresryan22/anatomy.git $skill
+git -C $skill checkout --quiet e9488296a44211c42701ff71705b7901470ec78f
+Remove-Item -Recurse -Force "$skill\.git", "$skill\.github", "$skill\references\publish.md", `
+  "$skill\scripts\publish.mjs", "$skill\scripts\publish.test.mjs", "$skill\scripts\session.mjs", `
+  "$skill\scripts\session.test.mjs", "$skill\scripts\fingerprint.mjs"
+$lines = Get-Content "$skill\SKILL.md" -Encoding UTF8 |
+  Where-Object { $_ -notmatch 'references/publish\.md' } |
+  ForEach-Object { $_.Replace(' Also publishes a finished figure to the Anatomy community gallery when asked.', '') }
+# WriteAllLines writes UTF-8 without a byte order mark, which the skill's front matter needs.
+[IO.File]::WriteAllLines("$skill\SKILL.md", [string[]]$lines)
+[IO.File]::WriteAllText("$skill\.source-commit", "e9488296a44211c42701ff71705b7901470ec78f`n")
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.agents\skills" | Out-Null
+Copy-Item -Recurse $skill "$env:USERPROFILE\.agents\skills\anatomy"
+```
+
+Check: `(Select-String -Path "$skill\SKILL.md" -Pattern publish).Count` prints `0`, and
+`Test-Path "$env:USERPROFILE\.agents\skills\anatomy\SKILL.md"` prints `True`. A Claude Code session started after
+this lists `anatomy` among its skills.
+
+If the other Windows user on this PC should have it too, ask first: it goes in their own profile.
+
+**Check it works end to end:** in Noctis, on a thread running on `zarrarpc`, ask Vesper to "explain how a token
+bucket rate limiter works with an interactive figure". A visual panel opens with the figure running in it, and
+`git status` in that folder shows nothing new.
