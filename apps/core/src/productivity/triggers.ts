@@ -77,3 +77,10 @@ export function latestTriggerAt(trigger: Trigger, dueAt: string, now: number): s
       : weeklyAt(trigger.rule, now, false);
   return new Date(Math.max(due, latest ?? due)).toISOString();
 }
+
+export function lastWeeklyAt(
+  rule: { daysOfWeek: number[]; timeOfDay: string; timeZone: string },
+  now: number,
+): number | undefined {
+  return weeklyAt({ kind: "weekly", ...rule }, now, false);
+}

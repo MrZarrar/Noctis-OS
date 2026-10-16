@@ -171,7 +171,7 @@ describe("migrate", () => {
     db.close();
   });
 
-  it("applies every migration and creates all 53 tables", () => {
+  it("applies every migration and creates all 55 tables", () => {
     const db = openDatabase(":memory:");
 
     migrate(db, { directory: "apps/core/migrations", clock });
@@ -199,7 +199,7 @@ describe("migrate", () => {
     };
     db.close();
 
-    expect(row.c).toBe(53);
+    expect(row.c).toBe(55);
     expect(tables).toEqual(
       expect.arrayContaining([
         "identity_message_content",
@@ -261,7 +261,8 @@ describe("migrate", () => {
       ]),
     );
     expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(20);
+    expect(version.v).toBe(21);
+    expect(tables).toEqual(expect.arrayContaining(["health_report", "health_runs"]));
     expect(vaultItems).toContain("sensitive");
     expect(vaultItems).toContain("tags");
   });

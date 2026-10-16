@@ -14,6 +14,8 @@ import {
   CAPABILITY_OPERATION_CLASS,
   CapabilityGrantSchema,
   FileSearchConstraintsSchema,
+  HEALTH_CAPABILITIES,
+  HealthGrantConstraintsSchema,
   NodeDescriptorSchema,
   RuntimeGrantConstraintsSchema,
   RuntimeProbeSchema,
@@ -841,7 +843,9 @@ export function grantCapability(
       ? FileSearchConstraintsSchema.parse(command.constraints)
       : command.capability === "runtime.turn"
         ? RuntimeGrantConstraintsSchema.parse(command.constraints)
-        : (command.constraints ?? {});
+        : (HEALTH_CAPABILITIES as readonly string[]).includes(command.capability)
+          ? HealthGrantConstraintsSchema.parse(command.constraints)
+          : (command.constraints ?? {});
 
   return runCommand<CapabilityGrant>(
     kernel,

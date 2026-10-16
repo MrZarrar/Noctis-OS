@@ -1,3 +1,10 @@
+import type { HealthService } from "../health/service.js";
+import {
+  AllowHealthCommandSchema,
+  DisallowHealthCommandSchema,
+  HealthCommandSchema,
+  HealthDecideCommandSchema,
+} from "@noctis/contracts";
 import type { SetSettingCommand, SurfaceOwner } from "@noctis/contracts";
 import {
   createReminder,
@@ -307,6 +314,7 @@ const LoginBodySchema = z.object({ token: z.string().min(1) }).strict();
 const UnsubscribeBodySchema = z.object({ endpoint: z.url() }).strict();
 
 export interface ApiDeps {
+  health: HealthService;
   taskExecution?: TaskExecutionDeps;
   kernel: Kernel;
   config: CoreConfig;
@@ -608,6 +616,31 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
   "task.resume": defineCommand(ResumeTaskCommandSchema, resumeTask, getTask),
   "task.delete": defineCommand(DeleteTaskCommandSchema, deleteTask, (db, id) =>
     replayDeletion(db, id, "task.deleted.v1"),
+  ),
+  "health.allow": defineDepsCommand(
+    AllowHealthCommandSchema,
+    (deps, context, command) => deps.health.allow(context, command),
+    (_db, id) => ({ id }),
+  ),
+  "health.disallow": defineDepsCommand(
+    DisallowHealthCommandSchema,
+    (deps, context, command) => deps.health.disallow(context, command),
+    (_db, id) => ({ id }),
+  ),
+  "health.refresh": defineDepsCommand(
+    HealthCommandSchema,
+    (deps, context, command) => deps.health.refresh(context, command),
+    (db, id) => getJob(db, id),
+  ),
+  "health.run_now": defineDepsCommand(
+    HealthCommandSchema,
+    (deps, context, command) => deps.health.runNow(context, command),
+    (db, id) => getJob(db, id),
+  ),
+  "health.decide": defineDepsCommand(
+    HealthDecideCommandSchema,
+    (deps, context, command) => deps.health.decide(context, command),
+    (db, id) => getJob(db, id),
   ),
   "task.run_now": defineDepsCommand(
     RunTaskNowCommandSchema,
@@ -1149,6 +1182,9 @@ function handleRead(
     };
   }
 
+  if (segments.length === 1 && segments[0] === "glucose")
+    return { status: 200, body: deps.health.status() };
+
   if (segments.length === 1 && segments[0] === "approvals") {
     return { status: 200, body: { approvals: listApprovals(deps.kernel.db, limit) } };
   }
@@ -1638,6 +1674,13 @@ async function handleNodeFile(
     return;
   }
 
+  const capability = UuidSchema.safeParse(jobId).success
+    ? getJob(deps.kernel.db, jobId)?.job.capability
+    : undefined;
+  if (capability?.startsWith("health.")) {
+    finishNodeStream(res, await deps.health.accept(nodeId, jobId, req), req, correlationId);
+    return;
+  }
   const sizeBytes = headerCount(req.headers[FILE_SIZE_HEADER]);
   const offset = headerCount(req.headers[FILE_OFFSET_HEADER]);
   const length = headerCount(req.headers[FILE_LENGTH_HEADER]);
@@ -2776,6 +2819,12 @@ export async function handleRequest(
         if (changed.success) {
           deps.dispatcher.sendGrants(changed.data.nodeId);
         }
+      } else if (name.startsWith("health.")) {
+        if (name === "health.allow" || name === "health.disallow") {
+          const changed = z.object({ nodeId: z.string() }).safeParse(body);
+          if (changed.success) deps.dispatcher.sendGrants(changed.data.nodeId);
+        }
+        deps.dispatcher.pass();
       } else if (name === "node.job_cancel") {
         const cancelled = CancelNodeJobCommandSchema.safeParse(body);
         const record = cancelled.success ? getJob(deps.kernel.db, cancelled.data.jobId) : undefined;

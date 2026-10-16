@@ -331,7 +331,7 @@ describe("headless kernel loop", () => {
     // the session a thread adopted; 0013 archived conversations; 0014 the
     // Vault passcode; 0015 the live bridge's sessions; 0016 Surface owners;
     // 0017 Vault tags; 0018 manual Surface override order; 0019 productivity.
-    expect(diagnostics.body.schemaVersion).toBe(20);
+    expect(diagnostics.body.schemaVersion).toBe(21);
   });
 
   it("allows a local reversible edit only while its Objective is active", async () => {
@@ -2407,4 +2407,14 @@ describe("settings the core follows live", () => {
 
     expect(response.headers.get("set-cookie")).toContain("Max-Age=7200");
   });
+});
+
+it("serves health only to an authenticated owner without caching", async () => {
+  const h = await startTestCore();
+  const denied = await fetch(`${h.base}/glucose`);
+  expect(denied.status).toBe(401);
+  const response = await fetch(`${h.base}/glucose`, { headers: authorized() });
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toMatchObject({ granted: false, report: { state: "none" } });
 });

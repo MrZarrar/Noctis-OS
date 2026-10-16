@@ -18,6 +18,7 @@ import { createLogger } from "../logging.js";
 import type { RunningCore } from "../server.js";
 import { startCore } from "../server.js";
 import { enqueueJobInTransaction, LEASE_MS, MAX_ATTEMPTS } from "./jobs.js";
+import { grantCapability } from "./registry.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -421,6 +422,32 @@ describe("the paired node loop", () => {
     ]);
   });
 
+  it("validates health grants and stores their operation class", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    expect(() =>
+      grantCapability(
+        core.core.kernel,
+        { correlationId: "health-grant", actorType: "user", actorId: "local" },
+        {
+          idempotencyKey: "health-relative",
+          nodeId: paired.nodeId,
+          capability: "health.run",
+          constraints: { repo: "relative" },
+        },
+      ),
+    ).toThrow();
+    expect((await read(core, `/nodes/${paired.nodeId}`)).body.grants).toEqual([]);
+    await grant(core, paired.nodeId, "health.run", { constraints: { repo: "C:\\glycolens" } });
+    const node = await read(core, `/nodes/${paired.nodeId}`);
+    expect(node.body.grants).toEqual([
+      expect.objectContaining({
+        capability: "health.run",
+        operationClass: "local_reversible_edit",
+        constraints: { repo: "C:\\glycolens" },
+      }),
+    ]);
+  });
   it("reports a connected node and its grants over REST", async () => {
     const core = await startTestCore();
     const paired = await pairFake(core);

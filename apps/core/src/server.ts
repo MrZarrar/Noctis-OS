@@ -1,3 +1,4 @@
+import { createHealthService, type HealthService } from "./health/service.js";
 import {
   createServer,
   STATUS_CODES,
@@ -80,6 +81,7 @@ export interface RunningCore {
   live: LiveBroker;
   conversation: ConversationService;
   productivity: ProductivityScheduler;
+  health: HealthService;
   close: () => Promise<void>;
 }
 
@@ -295,9 +297,17 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
 
   const taskExecution = { conversation, dispatcher, enabled: config.tasksEnabled === true };
   const productivity = createProductivityScheduler(kernel, taskExecution, { recover: true });
+  const health = createHealthService({
+    kernel,
+    dispatcher,
+    notifier,
+    weeklyAt: () => readSetting(db, env, "healthRunAt"),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
   const sweepProductivity = (): void => {
     try {
       productivity.pass();
+      health.pass();
     } catch (error) {
       logger.log("error", "productivity sweep failed", {
         reason: error instanceof Error ? error.message : "unknown",
@@ -320,6 +330,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     live,
     notifier,
     taskExecution,
+    health,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     // Read on every use, so turning Vault writes off on the Settings page
     // refuses the very next write.
@@ -419,12 +430,14 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     live,
     conversation,
     productivity,
+    health,
     async close() {
       digestTimer.stop();
       promoterTimer.stop();
       stopFollowingSettings();
       clearInterval(productivityTimer);
       productivity.close();
+      health.close();
       conversation.close();
       files.close();
       screen.close();

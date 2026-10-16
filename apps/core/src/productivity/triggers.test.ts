@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latestTriggerAt, nextTriggerAt } from "./triggers.js";
+import { lastWeeklyAt, latestTriggerAt, nextTriggerAt } from "./triggers.js";
 
 const ms = (iso: string): number => Date.parse(iso);
 const weekly = {
@@ -43,4 +43,13 @@ describe("deterministic productivity triggers", () => {
       "2026-10-12T08:00:00.000Z",
     );
   });
+});
+
+it("finds the latest Sunday across the clock change", () => {
+  expect(
+    lastWeeklyAt(
+      { daysOfWeek: [0], timeOfDay: "20:00", timeZone: "Europe/London" },
+      Date.parse("2026-11-04T09:00:00Z"),
+    ),
+  ).toBe(Date.parse("2026-11-01T20:00:00Z"));
 });
