@@ -39,6 +39,7 @@ import { AdapterRefused } from "./runtimes/Runtime.js";
 import { promptWithAttachments, stageAttachments } from "./runtimes/attachments.js";
 import { childEnvironment } from "./runtimes/env.js";
 import { resolveRoots } from "./runtimes/roots.js";
+import { createHealthAdapters } from "./health/glycolens.js";
 import { createScreenView } from "./screen/view.js";
 
 export { AdapterRefused };
@@ -609,4 +610,5 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "session.list": sessionList,
   "session.history": sessionHistory,
   "screen.view": createScreenView(),
+  ...createHealthAdapters(),
 };

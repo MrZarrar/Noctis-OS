@@ -2,6 +2,14 @@ import { z } from "zod";
 
 import { NodeJobStatusSchema, OperationClassSchema } from "./enums.js";
 import {
+  HealthDecideEvidenceSchema,
+  HealthDecidePayloadSchema,
+  HealthReportEvidenceSchema,
+  HealthReportPayloadSchema,
+  HealthRunEvidenceSchema,
+  HealthRunPayloadSchema,
+} from "./health.js";
+import {
   IdempotencyKeySchema,
   RevisionSchema,
   SchemaVersionSchema,
@@ -112,6 +120,10 @@ export const NODE_CAPABILITIES = [
   "session.history",
   /** The owner watching a PC's desktop as it is. View only: nothing goes back to it. */
   "screen.view",
+  /** glycolens on the home PC: read report.json, run the weekly analysis, record a decision. */
+  "health.report",
+  "health.run",
+  "health.decide",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -142,6 +154,11 @@ export const CAPABILITY_OPERATION_CLASS = {
   "session.list": "read_inspect",
   "session.history": "read_inspect",
   "screen.view": "read_inspect",
+  "health.report": "read_inspect",
+  /** Writes glycolens's own store and report on the PC; reruns replace it. */
+  "health.run": "local_reversible_edit",
+  /** A suggestion's status; `reset` undoes it. */
+  "health.decide": "local_reversible_edit",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
 /**
@@ -387,6 +404,9 @@ export const CAPABILITY_CONTRACTS = {
     evidence: SessionHistoryEvidenceSchema,
   },
   "screen.view": { payload: ScreenViewPayloadSchema, evidence: ScreenViewEvidenceSchema },
+  "health.report": { payload: HealthReportPayloadSchema, evidence: HealthReportEvidenceSchema },
+  "health.run": { payload: HealthRunPayloadSchema, evidence: HealthRunEvidenceSchema },
+  "health.decide": { payload: HealthDecidePayloadSchema, evidence: HealthDecideEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**

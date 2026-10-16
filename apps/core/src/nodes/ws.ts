@@ -48,6 +48,10 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   "session.history": 200,
   /** A heartbeat every ten seconds for as long as someone watches, counted per window. */
   "screen.view": 60,
+  "health.report": 200,
+  /** A heartbeat every ten seconds for a run of up to fifteen minutes. */
+  "health.run": 200,
+  "health.decide": 200,
 };
 
 /**
