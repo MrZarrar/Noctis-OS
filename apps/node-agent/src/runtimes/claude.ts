@@ -205,6 +205,10 @@ const NOCTIS_PREFIX = "mcp__noctis__";
 const DECLINED = "declined by Noctis authority";
 const NO_TURN = "no Noctis turn is running";
 const HOOK_TIMEOUT_SECONDS = 24 * 60 * 60;
+const QUESTIONS_IN_THREAD =
+  "Noctis has shown these questions and their options to the owner in the thread. " +
+  "End your turn now: do not pick an answer yourself or carry on with a default. " +
+  "Their answer arrives as the next message.";
 
 function gateDecision(decision: "allow" | "deny", reason: string): HookJSONOutput {
   return {
@@ -820,6 +824,14 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         async canUseTool(toolName, toolInput, ctx): Promise<PermissionResult> {
           if (refusedBrowserTool(toolName)) {
             return { behavior: "deny", message: `${toolName} is not a tool Noctis lends` };
+          }
+
+          // An approval card has no room for the questions or their options. The
+          // thread shows them from the tool call itself, and the owner's pick
+          // arrives as the next message.
+          if (toolName === "AskUserQuestion") {
+            denied.add(ctx.toolUseID);
+            return { behavior: "deny", message: QUESTIONS_IN_THREAD };
           }
 
           // The agent wanted a person, so a person answers, whatever the class.

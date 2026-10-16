@@ -115,3 +115,20 @@ location.
   leave gym-affected windows out of the ratio and sensitivity checks. That is a glycolens change first.
 - An undo for a wrong visit, if false visits turn up.
 - If arrivals get lost while Tailscale is off, OwnTracks (buffers offline) is the fallback.
+
+## 6. Agent questions in the thread
+
+The owner saw Claude's AskUserQuestion arrive as a "Requested action: call AskUserQuestion" card with only
+Confirm and Decline. The question, its options and anywhere to type an answer were missing, and the agent went
+on with its own defaults.
+
+**Decided:**
+
+- **Questions are not approvals.** The node no longer raises an approval for AskUserQuestion. It tells the agent
+  the owner has the questions and to end its turn.
+- **The answer is the next message.** The thread reads the questions from the tool call and shows each one with
+  its options. Picking options and pressing "Send answer" sends one message, each question beside its pick, on
+  the model that asked. Typing in the composer works as well.
+- Only the newest turn's questions can be answered, so an old one is not answered twice.
+
+**Built:** the node change and the question card in Threads. The node on each PC needs a restart to pick it up.

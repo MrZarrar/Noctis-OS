@@ -35,6 +35,7 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ProductivityReceipt, type OpenProductivity } from "./ProductivityReceipt.js";
 import { BeforeNoctis } from "./BeforeNoctis.js";
 import { Conversations } from "./Conversations.js";
+import { AgentQuestions, questionsOf } from "./AgentQuestions.js";
 import { conversationLabel, pinnedTo } from "./conversations-view.js";
 import type { FileTarget } from "./files-view.js";
 import { locateInRoots } from "./files-view.js";
@@ -241,6 +242,8 @@ function TurnRow({
   written,
   onOpenFile,
   arriving,
+  answerable,
+  onAnswer,
 }: {
   transport: CoreTransport | undefined;
   onOpenProductivity: OpenProductivity | undefined;
@@ -250,6 +253,8 @@ function TurnRow({
   written: ReadonlyArray<FileTarget<RuntimeRootOption>>;
   onOpenFile: ((target: FileTarget<RuntimeRootOption>) => void) | undefined;
   arriving: typeof ARRIVE | false;
+  answerable: boolean;
+  onAnswer: (text: string) => void;
 }): JSX.Element {
   const running = turn.status === "queued" || turn.status === "running";
   const outputs = turn.items.filter((item) => item.kind === "output");
@@ -312,6 +317,20 @@ function TurnRow({
             onOpen={onOpenProductivity}
           />
         ))}
+      {turn.items.map((item) => {
+        const questions = questionsOf(item);
+
+        return (
+          questions !== undefined && (
+            <AgentQuestions
+              key={item.itemId}
+              questions={questions}
+              answerable={answerable}
+              onAnswer={onAnswer}
+            />
+          )
+        );
+      })}
       {outputs.length > 0 && (
         <ul aria-label="Outputs" style={{ ...listStyle, gap: spacing.xs, minWidth: 0 }}>
           {outputs.map((item) => (
@@ -490,6 +509,7 @@ export function Threads({
   const roleLabel = (role: string): string =>
     role === "user" ? "You" : role === "identity" ? displayName : "System";
   const timeline = timelineOf(messages, turns, pendingApprovals);
+  const latestTurn = timeline.findLast((entry) => entry.kind === "turn");
   const arrived = useArrivals(
     [...timeline.map(entryKey), ...[...streaming.keys()].map(streamKey)],
     thread?.id,
@@ -694,6 +714,12 @@ export function Threads({
                         outputUrl={outputUrl}
                         written={writtenFiles(entry.turn, conversation.roots)}
                         onOpenFile={onOpenFile}
+                        answerable={entry === latestTurn}
+                        onAnswer={(text) => {
+                          follow.current = true;
+                          // On the model that asked, not the identity's default.
+                          void conversation.send(text, { model: entry.turn.model });
+                        }}
                         onCancel={() => {
                           if (entry.turn.jobId !== undefined) {
                             void conversation.cancel(entry.turn.jobId);

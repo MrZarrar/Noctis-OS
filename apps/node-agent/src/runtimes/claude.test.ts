@@ -694,6 +694,22 @@ describe("the Claude Agent SDK runtime", () => {
       ]);
     });
 
+    it("leaves the agent's questions to the conversation instead of raising an approval", async () => {
+      const { r, agentAsks } = await held("allow");
+
+      await expect(
+        agentAsks("AskUserQuestion", {
+          questions: [
+            { question: "Which repos?", header: "Scope", options: [], multiSelect: false },
+          ],
+        }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: expect.stringContaining("End your turn now") as unknown as string,
+      });
+      expect(r.asks).toEqual([]);
+    });
+
     it("turns the owner's no to the agent's ask into a deny", async () => {
       await expect(
         (await held("deny", "not now")).agentAsks("Bash", { command: "npm test" }),
