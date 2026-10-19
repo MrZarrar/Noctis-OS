@@ -39,7 +39,10 @@ export function resetText(resetsAt: string | undefined, now: Date): string {
   }
 
   if (remaining >= DAY_MS) {
-    return LATER.format(new Date(resetsAt)).replace(",", "");
+    // Providers reset a fraction of a second before the hour; 10:59:59 means 11:00.
+    const minute = Math.round(Date.parse(resetsAt) / 60_000) * 60_000;
+
+    return LATER.format(new Date(minute)).replace(",", "");
   }
 
   const minutes = Math.ceil(remaining / 60_000);

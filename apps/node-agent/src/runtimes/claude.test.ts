@@ -586,7 +586,7 @@ describe("the Claude Agent SDK runtime", () => {
     });
 
     await expect(runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home })).rejects.toThrow(
-      /again in 5 min/,
+      /next read in 5 min/,
     );
   });
 

@@ -169,10 +169,7 @@ export function UsageLimits({
             </span>
             {limit.problem !== undefined ||
             (limit.fiveHour === undefined && limit.weekly === undefined) ? (
-              <span
-                title={limit.problem}
-                style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-              >
+              <span style={{ lineHeight: 1.45, overflowWrap: "anywhere" }}>
                 {limit.problem ?? "No limits reported"}
               </span>
             ) : (

@@ -48,6 +48,10 @@ describe("resetText", () => {
     expect(resetText(after(1440), now)).toBe("Tue 10:00");
   });
 
+  it("rounds a reset a moment before the hour to the hour", () => {
+    expect(resetText(new Date(2026, 9, 22, 10, 59, 59, 717).toISOString(), now)).toBe("Thu 11:00");
+  });
+
   it("says when the provider gave no reset rather than inventing one", () => {
     expect(resetText(undefined, now)).toBe("—");
     expect(resetText(after(-1), now)).toBe("now");

@@ -1319,7 +1319,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         }
 
         throw new AdapterRefused(
-          `Claude is limiting how often its usage is read: again in ${String(
+          `Claude limits how often usage is read; next read in ${String(
             Math.ceil((quietUntil - now) / 60_000),
           )} min`,
         );
