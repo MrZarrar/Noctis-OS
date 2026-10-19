@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ACTING_INSTRUCTIONS,
   WORKING_INSTRUCTIONS,
+  WRITING_INSTRUCTIONS,
   identityCard,
   isOwnerClockBlock,
   mindVaultIn,
@@ -166,6 +167,20 @@ describe("identityCard", () => {
     // The model guessed its own field names once and the panel never appeared.
     expect(WORKING_INSTRUCTIONS).toContain("image: {path}, url, action: {label, message}");
     expect(WORKING_INSTRUCTIONS).toContain("wait for their pick");
+  });
+
+  it("tells Vesper to write without the usual AI tells, on every runtime", () => {
+    for (const runtime of ["claude", "codex", "hermes", "local"] as const) {
+      expect(identityCard({ identityId: "vesper", runtime, model: "m", env: {} })).toContain(
+        WRITING_INSTRUCTIONS,
+      );
+    }
+
+    expect(WRITING_INSTRUCTIONS).toContain("em dashes");
+    expect(WRITING_INSTRUCTIONS).toContain("it's not X, it's Y");
+    expect(WRITING_INSTRUCTIONS).toContain("eyebrow");
+    // A rule against em dashes written with them would teach the opposite.
+    expect(WRITING_INSTRUCTIONS).not.toMatch(/[—–“”‘’→]/);
   });
 
   it("gives a local model with no tools no claim to act", () => {

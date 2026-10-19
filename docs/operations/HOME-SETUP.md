@@ -384,3 +384,78 @@ From the phone, with you away from the home PC but signed in:
 4. Vesper: "find a USB-C cable under £10 on Amazon and add it to my basket". It searches, adds one, and stops; if it
    goes towards checkout, an approval card appears and you press Deny.
 5. Codex (pick it under Agent): "take a screenshot of my desktop and tell me what's open". It answers without asking.
+
+## 7. Everything since step 6: usage limits, options panels, page panels, and writing without AI tells
+
+Added 19 October 2026, already live on the work PC. The work PC's core is redeployed first, so the home node can
+restart straight away.
+
+What the home node gains:
+
+- Presence shows your Claude and Codex 5-hour and weekly limits, as each provider reports them, with when each
+  resets. The home PC's node reads them from its own Claude Code sign-in and `codex app-server`. Until this node is
+  updated the core simply asks the work PC instead.
+- Options panels: when an agent finds things for you to pick between (products, places, flights), it shows one panel
+  with a screenshot, price and link for each and a button to choose one. Screenshots go in `noctis-show/.shots/` in
+  the working folder.
+- "open the vault" or "health as a panel" opens that Noctis page as a panel instead of launching Obsidian.
+- A Codex Vesper can hand work to another PC (`noctis_delegate`).
+- An agent hears when a panel it sent will not show, and fixes it in the same turn.
+- Vesper and Jester write without the usual AI tells: no em dashes, no "it's not X, it's Y", no eyebrow labels and
+  the rest of the list below.
+
+**Pull, build and restart the node:**
+
+```powershell
+cd $env:USERPROFILE\Documents\Jarvis\Noctis-OS
+git pull --ff-only
+npm ci
+npm run build
+Stop-ScheduledTask  -TaskName "Noctis node agent"
+Start-ScheduledTask -TaskName "Noctis node agent"
+```
+
+**Add the writing rules to Claude Code and Codex on this PC.** Noctis gives Vesper and Jester these rules itself, but
+Claude Code and Codex also read your own instruction files, and so does any session you run outside Noctis. Each PC
+keeps its own copy. This appends the same block the work PC has to both files, once:
+
+```powershell
+$rules = @'
+
+## Writing style
+Applies to everything written for a person: replies, docs, files, commit messages, UI copy. Quoted text and code stay as they are.
+- Never use em dashes or spaced en dashes. Use a full stop, comma, colon or brackets.
+- No negation framing: "it's not X, it's Y", "not just X but Y", "not X. Not Y. Just Z." Say what the thing is.
+- No rhetorical setups such as "The catch?", "The result?" or "Here's the kicker".
+- Don't default to threes: three adjectives, three-beat sentences, back-to-back triplets.
+- No bold lead-in label on every bullet or paragraph. No "Bottom line:", "TL;DR:" or "Short answer:".
+- No preamble, no announcing how many points follow, no restating the question. No closing summary, "Hope this helps" or "Let me know if".
+- Never use: delve, robust, leverage, seamless, crucial, pivotal, tapestry, landscape, testament, quietly, genuinely, honestly, truly, fundamentally.
+- Write "is" and "has", not "serves as", "stands as" or "boasts".
+- No one-line dramatic paragraphs or quotable closing lines, and no invented concept labels presented as established terms.
+- Straight quotes and apostrophes. In prose, write "to" instead of arrow characters. No decorative emoji.
+- Sentence-case headings, and only when the text is long enough to need them.
+- In UI: no small uppercase letter-spaced eyebrow label above headings, no violet glow behind a centred hero, no row of three identical cards, no decorative icon on every card.
+'@
+foreach ($file in "$env:USERPROFILE\.claude\CLAUDE.md", "$env:USERPROFILE\.codex\AGENTS.md") {
+  if (-not (Test-Path $file)) { New-Item -ItemType File -Force -Path $file | Out-Null }
+  if (-not (Select-String -Path $file -Pattern '^## Writing style' -Quiet)) {
+    # UTF-8 without a byte order mark, as both tools expect.
+    [IO.File]::AppendAllText($file, $rules, (New-Object Text.UTF8Encoding $false))
+  }
+}
+```
+
+Check: `Select-String -Path $env:USERPROFILE\.claude\CLAUDE.md, $env:USERPROFILE\.codex\AGENTS.md -Pattern '^## Writing style'`
+prints one line for each file.
+
+**Check it works:**
+
+1. Presence shows Claude and Codex, each with a 5H and a WK bar, a percent and a reset time. Claude can say "Claude
+   limits how often usage is read; next read in N min" for a few minutes after a restart: Anthropic allows a read
+   about every five minutes, and Claude Code reads the same allowance. After that wait the numbers appear.
+2. On a thread on `zarrarpc`, ask Vesper "find me three USB-C cables under £10 and let me pick". One options panel
+   appears with a screenshot of each. If the screenshots are missing, the browser tool could not save into
+   `noctis-show/.shots/`: say so in the thread and it will try another way.
+3. Ask Vesper "open the vault". The Vault page opens as a panel in Noctis, not Obsidian.
+4. Ask Vesper anything that needs a paragraph back. The reply has no em dashes.

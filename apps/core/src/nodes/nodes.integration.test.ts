@@ -169,6 +169,48 @@ describe("GET /limits", () => {
       },
     });
   });
+
+  it("asks the next PC running the provider when the first cannot answer", async () => {
+    const core = await startTestCore();
+    const nodes = [];
+    for (const hostId of ["first-pc", "second-pc"]) {
+      const paired = await pairFake(core, { hostId, fingerprint: hostId });
+      await grant(core, paired.nodeId, "runtime.turn", {
+        idempotencyKey: `fallback-${hostId}`,
+        constraints: { providers: ["claude"], roots },
+      });
+      nodes.push({
+        ...paired,
+        hostId,
+        node: await openFake(core, paired, { providers: [probe("claude")] }),
+      });
+    }
+    nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+    const [first, second] = nodes as [(typeof nodes)[number], (typeof nodes)[number]];
+    const pending = read(core, "/limits");
+
+    // A node on an older build refuses a job it has no adapter for.
+    await waitFor(() => first.node.jobs().length === 1, "the first PC asked");
+    const refused = NodeJobAssignmentSchema.parse(JSON.parse(first.node.jobs()[0]!.assignment));
+    first.node.frame({
+      kind: "result",
+      jobId: refused.jobId,
+      outcome: "failed",
+      evidence: null,
+      failureReason: "no adapter for usage.limits",
+    });
+
+    await waitFor(() => second.node.jobs().length === 1, "the second PC asked");
+    const answered = NodeJobAssignmentSchema.parse(JSON.parse(second.node.jobs()[0]!.assignment));
+    second.node.result(answered.jobId, { weekly: { usedPercent: 70 } });
+
+    expect((await pending).body).toEqual({
+      limits: [
+        { providerId: "claude", hostId: second.hostId, weekly: { usedPercent: 70 } },
+        { providerId: "codex", problem: "No connected PC runs Codex" },
+      ],
+    });
+  });
 });
 
 describe("authenticated owner presence frames", () => {

@@ -17,7 +17,7 @@ import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts"
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
-import { ACTING_INSTRUCTIONS } from "./identity.js";
+import { ACTING_INSTRUCTIONS, WRITING_INSTRUCTIONS } from "./identity.js";
 import type { CodexSpawn, SpawnedChild } from "./codex.js";
 import { AdapterRefused } from "./Runtime.js";
 import { createHermesRuntime } from "./hermes.js";
@@ -747,6 +747,7 @@ describe("the Hermes runtime (ACP)", () => {
     // A contrarian that also does what it is asked on the PC, up to the step that commits the owner.
     expect(soul).toContain("contrarian");
     expect(soul).toContain(ACTING_INSTRUCTIONS);
+    expect(soul).toContain(WRITING_INSTRUCTIONS);
     expect(soul).not.toContain("You prepare; you do not commit");
     // Jester took recalled notes for something the owner pasted, and Hermes's
     // own browser vault for the MindVault.

@@ -155,15 +155,8 @@ export function UsageLimits({
         return (
           <div key={limit.providerId} style={{ display: "grid", gap: 4 }}>
             <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.14em",
-                  color: typography.color.primary,
-                  opacity: 0.85,
-                }}
-              >
-                {name.toUpperCase()}
+              <span style={{ fontSize: 11, color: typography.color.primary, opacity: 0.85 }}>
+                {name}
               </span>
               {stale !== undefined && <span style={{ fontSize: 10, opacity: 0.7 }}>{stale}</span>}
             </span>

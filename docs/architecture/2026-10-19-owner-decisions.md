@@ -178,3 +178,27 @@ unavailable rather than a guess.
 
 **Process (owner):** Claude does design and frontend work. Codex takes non-visual slices and image or mockup
 generation. Codex built the core endpoint here; the Presence card was taken back from Codex part-way through.
+
+## 5. Writing without AI tells
+
+**Asked (owner):** Vesper uses a lot of em dashes though Claude and Codex are set never to. The same for other giveaways:
+the eyebrow label, "it's not this, it's this", and the rest.
+
+**Found:** the only em-dash rule in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` was for commit messages, and
+Noctis loads both files as they are. A "never" rule in the Claude or ChatGPT apps' own settings does not reach Claude
+Code, Codex or Noctis. Vesper's 126 replies so far: 19 em dashes per thousand words (AI text in general about 1.7,
+people about 0.2), curly quotes at 8, arrows and "honestly/genuinely/actually/really" at 2.8 each, bold-first bullets
+at 2. The list of tells came from Wikipedia's "Signs of AI writing" and tropes.fyi.
+
+**Decided (owner):** the rules go in both global files and in Noctis's own instructions, so they hold on every runtime,
+including the local model and Hermes, which read neither file.
+
+**Built:**
+
+- A "Writing style" section in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` on the work PC. The home PC gets the
+  same block from `docs/operations/HOME-SETUP.md`, step 7.
+- `WRITING_INSTRUCTIONS` in Vesper's card on every runtime and in Jester's soul. It names the tells without using any
+  of the characters it bans, so it does not show the model what it forbids.
+- The usage card's labels are now "Claude" and "Codex" in sentence case, not uppercase and letter-spaced.
+- `/limits` asks the next PC running a provider when the first cannot answer, so the home PC on an older build does not
+  leave Claude or Codex showing as unavailable.

@@ -2119,28 +2119,39 @@ async function handleLimits(
   );
   const results = await Promise.allSettled(
     providers.map(async (providerId) => {
-      const candidate = candidates.find(
+      const eligible = candidates.filter(
         (entry) =>
           entry.probe.providerId === providerId &&
           entry.connected &&
           entry.granted &&
           entry.roots.length > 0,
       );
-      const root = candidate?.roots[0];
 
-      if (candidate === undefined || root === undefined) {
+      if (eligible.length === 0) {
         return {
           providerId,
           problem: `No connected PC runs ${providerId === "claude" ? "Claude" : "Codex"}`,
         };
       }
 
-      const limits = await deps.files.limits(
-        { correlationId, actorType: "user", actorId: "local" },
-        { nodeId: candidate.nodeId, rootGrantId: root.grantId, providerId },
-      );
+      // The limits are the account's, so any PC signed in to it will do: one on
+      // an older build, or not signed in, hands over to the next.
+      let failure: unknown;
 
-      return { providerId, hostId: candidate.hostId, ...limits };
+      for (const candidate of eligible) {
+        try {
+          const limits = await deps.files.limits(
+            { correlationId, actorType: "user", actorId: "local" },
+            { nodeId: candidate.nodeId, rootGrantId: candidate.roots[0]!.grantId, providerId },
+          );
+
+          return { providerId, hostId: candidate.hostId, ...limits };
+        } catch (error) {
+          failure = error;
+        }
+      }
+
+      throw failure;
     }),
   );
 
