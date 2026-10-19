@@ -9,3 +9,9 @@ it("tells the agent it can open any Noctis page the owner can, such as the Vault
     expect(PANEL_TOOL_DESCRIPTION).toContain(`"${page}"`);
   }
 });
+
+it("describes the options panel, its pictures by path and its links", () => {
+  expect(PANEL_TOOL_DESCRIPTION).toContain("options {title, options:");
+  expect(PANEL_TOOL_DESCRIPTION).toContain("image: {path}");
+  expect(PANEL_TOOL_DESCRIPTION).toContain("url");
+});

@@ -126,3 +126,28 @@ agents are told to stop before any of those. What does not: a click by screen po
 
 **Kept:** Windows-MCP yields to the owner's own mouse and keyboard. That is its safety, and opening Noctis pages
 directly removes the case that hit it.
+
+## 3. Options panels: pick from what the agent found
+
+**Asked (owner):** "find me a usb c cable under 10£ for my macbook and show me the best 3 options to add to my
+basket" should end in a panel with the best three, as screenshots, where the owner clicks one to add it.
+
+**Found:** a `list` panel could already carry "Add #1" buttons, but no pictures. Live listings cannot be embedded:
+Amazon refuses to be framed, and the app only loads images from itself (`img-src 'self'`). Screenshots saved as files
+on the PC can be served like any media panel.
+
+**Decided (owner):** agents may supply links. The owner must be able to see the full address before opening one, on
+hover at least.
+
+**Built:**
+
+- Surface kind `options`: a title and 1 to 8 options, each with a title, price, detail, a screenshot, an `http(s)`
+  link and its own choice (a message back to the conversation). The agent names each screenshot by path; the core
+  resolves it to the shared folder holding it and drops a picture from anywhere else, keeping the option.
+- Screenshots go in `noctis-show/.shots/` in the working folder. Files in a hidden folder inside the show folder
+  never open as panels of their own; the folder is already git-ignored with the rest of `noctis-show/`. Checked live
+  that Playwright MCP may save there.
+- The agents are told to use one options panel when the owner is choosing between things they found, with a
+  progress panel while they search, and to wait for the pick.
+- The card renderer was handed to Codex (`docs/handoffs/2026-10-19-options-panel-renderer.md`): the host is always
+  visible, the full address on hover, focus and in the accessible name, opened in a new tab.

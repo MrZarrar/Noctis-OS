@@ -34,9 +34,13 @@ function isFileBacked(intent: SurfaceIntent): boolean {
   const payload = intent.payload as {
     content?: { from?: string };
     source?: { from?: string };
+    options?: { image?: { from?: string } }[];
   } | null;
   return (
     (intent.kind === "document" && payload?.content?.from === "file") ||
-    (intent.kind === "media" && payload?.source?.from === "file")
+    (intent.kind === "media" && payload?.source?.from === "file") ||
+    (intent.kind === "options" &&
+      Array.isArray(payload?.options) &&
+      payload.options.some((option) => option?.image?.from === "file"))
   );
 }

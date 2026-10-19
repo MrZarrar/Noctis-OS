@@ -661,6 +661,105 @@ describe("conversation service", () => {
     expect(panels[0]).toMatchObject({ kind: "page", payload: { page: "Vault" } });
     rmSync(directory, { recursive: true, force: true });
   });
+  it("an options panel shows each picture from a shared folder, and drops one from anywhere else", async () => {
+    const logs: string[] = [];
+    const core = await startTestCore(logs);
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const sent = await send(core, "find me a usb-c cable");
+    await waitFor(() => node.jobs().length === 1, "options panel job");
+    const threadId = sent.body.threadId as string;
+    const option = (id: string, path: string) => ({
+      id,
+      title: `Cable ${id}`,
+      price: "£7.99",
+      image: { path },
+      url: "https://www.amazon.co.uk/dp/B0EXAMPLE",
+      action: { label: "Add to basket", message: `Add ${id} to my basket` },
+    });
+
+    node.frame({
+      kind: "stream",
+      jobId: lastTurnJob(node).assignment.jobId,
+      sequence: 0,
+      item: {
+        itemId: "options",
+        kind: "proposal",
+        status: "completed",
+        proposal: {
+          kind: "surface",
+          surfaceKind: "options",
+          role: "primary",
+          persistence: "restorable",
+          priority: 50,
+          payloadVersion: 1,
+          payload: {
+            title: "USB-C cables under £10",
+            options: [
+              option("inside", join(directory, "noctis-show", ".shots", "a.png")),
+              option("outside", join(tmpdir(), "elsewhere", "b.png")),
+            ],
+          },
+        },
+      },
+    });
+    await waitFor(
+      () => listSurfaceIntents(core.core.kernel.db, { threadId }).length === 1,
+      "options panel",
+    );
+    const [panel] = listSurfaceIntents(core.core.kernel.db, { threadId });
+    const [inside, outside] = (panel?.payload as { options: Array<Record<string, unknown>> })
+      .options;
+
+    expect(panel?.kind).toBe("options");
+    expect(inside?.image).toEqual({
+      from: "file",
+      nodeId: node.nodeId,
+      grantId: "d",
+      relativePath: "noctis-show/.shots/a.png",
+    });
+    expect(outside).not.toHaveProperty("image");
+    expect(outside).toMatchObject({ url: "https://www.amazon.co.uk/dp/B0EXAMPLE" });
+
+    // A picture named by node and grant is what the core resolves, never what the model says.
+    node.frame({
+      kind: "stream",
+      jobId: lastTurnJob(node).assignment.jobId,
+      sequence: 1,
+      item: {
+        itemId: "named-grant",
+        kind: "proposal",
+        status: "completed",
+        proposal: {
+          kind: "surface",
+          surfaceKind: "options",
+          role: "primary",
+          persistence: "restorable",
+          priority: 50,
+          payloadVersion: 1,
+          payload: {
+            title: "Named grant",
+            options: [
+              {
+                id: "x",
+                title: "x",
+                image: {
+                  from: "file",
+                  nodeId: node.nodeId,
+                  grantId: "d",
+                  relativePath: "secret.png",
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    await waitFor(() => logs.some((line) => line.includes("invalid_surface_payload")), "refusal");
+    expect(listSurfaceIntents(core.core.kernel.db, { threadId })).toHaveLength(1);
+    rmSync(directory, { recursive: true, force: true });
+  });
   it("a named panel is the same panel in later turns, so live work updates one place", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));

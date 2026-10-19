@@ -36,6 +36,7 @@ import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
 import { LiveBriefSurface } from "./LiveBrief.js";
+import { OptionsPanel } from "./OptionsPanel.js";
 import { FileDocument } from "./FileDocument.js";
 import { FileMedia, type FileImageCache } from "./FileMedia.js";
 import type { FileTextCache } from "../pages/useFileText.js";
@@ -175,6 +176,9 @@ const RENDERERS: Record<
     <ConversationSurface {...payload} />
   ),
   list: (payload: Parameters<typeof ListSurface>[0]) => <ListSurface {...payload} />,
+  options: (payload: Parameters<typeof OptionsPanel>[0]["payload"], context: SurfaceContext) => (
+    <OptionsPanel payload={payload} context={context} />
+  ),
   detail: (payload: Parameters<typeof DetailSurface>[0]) => <DetailSurface {...payload} />,
   evidence: (payload: Parameters<typeof EvidenceSurface>[0]) => <EvidenceSurface {...payload} />,
   attention: (payload: Parameters<typeof AttentionSurface>[0]) => <AttentionSurface {...payload} />,

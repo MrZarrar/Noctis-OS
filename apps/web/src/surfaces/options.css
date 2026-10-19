@@ -1,0 +1,17 @@
+.options-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 719px) {
+  .options-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.options-panel :focus-visible {
+  outline: 2px solid #8b7cf6;
+  outline-offset: 2px;
+}

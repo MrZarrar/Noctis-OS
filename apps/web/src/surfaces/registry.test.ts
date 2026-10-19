@@ -1,12 +1,207 @@
+/// <reference types="node" />
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { MOBILE_QUERY } from "../layout/useIsMobile.js";
 
 import { renderSurface } from "./renderers.js";
 
 import { REGISTRY, resolveSurface } from "./registry.js";
 
 const CONVERSATION = { messages: [{ id: "m1", author: "Vesper", text: "Ready." }] };
+
+describe("options panels", () => {
+  const image = { from: "file", nodeId: "work", grantId: "screens", relativePath: "anker.png" };
+  const payload = {
+    title: "Three cables under £10",
+    options: [
+      {
+        id: "anker",
+        title: "Anker USB-C cable",
+        price: "£8.99",
+        detail: "60W charging, 1 metre",
+        image,
+        url: "https://amazon.co.uk/cable?colour=black",
+        action: { label: "Add Anker", message: "Add option anker to my basket" },
+      },
+    ],
+    actions: [{ label: "Find more", message: "Find more cables" }],
+  };
+  const render = (context = {}, value = payload) =>
+    renderToStaticMarkup(
+      createElement(
+        "div",
+        null,
+        renderSurface(resolveSurface("options", 1, value, "standard"), context),
+      ),
+    );
+
+  it.each(["compact", "standard", "wide", "stage"] as const)(
+    "resolves at %s with its payload title and no capability",
+    (size) => {
+      expect(resolveSurface("options", 1, payload, size)).toMatchObject({
+        status: "ok",
+        title: payload.title,
+      });
+    },
+  );
+
+  it("renders file screenshots through the media handoff with the content revision", () => {
+    const html = render({
+      contentRevision: "revision-2",
+      mediaUrl: (source: unknown, revision: string) => {
+        expect(source).toEqual(image);
+        expect(revision).toBe("revision-2");
+        return "/files/content?preview=anker";
+      },
+    });
+    expect(html).toContain('src="/files/content?preview=anker"');
+    expect(html).toContain("Anker USB-C cable");
+    expect(html).toContain("£8.99");
+    expect(html).toContain("60W charging, 1 metre");
+  });
+
+  it("offers inspectable listing links and a calm fallback without a media URL", () => {
+    const html = render();
+    expect(html).toContain("amazon.co.uk");
+    expect(html).toContain(`title="${payload.options[0]!.url}"`);
+    expect(html).toContain(`aria-label="Open listing: ${payload.options[0]!.url}"`);
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain("View address");
+    expect(html).toContain("Screenshot unavailable");
+    expect(html).not.toContain("<img");
+  });
+
+  it("requires both the owner and handoff and honours action disabled and error state", () => {
+    for (const context of [
+      {},
+      { onPanelAction: () => undefined },
+      { panelOwner: { threadId: "owner" } },
+    ]) {
+      expect(render(context)).toMatch(/<button[^>]*disabled[^>]*>Add Anker<\/button>/);
+    }
+    const context = { panelOwner: { threadId: "owner" }, onPanelAction: () => undefined };
+    expect(render(context)).toContain("Add Anker</button>");
+    expect(render(context)).not.toContain("disabled");
+    expect(render({ ...context, panelActionsDisabled: true })).toMatch(
+      /<button[^>]*disabled[^>]*>Add Anker<\/button>/,
+    );
+    expect(render({ ...context, panelActionsError: "Could not send choice" })).toContain(
+      "Could not send choice",
+    );
+    expect(render(context)).toContain("Find more</button>");
+  });
+
+  it.each(["javascript:alert(1)", "data:text/html,test", "ftp://example.com/a", "not a URL"])(
+    "checks unsafe links again at the rendering edge: %s",
+    (url) => {
+      const html = renderToStaticMarkup(
+        createElement(
+          "div",
+          null,
+          renderSurface({
+            status: "ok",
+            kind: "options",
+            title: payload.title,
+            payload: { ...payload, options: [{ ...payload.options[0], url }] },
+          }),
+        ),
+      );
+      expect(html).not.toContain("<a ");
+    },
+  );
+
+  it("rejects malformed options at the registry gate", () => {
+    for (const options of [[], Array(9).fill(payload.options[0]), [{ id: "a" }]]) {
+      expect(resolveSurface("options", 1, { ...payload, options }, "standard").status).toBe(
+        "fallback",
+      );
+    }
+  });
+
+  it("uses the shell's phone breakpoint for stacked cards", () => {
+    expect(readFileSync(new URL("./options.css", import.meta.url), "utf8")).toContain(
+      `@media ${MOBILE_QUERY}`,
+    );
+  });
+
+  it("retains accepted bytes independently for each screenshot across remounts", () => {
+    const value = {
+      ...payload,
+      options: [
+        payload.options[0]!,
+        {
+          ...payload.options[0]!,
+          id: "belkin",
+          title: "Belkin cable",
+          image: { ...image, relativePath: "belkin.png" },
+        },
+      ],
+    };
+    const cache = new Map(
+      value.options.map((option, index) => {
+        const id = JSON.stringify(["panel", option.id, index]);
+        return [
+          id,
+          {
+            key: JSON.stringify([`/files/${option.image.relativePath}?revision=old`, id]),
+            url: `blob:accepted-${option.id}`,
+          },
+        ];
+      }),
+    );
+    const context = {
+      fileMedia: { cache, surfaceId: "panel" },
+      mediaUrl: (source: typeof image, revision: string) =>
+        `/files/${source.relativePath}?revision=${revision}`,
+      contentRevision: "old",
+    };
+    for (let mount = 0; mount < 2; mount++) {
+      const html = render(context, value);
+      expect(html).toContain('src="blob:accepted-anker"');
+      expect(html).toContain('src="blob:accepted-belkin"');
+    }
+    const updated = render({ ...context, contentRevision: "new" }, value);
+    expect(updated).not.toContain('src="blob:accepted-');
+  });
+
+  it("keeps distinct screenshots for valid options sharing an ID", () => {
+    const value = {
+      ...payload,
+      options: [
+        payload.options[0]!,
+        {
+          ...payload.options[0]!,
+          title: "Another cable",
+          image: { ...image, relativePath: "other.png" },
+        },
+      ],
+    };
+    const cache = new Map(
+      value.options.map((option, index) => {
+        const id = JSON.stringify(["panel", option.id, index]);
+        return [
+          id,
+          {
+            key: JSON.stringify([`/files/${option.image.relativePath}`, id]),
+            url: `blob:accepted-${index}`,
+          },
+        ];
+      }),
+    );
+    const html = render(
+      {
+        fileMedia: { cache, surfaceId: "panel" },
+        mediaUrl: (source: typeof image) => `/files/${source.relativePath}`,
+      },
+      value,
+    );
+    expect(html).toContain('src="blob:accepted-0"');
+    expect(html).toContain('src="blob:accepted-1"');
+  });
+});
 
 describe("read-only work panels", () => {
   const document = {

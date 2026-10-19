@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { RuntimeItemSchema } from "@noctis/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SHOW_FOLDER, showItem, watchShowFolder, withdrawItem } from "./show-folder.js";
+import {
+  SHOTS_FOLDER,
+  SHOW_FOLDER,
+  showItem,
+  watchShowFolder,
+  withdrawItem,
+} from "./show-folder.js";
 
 let dir: string;
 let stop: () => void = () => undefined;
@@ -56,6 +62,20 @@ describe("the show folder", () => {
     await settle(800);
 
     expect(removed).toEqual([shot]);
+  });
+
+  it("leaves files in a hidden folder inside it alone, where an options panel's screenshots go", async () => {
+    const seen: string[] = [];
+    stop = watchShowFolder(dir, (path) => seen.push(path));
+
+    mkdirSync(join(dir, SHOW_FOLDER, SHOTS_FOLDER), { recursive: true });
+    await settle(100);
+    writeFileSync(join(dir, SHOW_FOLDER, SHOTS_FOLDER, "anker.png"), "png");
+    const page = join(dir, SHOW_FOLDER, "options.md");
+    writeFileSync(page, "# shown");
+    await settle(1000);
+
+    expect(seen).toEqual([page]);
   });
 
   it("does nothing for a folder that does not exist", () => {

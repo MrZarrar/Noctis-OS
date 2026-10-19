@@ -8,6 +8,28 @@ const intent = (
   threadId = "0199a000-0000-7000-8000-0000000000f1",
 ) => ({ id, role, payload, payloadVersion: 1, kind: "detail", threadId }) as SurfaceIntent;
 describe("reconcileIntents", () => {
+  it("holds new options screenshot revisions until acceptance", () => {
+    const old = {
+      ...intent("a", "primary", {
+        title: "Cables",
+        options: [{ id: "a", title: "Cable", image: { from: "file" } }],
+      }),
+      kind: "options",
+      requestedAt: "2026-10-19T00:00:00.000Z",
+    };
+    const next = { ...old, requestedAt: "2026-10-19T00:00:01.000Z" };
+    const result = reconcileIntents([old], [next]);
+    expect(result.intents[0]?.requestedAt).toBe(old.requestedAt);
+    expect(result.pending.a).toEqual(next);
+    expect(reconcileIntents([next], [next]).pending).toEqual({});
+    const textOnly = {
+      ...old,
+      payload: { title: "Cables", options: [{ id: "a", title: "Cable" }] },
+    };
+    expect(
+      reconcileIntents([textOnly], [{ ...textOnly, requestedAt: next.requestedAt }]).pending,
+    ).toEqual({});
+  });
   it("holds a primary file's accepted revision while supporting files update automatically", () => {
     const old = {
       ...intent("a", "primary", { content: { from: "file" } }),

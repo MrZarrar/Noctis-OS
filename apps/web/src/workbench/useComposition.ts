@@ -22,7 +22,11 @@ import { reconcileIntents } from "./reconcile.js";
 import { clientId, displayFor, screenFacts } from "./display.js";
 import { geometryKey } from "./arrange.js";
 import type { FileTextCache } from "../pages/useFileText.js";
-import { clearFileImages, releaseFileImage, type FileImageCache } from "../surfaces/FileMedia.js";
+import {
+  clearFileImages,
+  releaseUnusedFileImages,
+  type FileImageCache,
+} from "../surfaces/FileMedia.js";
 
 /** Long enough that dragging a window edge is one recomposition, not sixty. */
 const RESIZE_SETTLE_MS = 200;
@@ -113,8 +117,7 @@ export function useComposition(
         .map((intent) => intent.id),
     );
     for (const id of fileTextCache.keys()) if (!live.has(id)) fileTextCache.delete(id);
-    for (const id of [...fileImageCache.keys()])
-      if (!live.has(id)) releaseFileImage(fileImageCache, id);
+    releaseUnusedFileImages(fileImageCache, live);
   }, [fileTextCache, fileImageCache, intents]);
   const [overrides, setOverrides] = useState<readonly SurfaceOverride[]>([]);
   const [focusedSurfaceId, setFocusedSurfaceId] = useState<string>();

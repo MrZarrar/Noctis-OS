@@ -12,6 +12,7 @@ import {
   LiveBriefPayloadSchema,
   MediaPayloadSchema,
   NativeFocusPayloadSchema,
+  OptionsPayloadSchema,
   PagePanelPayloadSchema,
   SourceStatePayloadSchema,
   TimelinePayloadSchema,
@@ -110,6 +111,12 @@ export const REGISTRY = {
     schema: ListPayloadSchema,
     sizes: ALL_SIZES,
     title: "Choices",
+  },
+  options: {
+    payloadVersion: 1,
+    schema: OptionsPayloadSchema,
+    sizes: ALL_SIZES,
+    title: "Options",
   },
   detail: {
     payloadVersion: 1,
@@ -272,6 +279,7 @@ export function resolveSurface(
             kind === "document" ||
             kind === "visual" ||
             kind === "timeline" ||
+            kind === "options" ||
             kind === "verification"
           ? (parsed.data as MediaPayload | LiveBriefPayload).title
           : entry.title,

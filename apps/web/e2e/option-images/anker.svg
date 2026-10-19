@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="360" viewBox="0 0 600 360">
+  <rect width="600" height="360" fill="#edeef2" />
+  <path d="M170 160 C80 330 510 330 430 150" fill="none" stroke="#353440" stroke-width="16" />
+  <rect x="152" y="82" width="36" height="100" rx="10" fill="#6c6c78" />
+  <rect x="412" y="72" width="36" height="100" rx="10" fill="#6c6c78" />
+  <text x="300" y="330" text-anchor="middle" font-family="sans-serif" font-size="16">
+    USB-C · 60W · 1 metre
+  </text>
+</svg>

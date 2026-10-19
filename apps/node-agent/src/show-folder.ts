@@ -11,6 +11,8 @@ import { viewerKind } from "@noctis/domain";
  * reached Noctis only if the agent remembered to show it.
  */
 export const SHOW_FOLDER = "noctis-show";
+/** Screenshots an options panel shows: served from the show folder, never opened as panels of their own. */
+export const SHOTS_FOLDER = ".shots";
 
 /** A file is reported once its writes have stopped for this long. */
 const QUIET_MS = 300;
@@ -35,6 +37,13 @@ export function watchShowFolder(
   try {
     watcher = watch(cwd, { recursive: true }, (_event, name) => {
       if (name === null || !`${name}`.startsWith(`${SHOW_FOLDER}${sep}`)) return;
+      if (
+        `${name}`
+          .split(sep)
+          .slice(1, -1)
+          .some((part) => part.startsWith("."))
+      )
+        return;
 
       const path = join(cwd, `${name}`);
       clearTimeout(pending.get(path));

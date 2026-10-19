@@ -151,6 +151,56 @@ export const PathPanelProposalSchema = z
   })
   .strict();
 
+/** A link the owner opens themselves; the panel shows the whole address before they do. */
+const WebLinkSchema = z.url({ protocol: /^https?$/ }).max(2048);
+
+const OptionFields = {
+  id: z.string().trim().min(1).max(64),
+  title: z.string().trim().min(1).max(200),
+  price: z.string().trim().min(1).max(40).optional(),
+  detail: z.string().trim().min(1).max(500).optional(),
+  url: WebLinkSchema.optional(),
+  action: PanelActionSchema.optional(),
+};
+
+/**
+ * Things the agent found for the owner to pick from: products, hotels, flights.
+ * Each can carry a screenshot from a shared folder, the listing's link, and a
+ * choice that goes back to the conversation as a message.
+ */
+export const OptionsPayloadSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    options: z
+      .array(z.object({ ...OptionFields, image: FileSourceSchema.optional() }).strict())
+      .min(1)
+      .max(8),
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
+/** What an agent sends: each picture by path, which the core resolves to a shared folder itself. */
+export const OptionsProposalSchema = z
+  .object({
+    title: OptionsPayloadSchema.shape.title,
+    options: z
+      .array(
+        z
+          .object({
+            ...OptionFields,
+            image: z
+              .object({ path: z.string().trim().min(1).max(1024) })
+              .strict()
+              .optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+    actions: PanelActionsSchema,
+  })
+  .strict();
+
 /** An interactive page, run sandboxed with no network, from a file in a shared folder. */
 export const VisualPayloadSchema = z
   .object({
@@ -218,6 +268,7 @@ export const PANEL_PROPOSABLE_KINDS: ReadonlySet<string> = new Set([
   "visual",
   "media",
   "page",
+  "options",
 ]);
 
 /** What an agent is doing right now. Built by the core from the job, so it never carries the prompt. */
@@ -316,6 +367,7 @@ export const SURFACE_PAYLOAD_SCHEMAS: Record<
   attention: { payloadVersion: 1, schema: AttentionPayloadSchema },
   media: { payloadVersion: 1, schema: MediaPayloadSchema },
   visual: { payloadVersion: 1, schema: VisualPayloadSchema },
+  options: { payloadVersion: 1, schema: OptionsPayloadSchema },
   live_brief: { payloadVersion: 1, schema: LiveBriefPayloadSchema },
   approval: { payloadVersion: 1, schema: ApprovalPayloadSchema },
   artifact: { payloadVersion: 1, schema: ArtifactPayloadSchema },

@@ -10,7 +10,7 @@ import { Skeleton } from "../layout/Page.js";
  * region move) would otherwise fetch a rewritten file's new bytes while its
  * "Use new version" offer is still pending.
  */
-export type FileImageCache = Map<string, { key: string; url: string }>;
+export type FileImageCache = Map<string, { key: string; url: string; ownerId?: string }>;
 // ponytail: images only, and bounded; video and audio keep streaming from the live URL.
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
@@ -24,18 +24,24 @@ export function clearFileImages(cache: FileImageCache): void {
   for (const id of [...cache.keys()]) releaseFileImage(cache, id);
 }
 
+export function releaseUnusedFileImages(cache: FileImageCache, live: ReadonlySet<string>): void {
+  for (const [id, entry] of cache) if (!live.has(entry.ownerId ?? id)) releaseFileImage(cache, id);
+}
+
 export function FileMedia({
   payload,
   url,
   size,
   retained,
+  renderImage,
 }: {
   payload: MediaPayload;
   url: string | undefined;
   size: SurfaceSize;
-  retained: { cache: FileImageCache; surfaceId: string };
+  retained: { cache: FileImageCache; surfaceId: string; ownerId?: string };
+  renderImage?: (url: string | undefined) => JSX.Element;
 }): JSX.Element {
-  const { cache, surfaceId } = retained;
+  const { cache, surfaceId, ownerId } = retained;
   const key = JSON.stringify([url, surfaceId]);
   const [, refresh] = useState(0);
   const [failed, setFailed] = useState<string>();
@@ -55,7 +61,11 @@ export function FileMedia({
           throw new Error("This image cannot be kept for the panel");
         if (controller.signal.aborted) return;
         releaseFileImage(cache, surfaceId);
-        cache.set(surfaceId, { key, url: URL.createObjectURL(blob) });
+        cache.set(surfaceId, {
+          key,
+          url: URL.createObjectURL(blob),
+          ...(ownerId === undefined ? {} : { ownerId }),
+        });
         refresh((count) => count + 1);
       })
       .catch((error: unknown) => {
@@ -63,7 +73,8 @@ export function FileMedia({
           setFailed(error instanceof Error ? error.message : "Could not open this image");
       });
     return () => controller.abort();
-  }, [cache, surfaceId, url, key, current]);
+  }, [cache, surfaceId, ownerId, url, key, current]);
+  if (renderImage !== undefined) return renderImage(current);
   if (failed !== undefined && current === undefined)
     // Degrades to the live file rather than hiding it; acceptance is then not enforced.
     return (

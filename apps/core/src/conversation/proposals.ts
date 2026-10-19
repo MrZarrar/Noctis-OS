@@ -4,6 +4,7 @@ import {
   SURFACE_PAYLOAD_SCHEMAS,
   RuntimeProposalSchema,
   PathPanelProposalSchema,
+  OptionsProposalSchema,
 } from "@noctis/contracts";
 import type { PathPanelProposal } from "@noctis/contracts";
 import { isWindowsPath, locateInRoots, viewerKind } from "@noctis/domain";
@@ -105,6 +106,48 @@ function fromPath(
       source.grantId,
       isWindowsPath(located.root.path) ? source.relativePath.toLowerCase() : source.relativePath,
     ),
+  };
+}
+
+/**
+ * An options panel with each picture resolved to the shared folder holding it.
+ * A picture from anywhere else is dropped, not the panel: the choice still stands
+ * without it.
+ */
+function optionsFromPaths(kernel: Kernel, turn: Turn, raw: unknown): unknown {
+  const asked = OptionsProposalSchema.safeParse(raw);
+
+  // Nothing else passes: a picture named by node and grant would skip the resolution below.
+  if (!asked.success) {
+    return undefined;
+  }
+
+  const roots = listRuntimeRoots(kernel.db, () => true, kernel.clock.now());
+
+  return {
+    ...asked.data,
+    options: asked.data.options.map(({ image, ...option }) => {
+      const located =
+        image === undefined || turn.nodeId === undefined
+          ? undefined
+          : locateInRoots(image.path, turn.nodeId, roots);
+      const name = located?.relativePath.split("/").at(-1) ?? "";
+
+      return located === undefined ||
+        turn.nodeId === undefined ||
+        located.relativePath.split(/[\\/]/).includes("..") ||
+        viewerKind(name, 0) !== "image"
+        ? option
+        : {
+            ...option,
+            image: {
+              from: "file",
+              nodeId: turn.nodeId,
+              grantId: located.root.grantId,
+              relativePath: located.relativePath,
+            },
+          };
+    }),
   };
 }
 
@@ -335,6 +378,8 @@ export function applyProposal(
 
     raw = shown.payload;
     fileSourceId = shown.sourceId;
+  } else if (proposal.surfaceKind === "options") {
+    raw = optionsFromPaths(kernel, turn, proposal.payload);
   } else if (proposal.surfaceKind === "visual" || proposal.surfaceKind === "media") {
     // A page that runs, or bytes from a PC, only ever come from a path the core
     // resolved itself, never from a node and grant the model named.
