@@ -80,6 +80,9 @@ export interface ThreadsProps {
   onOpenFile?: (target: FileTarget<RuntimeRootOption>) => void;
   /** For the conversation list. Absent, there is no list to open. */
   transport?: CoreTransport | undefined;
+  /** The Threads tab was pressed: show the list, then say so, so it is shown once per press. */
+  openList?: boolean;
+  onListOpened?: () => void;
 }
 
 /**
@@ -461,7 +464,7 @@ const STREAM_HANDOFF = {
 };
 
 /**
- * Threads: the identity's thread — free chat, or the active Objective's (0.12).
+ * Threads: the identity's thread — the current chat, or the active Objective's (0.12).
  *
  * Everything shown is read from the core except the streamed text, which lives
  * only until the message it was streaming commits. Approval cards are the same
@@ -480,16 +483,26 @@ export function Threads({
   onOpenInVault,
   transport,
   renderPage,
+  openList,
+  onListOpened,
 }: ThreadsProps): JSX.Element {
   const mobile = useIsMobile();
   const panels = useThreadPanels(transport, conversation, onOpenInVault, onOpenFile, renderPage);
   const panelSheet = usePanelSheet(panels);
   const focused = !mobile && panelSheet.focused !== undefined;
   const pageContext = pagePanelContext(panels, conversation);
-  const [listing, setListing] = useState(false);
+  const [listing, setListing] = useState(openList === true);
   const list = useBackLayer("conversations", listing, () => {
     setListing(false);
   });
+  // No history entry of its own: opened from the tab, the list is the page, so
+  // back leaves Threads rather than landing on a thread nobody asked for.
+  useEffect(() => {
+    if (openList === true) {
+      setListing(true);
+      onListOpened?.();
+    }
+  }, [openList, onListOpened]);
   const {
     thread,
     messages,
@@ -566,7 +579,7 @@ export function Threads({
         : thread.kind === "named"
           ? `${displayName} · ${conversationLabel(thread)}`
           : thread.objectiveId === undefined
-            ? `${displayName} · free chat`
+            ? `${displayName} · current chat`
             : `${displayName} · Objective thread`;
 
   const content = (
@@ -615,7 +628,7 @@ export function Threads({
             <button
               type="button"
               onClick={() => {
-                onOpenThread(undefined);
+                onOpenThread(thread.parentThreadId);
               }}
               style={buttonStyle}
             >

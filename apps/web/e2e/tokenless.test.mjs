@@ -60,6 +60,7 @@ let browser;
 let context;
 let page;
 let databaseDirectory;
+let seededThreadId;
 
 function seed(name, body) {
   return coreCommand(CORE_URL, name, body);
@@ -160,6 +161,7 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
     });
 
     assert.equal(seeded.status, 200, JSON.stringify(seeded.body));
+    seededThreadId = seeded.body.threadId;
 
     browser = await chromium.launch(launchOptions());
     context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -303,8 +305,22 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
       //    reaching this page over SSE. The browser attaches the cookie to the
       //    `EventSource` on its own — nothing in the page can, because
       //    `EventSource` takes no headers.
+      // Loading the page was a visit to Presence, which may have moved the
+      // seeded chat onto the list; it is carried on from there either way.
       await tabTo(page, "Threads");
       await page.keyboard.press("Enter");
+
+      const listed = (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body;
+      const seededChat = listed.conversations.find((c) => c.id === seededThreadId);
+      const seededLabel =
+        seededChat.kind === "free"
+          ? "Current chat"
+          : seededChat.preview?.split("\n")[0]?.trim() || "New conversation";
+
+      await page
+        .getByRole("region", { name: "Conversations" })
+        .getByRole("button", { name: seededLabel, exact: true })
+        .click();
 
       const history = await waitFor(
         readPage,
@@ -317,6 +333,7 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
       const live = await seed("conversation.send", {
         idempotencyKey: "e2e-tokenless-live",
         identityId: "vesper",
+        threadId: seededThreadId,
         text: LIVE,
         model: MODEL,
       });

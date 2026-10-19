@@ -57,12 +57,48 @@ let databaseDirectory;
 let nodeHome;
 let scratch;
 
-/** Reloads and walks to Chat with the keyboard. */
+/**
+ * Reloads and walks to Threads with the keyboard, then carries on the newest
+ * conversation, as the owner would: a reload is a new visit to Presence, which
+ * starts a new chat and leaves the last one on the list. With none yet, closing
+ * the list shows the current chat.
+ */
 async function openChat() {
   await page.goto(WEB_URL);
+  // Presence starts a chat over as it opens, unless nothing was said in it or
+  // a reply is still running; the list is read once that has happened.
+  const { newest } = await waitFor(
+    async () => {
+      const [first] = (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body
+        .conversations;
+      if (first?.kind !== "free" || first.preview === undefined) {
+        return { newest: first, settled: true };
+      }
+      const { turns } = (await coreRead(CORE_URL, `/threads/${first.id}/turns`)).body;
+      return {
+        newest: first,
+        settled: turns.some((turn) => turn.status === "queued" || turn.status === "running"),
+      };
+    },
+    (state) => state.settled,
+    "Presence never started the last chat over",
+  );
   await tabTo(page, "Threads");
   await page.keyboard.press("Enter");
   await waitFor(readPage, (state) => state.heading === "Threads", "Threads never opened");
+  const list = page.getByRole("region", { name: "Conversations" });
+
+  if (newest === undefined) {
+    await list.getByRole("button", { name: "Close", exact: true }).click();
+    return;
+  }
+
+  const label =
+    newest.title ??
+    (newest.kind === "free"
+      ? "Current chat"
+      : newest.preview?.split("\n")[0]?.trim() || "New conversation");
+  await list.getByRole("button", { name: label, exact: true }).click();
 }
 
 async function prompt(text) {
@@ -84,7 +120,12 @@ function readPage() {
       heading: document.querySelector("h1")?.textContent ?? "",
       // One chronological list now, so each kind is read by its data-entry
       // rather than by its own `ul`. Document order is still time order.
-      messages: texts('li[data-entry="message"]'),
+      // Without the message's time, which changes with the clock.
+      messages: [...document.querySelectorAll('li[data-entry="message"]')].map((node) => {
+        const copy = node.cloneNode(true);
+        copy.querySelector("time")?.remove();
+        return copy.textContent?.trim() ?? "";
+      }),
       turns: [...document.querySelectorAll('li[data-entry="turn"]')].map(
         (item) => item.dataset.turnStatus ?? "",
       ),
@@ -717,10 +758,54 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
     await waitFor(readPage, (state) => state.messages.length === 0, "free chat kept its history");
 
     const listed = await coreRead(CORE_URL, "/conversations?identityId=vesper");
+    const before = listed.body.conversations.filter((c) =>
+      c.preview?.includes("Before the new chat"),
+    );
 
-    assert.equal(listed.body.conversations.length, 1);
-    assert.equal(listed.body.conversations[0].kind, "named");
+    assert.equal(before.length, 1);
+    assert.equal(before[0].kind, "named");
   });
+
+  it(
+    "starts each Presence visit on a new chat, and the Threads tab lists the last one",
+    {
+      timeout: 60_000,
+    },
+    async () => {
+      const lastVisit = (conversations) =>
+        conversations.find((c) => c.preview?.includes("Hello Last visit's question"));
+      const conversations = async () =>
+        (await coreRead(CORE_URL, "/conversations?identityId=vesper")).body.conversations;
+
+      await page.goto(WEB_URL);
+      await prompt("Last visit's question");
+      const chat = await waitFor(
+        conversations,
+        (list) => lastVisit(list)?.kind === "free",
+        "no reply came",
+      );
+      // A chat with a reply still running is kept, so let the turn finish first.
+      await waitFor(
+        async () => (await coreRead(CORE_URL, `/threads/${lastVisit(chat).id}/turns`)).body.turns,
+        (turns) => turns.every((turn) => turn.status === "completed"),
+        "the reply's turn never finished",
+      );
+
+      await page.goto(WEB_URL);
+      await waitFor(
+        conversations,
+        (list) => lastVisit(list)?.kind === "named",
+        "a new visit to Presence kept talking on the last chat",
+      );
+
+      await tabTo(page, "Threads");
+      await page.keyboard.press("Enter");
+      await page
+        .getByRole("button", { name: "Hello Last visit's question", exact: true })
+        .waitFor();
+      assert.equal(await page.getByRole("textbox", { name: "Message Vesper" }).count(), 0);
+    },
+  );
 
   it("shares a folder with the agents from Nodes", { timeout: 60_000 }, async () => {
     const folder = join(scratch, "Shared Project");

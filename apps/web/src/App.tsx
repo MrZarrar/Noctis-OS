@@ -18,7 +18,7 @@ import {
   typography,
 } from "@noctis/ui";
 import type { RailItem } from "@noctis/ui";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CompanionCore, useComposerFocus } from "./companion/CompanionCore.js";
 import { guardStrayFileDrops } from "./conversation/file-drops.js";
@@ -185,6 +185,8 @@ function Workbench({
   const objectiveId = freeThread ? undefined : identity.activeObjectiveId;
   /** A delegated thread the owner opened; undefined is the identity's own thread. */
   const [openThreadId, setOpenThreadId] = useState<string | undefined>(undefined);
+  const [threadsList, setThreadsList] = useState(false);
+  const listOpened = useCallback(() => setThreadsList(false), []);
   // Unlike the layers inside a page, an open thread stays open across a page
   // change, so its history entry does too.
   const threadLayer = useBackLayer(
@@ -352,8 +354,12 @@ function Workbench({
     openTaskThread(id);
   }, [transport]);
 
-  const select = (item: RailItem): void => {
+  /** `list` false is the core's way in: it means "the chat I am in", not "my chats". */
+  const select = (item: RailItem, list = true): void => {
     setProductivityFocus(undefined);
+    if (item === "Threads" && list) {
+      setThreadsList(true);
+    }
     if (item === "Presence" && openThreadId !== undefined) {
       void threadLayer.closed().then(() => {
         arrive(item);
@@ -481,6 +487,8 @@ function Workbench({
               ? {}
               : { freeThread, onUseFreeThread: setFreeThread })}
             onOpenThread={openThread}
+            openList={threadsList}
+            onListOpened={listOpened}
             onSwitchIdentity={switchIdentity}
             transport={transport}
             onOpenFile={(target) => {
@@ -567,7 +575,7 @@ function Workbench({
           if (active === "Threads") {
             history.back();
           } else {
-            select("Threads");
+            select("Threads", false);
           }
         }}
       />

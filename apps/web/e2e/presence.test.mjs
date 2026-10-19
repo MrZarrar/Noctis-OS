@@ -523,6 +523,10 @@ it(
 
       await nav.getByRole("button", { name: "Threads" }).click();
       await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+      await page
+        .getByRole("region", { name: "Conversations" })
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
       const threads = await settled('[data-core-slot="composer"]');
       assert.equal(threads.count, 1, "Threads has more than one core");
       assert.ok(threads.slot, "Threads has no composer slot");
@@ -557,6 +561,10 @@ it(
       await page.goBack();
       await page.getByRole("heading", { name: "Presence", exact: true }).waitFor();
       await nav.getByRole("button", { name: "Threads" }).click();
+      await page
+        .getByRole("region", { name: "Conversations" })
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
 
       await page.getByRole("textbox", { name: "Message Vesper" }).fill("SLOW: take your time");
       await page.getByRole("button", { name: "Send", exact: true }).click();

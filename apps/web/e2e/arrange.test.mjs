@@ -72,7 +72,6 @@ async function open(title = "Arrange gate") {
     await page.getByLabel("Core token").press("Enter");
   }
   await page.getByRole("button", { name: "Threads", exact: true }).click();
-  await page.getByRole("button", { name: "Conversations", exact: true }).click();
   await page.getByRole("button", { name: title, exact: true }).click();
 }
 const frames = () => page.locator('[aria-label="Thread panels"] [data-surface-id]');

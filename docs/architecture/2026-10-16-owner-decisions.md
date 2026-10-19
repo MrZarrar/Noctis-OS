@@ -318,3 +318,48 @@ Jarvis's own logon task brought its dashboard back.
   `~/.claude/settings.json`. The donor folder is untouched and stays the read-only donor.
 - HOME-SETUP section 5 does the same on the home PC, whose node already starts at logon.
 - Codex runs now always close stdin (`< /dev/null`); without it a background `codex exec` waits forever.
+
+## 14. Threads opens the list; Presence starts a new chat each visit (2026-10-19)
+
+The owner: pressing Threads opened the same free chat rather than the conversations, and one free chat that every
+Presence message went into kept growing, filling the context window. They asked whether it was kept for speed.
+
+**Findings:**
+
+- A thread's Claude or Codex process stays open for 10 minutes after its last turn (`RUNTIME_IDLE_MS`). Within that,
+  a follow-up skips starting the CLI. That is the only speed it buys.
+- The model keeps nothing between turns: every turn sends the whole conversation, from a live process or a resumed
+  one. Anthropic's prompt cache keys on that text, not on the process, so a session resumed after the process
+  closed still reads from the cache. The work PC's session files show it: after a 24 minute gap the next turn read
+  94k tokens from the cache and wrote 1.3k; after a 63 minute gap (past the 1 hour cache) it read nothing and wrote
+  159k. Every turn's cache writes were the 1 hour kind. This is the same as reopening a session in VS Code: the same
+  CLI, the same login, the same cache.
+- So a long chat costs on every turn (the whole history is read each time and fills the window until it compacts)
+  and costs most on the first message after an hour away. A new chat starts with only the cached system prompt and
+  tools (about 35k tokens read).
+
+**Decided (owner):**
+
+- The Threads tab opens the conversation list. The core and Presence's "Review approval" still open the chat itself.
+- Presence starts a new chat on every visit, the app opening included. The last one becomes an ordinary
+  conversation in Threads, where it can be renamed, archived or continued. A chat with a reply still running is
+  left alone.
+- The free chat is called "Current chat" in the list and the Threads subtitle.
+
+**Built:** `startFreshIfIdle` in the conversation store waits for the chat to load and starts it over only when it
+is the identity's own chat, outside an Objective, something was said in it, and nothing is queued or running;
+Presence calls it as it opens. The Threads tab sets a one-shot request that Threads answers by showing the list,
+with no history entry of its own, so back leaves Threads.
+
+Found while testing it:
+
+- Presence's effect runs before App's, so the store is asked before it has started. It waits for the first load
+  rather than for a start that has not happened.
+- A message sent before the old chat finished loading belongs to this visit, so that chat is never moved.
+- A chat nothing was said in stays the current chat; moving it only listed an empty "New conversation".
+- A refusal from another tab starting the chat over first is not shown as an error.
+- **Back** from a delegated thread now returns to the thread that delegated it. It used to go to the free chat,
+  which was wrong for any named conversation and became the common case once chats are continued from the list.
+- The browser suites run one file at a time (`--test-concurrency=1`): run together, each rebuilds `apps/web/dist`
+  and they fail on a locked file. A chat test still expected "You: ASK: hello" from before message times were
+  added; it now reads messages without their time.

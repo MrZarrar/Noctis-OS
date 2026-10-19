@@ -131,6 +131,11 @@ async function open(name) {
   await tabTo(page, name);
   await page.keyboard.press("Enter");
   await waitFor(readPage, (state) => state.heading === name, `${name} never opened`);
+  if (name === "Threads") {
+    // The tab lands on the list; closing it shows the current chat.
+    await tabTo(page, "Close");
+    await page.keyboard.press("Enter");
+  }
 }
 
 /**
@@ -680,15 +685,14 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
   );
 
   it(
-    "opens a new conversation beside free chat, and lists both",
+    "opens a new conversation from the list the Threads tab lands on, and lists it first",
     { timeout: 120_000 },
     async () => {
       await page.setViewportSize(PHONE);
       await page.goto(WEB_URL);
-      await open("Threads");
-
-      await tabTo(page, "Conversations");
+      await tabTo(page, "Threads");
       await page.keyboard.press("Enter");
+
       await tabTo(page, "New conversation");
       await page.keyboard.press("Enter");
       // Tabbing while the list is still up runs out of tabs before the composer.
@@ -711,12 +715,13 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       await tabTo(page, "Conversations");
       await page.keyboard.press("Enter");
 
-      const listed = await waitFor(
-        readPage,
-        (state) => state.body.includes("a fresh topic") && state.body.includes("Free chat"),
-        "the list does not show the new conversation beside free chat",
+      const rows = page.getByRole("region", { name: "Conversations" }).locator("li > button");
+
+      await waitFor(
+        () => rows.first().getAttribute("aria-label"),
+        (label) => label === "Hello a fresh topic",
+        "the new conversation is not first on the list",
       );
-      assert.ok(listed.body.indexOf("a fresh topic") < listed.body.indexOf("Free chat"));
     },
   );
 
@@ -776,7 +781,10 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       await page.keyboard.press("Enter");
       await waitFor(
         readPage,
-        (state) => state.body.includes("Free chat") && !state.body.includes("Hook ideas"),
+        (state) =>
+          state.body.includes("Show archived") &&
+          !state.body.includes("Loading…") &&
+          !state.body.includes("Hook ideas"),
         "the archived conversation is still on the list",
       );
 
@@ -784,7 +792,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       await page.keyboard.press("Enter");
       await waitFor(
         readPage,
-        (state) => state.body.includes("Hook ideas") && !state.body.includes("Free chat"),
+        (state) => state.body.includes("Hook ideas") && state.body.includes("Show current"),
         "the archive does not hold the conversation",
       );
       await tabTo(page, "Restore Hook ideas");
@@ -793,7 +801,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
       await page.keyboard.press("Enter");
       await waitFor(
         readPage,
-        (state) => state.body.includes("Hook ideas") && state.body.includes("Free chat"),
+        (state) => state.body.includes("Hook ideas") && state.body.includes("Show archived"),
         "the restored conversation is not back on the list",
       );
     },

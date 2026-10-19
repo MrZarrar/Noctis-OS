@@ -66,6 +66,11 @@ async function openThreads() {
   }
   await page.getByRole("button", { name: "Threads", exact: true }).click();
   await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+  // The tab lands on the list; closing it shows the current chat.
+  await page
+    .getByRole("region", { name: "Conversations" })
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
   await page.getByLabel("Message Vesper").waitFor();
 }
 async function prompt(text) {
@@ -409,7 +414,6 @@ describe("Threads desktop panels", () => {
           await page.getByRole("button", { name: "Presence", exact: true }).click();
           await waitFor(() => child.isClosed(), Boolean, "page unmount leaked the child");
           await page.getByRole("button", { name: "Threads", exact: true }).click();
-          await page.getByRole("button", { name: "Conversations", exact: true }).click();
           await page.getByRole("button", { name: `Popout ${mode}`, exact: true }).click();
           await restored.waitFor();
           await page.setViewportSize({ width: 400, height: 860 });
@@ -601,6 +605,13 @@ describe("Threads desktop panels", () => {
       await page.setViewportSize({ width: 400, height: 860 });
       for (const host of ["Threads", "Presence"]) {
         await page.getByRole("button", { name: host, exact: true }).click();
+        if (host === "Threads") {
+          // The tab lands on the list, over the conversation that stays open.
+          await page
+            .getByRole("region", { name: "Conversations" })
+            .getByRole("button", { name: "Close", exact: true })
+            .click();
+        }
         await page.getByRole("button", { name: "Add panel", exact: true }).click();
         await page.getByRole("button", { name: "Open Vault panel", exact: true }).click();
         const chip = page.getByRole("button", { name: "Open panel Vault", exact: true }).last();

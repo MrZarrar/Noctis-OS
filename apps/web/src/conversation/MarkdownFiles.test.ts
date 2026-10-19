@@ -236,6 +236,7 @@ describe("Markdown file providers", () => {
     send: () => Promise.resolve(),
     cancel: () => Promise.resolve(),
     startFresh: () => Promise.resolve(),
+    startFreshIfIdle: () => Promise.resolve(),
     confirm: () => Promise.resolve(),
     decline: () => Promise.resolve(),
     retryElsewhere: () => Promise.resolve(),

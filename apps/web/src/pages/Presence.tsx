@@ -41,6 +41,7 @@ export interface PresenceProps {
         | "error"
         | "outputUrl"
         | "startFresh"
+        | "startFreshIfIdle"
         | "presencePanelsRevision"
       >
     >;
@@ -78,6 +79,12 @@ export function Presence({
   // Only what was said from here, this visit: an exchange from yesterday is
   // history, which Threads keeps, not something to greet the owner with.
   const [sent, setSent] = useState(false);
+  // Each visit talks on a new chat, so one thread does not grow without end.
+  // The last one stays in Threads, to be carried on from there.
+  const startFreshIfIdle = conversation.startFreshIfIdle;
+  useEffect(() => {
+    void startFreshIfIdle?.();
+  }, [startFreshIfIdle]);
   const mobile = useIsMobile();
   const panels = usePresencePanels(transport, conversation.presencePanelsRevision ?? 0, renderPage);
   const sheet = usePanelSheet(panels);

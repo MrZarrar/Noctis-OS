@@ -39,7 +39,7 @@ export function conversationLabel(conversation: {
   }
 
   if (conversation.kind === "free") {
-    return "Free chat";
+    return "Current chat";
   }
 
   return conversation.preview?.split("\n")[0]?.trim() || "New conversation";

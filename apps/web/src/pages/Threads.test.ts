@@ -64,6 +64,7 @@ function conversationWith(turns: Turn[]): ConversationState {
     send: () => Promise.resolve(),
     cancel: () => Promise.resolve(),
     startFresh: () => Promise.resolve(),
+    startFreshIfIdle: () => Promise.resolve(),
     confirm: () => Promise.resolve(),
     decline: () => Promise.resolve(),
     retryElsewhere: () => Promise.resolve(),
@@ -217,5 +218,27 @@ describe("Threads timeline", () => {
     expect(outside).toContain("explore LVL Unbound");
     expect(outside).toContain("Reading the diary");
     expect(outside).toContain("explore glycolens");
+  });
+
+  it("opens on the conversation list when the Threads tab asks for it", () => {
+    const transport = {
+      request: () => new Promise<never>(() => undefined),
+      subscribe: () => new Promise<never>(() => undefined),
+    };
+    const render = (openList: boolean): string =>
+      renderToStaticMarkup(
+        createElement(Threads, {
+          identityId: "vesper",
+          conversation: conversationWith([]),
+          connected: true,
+          transport,
+          onOpenThread: () => undefined,
+          openList,
+        }),
+      );
+
+    expect(render(true)).toContain("Continue a session");
+    expect(render(true)).not.toContain("Here is your result");
+    expect(render(false)).not.toContain("Continue a session");
   });
 });

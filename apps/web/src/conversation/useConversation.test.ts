@@ -552,6 +552,118 @@ describe("createConversation", () => {
     store.close();
   });
 
+  it("starts a new chat on arrival once the current one has loaded and is idle", async () => {
+    const scripted = core({
+      [`GET /threads/${THREAD_ID}/turns`]: {
+        status: 200,
+        body: { turns: [{ ...runningTurn, status: "completed", completedAt: AT }] },
+      },
+      "POST /commands/conversation.start_fresh": {
+        status: 200,
+        body: { ...thread, kind: "named" },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+    // Presence's effect runs before App's, so it asks before the store starts.
+    const arrived = store.startFreshIfIdle();
+
+    store.start();
+    await arrived;
+
+    const paths = scripted.calls.map((call) => `${call.method} ${call.path}`);
+
+    expect(paths.indexOf("POST /commands/conversation.start_fresh")).toBeGreaterThan(
+      paths.indexOf(`GET /threads/${THREAD_ID}/turns`),
+    );
+
+    store.close();
+  });
+
+  it("never moves a chat the owner started on this visit before the old one loaded", async () => {
+    const scripted = core({
+      [`GET /threads/${THREAD_ID}/turns`]: {
+        status: 200,
+        body: { turns: [{ ...runningTurn, status: "completed", completedAt: AT }] },
+      },
+      "POST /commands/conversation.send": { status: 200, body: runningTurn },
+      "POST /commands/conversation.start_fresh": {
+        status: 200,
+        body: { ...thread, kind: "named" },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+    const arrived = store.startFreshIfIdle();
+
+    await store.send("typed straight away");
+    store.start();
+    await arrived;
+
+    expect(scripted.calls.some((call) => call.path.endsWith("start_fresh"))).toBe(false);
+
+    store.close();
+  });
+
+  it("says nothing when the chat was already started over before it could be", async () => {
+    const scripted = core({
+      [`GET /threads/${THREAD_ID}/turns`]: { status: 200, body: { turns: [] } },
+      "POST /commands/conversation.start_fresh": {
+        status: 404,
+        body: { error: { code: "not_found", message: "conversation not found" } },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+
+    store.start();
+    await store.startFreshIfIdle();
+
+    expect(scripted.calls.some((call) => call.path.endsWith("start_fresh"))).toBe(true);
+    expect(store.getState().error).toBeUndefined();
+
+    store.close();
+  });
+
+  it("keeps the current chat on arrival while a reply is still running", async () => {
+    const scripted = core();
+    const store = createConversation(scripted.transport, "vesper", undefined);
+
+    store.start();
+    await store.startFreshIfIdle();
+
+    expect(scripted.calls.some((call) => call.path.endsWith("start_fresh"))).toBe(false);
+
+    store.close();
+  });
+
+  it("keeps a chat nothing was said in, rather than listing an empty conversation", async () => {
+    const scripted = core({
+      [`GET /threads/${THREAD_ID}/messages`]: { status: 200, body: { messages: [] } },
+      [`GET /threads/${THREAD_ID}/turns`]: { status: 200, body: { turns: [] } },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+
+    store.start();
+    await store.startFreshIfIdle();
+
+    expect(scripted.calls.some((call) => call.path.endsWith("start_fresh"))).toBe(false);
+
+    store.close();
+  });
+
+  it("never starts the identity's chat over from a conversation opened by id", async () => {
+    const scripted = core({
+      [`GET /threads/${THREAD_ID}`]: { status: 200, body: { ...thread, kind: "named" } },
+      [`GET /threads/${THREAD_ID}/turns`]: { status: 200, body: { turns: [] } },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined, THREAD_ID);
+
+    store.start();
+    await store.startFreshIfIdle();
+
+    expect(scripted.calls.some((call) => call.path.endsWith("start_fresh"))).toBe(false);
+
+    store.close();
+  });
+
   it("lists the threads agents delegated from this one, and finds a new one when it starts", async () => {
     const scripted = core();
     const store = createConversation(scripted.transport, "vesper", undefined);

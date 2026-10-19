@@ -17,7 +17,7 @@ describe("ago", () => {
 describe("conversationLabel", () => {
   it("names a conversation by its title, else by what was said, else by what it is", () => {
     expect(conversationLabel({ kind: "named", title: "Storyboard pass" })).toBe("Storyboard pass");
-    expect(conversationLabel({ kind: "free", preview: "hi" })).toBe("Free chat");
+    expect(conversationLabel({ kind: "free", preview: "hi" })).toBe("Current chat");
     expect(
       conversationLabel({ kind: "named", preview: "Draft the cold open\nthen the hook" }),
     ).toBe("Draft the cold open");

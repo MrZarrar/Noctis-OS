@@ -152,6 +152,11 @@ export interface ConversationActions {
   cancel: (jobId: string) => Promise<void>;
   /** Free chat starts again; the old one stays on the conversation list. */
   startFresh: () => Promise<void>;
+  /**
+   * The same, for arriving on Presence: waits for the chat to load, and leaves
+   * it alone when nothing has been said in it or a reply is still running.
+   */
+  startFreshIfIdle: () => Promise<void>;
   confirm: (requestId: string, typedConfirmation?: string) => Promise<void>;
   decline: (requestId: string, reason?: string) => Promise<void>;
 }
@@ -233,6 +238,12 @@ export function createConversation(
         : (attachmentId) => transport.contentUrl?.(`/attachments/${attachmentId}/content`) ?? "",
   };
   let generation = 0;
+  // A child's effect runs before its parent's, so Presence can ask before App starts the store.
+  let markLoaded = (): void => undefined;
+  const firstLoad = new Promise<void>((resolve) => {
+    markLoaded = resolve;
+  });
+  let sends = 0;
   let subscription: Subscription | undefined;
   const listeners = new Set<() => void>();
 
@@ -658,9 +669,15 @@ export function createConversation(
     },
     start: () => {
       generation += 1;
-      void open(generation).catch((failure: unknown) => {
-        fail(failure instanceof Error ? failure.message : "could not open the conversation");
-      });
+      const current = generation;
+      void open(current)
+        .catch((failure: unknown) => {
+          fail(failure instanceof Error ? failure.message : "could not open the conversation");
+        })
+        .then(() => {
+          // An open a close cut short loaded nothing.
+          if (current === generation) markLoaded();
+        });
     },
     close: () => {
       generation += 1;
@@ -668,6 +685,7 @@ export function createConversation(
       subscription = undefined;
     },
     send: async (text, options) => {
+      sends += 1;
       const attachmentIds = await uploadAll(options?.files ?? []);
 
       if (attachmentIds === undefined) {
@@ -751,6 +769,33 @@ export function createConversation(
         await loadThread();
       }
     },
+    startFreshIfIdle: async () => {
+      const sentBefore = sends;
+
+      await firstLoad;
+
+      const { thread, messages, turns } = state;
+
+      if (
+        // Whatever is there now was said on this visit.
+        sends !== sentBefore ||
+        openThreadId !== undefined ||
+        thread?.kind !== "free" ||
+        thread.objectiveId !== undefined ||
+        messages.length === 0 ||
+        turns.some((turn) => turn.status === "queued" || turn.status === "running")
+      ) {
+        return;
+      }
+
+      // Not through `command`: a refusal here means another tab, or a store a
+      // moment older, started it over first, which is no error to show.
+      await transport.request("POST", "/commands/conversation.start_fresh", {
+        idempotencyKey: nextKey("conversation.start_fresh"),
+        identityId,
+      });
+      await loadThread();
+    },
     confirm: async (requestId, typedConfirmation) => {
       await command("authority.confirm", {
         requestId,
@@ -813,6 +858,7 @@ export function useConversation(
     retryElsewhere: store?.retryElsewhere ?? noTransport,
     cancel: store?.cancel ?? noTransport,
     startFresh: store?.startFresh ?? noTransport,
+    startFreshIfIdle: store?.startFreshIfIdle ?? noTransport,
     confirm: store?.confirm ?? noTransport,
     decline: store?.decline ?? noTransport,
   };
