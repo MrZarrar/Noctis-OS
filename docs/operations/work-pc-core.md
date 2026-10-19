@@ -98,6 +98,21 @@ Stop any `vite` or `tauri dev` running from this checkout first. Their native bi
 files in `node_modules` Windows locks, and `npm ci` fails on a locked file. Worker nodes reconnect by
 themselves after the restart. A turn leased at that moment fails after 30 s rather than re-running.
 
+## The agents' browser and desktop
+
+Agents act on this PC's screen (decisions of 19 October 2026). The node lends them two MCP servers:
+
+- **Desktop:** Windows-MCP 0.8.8, found at `%APPDATA%\Python\Python314\Scripts\windows-mcp.exe`. It needs Python
+  3.14: `winget install --id Python.Python.3.14 -e --scope user`, then
+  `& "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" -m pip install --user windows-mcp==0.8.8`.
+  `NOCTIS_WINDOWS_MCP` overrides the path.
+- **Browser:** your own Chrome, through the Playwright extension. Install **Playwright MCP Bridge** from the Chrome Web
+  Store in the Chrome profile you use, open the extension, copy its token, and set it for the node:
+  `[Environment]::SetEnvironmentVariable("NOCTIS_BROWSER_EXTENSION_TOKEN", "<token>", "User")`. Without the token
+  the agents get a headless browser of their own instead. `NOCTIS_BROWSER_CHANNEL=msedge` would use Edge.
+
+Restart Noctis after setting either (`work-pc.ps1 -StartOnly`, or sign out and in).
+
 ## Remote desktop (Task 3.9, ADR-0035)
 
 Off until both variables are set. Once, on the work PC:

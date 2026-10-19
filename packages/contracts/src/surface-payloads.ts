@@ -217,6 +217,7 @@ export const PANEL_PROPOSABLE_KINDS: ReadonlySet<string> = new Set([
   "attention",
   "visual",
   "media",
+  "page",
 ]);
 
 /** What an agent is doing right now. Built by the core from the job, so it never carries the prompt. */

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -1064,6 +1064,171 @@ describe("the Codex App Server runtime", () => {
         text: "Noctis does not answer runtime questions mid-turn; continue without the input.",
       },
     ]);
+  });
+
+  it("lends the owner's browser and desktop, with Codex made to ask about every tool on them", async () => {
+    const exe = join(scratch, "windows-mcp.exe");
+    writeFileSync(exe, "");
+    const { runtime: codex, spawned } = runtime(HAPPY);
+    const turn = input();
+
+    turn.env = { PATH: "C:\\bin", NOCTIS_WINDOWS_MCP: exe, NOCTIS_BROWSER_EXTENSION_TOKEN: "tok" };
+
+    await codex.turn(turn, recorder().sink);
+
+    const args = spawned[0]?.args ?? [];
+    const browserArgs = JSON.parse(
+      args.find((arg) => arg.startsWith("mcp_servers.browser.args="))?.slice(25) ?? "[]",
+    ) as string[];
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        `mcp_servers.browser.command=${JSON.stringify(process.execPath)}`,
+        'mcp_servers.browser.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN="tok"',
+        'mcp_servers.browser.default_tools_approval_mode="prompt"',
+        `mcp_servers.desktop.command=${JSON.stringify(exe)}`,
+        `mcp_servers.desktop.args=${JSON.stringify(["serve", "--exclude-tools", "PowerShell,FileSystem,Registry,Process"])}`,
+        'mcp_servers.desktop.env.ANONYMIZED_TELEMETRY="false"',
+        'mcp_servers.desktop.default_tools_approval_mode="prompt"',
+      ]),
+    );
+    expect(browserArgs).toContain("--extension");
+
+    const bare = runtime(HAPPY);
+
+    await bare.runtime.turn(input(), recorder().sink);
+
+    expect(bare.spawned[0]?.args.filter((arg) => arg.startsWith("mcp_servers.desktop."))).toEqual(
+      [],
+    );
+  });
+
+  describe("an MCP tool call Codex asks about", () => {
+    function toolApproval(
+      spawned: Spawned,
+      serverName: string,
+      tool: string,
+      params: unknown,
+    ): unknown {
+      return {
+        threadId: spawned.threadId,
+        turnId: TURN_ID,
+        serverName,
+        mode: "form",
+        _meta: {
+          codex_approval_kind: "mcp_tool_call",
+          tool_description: "a tool",
+          tool_params: params,
+          tool_params_display: [],
+        },
+        message: `Allow the ${serverName} MCP server to run tool "${tool}"?`,
+        requestedSchema: { type: "object", properties: {} },
+      };
+    }
+
+    function asking(
+      calls: Array<[serverName: string, tool: string, params: unknown]>,
+      outcomes: unknown[],
+    ): Scenario {
+      return {
+        async turn(server, spawned) {
+          for (const [index, [serverName, tool, params]] of calls.entries()) {
+            server.notify(
+              "item/started",
+              itemNotification(spawned, {
+                type: "mcpToolCall",
+                id: `t${String(index)}`,
+                server: serverName,
+                tool,
+                status: "inProgress",
+                arguments: params,
+              }),
+            );
+            outcomes.push(
+              await server.request(
+                "mcpServer/elicitation/request",
+                toolApproval(spawned, serverName, tool, params),
+              ),
+            );
+          }
+
+          server.notify("turn/completed", turnCompleted(spawned, "completed"));
+        },
+      };
+    }
+
+    const accept = { action: "accept", content: null, _meta: null };
+    const decline = { action: "decline", content: null, _meta: null };
+
+    it("runs a step on the owner's screen and Noctis's own tools without asking anyone", async () => {
+      const outcomes: unknown[] = [];
+      const r = recorder("deny");
+
+      await runtime(
+        asking(
+          [
+            ["browser", "browser_click", { element: "Search button", ref: "e3" }],
+            ["desktop", "Click", { loc: [10, 20] }],
+            ["noctis", "noctis_propose_objective", { title: "x" }],
+          ],
+          outcomes,
+        ),
+      ).runtime.turn(input(), r.sink);
+
+      expect(outcomes).toEqual([accept, accept, accept]);
+      expect(r.asks).toEqual([]);
+    });
+
+    it("refuses raw code in the page without asking", async () => {
+      const outcomes: unknown[] = [];
+      const r = recorder("allow");
+
+      await runtime(
+        asking([["browser", "browser_evaluate", { function: "() => 1" }]], outcomes),
+      ).runtime.turn(input(), r.sink);
+
+      expect(outcomes).toEqual([decline]);
+      expect(r.asks).toEqual([]);
+    });
+
+    it("asks the owner before a step that commits them, and answers Codex with their decision", async () => {
+      const calls: Array<[string, string, unknown]> = [
+        ["browser", "browser_click", { element: "Place order", ref: "e9" }],
+      ];
+      const allowed: unknown[] = [];
+      const r = recorder("allow");
+
+      await runtime(asking(calls, allowed)).runtime.turn(input(), r.sink);
+
+      expect(allowed).toEqual([accept]);
+      expect(r.asks).toEqual([
+        {
+          itemId: "t0",
+          kind: "tool_call",
+          summary: "call mcp__browser__browser_click",
+          operationClass: "external_write",
+          reversibility: "partially_reversible",
+          capability: "runtime.tool_call",
+          target: { type: "tool_call", id: "mcp__browser__browser_click" },
+          detail: { tool: "mcp__browser__browser_click" },
+          askedBy: "runtime",
+        },
+      ]);
+
+      const denied: unknown[] = [];
+
+      await runtime(asking(calls, denied)).runtime.turn(input(), recorder("deny").sink);
+
+      expect(denied).toEqual([decline]);
+
+      const unanswered: unknown[] = [];
+      const failing = recorder();
+
+      failing.sink.ask = () => Promise.reject(new Error("disconnected"));
+      await runtime(asking(calls, unanswered)).runtime.turn(input(), failing.sink);
+
+      expect(unanswered).toEqual([{ action: "cancel", content: null, _meta: null }]);
+    });
   });
 
   describe("one app-server per thread", () => {

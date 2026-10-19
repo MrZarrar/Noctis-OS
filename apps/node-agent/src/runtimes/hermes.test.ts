@@ -17,11 +17,13 @@ import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts"
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
+import { ACTING_INSTRUCTIONS } from "./identity.js";
 import type { CodexSpawn, SpawnedChild } from "./codex.js";
 import { AdapterRefused } from "./Runtime.js";
 import { createHermesRuntime } from "./hermes.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { createJsonRpcClient } from "./jsonrpc.js";
+import { browserServer } from "./mcp-config.js";
 
 const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: [], localOnly: true };
 const MODEL = { providerId: "hermes" as const, model: "qwen/qwen3.5-9b" };
@@ -171,8 +173,10 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-/** The Noctis MCP server as ACP names it to Hermes: the node's own, writing to this thread's file. */
-function noctisMcp(): unknown[] {
+/** The MCP servers as ACP names them to Hermes: the node's own, writing to this thread's file, then the owner's browser. */
+function lentMcp(): unknown[] {
+  const browser = browserServer(input().env, THREAD);
+
   return [
     {
       name: "noctis",
@@ -180,7 +184,40 @@ function noctisMcp(): unknown[] {
       args: [MCP_ENTRY, "--proposals", join(scratch, "proposals", `hermes-${THREAD}.jsonl`)],
       env: [],
     },
+    ...(browser === undefined
+      ? []
+      : [{ name: "browser", command: browser.command, args: browser.args, env: [] }]),
   ];
+}
+
+/** A step on a lent server as Hermes asks about it: Noctis's plugin escalates it, giving its input as the reason. */
+function screenStep(
+  server: JsonRpcClient,
+  sessionId: string,
+  id: number,
+  tool: string,
+  reason: string,
+): Promise<unknown> {
+  const command = `<${tool}> (plugin approval rule)`;
+
+  return server.request("session/request_permission", {
+    sessionId,
+    toolCall: {
+      toolCallId: `perm-check-${String(id)}`,
+      title: `${reason}: ${command}`,
+      kind: "execute",
+      status: "pending",
+      content: [{ type: "content", content: { type: "text", text: `${reason}\n$ ${command}` } }],
+      rawInput: { command, description: reason },
+    },
+    options: [
+      { optionId: "allow_once", kind: "allow_once", name: "Allow once" },
+      { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
+      { optionId: "allow_always", kind: "allow_always", name: "Allow always" },
+      { optionId: "deny", kind: "reject_once", name: "Deny" },
+      { optionId: "deny_always", kind: "reject_always", name: "Deny always" },
+    ],
+  });
 }
 
 function payload(overrides: Partial<RuntimeTurnPayload> = {}): RuntimeTurnPayload {
@@ -271,7 +308,7 @@ describe("the Hermes runtime (ACP)", () => {
 
     expect(spawned[0]?.cwd).toBe("C:\\work");
     expect(spawned[0]?.requests.get("session/new")).toEqual([
-      { cwd: "C:\\work", mcpServers: noctisMcp() },
+      { cwd: "C:\\work", mcpServers: lentMcp() },
     ]);
     expect(spawned[0]?.requests.get("session/prompt")).toEqual([
       {
@@ -380,6 +417,114 @@ describe("the Hermes runtime (ACP)", () => {
     });
   });
 
+  it("lends the owner's browser and desktop on new and resumed sessions, env in ACP's form", async () => {
+    const exe = join(scratch, "windows-mcp.exe");
+    writeFileSync(exe, "");
+    const env = { PATH: "C:\\bin", NOCTIS_WINDOWS_MCP: exe, NOCTIS_BROWSER_EXTENSION_TOKEN: "tok" };
+    const { runtime: hermes, spawned } = runtime();
+
+    await hermes.turn({ ...input(), env }, recorder().sink);
+    await hermes.turn(
+      {
+        ...input({ threadId: "0199a000-0000-7000-8000-0000000000f2", sessionRef: "hs-9" }),
+        env,
+      },
+      recorder().sink,
+    );
+
+    const lent = [
+      spawned[0]?.requests.get("session/new")?.[0],
+      spawned[1]?.requests.get("session/load")?.[0],
+    ].map((params) => (params as { mcpServers: Array<{ name: string }> }).mcpServers);
+
+    for (const servers of lent) {
+      expect(servers.map((server) => server.name)).toEqual(["noctis", "browser", "desktop"]);
+      expect(servers[1]).toEqual({
+        name: "browser",
+        command: process.execPath,
+        args: expect.arrayContaining(["--extension"]) as unknown,
+        env: [{ name: "PLAYWRIGHT_MCP_EXTENSION_TOKEN", value: "tok" }],
+      });
+      expect(servers[2]).toMatchObject({ name: "desktop", command: exe });
+    }
+  });
+
+  it("installs the plugin that makes Hermes ask before every step on the owner's screen", async () => {
+    const { runtime: hermes } = runtime();
+
+    await hermes.turn(input(), recorder().sink);
+
+    const home = join(scratch, "hermes");
+    const plugin = join(home, "plugins", "noctis-screen");
+
+    expect(readFileSync(join(home, "config.yaml"), "utf8")).toMatch(
+      /\nplugins:\n {2}enabled:\n {4}- "noctis-screen"\n/,
+    );
+    expect(readFileSync(join(plugin, "plugin.yaml"), "utf8")).toContain("name: noctis-screen");
+
+    const code = readFileSync(join(plugin, "__init__.py"), "utf8");
+
+    expect(code).toContain('ctx.register_hook("pre_tool_call"');
+    expect(code).toContain('"mcp__browser__"');
+    expect(code).toContain('"mcp__desktop__"');
+    expect(code).toContain('"action": "approve"');
+  });
+
+  it("lets a step on the owner's screen run, refuses raw code, and asks the owner before one that commits them", async () => {
+    const answers: unknown[] = [];
+    const stepping: Script = async (server, sessionId) => {
+      const step = (id: number, tool: string, reason: string) =>
+        screenStep(server, sessionId, id, tool, reason);
+
+      answers.length = 0;
+      answers.push(
+        await step(
+          1,
+          "mcp__browser__browser_click",
+          JSON.stringify({ element: "Search button", ref: "e3" }),
+        ),
+        await step(2, "mcp__browser__browser_evaluate", JSON.stringify({ function: "() => 1" })),
+        await step(
+          3,
+          "mcp__browser__browser_click",
+          JSON.stringify({ element: "Place order", ref: "e9" }),
+        ),
+        // No input to judge it by, so the owner judges it.
+        await step(4, "mcp__desktop__Click", "not json"),
+      );
+
+      return "end_turn";
+    };
+    const allow = { outcome: { outcome: "selected", optionId: "allow_once" } };
+    const deny = { outcome: { outcome: "selected", optionId: "deny" } };
+
+    const declined = recorder("deny");
+    await runtime(stepping).runtime.turn(input(), declined.sink);
+    expect(answers).toEqual([allow, deny, deny, deny]);
+    expect(declined.asks).toEqual([
+      {
+        itemId: "perm-check-3",
+        kind: "tool_call",
+        askedBy: "runtime",
+        summary: "call mcp__browser__browser_click",
+        operationClass: "external_write",
+        reversibility: expect.any(String) as unknown,
+        capability: "runtime.tool_call",
+        target: { type: "tool_call", id: "mcp__browser__browser_click" },
+        detail: { tool: "mcp__browser__browser_click" },
+      },
+      expect.objectContaining({
+        itemId: "perm-check-4",
+        kind: "tool_call",
+        target: { type: "tool_call", id: "mcp__desktop__Click" },
+      }),
+    ]);
+
+    const allowed = recorder("allow");
+    await runtime(stepping).runtime.turn(input(), allowed.sink);
+    expect(answers).toEqual([allow, deny, allow, allow]);
+  });
+
   it("resumes a session in a new process without replaying its history as this turn, then reuses the process", async () => {
     const { runtime: hermes, spawned } = runtime();
     const r = recorder();
@@ -387,7 +532,7 @@ describe("the Hermes runtime (ACP)", () => {
     const evidence = await hermes.turn(input({ sessionRef: "hs-9" }), r.sink);
 
     expect(spawned[0]?.requests.get("session/load")).toEqual([
-      { sessionId: "hs-9", cwd: "C:\\work", mcpServers: noctisMcp() },
+      { sessionId: "hs-9", cwd: "C:\\work", mcpServers: lentMcp() },
     ]);
     expect(spawned[0]?.requests.has("session/new")).toBe(false);
     expect(r.deltas).not.toContain("an old reply");
@@ -599,7 +744,10 @@ describe("the Hermes runtime (ACP)", () => {
 
     expect(spawned[0]?.env.HERMES_HOME).toBe(jesterHome);
     expect(soul).toMatch(/^You are Jester/);
-    expect(soul).toContain("never send, publish, spend");
+    // A contrarian that also does what it is asked on the PC, up to the step that commits the owner.
+    expect(soul).toContain("contrarian");
+    expect(soul).toContain(ACTING_INSTRUCTIONS);
+    expect(soul).not.toContain("You prepare; you do not commit");
     // Jester took recalled notes for something the owner pasted, and Hermes's
     // own browser vault for the MindVault.
     expect(soul).toContain("MindVault");

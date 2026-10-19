@@ -14,6 +14,8 @@ export interface AskInput {
   cwd?: string;
   paths?: readonly string[];
   tool?: string;
+  /** A tool call's own input, so a step on the owner's screen can be judged by what it presses. */
+  args?: unknown;
   writableRoots: readonly string[];
   readableRoots: readonly string[];
 }
@@ -217,7 +219,64 @@ function classifyCommand(input: AskInput): AskClass {
 const MCP_READ_VERB =
   /^(?:get|list|search|read|fetch|query|find|view|describe|show|lookup|resolve)(?:[_-]|$)/;
 
-function classifyToolCall(tool: string): AskClass {
+/**
+ * The servers Noctis lends for the owner's own screen: their browser and their desktop. A step
+ * there is the owner's PC doing what they asked, so it runs, unless what it presses commits them.
+ */
+const SCREEN_SERVER = /^mcp__(?:browser|desktop)__/;
+
+/**
+ * Words on a button or field that mean money, a message or a post leaves the PC. A backstop
+ * under the agent's own judgement, which is told to stop before these anyway.
+ *
+ * ponytail: matches only what a step names (a browser element, a desktop label). A desktop click
+ * by screen id or an Enter that sends a chat names nothing; an accessibility-tree lookup of the
+ * target would close that if it misses in practice.
+ */
+const COMMITS =
+  /\b(?:buy|purchase|place (?:your |the )?order|pay(?:ment)?|pay now|checkout|check out|complete (?:order|purchase)|confirm (?:order|purchase|payment)|card number|cvv|cvc|send|submit|post|publish|tweet|delete|transfer)\b/i;
+
+/**
+ * A terminal or the Run box opened on the desktop, which the next Type step would turn into a
+ * command no command check ever saw.
+ *
+ * ponytail: names and one shortcut; typing into a terminal that was already open is not caught.
+ */
+const OPENS_A_SHELL =
+  /\b(?:powershell|pwsh|cmd|command prompt|terminal|wt|bash|wsl|git bash)\b|^win\+r$/i;
+
+function opensAShell(tool: string, args: unknown): boolean {
+  if (typeof args !== "object" || args === null) {
+    return false;
+  }
+
+  const { name, shortcut } = args as { name?: unknown; shortcut?: unknown };
+  const target =
+    tool === "mcp__desktop__App" ? name : tool === "mcp__desktop__Shortcut" ? shortcut : undefined;
+
+  return typeof target === "string" && OPENS_A_SHELL.test(target.trim());
+}
+
+/** The names a step gives what it presses: Playwright's `element`, a field's `name`, a desktop `label`. */
+function namedTargets(args: unknown): string[] {
+  if (Array.isArray(args)) {
+    return args.flatMap(namedTargets);
+  }
+
+  if (typeof args !== "object" || args === null) {
+    return [];
+  }
+
+  return Object.entries(args).flatMap(([key, value]) =>
+    typeof value === "string" && (key === "element" || key === "name" || key === "label")
+      ? [value]
+      : typeof value === "object"
+        ? namedTargets(value)
+        : [],
+  );
+}
+
+function classifyToolCall(tool: string, args: unknown): AskClass {
   const capability = "runtime.tool_call";
 
   if (tool.startsWith("noctis_")) {
@@ -228,6 +287,22 @@ function classifyToolCall(tool: string): AskClass {
   // server's claim, which is all Noctis has; anything else stays external.
   if (tool.startsWith("mcp__") && MCP_READ_VERB.test(tool.slice(tool.lastIndexOf("__") + 2))) {
     return { ...READ_CLASS, capability, reason: "mcp__* tool named for a read" };
+  }
+
+  if (opensAShell(tool, args)) {
+    return { ...EXTERNAL_CLASS, capability, reason: "opens a shell on the desktop" };
+  }
+
+  if (SCREEN_SERVER.test(tool)) {
+    const commits = namedTargets(args).find((name) => COMMITS.test(name));
+
+    return commits === undefined
+      ? { ...LOCAL_CLASS, capability, reason: "a step on the owner's own screen" }
+      : {
+          ...EXTERNAL_CLASS,
+          capability,
+          reason: `presses something that commits: ${commits.slice(0, 80)}`,
+        };
   }
 
   if (tool.startsWith("browser_") || tool.startsWith("mcp__")) {
@@ -248,7 +323,7 @@ export function classifyAsk(input: AskInput): AskClass {
         reason: "permission ask",
       };
     case "tool_call":
-      return classifyToolCall(input.tool ?? "");
+      return classifyToolCall(input.tool ?? "", input.args);
     case "file_change": {
       const paths = input.paths ?? [];
       const capability = "runtime.file_change";

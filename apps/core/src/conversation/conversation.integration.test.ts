@@ -607,6 +607,60 @@ describe("conversation service", () => {
     expect(panels.find((panel) => panel.id !== firstPanel.id)?.sourceIds).toEqual([second.body.id]);
     rmSync(directory, { recursive: true, force: true });
   });
+  it("an agent opens a Noctis page as a panel, but never one pointed at a folder", async () => {
+    const logs: string[] = [];
+    const core = await startTestCore(logs);
+    const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
+    const node = await connectFake(core, directory);
+    await setDefault(core);
+    const sent = await send(core, "open the vault");
+    await waitFor(() => node.jobs().length === 1, "page panel job");
+    const jobId = lastTurnJob(node).assignment.jobId;
+    const threadId = sent.body.threadId as string;
+    const page = (payload: Record<string, unknown>) => ({
+      kind: "surface" as const,
+      surfaceKind: "page",
+      role: "primary" as const,
+      persistence: "restorable" as const,
+      priority: 50,
+      payloadVersion: 1,
+      payload,
+    });
+
+    node.frame({
+      kind: "stream",
+      jobId,
+      sequence: 0,
+      item: {
+        itemId: "vault",
+        kind: "proposal",
+        status: "completed",
+        proposal: page({ page: "Vault" }),
+      },
+    });
+    node.frame({
+      kind: "stream",
+      jobId,
+      sequence: 1,
+      item: {
+        itemId: "files",
+        kind: "proposal",
+        status: "completed",
+        proposal: page({
+          page: "Files",
+          folder: { nodeId: node.nodeId, grantId: "d", relativePath: "secret" },
+        }),
+      },
+    });
+    await waitFor(
+      () => logs.some((line) => line.includes("page_folder_not_proposable")),
+      "folder page refused",
+    );
+    const panels = listSurfaceIntents(core.core.kernel.db, { threadId });
+    expect(panels).toHaveLength(1);
+    expect(panels[0]).toMatchObject({ kind: "page", payload: { page: "Vault" } });
+    rmSync(directory, { recursive: true, force: true });
+  });
   it("a named panel is the same panel in later turns, so live work updates one place", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-panel-"));
@@ -864,6 +918,9 @@ describe("conversation service", () => {
     const node = await connectFake(core, directory);
 
     await setDefault(core);
+    core.core.kernel.db
+      .prepare("UPDATE node_owner_presence SET present = 1, updated_at = ? WHERE node_id = ?")
+      .run(new Date().toISOString(), node.nodeId);
     const sent = await send(core, "turn-1");
     expect(sent.status).toBe(200);
     expect(sent.body).toMatchObject({ status: "queued", model: MODEL, nodeId: node.nodeId });
@@ -882,7 +939,8 @@ describe("conversation service", () => {
     expect(payload.sessionRef).toBeUndefined();
     // What the owner's words can name, so a model never invents an id.
     expect(payload.targets).toMatchObject({
-      pcs: [{ nodeId: node.nodeId, current: true, online: true }],
+      // The PC the owner is using is what "my PC" means.
+      pcs: [{ nodeId: node.nodeId, current: true, online: true, ownerPresent: true }],
       folders: [{ grantId: "d", nodeId: node.nodeId }],
       tasks: [],
     });

@@ -16,8 +16,8 @@ function files(...paths: string[]): AskInput {
   return { kind: "file_change", paths, ...ROOTS };
 }
 
-function tool(name: string): AskInput {
-  return { kind: "tool_call", tool: name, ...ROOTS };
+function tool(name: string, args?: unknown): AskInput {
+  return { kind: "tool_call", tool: name, ...(args === undefined ? {} : { args }), ...ROOTS };
 }
 
 type Row = [
@@ -397,6 +397,96 @@ const ROWS: Row[] = [
     TOOL,
   ],
   ["tool_call other", tool("web_fetch"), "external_write", "partially_reversible", TOOL],
+  [
+    "clicking around the owner's browser is a local step",
+    tool("mcp__browser__browser_click", { element: "Add to Basket button", ref: "e12" }),
+    "local_reversible_edit",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "opening a page in the owner's browser is a local step",
+    tool("mcp__browser__browser_navigate", { url: "https://www.amazon.co.uk/s?k=headphones" }),
+    "local_reversible_edit",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "a browser click that places an order asks",
+    tool("mcp__browser__browser_click", { element: "Place your order", ref: "e40" }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "a browser click that heads to checkout asks",
+    tool("mcp__browser__browser_click", { element: "Proceed to Checkout button", ref: "e9" }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "a form field named for payment asks",
+    tool("mcp__browser__browser_fill_form", {
+      fields: [{ name: "Card number", type: "textbox", ref: "e3", value: "4111" }],
+    }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "typed words are what the owner asked for, not what the click does",
+    tool("mcp__browser__browser_type", {
+      element: "Search box",
+      ref: "e2",
+      text: "how to send a parcel",
+    }),
+    "local_reversible_edit",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "a desktop click is a local step",
+    tool("mcp__desktop__Click", { label: 14 }),
+    "local_reversible_edit",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "launching an app on the desktop is a local step",
+    tool("mcp__desktop__App", { mode: "launch", name: "Teams" }),
+    "local_reversible_edit",
+    "reversible",
+    TOOL,
+  ],
+  [
+    "a desktop button named Send asks",
+    tool("mcp__desktop__Click", { label: "Send" }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "opening a terminal on the desktop asks, or typing into it would go round the command checks",
+    tool("mcp__desktop__App", { mode: "launch", name: "Windows PowerShell" }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "the Run box asks for the same reason",
+    tool("mcp__desktop__Shortcut", { shortcut: "win+r" }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
+  [
+    "a desktop server Noctis did not lend still asks",
+    tool("mcp__windows-mcp__Click", { label: 14 }),
+    "external_write",
+    "partially_reversible",
+    TOOL,
+  ],
 ];
 
 describe("classifyAsk", () => {

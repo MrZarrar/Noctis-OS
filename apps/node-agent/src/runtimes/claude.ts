@@ -49,7 +49,14 @@ import { trackChild } from "./orphans.js";
 import { killProcessTree, type KillableChild } from "./kill-tree.js";
 import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
 import { PRODUCTIVITY_TOOLS, proposalSchema } from "../proposal-tools.js";
-import { PLAYWRIGHT_SERVER, playwrightServer, refusedBrowserTool } from "./mcp-config.js";
+import {
+  BROWSER_SERVER,
+  DESKTOP_SERVER,
+  browserServer,
+  desktopServer,
+  refusedTool,
+  type StdioServer,
+} from "./mcp-config.js";
 import { probeClaudeInstalled } from "./probe.js";
 import type { LiveProcess } from "./sessions.js";
 import { createProcessPool, processKey } from "./sessions.js";
@@ -328,7 +335,7 @@ function describeCall(
         reversibility: "reversible",
         capability: "runtime.tool_call",
       } as const)
-    : classifyAsk({ kind: "tool_call", tool: name, ...scope });
+    : classifyAsk({ kind: "tool_call", tool: name, args: raw, ...scope });
 
   return {
     itemId,
@@ -622,8 +629,11 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       ],
     });
 
-    // One browser profile per thread, and only on this route: see mcp-config.
-    const browser = playwrightServer(input.env, payload.threadId);
+    // The owner's browser and desktop, where this PC has them.
+    const screen = Object.entries({
+      [BROWSER_SERVER]: browserServer(input.env, payload.threadId),
+      [DESKTOP_SERVER]: desktopServer(input.env),
+    }).filter((entry): entry is [string, StdioServer] => entry[1] !== undefined);
 
     // The SDK does not split read from write access: `additionalDirectories`
     // grants both, so a write into a read root is caught by the gate, where
@@ -642,6 +652,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       env: input.env,
       model: payload.model.model,
       permissionMode: "auto",
+      // Without these the CLI's own permission system asks about every click; the
+      // PreToolUse gate still runs first and stops a step that commits the owner.
+      allowedTools: screen.map(([name]) => `mcp__${name}`),
       disallowedTools: DISALLOWED_TOOLS,
       settingSources: ["user", "project", "local"],
       skills: "all",
@@ -670,9 +683,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       },
       mcpServers: {
         noctis,
-        ...(browser === undefined
-          ? {}
-          : { [PLAYWRIGHT_SERVER]: { type: "stdio" as const, ...browser } }),
+        ...Object.fromEntries(
+          screen.map(([name, server]) => [name, { type: "stdio" as const, ...server }]),
+        ),
       },
       hooks: {
         PreToolUse: [
@@ -857,10 +870,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         },
 
         async gate(toolName, toolInput, toolUseId) {
-          // Refused, not asked: a browser tool outside the allowlist is not a
-          // decision the owner should be handed. `browser_evaluate` and
-          // `browser_run_code_unsafe` are on the same server as the five.
-          if (refusedBrowserTool(toolName)) {
+          // Refused, not asked: raw code in the owner's browser is not a
+          // decision the owner should be handed.
+          if (refusedTool(toolName)) {
             return gateDecision("deny", `${toolName} is not a tool Noctis lends`);
           }
 
@@ -879,7 +891,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         },
 
         async canUseTool(toolName, toolInput, ctx): Promise<PermissionResult> {
-          if (refusedBrowserTool(toolName)) {
+          if (refusedTool(toolName)) {
             return { behavior: "deny", message: `${toolName} is not a tool Noctis lends` };
           }
 

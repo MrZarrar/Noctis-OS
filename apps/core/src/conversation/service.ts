@@ -44,6 +44,7 @@ import type { Dispatcher } from "../nodes/dispatch.js";
 import type { NodeJobRecord } from "../nodes/jobs.js";
 import { cancelJob, enqueueJobInTransaction, getJob } from "../nodes/jobs.js";
 import {
+  getOwnerPresence,
   listNodes,
   listRuntimeCandidates,
   listRuntimeRoots,
@@ -1776,6 +1777,7 @@ function runtimeTargets(
         hostId: node.hostId,
         current: node.id === currentNodeId,
         online: isConnected(node.id),
+        ownerPresent: getOwnerPresence(db, node.id),
       })),
     folders: listRuntimeRoots(db, isConnected, now)
       .slice(0, 128)

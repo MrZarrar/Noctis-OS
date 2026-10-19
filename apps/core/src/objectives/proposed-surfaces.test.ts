@@ -150,6 +150,7 @@ describe("proposeFor", () => {
       "attention",
       "visual",
       "media",
+      "page",
     ]);
   });
   const threadId = "0199a000-0000-7000-8000-0000000000d1";

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,7 +23,7 @@ import type { RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import type { ClaudeQuery } from "./claude.js";
 import { createClaudeRuntime } from "./claude.js";
-import { PLAYWRIGHT_SERVER } from "./mcp-config.js";
+import { BROWSER_SERVER, DESKTOP_SERVER } from "./mcp-config.js";
 
 const ROOTS = { cwd: "C:\\work", writable: ["C:\\work"], readable: ["C:\\ref"], localOnly: false };
 const SESSION = "0199a000-0000-7000-8000-00000000c1a0";
@@ -680,19 +680,25 @@ describe("the Claude Agent SDK runtime", () => {
       ]);
     });
 
-    it("asks about an allowlisted browser tool and refuses the rest of that server outright", async () => {
+    it("lets a step on the owner's screen run, asks before one that commits, and refuses raw code", async () => {
       const { r, gate } = await held("allow");
 
       await expect(
-        gate("mcp__playwright__browser_navigate", { url: "https://example.com" }),
+        gate("mcp__browser__browser_navigate", { url: "https://www.amazon.co.uk" }),
+      ).resolves.toEqual({});
+      await expect(gate("mcp__desktop__App", { mode: "launch", name: "Teams" })).resolves.toEqual(
+        {},
+      );
+      await expect(
+        gate("mcp__browser__browser_click", { element: "Place your order", ref: "e40" }),
       ).resolves.toEqual(allowed);
       await expect(
-        gate("mcp__playwright__browser_evaluate", { function: "() => 1" }),
-      ).resolves.toEqual(denied("mcp__playwright__browser_evaluate is not a tool Noctis lends"));
+        gate("mcp__browser__browser_evaluate", { function: "() => 1" }),
+      ).resolves.toEqual(denied("mcp__browser__browser_evaluate is not a tool Noctis lends"));
 
-      // One ask, for the navigate. The refusal is never a decision the owner is handed.
+      // One ask, for the order. The refusal is never a decision the owner is handed.
       expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
-        ["tool_call", "external_write", "mcp__playwright__browser_navigate"],
+        ["tool_call", "external_write", "mcp__browser__browser_click"],
       ]);
     });
 
@@ -791,7 +797,7 @@ describe("the Claude Agent SDK runtime", () => {
     await runtime.turn(input({ threadId: other }, undefined, env), recorder().sink);
 
     const dirs = calls.map((call) => {
-      const server = call.options?.mcpServers?.[PLAYWRIGHT_SERVER];
+      const server = call.options?.mcpServers?.[BROWSER_SERVER];
       const args = server !== undefined && "args" in server ? (server.args ?? []) : [];
 
       return args[args.indexOf("--user-data-dir") + 1];
@@ -801,6 +807,28 @@ describe("the Claude Agent SDK runtime", () => {
       join("C:\\noctis", "browser", payload().threadId),
       join("C:\\noctis", "browser", other),
     ]);
+  });
+
+  it("lends the owner's desktop when Windows-MCP is installed on this PC", async () => {
+    const exe = join(mkdtempSync(join(tmpdir(), "noctis-desktop-")), "windows-mcp.exe");
+    writeFileSync(exe, "");
+    const { query, calls } = scripted(list(init(), result()));
+
+    await createClaudeRuntime({ query }).turn(
+      input({}, undefined, { PATH: "C:\bin", NOCTIS_WINDOWS_MCP: exe }),
+      recorder().sink,
+    );
+
+    expect(calls[0]?.options?.mcpServers?.[DESKTOP_SERVER]).toMatchObject({
+      type: "stdio",
+      command: exe,
+      env: { ANONYMIZED_TELEMETRY: "false" },
+    });
+    // Allowed in the CLI too, or its own permission system asks about every click; the
+    // gate before it still stops a step that commits the owner.
+    expect(calls[0]?.options?.allowedTools).toEqual(
+      expect.arrayContaining([`mcp__${BROWSER_SERVER}`, `mcp__${DESKTOP_SERVER}`]),
+    );
   });
 
   describe("background sub-agents", () => {

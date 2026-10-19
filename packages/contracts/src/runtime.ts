@@ -99,6 +99,8 @@ export const RuntimeTargetsSchema = z
             hostId: z.string().min(1).max(253),
             current: z.boolean(),
             online: z.boolean(),
+            /** The owner is using this PC now, so "my PC" means it. */
+            ownerPresent: z.boolean().optional(),
           })
           .strict(),
       )

@@ -14,7 +14,7 @@ import type {
   SessionExchange,
 } from "@noctis/contracts";
 import { MAX_HISTORY_EXCHANGES, MAX_LISTED_SESSIONS } from "@noctis/contracts";
-import { classifyAsk } from "@noctis/domain";
+import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
@@ -28,6 +28,14 @@ import { childEnvironment } from "./env.js";
 import { trackChild } from "./orphans.js";
 import { killProcessTree, type KillableChild } from "./kill-tree.js";
 import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
+import type { StdioServer } from "./mcp-config.js";
+import {
+  BROWSER_SERVER,
+  DESKTOP_SERVER,
+  browserServer,
+  desktopServer,
+  refusedTool,
+} from "./mcp-config.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
 import { probeCodexInstalled } from "./probe.js";
@@ -120,6 +128,7 @@ const ThreadItemSchema = z
       .nullable()
       .optional(),
     kind: z.string().optional(),
+    server: z.string().optional(),
     agentPath: z.string().optional(),
     savedPath: z.string().nullable().optional(),
   })
@@ -218,6 +227,17 @@ const PermissionsApprovalSchema = z
   })
   .loose();
 
+const ElicitationSchema = z
+  .object({
+    serverName: z.string(),
+    message: z.string().optional(),
+    _meta: z
+      .object({ codex_approval_kind: z.unknown().optional(), tool_params: z.unknown().optional() })
+      .loose()
+      .nullish(),
+  })
+  .loose();
+
 const STATUS: Readonly<Record<string, RuntimeItemStatus>> = {
   inProgress: "in_progress",
   completed: "completed",
@@ -254,6 +274,27 @@ function spawnArgs(model: string, mcpEntry: string, proposalsFile: string): stri
     "-c",
     `mcp_servers.noctis.args=${toml([mcpEntry, "--proposals", proposalsFile])}`,
   ];
+}
+
+/**
+ * A server lent for the owner's screen. Codex is made to ask before every tool on
+ * it, even one that says it only reads, so each step reaches `classifyAsk`.
+ * Codex starts an MCP server with only the usual Windows variables, so anything
+ * else the server needs has to be named in its own `env`.
+ */
+function lend(name: string, server: StdioServer | undefined): string[] {
+  if (server === undefined) {
+    return [];
+  }
+
+  return [
+    `mcp_servers.${name}.command=${toml(server.command)}`,
+    `mcp_servers.${name}.args=${toml(server.args)}`,
+    ...Object.entries(server.env ?? {}).map(
+      ([key, value]) => `mcp_servers.${name}.env.${key}=${toml(value)}`,
+    ),
+    `mcp_servers.${name}.default_tools_approval_mode="prompt"`,
+  ].flatMap((arg) => ["-c", arg]);
 }
 
 function toolOutput(item: ThreadItem): string | undefined {
@@ -411,7 +452,11 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     installCodexRules(codexHome);
     const child = spawn(
       command,
-      spawnArgs(payload.model.model, mcpEntry, proposals.path),
+      [
+        ...spawnArgs(payload.model.model, mcpEntry, proposals.path),
+        ...lend(BROWSER_SERVER, browserServer(input.env, payload.threadId)),
+        ...lend(DESKTOP_SERVER, desktopServer(input.env)),
+      ],
       // Stripped again here: the adapter already did, and this is the boundary.
       { cwd: roots.cwd, env: childEnvironment(input.env) },
     );
@@ -801,15 +846,64 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
 
               return { answers: {} };
             }
-            case "mcpServer/elicitation/request":
-              emit({
-                itemId: "elicitation",
-                kind: "agent_message",
-                status: "completed",
-                text: NO_INPUT_TEXT,
+            case "mcpServer/elicitation/request": {
+              const p = ElicitationSchema.parse(params);
+              // Codex names the tool it wants to run only in the message it would show.
+              const name =
+                p._meta?.codex_approval_kind === "mcp_tool_call"
+                  ? /run tool "([^"]+)"\?$/.exec(p.message ?? "")?.[1]
+                  : undefined;
+
+              if (name === undefined) {
+                emit({
+                  itemId: "elicitation",
+                  kind: "agent_message",
+                  status: "completed",
+                  text: NO_INPUT_TEXT,
+                });
+
+                return { action: "decline", content: null, _meta: null };
+              }
+
+              // Noctis's own tools go by their bare names, which is how the classifier knows them.
+              const tool = p.serverName === "noctis" ? name : `mcp__${p.serverName}__${name}`;
+
+              if (refusedTool(tool)) {
+                return { action: "decline", content: null, _meta: null };
+              }
+
+              const cls = classifyAsk({
+                kind: "tool_call",
+                tool,
+                args: p._meta?.tool_params,
+                writableRoots: roots.writable,
+                readableRoots: roots.readable,
               });
 
-              return { action: "decline", content: null, _meta: null };
+              if (!isConfirmLevel(cls.operationClass)) {
+                return { action: "accept", content: null, _meta: null };
+              }
+
+              const item = [...started.values()]
+                .filter(
+                  (i) => i.type === "mcpToolCall" && i.server === p.serverName && i.tool === name,
+                )
+                .at(-1);
+              const { decision } = approval(
+                await decide({
+                  itemId: clip(item?.id ?? "elicitation", 128),
+                  kind: "tool_call",
+                  summary: clip(`call ${tool}`, 2000),
+                  operationClass: cls.operationClass,
+                  reversibility: cls.reversibility,
+                  capability: cls.capability,
+                  target: { type: "tool_call", id: clip(tool, 200) },
+                  detail: { tool: clip(tool, 128) },
+                }),
+              );
+
+              return { action: decision, content: null, _meta: null };
+            }
             default:
               throw new JsonRpcError(METHOD_NOT_FOUND, `noctis does not handle ${method}`);
           }

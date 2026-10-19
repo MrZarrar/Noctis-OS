@@ -18,7 +18,7 @@ export const PANEL_FIXTURES = {
 } as const;
 
 describe("read-only panels and message choices", () => {
-  it("accepts only owner page panels and bounds their starting context", () => {
+  it("accepts only Noctis page panels and bounds their starting context", () => {
     const schema = SURFACE_PAYLOAD_SCHEMAS.page?.schema;
     expect(schema).toBeDefined();
     for (const page of [
@@ -36,7 +36,7 @@ describe("read-only panels and message choices", () => {
       expect(schema?.safeParse({ page }).success).toBe(true);
     for (const page of ["Presence", "Threads", "Login", "Command"])
       expect(schema?.safeParse({ page }).success).toBe(false);
-    expect(PANEL_PROPOSABLE_KINDS.has("page")).toBe(false);
+    expect(PANEL_PROPOSABLE_KINDS.has("page")).toBe(true);
     expect(schema?.safeParse({ page: "Files", url: "https://example.com" }).success).toBe(false);
     expect(
       schema?.safeParse({

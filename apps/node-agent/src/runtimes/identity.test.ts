@@ -4,7 +4,13 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { identityCard, isOwnerClockBlock, mindVaultIn, ownerClockBlock } from "./identity.js";
+import {
+  ACTING_INSTRUCTIONS,
+  identityCard,
+  isOwnerClockBlock,
+  mindVaultIn,
+  ownerClockBlock,
+} from "./identity.js";
 
 it("resolves a fresh owner clock for every turn, independent of a worker's local zone", () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -121,6 +127,32 @@ describe("identityCard", () => {
     );
   });
 
+  it("tells Vesper it acts on the owner's own PC and should assume it can, until it commits them", () => {
+    for (const runtime of ["claude", "codex"] as const) {
+      const card = identityCard({ identityId: "vesper", runtime, model: "m", env: {} });
+
+      expect(card).toContain(ACTING_INSTRUCTIONS);
+    }
+
+    // On the owner's screen, in their own browser, never refusing before trying.
+    expect(ACTING_INSTRUCTIONS).toContain("signed-in Windows session");
+    expect(ACTING_INSTRUCTIONS).toContain("their own browser");
+    expect(ACTING_INSTRUCTIONS).toContain("before you have tried");
+    // From the phone, opening something happens on the PC.
+    expect(ACTING_INSTRUCTIONS).toContain("from their phone");
+    // It goes up to the step that commits the owner, and asks there.
+    expect(ACTING_INSTRUCTIONS).toContain("spends money");
+    expect(ACTING_INSTRUCTIONS).toContain("ask");
+    // Not a list of what it may do: a stance.
+    expect(ACTING_INSTRUCTIONS).not.toMatch(/Start-Process|Playwright|Windows-MCP/);
+  });
+
+  it("gives a local model with no tools no claim to act", () => {
+    expect(
+      identityCard({ identityId: "vesper", runtime: "local", model: "qwen", env: {} }),
+    ).not.toContain(ACTING_INSTRUCTIONS);
+  });
+
   it("is off when NOCTIS_IDENTITY_CARDS is 0", () => {
     expect(
       identityCard({
@@ -185,5 +217,24 @@ describe("the targets beside the clock", () => {
     expect(block).toContain(`Morning review: taskId ${task}, paused`);
     expect(block).toContain("ask the owner");
     expect(isOwnerClockBlock(block)).toBe(true);
+  });
+
+  it("says which PC the owner is at, and what their names for the PCs mean", () => {
+    const work = "00000000-0000-7000-8000-000000000001";
+    const home = "00000000-0000-7000-8000-000000000003";
+    const block = ownerClockBlock("Europe/London", {
+      pcs: [
+        { nodeId: work, hostId: "work", current: true, online: true, ownerPresent: true },
+        { nodeId: home, hostId: "home", current: false, online: true, ownerPresent: false },
+      ],
+      folders: [],
+      tasks: [],
+    });
+
+    expect(block).toContain(`work: nodeId ${work}, this PC, online, the owner is at it now`);
+    expect(block).toContain(`home: nodeId ${home}, online
+`);
+    expect(block).toContain('"My PC"');
+    expect(block).toContain("noctis_delegate");
   });
 });

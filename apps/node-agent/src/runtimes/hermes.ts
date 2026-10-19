@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
-import { classifyAsk } from "@noctis/domain";
+import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
@@ -14,6 +14,7 @@ import { createProposalChannel } from "../proposals-file.js";
 import type { CodexSpawn } from "./codex.js";
 import { childEnvironment } from "./env.js";
 import {
+  ACTING_INSTRUCTIONS,
   identityCard,
   mindVaultNote,
   ownerTimeContext,
@@ -22,6 +23,14 @@ import {
 } from "./identity.js";
 import type { ModelHost } from "./lmstudio.js";
 import { ensureModel } from "./local.js";
+import type { StdioServer } from "./mcp-config.js";
+import {
+  BROWSER_SERVER,
+  DESKTOP_SERVER,
+  browserServer,
+  desktopServer,
+  refusedTool,
+} from "./mcp-config.js";
 import type { JsonRpcClient } from "./jsonrpc.js";
 import { JsonRpcError, METHOD_NOT_FOUND, createJsonRpcClient } from "./jsonrpc.js";
 import type { LiveProcess } from "./sessions.js";
@@ -76,12 +85,44 @@ const jesterSoul = (
 
 Your job is to make the owner's ideas better by attacking them. Find the premise doing the most work and test it. Name the part they are pretending will solve itself. Ask the one uncomfortable question that matters. Be specific, brief and a little irreverent: wit, never contempt. You are on the owner's side. When an idea survives, say so plainly and propose the cheapest real test of it.
 
-You prepare; you do not commit. Draft the offer, the message, the list, the plan, for the owner to review. You never send, publish, spend money or change anything outside this PC. Noctis asks the owner before anything consequential, and a refusal is final.
+You also do things. When the owner asks for something done rather than argued with, do it, in your own voice. ${ACTING_INSTRUCTIONS} You run on this PC alone: for another of the owner's PCs, or a long task beyond a local model, say Vesper should take it. Noctis asks the owner before anything consequential, and a refusal is final.
 
 ${mindVaultNote(readable)}
 `;
 /** Hermes's own scheduler stays off until scheduling runs through Noctis, where the owner can see and stop it. */
 const NO_SCHEDULER = ["cronjob"];
+
+/**
+ * Hermes runs a tool on a server the client lends without asking anyone: only servers in its own
+ * config can be marked untrusted. This plugin makes it ask first, through the same approval it
+ * uses for risky commands, before every step on the owner's screen. The step's input goes as the
+ * reason, so Noctis can judge the step by what it presses.
+ */
+const SCREEN_PLUGIN = "noctis-screen";
+const SCREEN_PLUGIN_MANIFEST = `name: ${SCREEN_PLUGIN}
+version: "1.0.0"
+description: "Noctis decides every step on the owner's browser and desktop."
+provides_hooks:
+  - pre_tool_call
+`;
+const SCREEN_PLUGIN_CODE = `import json
+
+SCREEN = ("mcp__${BROWSER_SERVER}__", "mcp__${DESKTOP_SERVER}__")
+
+
+def _ask(tool_name, args, **_):
+    if str(tool_name).startswith(SCREEN):
+        return {"action": "approve", "message": json.dumps(args, ensure_ascii=False, default=str)}
+    return None
+
+
+def register(ctx):
+    ctx.register_hook("pre_tool_call", _ask)
+`;
+/** How a step the plugin escalated reaches Noctis: the tool's name, as Hermes's approval words it. */
+const SCREEN_STEP = new RegExp(
+  `^<(mcp__(?:${BROWSER_SERVER}|${DESKTOP_SERVER})__\\w+)> \\(plugin approval rule\\)$`,
+);
 
 /** `hermes-acp.exe` where Hermes's own installer puts it, unless the operator names one. */
 export function resolveHermesCommand(env: NodeJS.ProcessEnv): string | undefined {
@@ -128,6 +169,9 @@ function hermesConfig(model: string): string {
     "agent:",
     "  disabled_toolsets:",
     ...NO_SCHEDULER.map((toolset) => `    - ${JSON.stringify(toolset)}`),
+    "plugins:",
+    "  enabled:",
+    `    - ${JSON.stringify(SCREEN_PLUGIN)}`,
     "",
   ].join("\n");
 }
@@ -158,7 +202,10 @@ const PermissionSchema = z
         title: z.string().nullish(),
         kind: z.string().nullish(),
         locations: z.array(z.object({ path: z.string() }).loose()).nullish(),
-        rawInput: z.object({ command: z.string().optional() }).loose().nullish(),
+        rawInput: z
+          .object({ command: z.string().optional(), description: z.string().optional() })
+          .loose()
+          .nullish(),
       })
       .loose(),
     options: z.array(z.object({ optionId: z.string(), kind: z.string() }).loose()),
@@ -183,6 +230,24 @@ const STOPPED: Readonly<Record<string, RuntimeTurnEvidence["stoppedReason"]>> = 
 
 function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
+}
+
+/** A lent server in ACP's shape, where env is a list of names and values. */
+function acpServer(name: string, server: StdioServer) {
+  return {
+    name,
+    command: server.command,
+    args: server.args,
+    env: Object.entries(server.env ?? {}).map(([key, value]) => ({ name: key, value })),
+  };
+}
+
+function parseJson(text: string | undefined): unknown {
+  try {
+    return text === undefined ? undefined : (JSON.parse(text) as unknown);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The text in an ACP content value: one block, or a tool's list of content entries. */
@@ -234,8 +299,12 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
     const jester = input.payload.identityId === "jester";
     const home = jester ? `${options.hermesHome}-jester` : options.hermesHome;
 
-    mkdirSync(home, { recursive: true });
+    const plugin = join(home, "plugins", SCREEN_PLUGIN);
+
+    mkdirSync(plugin, { recursive: true });
     writeFileSync(join(home, "config.yaml"), hermesConfig(input.payload.model.model));
+    writeFileSync(join(plugin, "plugin.yaml"), SCREEN_PLUGIN_MANIFEST);
+    writeFileSync(join(plugin, "__init__.py"), SCREEN_PLUGIN_CODE);
 
     const soul = jester
       ? `${jesterSoul(input.roots.readable)}\n${ownerTimeContext(new Date(), input.payload.ownerTimeZone)}\n${PRODUCTIVITY_INSTRUCTIONS}`
@@ -336,6 +405,10 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
 
     const cwd = input.roots.cwd;
     const named = input.payload.sessionRef;
+    const screen = Object.entries({
+      [BROWSER_SERVER]: browserServer(input.env, input.payload.threadId),
+      [DESKTOP_SERVER]: desktopServer(input.env),
+    }).filter((entry): entry is [string, StdioServer] => entry[1] !== undefined);
     // The Noctis MCP tools, as Codex has them: what they propose lands in this thread's file.
     const mcpServers = [
       {
@@ -344,6 +417,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
         args: [mcpEntry, "--proposals", proc.proposals.path],
         env: [],
       },
+      ...screen.map(([name, server]) => acpServer(name, server)),
     ];
 
     if (named !== undefined) {
@@ -464,6 +538,41 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       };
     }
 
+    /**
+     * A step on the owner's screen, as Codex and Claude have them: raw code is refused, an
+     * ordinary step runs, and one that commits the owner is theirs to decide.
+     */
+    async function screenStep(p: z.infer<typeof PermissionSchema>, tool: string): Promise<boolean> {
+      if (refusedTool(tool)) {
+        return false;
+      }
+
+      const args = parseJson(p.toolCall.rawInput?.description);
+      const cls = classifyAsk({
+        kind: "tool_call",
+        tool,
+        args,
+        writableRoots: roots.writable,
+        readableRoots: roots.readable,
+      });
+
+      // With no input to judge the step by, the owner judges it.
+      if (args !== undefined && !isConfirmLevel(cls.operationClass)) {
+        return true;
+      }
+
+      return decide({
+        itemId: clip(p.toolCall.toolCallId, 128),
+        kind: "tool_call",
+        summary: clip(`call ${tool}`, 2000),
+        operationClass: cls.operationClass,
+        reversibility: cls.reversibility,
+        capability: cls.capability,
+        target: { type: "tool_call", id: clip(tool, 200) },
+        detail: { tool: clip(tool, 128) },
+      });
+    }
+
     /** A message is finished once another starts, or the turn ends. */
     const closeMessage = (): void => {
       if (lastMessage !== undefined) {
@@ -561,6 +670,11 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
       },
       async permission(params) {
         const p = PermissionSchema.parse(params);
+        const step = SCREEN_STEP.exec(p.toolCall.rawInput?.command ?? "")?.[1];
+
+        if (step !== undefined) {
+          return answer(p, await screenStep(p, step));
+        }
 
         if (p.toolCall.kind === "edit") {
           return answer(p, await decide(editAsk(p)));

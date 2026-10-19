@@ -255,3 +255,132 @@ foreach ($event in @($settings.hooks.PSObject.Properties.Name)) {
 Check: `Get-NetTCPConnection -LocalPort 4820 -State Listen -ErrorAction SilentlyContinue` prints nothing, and
 `Select-String -Path $path -Pattern Jarvis-Sub-Agent-Dashboard` prints nothing. The home node already starts at logon
 (`Noctis node agent`), so nothing else is needed for a reboot.
+
+## 6. Agents that act on this PC: Zen, Windows-MCP, and a node on your desktop
+
+Added 19 October 2026, and already done at the work PC (with Chrome there instead of Zen). Vesper and Jester now
+act on the PC rather than explaining what they cannot do: they open things on your screen, work in your own browser
+with its logins, and drive desktop apps, stopping to ask before anything that buys, sends, posts or deletes. The
+decisions are in `docs/architecture/2026-10-19-owner-decisions.md`, section 1.
+
+The work PC's core is redeployed first: the turn payload now says which PC you are at, and an old node refuses a
+payload it does not recognise.
+
+**Pull, build and restart the node** as in step 4 (`git pull --ff-only`, `npm ci`, `npm run build`).
+
+### 6.1 Run the node in your own session
+
+Until now the node started at boot in session 0, which has no desktop, so anything an agent opened there would never
+appear on your screen. Windows signs you in within seconds of a restart on this PC, so starting it at logon in your
+session costs almost nothing. Re-register it, as the owner, in **elevated** PowerShell:
+
+```powershell
+$repo = "$env:USERPROFILE\Documents\Jarvis\Noctis-OS"
+$old  = Get-ScheduledTask -TaskName "Noctis node agent"
+$node = $old.Actions[0].Execute
+Unregister-ScheduledTask -TaskName "Noctis node agent" -Confirm:$false
+$action    = New-ScheduledTaskAction -Execute $node `
+  -Argument "$repo\apps\node-agent\dist\main.js" -WorkingDirectory $repo
+$trigger   = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\$env:USERNAME"
+$principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$env:USERNAME" `
+  -LogonType Interactive -RunLevel Limited
+$settings  = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "Noctis node agent" -Action $action -Trigger $trigger `
+  -Principal $principal -Settings $settings
+Start-ScheduledTask -TaskName "Noctis node agent"
+```
+
+Check: `(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -match 'node-agent').SessionId`
+prints `1` (or whichever session `query user` shows for you), not `0`. Nodes in Noctis shows `zarrarpc` online.
+
+The trade: before anyone signs in, the node is not running. Woken by Wake-on-LAN and left at the lock screen, the PC
+comes online in Noctis only after sign-in. The screen helper from step 2 is no longer needed by this node, but
+leaving it registered does no harm.
+
+### 6.2 Windows-MCP for Claude, Codex and Jester
+
+Noctis now lends Windows-MCP to every agent itself, as the `desktop` server, without its PowerShell, FileSystem,
+Registry and Process tools (each agent's own shell and file tools do those, and Noctis checks those). You do not add
+it to `~/.codex/config.toml` or to Hermes: the node finds it and passes it to Claude, Codex and Hermes on every turn.
+
+It looks for `%APPDATA%\Python\Python314\Scripts\windows-mcp.exe`, which is where the 13 October install put it.
+Check:
+
+```powershell
+Test-Path "$env:APPDATA\Python\Python314\Scripts\windows-mcp.exe"   # True
+& "$env:APPDATA\Python\Python314\Scripts\windows-mcp.exe" --help     # lists serve, install, auth
+```
+
+If it is somewhere else, point the node at it: `[Environment]::SetEnvironmentVariable("NOCTIS_WINDOWS_MCP",
+"<full path to windows-mcp.exe>", "User")`, then restart the node task.
+
+**Take the old Claude entry out.** On 13 October Windows-MCP was also added to your own Claude Code config. In a
+Noctis turn that copy would sit beside Noctis's, with its PowerShell tool and an ask on every click. Find its name and
+remove it:
+
+```powershell
+claude mcp list            # the line whose command ends in windows-mcp.exe
+claude mcp remove <that name> -s user
+```
+
+Plain Claude Code sessions in VS Code lose it. If you want it there too, ask: it can go back in a project's
+`.mcp.json` instead.
+
+**Check Jester asks before a screen step.** Hermes would otherwise run every browser and desktop step without
+telling Noctis, so the node writes a small plugin, `noctis-screen`, into each Hermes home and enables it. After the
+first Jester and the first Vesper-on-Hermes turn:
+
+```powershell
+# The node keeps Jester's Hermes home under NOCTIS_NODE_HOME, or %TEMP%\noctis when that is unset.
+$root = if ($env:NOCTIS_NODE_HOME) { $env:NOCTIS_NODE_HOME } else { "$env:TEMP\noctis" }
+$env:HERMES_HOME = "$root\hermes-jester"
+hermes plugins list   # noctis-screen, enabled
+```
+
+Then ask Jester to "open Notepad and type hello" and watch Noctis's activity line: each step shows and no approval
+card appears. Ask it to click a button named Send in any app: an approval card must appear. If no card appears, the
+plugin did not load. Stop using Jester for screen work and tell Claude what `hermes plugins list` printed.
+
+### 6.3 Zen as the agents' browser
+
+Agents use your real Zen, with your tabs and logins, through Mozilla's `firefox-devtools-mcp`. It documents Firefox,
+not Zen, so this step is also the test of whether a Firefox fork works.
+
+**Install the server**, pinned:
+
+```powershell
+npm install -g @mozilla/firefox-devtools-mcp@0.10.4
+$entry = Join-Path (npm root -g) "@mozilla\firefox-devtools-mcp\dist\index.js"
+Test-Path $entry   # True
+[Environment]::SetEnvironmentVariable("NOCTIS_FIREFOX_MCP", $entry, "User")
+```
+
+**Start Zen with remote control on.** The server attaches to a Zen started with two flags. Edit the Zen shortcut you
+use (taskbar and Start), so Target ends with them, for example:
+
+```
+"C:\Program Files\Zen Browser\zen.exe" --marionette --remote-debugging-port
+```
+
+Close every Zen window and open it from that shortcut. While it runs this way any program on this PC can drive
+Zen, and sites can see `navigator.webdriver`, which some shops treat as a bot. Mozilla's own advice is to turn it on
+only while automating; if a shop starts asking for captchas, that is why.
+
+Restart the node task so it picks up `NOCTIS_FIREFOX_MCP`.
+
+**Check it works:** in Noctis, on a thread running on `zarrarpc`, ask Vesper "open github.com in a new tab in Zen".
+A tab opens in your Zen. If Vesper says the browser would not connect, Zen was not started with both flags; if the
+error mentions Marionette, Zen does not support what Mozilla's server needs, and the fallback is to set
+`NOCTIS_FIREFOX_MCP` back to nothing and use Chrome or Edge with the Playwright extension, as the work PC does.
+
+### 6.4 Check it all
+
+From the phone, with you away from the home PC but signed in:
+
+1. Vesper on `zarrarpc`: "open my GitHub". It opens in Zen on the PC and Vesper replies with the link.
+2. Vesper: "open the vault". The Vault page opens as a panel in Noctis.
+3. Jester: "open Notepad and type hello". Notepad opens on the PC with the text, and no approval card appears.
+4. Vesper: "find a USB-C cable under £10 on Amazon and add it to my basket". It searches, adds one, and stops; if it
+   goes towards checkout, an approval card appears and you press Deny.
+5. Codex (pick it under Agent): "take a screenshot of my desktop and tell me what's open". It answers without asking.

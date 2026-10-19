@@ -307,6 +307,18 @@ export function applyProposal(
     return;
   }
 
+  // The owner opens a folder in Files from a grant they chose; a model naming
+  // a node and grant is the path the file panels already refuse.
+  if (
+    proposal.surfaceKind === "page" &&
+    typeof proposal.payload === "object" &&
+    proposal.payload !== null &&
+    "folder" in proposal.payload
+  ) {
+    skip("page_folder_not_proposable");
+    return;
+  }
+
   let raw = proposal.payload;
   let fileSourceId: string | undefined;
   const byPath = FILE_PANEL_KINDS.has(proposal.surfaceKind)
