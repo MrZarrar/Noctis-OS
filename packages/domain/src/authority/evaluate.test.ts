@@ -314,12 +314,12 @@ describe("THE GATE: typed confirmation names what is about to happen", () => {
     expect(decision.confirmationPhrase).toBe("SPEND GBP 12.50 ON provider:suno");
   });
 
-  it("names the exact target of a destructive operation", () => {
+  it("asks for DESTROY alone for a destructive operation", () => {
     expect(
       evaluateAuthority(
         input({ operationClass: "destructive", target: { type: "database", id: "core.db" } }),
       ).confirmationPhrase,
-    ).toBe("DESTROY database:core.db");
+    ).toBe("DESTROY");
   });
 
   it("gives every typed class a phrase and every other class none", () => {

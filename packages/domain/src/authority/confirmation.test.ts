@@ -9,7 +9,11 @@ import {
 const target = { type: "listing", id: "vinted-4821" } as const;
 
 describe("confirmationMatches", () => {
-  const phrase = confirmationPhraseFor({ operationClass: "destructive", target }) as string;
+  const phrase = confirmationPhraseFor({
+    operationClass: "spend",
+    target,
+    estimatedCostGbp: 8,
+  }) as string;
 
   it("accepts the exact phrase, and the same phrase with stray outer whitespace", () => {
     expect(confirmationMatches(phrase, phrase)).toBe(true);
@@ -19,7 +23,7 @@ describe("confirmationMatches", () => {
   it("THE GATE: rejects a near miss rather than being helpful about it", () => {
     expect(confirmationMatches(phrase, phrase.toLowerCase())).toBe(false);
     expect(confirmationMatches(phrase, phrase.replace("vinted-4821", "vinted-4822"))).toBe(false);
-    expect(confirmationMatches(phrase, "DESTROY")).toBe(false);
+    expect(confirmationMatches(phrase, "SPEND")).toBe(false);
     expect(confirmationMatches(phrase, "")).toBe(false);
     expect(confirmationMatches(phrase, undefined)).toBe(false);
   });
@@ -38,6 +42,20 @@ describe("requiresTypedConfirmation", () => {
 });
 
 describe("confirmationPhraseFor", () => {
+  it("asks for DESTROY alone, since the card already shows what will be destroyed", () => {
+    // A shell command is its own target, and typing one back was a test of
+    // patience rather than of reading.
+    const command = {
+      type: "command",
+      id: "rm -rf /c/Users/me/AppData/Local/Temp/claude/x",
+    } as const;
+
+    expect(confirmationPhraseFor({ operationClass: "destructive", target: command })).toBe(
+      "DESTROY",
+    );
+    expect(confirmationMatches("DESTROY", "destroy")).toBe(false);
+  });
+
   it("treats a missing estimate as zero rather than omitting the amount", () => {
     // A spend phrase with no amount in it would confirm an unbounded spend.
     expect(confirmationPhraseFor({ operationClass: "spend", target })).toBe(

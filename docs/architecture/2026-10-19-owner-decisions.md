@@ -202,3 +202,12 @@ including the local model and Hermes, which read neither file.
 - The usage card's labels are now "Claude" and "Codex" in sentence case, not uppercase and letter-spaced.
 - `/limits` asks the next PC running a provider when the first cannot answer, so the home PC on an older build does not
   leave Claude or Codex showing as unavailable.
+
+## 6. DESTROY is enough
+
+**Asked (owner):** a typed confirmation for an agent's `rm -rf` of its own temp folder asked for the whole shell command
+to be typed back, and was clipped part way through it at that. "DESTROY" should have been sufficient.
+
+**Decided (owner):** a destructive operation asks for `DESTROY` alone, case-sensitive. The card still shows the full
+target above the box, which is what the phrase was making the owner re-read. Spend, deploy and credential phrases are
+unchanged. An approval already waiting keeps the phrase it was issued with.

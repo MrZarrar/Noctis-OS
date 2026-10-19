@@ -8,7 +8,7 @@ import type { AuthorityTarget, OperationClass } from "@noctis/contracts";
  * | Operation             | What the plan requires                       |
  * | --------------------- | -------------------------------------------- |
  * | spend                 | typed confirmation with amount/provider      |
- * | destructive           | typed confirmation naming exact target       |
+ * | destructive           | typed DESTROY; the card names the target     |
  * | production_deploy     | typed confirmation plus release gate         |
  * | credential_security   | typed confirmation; never delegated to model |
  *
@@ -77,7 +77,9 @@ export function confirmationPhraseFor(subject: ConfirmationSubject): string | un
       // amount to be confirmed, not merely displayed next to a button.
       return `SPEND GBP ${formatGbp(subject.estimatedCostGbp ?? 0)} ON ${target}`;
     case "destructive":
-      return `DESTROY ${target}`;
+      // The target sits on the card right above the box. When it is a shell
+      // command, naming it here made the owner type the whole command back.
+      return "DESTROY";
     case "production_deploy":
       return `DEPLOY ${target} TO PRODUCTION`;
     default:
