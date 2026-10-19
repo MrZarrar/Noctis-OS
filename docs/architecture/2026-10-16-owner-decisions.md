@@ -300,3 +300,21 @@ from opening twice only matched a show folder at the top of the shared folder.
   4 are in use, a new panel waits in "+N more" rather than displacing one.
 - Message times, a live "Working · 2m 10s" count and "Worked 7m 30s" on each turn, the activity line ("running ...",
   "editing ...", "N sub-agents working"), and an "Agents · N" header button opening the agent map.
+
+## 13. Noctis starts at logon; Jarvis is retired (2026-10-19)
+
+A Windows update rebooted the work PC on 17 October and Noctis stayed down until it was started by hand, while
+Jarvis's own logon task brought its dashboard back.
+
+**Decided (owner):** Noctis starts by itself at logon. Jarvis is abandoned for Noctis and must never start again.
+
+**Built:**
+
+- `work-pc.ps1 -StartOnly` starts what is already built, skipping the pull, the install and the build, and does
+  not refuse work in progress in the tree. A `Noctis` logon task runs it hidden, 20 s after logon. Tried by running
+  the task: the core and node it started stayed up after the task ended.
+- On the work PC the `Jarvis Production Core` logon task was removed and the dashboard stopped. Its Claude Code
+  hooks, which ran on every tool call in every session, Noctis turns included, were taken out of
+  `~/.claude/settings.json`. The donor folder is untouched and stays the read-only donor.
+- HOME-SETUP section 5 does the same on the home PC, whose node already starts at logon.
+- Codex runs now always close stdin (`< /dev/null`); without it a background `codex exec` waits forever.

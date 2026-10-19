@@ -23,8 +23,10 @@ ode-agent\dist), because npm ci cannot replace
   Both are started detached from this script's output (start-hidden.ps1), so
   a tool or terminal that runs the deploy gets its prompt back.
 
-  It registers nothing: no service, no scheduled task, no autostart. The core
-  it starts is an ordinary user process that the next deploy replaces.
+  It registers nothing itself: no service, no scheduled task. With -StartOnly
+  it skips the pull, the install and the build and starts what is already
+  built, even with work in progress in the tree; the "Noctis" logon task runs
+  it that way so a reboot brings Noctis back.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\deploy\work-pc.ps1
@@ -33,7 +35,8 @@ ode-agent\dist), because npm ci cannot replace
 param(
   [string] $ExpectedHost = 'mushafzarrar',
   [string] $RepoRoot = '',
-  [switch] $DryRun
+  [switch] $DryRun,
+  [switch] $StartOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,17 +79,19 @@ if ($env:COMPUTERNAME -ne $ExpectedHost) {
 
 Set-Location $RepoRoot
 
-$dirty = git status --porcelain
-if ($LASTEXITCODE -ne 0) {
-  Stop-Deploy "$RepoRoot is not a git repository"
-}
-if ($dirty) {
-  Stop-Deploy "$RepoRoot has uncommitted changes. Commit or stash them first; a deploy builds what is committed, nothing else."
-}
+if (-not $StartOnly) {
+  $dirty = git status --porcelain
+  if ($LASTEXITCODE -ne 0) {
+    Stop-Deploy "$RepoRoot is not a git repository"
+  }
+  if ($dirty) {
+    Stop-Deploy "$RepoRoot has uncommitted changes. Commit or stash them first; a deploy builds what is committed, nothing else."
+  }
 
-$branch = git rev-parse --abbrev-ref HEAD
-if ($branch -ne 'main') {
-  Stop-Deploy "$RepoRoot is on '$branch', not main"
+  $branch = git rev-parse --abbrev-ref HEAD
+  if ($branch -ne 'main') {
+    Stop-Deploy "$RepoRoot is on '$branch', not main"
+  }
 }
 
 $nodeVersion = node --version
@@ -113,7 +118,9 @@ $port = if ($env:NOCTIS_CORE_PORT) { $env:NOCTIS_CORE_PORT } else { '7717' }
 $logDirectory = Join-Path $env:LOCALAPPDATA 'Noctis'
 
 # 2. Pull.
-Invoke-Checked 'git pull --ff-only' 'git' @('pull', '--ff-only')
+if (-not $StartOnly) {
+  Invoke-Checked 'git pull --ff-only' 'git' @('pull', '--ff-only')
+}
 
 # 3. Stop.
 Write-Step 'stop the running core and node'
@@ -127,9 +134,11 @@ foreach ($process in $running) {
 }
 
 # 4. Install and build.
-Invoke-Checked 'npm ci' 'npm' @('ci')
-Invoke-Checked 'npm run build' 'npm' @('run', 'build')
-Invoke-Checked 'npm run build:web' 'npm' @('run', 'build:web')
+if (-not $StartOnly) {
+  Invoke-Checked 'npm ci' 'npm' @('ci')
+  Invoke-Checked 'npm run build' 'npm' @('run', 'build')
+  Invoke-Checked 'npm run build:web' 'npm' @('run', 'build:web')
+}
 
 # 5. Start.
 Write-Step 'start the core'

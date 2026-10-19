@@ -10,8 +10,10 @@ work machine the personal roots, which is exactly the boundary decision 0.30 dra
 before acting on either side. The home development core keeps running for tests
 only. ADR-0027 records why and what it costs.
 
-Everything below is a manual start in a terminal. **Windows service or autostart registration is a
-separate approval by name** and is not part of Slice 1.
+Everything below is a manual start in a terminal. On 2026-10-19 the owner approved one autostart: a logon task
+named `Noctis` runs `scripts\deploy\work-pc.ps1 -StartOnly`, which starts the core and node already built (no pull,
+no install, no build), hidden, 20 s after logon, logging to `%LOCALAPPDATA%\Noctis\logon-start.log`. Remove it with
+`Unregister-ScheduledTask -TaskName Noctis`. A Windows service is still a separate approval.
 
 ## Install (once, on the work PC)
 

@@ -81,6 +81,26 @@ test("plans pull, stop, install, build, page, start and health check, in that or
   assert.match(result.stdout, /dry run: nothing was changed/);
 });
 
+test("at logon it only starts what is already built, even with work in progress", () => {
+  const root = gitRepo();
+  writeFileSync(join(root, "stray.txt"), "uncommitted");
+
+  const result = runDeploy("-ExpectedHost", hostname(), "-RepoRoot", root, "-StartOnly", "-DryRun");
+
+  assert.equal(result.status, 0, result.stderr);
+  for (const step of [
+    "stop the running core and node",
+    "start the core",
+    "/health",
+    "start the node",
+  ]) {
+    assert.ok(result.stdout.includes(step), `missing ${step}:\n${result.stdout}`);
+  }
+  for (const step of ["git pull", "npm ci", "npm run build"]) {
+    assert.ok(!result.stdout.includes(step), `should not ${step}:\n${result.stdout}`);
+  }
+});
+
 test("the Gateway key pair is RSA-2048, and the private half is never overwritten", () => {
   const directory = mkdtempSync(join(tmpdir(), "noctis-gwkey-"));
   const first = spawnSync(process.execPath, [keygen, directory], { encoding: "utf8" });

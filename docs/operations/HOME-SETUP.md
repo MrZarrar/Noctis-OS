@@ -224,3 +224,34 @@ If the other Windows user on this PC should have it too, ask first: it goes in t
 **Check it works end to end:** in Noctis, on a thread running on `zarrarpc`, ask Vesper to "explain how a token
 bucket rate limiter works with an interactive figure". A visual panel opens with the figure running in it, and
 `git status` in that folder shows nothing new.
+
+## 5. Jarvis switched off for good
+
+On 2026-10-19 the owner retired Jarvis for Noctis. On the work PC its logon task (`Jarvis Production Core`, the
+"Agent Dashboard" terminal on port 4820) was removed, and its Claude Code hooks (`hook-handler.js` and
+`permission-gate.js`, which ran on every tool call) were taken out of `~/.claude/settings.json`. The donor folder
+itself is left alone. Do the same here, as the owner, in PowerShell:
+
+```powershell
+# Any task that starts the dashboard, whatever it is called. The Noctis checkout also lives under
+# Documents\Jarvis, so match the dashboard folder, not the word Jarvis.
+Get-ScheduledTask | Where-Object { ($_.Actions.Execute + ' ' + $_.Actions.Arguments + ' ' +
+    $_.Actions.WorkingDirectory) -match 'Jarvis-Sub-Agent-Dashboard' } |
+  ForEach-Object { Stop-ScheduledTask -InputObject $_; Unregister-ScheduledTask -InputObject $_ -Confirm:$false }
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'Jarvis-Sub-Agent-Dashboard' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# Its hooks, keeping every other hook (the Noctis bridge hooks included).
+$path = "$env:USERPROFILE\.claude\settings.json"
+Copy-Item $path "$path.before-jarvis"
+$settings = Get-Content $path -Raw | ConvertFrom-Json
+foreach ($event in @($settings.hooks.PSObject.Properties.Name)) {
+  $kept = @($settings.hooks.$event | Where-Object { -not ($_.hooks.command -match 'Jarvis-Sub-Agent-Dashboard') })
+  if ($kept.Count) { $settings.hooks.$event = $kept } else { $settings.hooks.PSObject.Properties.Remove($event) }
+}
+[IO.File]::WriteAllText($path, ($settings | ConvertTo-Json -Depth 20))
+```
+
+Check: `Get-NetTCPConnection -LocalPort 4820 -State Listen -ErrorAction SilentlyContinue` prints nothing, and
+`Select-String -Path $path -Pattern Jarvis-Sub-Agent-Dashboard` prints nothing. The home node already starts at logon
+(`Noctis node agent`), so nothing else is needed for a reboot.
