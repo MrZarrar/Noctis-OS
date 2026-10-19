@@ -1041,6 +1041,23 @@ describe("the Claude Agent SDK runtime", () => {
       },
     ]);
 
+    // A panel the core would refuse goes back to the agent to fix, not into the thread.
+    const refused = await client.callTool({
+      name: "noctis_propose_surface",
+      arguments: {
+        surfaceKind: "options",
+        role: "primary",
+        persistence: "restorable",
+        priority: 50,
+        payloadVersion: 1,
+        payload: { title: "Cables", options: [{ id: "a", title: "A", image: "C:\\a.png" }] },
+      },
+    });
+
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.content)).toContain("options.0.image");
+    expect(r.items).toHaveLength(1);
+
     for (const [kind, args] of [
       ["reminder", { text: "Tax", trigger: null }],
       [

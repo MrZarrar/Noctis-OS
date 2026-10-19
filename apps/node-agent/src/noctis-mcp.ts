@@ -6,7 +6,7 @@ import type { RuntimeProposal } from "@noctis/contracts";
 import { RuntimeProposalSchema } from "@noctis/contracts";
 
 import { AGENT_VERSION } from "./agent.js";
-import { PANEL_TOOL_DESCRIPTION } from "./panel-tool.js";
+import { PANEL_TOOL_DESCRIPTION, surfaceProblem } from "./panel-tool.js";
 import { PRODUCTIVITY_TOOLS, proposalSchema } from "./proposal-tools.js";
 
 /**
@@ -44,7 +44,13 @@ server.registerTool(
     description: PANEL_TOOL_DESCRIPTION,
     inputSchema: surface.omit({ kind: true }),
   },
-  (args) => record(RuntimeProposalSchema.parse({ kind: "surface", ...args })),
+  (args) => {
+    const problem = surfaceProblem(args);
+
+    return problem === undefined
+      ? record(RuntimeProposalSchema.parse({ kind: "surface", ...args }))
+      : { content: [{ type: "text" as const, text: problem }], isError: true };
+  },
 );
 
 server.registerTool(

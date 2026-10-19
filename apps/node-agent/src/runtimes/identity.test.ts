@@ -163,6 +163,8 @@ describe("identityCard", () => {
   it("shows things found for the owner to pick from as an options panel with screenshots", () => {
     expect(WORKING_INSTRUCTIONS).toContain('surfaceKind "options"');
     expect(WORKING_INSTRUCTIONS).toContain("noctis-show/.shots/");
+    // The model guessed its own field names once and the panel never appeared.
+    expect(WORKING_INSTRUCTIONS).toContain("image: {path}, url, action: {label, message}");
     expect(WORKING_INSTRUCTIONS).toContain("wait for their pick");
   });
 

@@ -41,7 +41,7 @@ import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
-import { PANEL_TOOL_DESCRIPTION } from "../panel-tool.js";
+import { PANEL_TOOL_DESCRIPTION, surfaceProblem } from "../panel-tool.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
@@ -581,7 +581,16 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           "noctis_propose_surface",
           PANEL_TOOL_DESCRIPTION,
           surface.omit({ kind: true }).shape,
-          (args) => record("surface", args),
+          (args) => {
+            const problem = surfaceProblem(args);
+
+            return problem === undefined
+              ? record("surface", args)
+              : Promise.resolve({
+                  content: [{ type: "text" as const, text: problem }],
+                  isError: true,
+                });
+          },
         ),
         tool(
           "noctis_propose_objective",
