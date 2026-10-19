@@ -185,6 +185,7 @@ import {
   issuePairingCode,
   listGrants,
   listNodes,
+  listRuntimeCandidates,
   listRuntimeRoots,
   pairNode,
   revokeNode,
@@ -2104,6 +2105,63 @@ async function handleSessions(
   }
 }
 
+async function handleLimits(
+  deps: ApiDeps,
+  res: ServerResponse,
+  correlationId: string,
+): Promise<void> {
+  const providers = ["claude", "codex"] as const;
+  const candidates = listRuntimeCandidates(
+    deps.kernel.db,
+    (nodeId) => deps.dispatcher.isConnected(nodeId),
+    [],
+    deps.kernel.clock.now(),
+  );
+  const results = await Promise.allSettled(
+    providers.map(async (providerId) => {
+      const candidate = candidates.find(
+        (entry) =>
+          entry.probe.providerId === providerId &&
+          entry.connected &&
+          entry.granted &&
+          entry.roots.length > 0,
+      );
+      const root = candidate?.roots[0];
+
+      if (candidate === undefined || root === undefined) {
+        return {
+          providerId,
+          problem: `No connected PC runs ${providerId === "claude" ? "Claude" : "Codex"}`,
+        };
+      }
+
+      const limits = await deps.files.limits(
+        { correlationId, actorType: "user", actorId: "local" },
+        { nodeId: candidate.nodeId, rootGrantId: root.grantId, providerId },
+      );
+
+      return { providerId, hostId: candidate.hostId, ...limits };
+    }),
+  );
+
+  send(
+    res,
+    200,
+    {
+      limits: results.map((result, index) =>
+        result.status === "fulfilled"
+          ? result.value
+          : {
+              providerId: providers[index],
+              problem:
+                result.reason instanceof Error ? result.reason.message : String(result.reason),
+            },
+      ),
+    },
+    correlationId,
+  );
+}
+
 /**
  * `GET /threads/:id/history`: what was said in the session a thread adopted,
  * before Noctis picked it up, asked of the PC that keeps it. Read from the
@@ -2739,6 +2797,11 @@ export async function handleRequest(
 
     if (req.method === "GET" && url.pathname === "/sessions") {
       await handleSessions(deps, url, res, correlationId);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/limits") {
+      await handleLimits(deps, res, correlationId);
       return;
     }
 

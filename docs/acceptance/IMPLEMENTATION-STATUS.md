@@ -4058,3 +4058,19 @@ The top five from Codex's motion audit. Panels rise in once when they open, and 
 | two-owner focus test, isolated                                                                                                               | 4/4 after `stackOpened` (clean tree 2/3)                                                                                         |
 
 Not verified by eye in the full app: the focus glide, page fades and the travelling nav marker were exercised by the e2e suites but only the Productivity fixture was screenshotted. No live deploy.
+
+## 2026-10-19 Usage limits on Presence
+
+Claude's and Codex's 5-hour and weekly limits, as each provider reports them, on Presence. Node capability `usage.limits` (Claude: Claude Code's usage endpoint; Codex: `account/rateLimits/read`), `GET /limits` on the core (Codex), and the Presence block.
+
+| Command/check                                                                                                                             | Result                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `claude.test.ts`, `codex.test.ts` (readLimits), `files.test.ts` (adapter), `api.test.ts` (`/limits` segment), `usage-limits-view.test.ts` | red then green                                           |
+| `nodes.integration.test.ts` `GET /limits` (5 tests, Codex)                                                                                | red then green per Codex's report; green here            |
+| `npx vitest run` (TEMP/TMP set to the long temp path)                                                                                     | 219 files, 2941/2941                                     |
+| `npm run typecheck`; `npx eslint apps packages scripts`; Prettier on changed files; `npm run build:web`                                   | exit 0                                                   |
+| e2e presence, presence-panels                                                                                                             | 6/6                                                      |
+| Live probes on the owner's PC before building                                                                                             | Claude 19% / 68%, Codex 14% / 10%, both with reset times |
+| Fixture screenshots at 1100px and 390px (normal, over 80/95%, provider unavailable)                                                       | checked by eye                                           |
+
+Not verified end to end against the live core and node agent: that needs both restarted on the new build. Node is 22.23.1 here, not the pinned 22.23.2.

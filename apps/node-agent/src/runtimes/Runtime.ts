@@ -11,6 +11,7 @@ import type {
   RuntimeTurnPayload,
   RuntimeWarmPayload,
   SessionExchange,
+  UsageLimits,
 } from "@noctis/contracts";
 
 /** The node refused the job itself. Reported to the core as a failure, not a crash. */
@@ -94,6 +95,12 @@ export interface Runtime {
    * folder is not found.
    */
   readHistory?(cwd: string, sessionRef: string, env: NodeJS.ProcessEnv): Promise<SessionExchange[]>;
+  /**
+   * How much of the signed-in subscription's 5-hour and weekly allowance is
+   * spent, as the provider itself reports it. Never estimated: a provider that
+   * cannot be asked is a refusal, not a guess.
+   */
+  readLimits?(cwd: string, env: NodeJS.ProcessEnv): Promise<UsageLimits>;
   /** Ends every process the runtime is keeping open between turns. */
   close?(): void | Promise<void>;
 }

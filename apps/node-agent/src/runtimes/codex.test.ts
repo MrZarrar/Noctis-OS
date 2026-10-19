@@ -164,6 +164,15 @@ function fakeAppServer(scenario: Scenario): { spawn: CodexSpawn; spawned: Spawne
           record.threadId = "thread-fork";
 
           return Promise.resolve({ thread: { id: record.threadId } });
+        case "account/rateLimits/read":
+          return Promise.resolve({
+            rateLimits: {
+              limitId: "codex",
+              primary: { usedPercent: 14, windowDurationMins: 300, resetsAt: 1_792_435_888 },
+              secondary: { usedPercent: 10, windowDurationMins: 10_080, resetsAt: 1_793_003_158 },
+              planType: "plus",
+            },
+          });
         case "thread/list":
           return Promise.resolve({ data: scenario.threads ?? [], nextCursor: null });
         case "thread/read":
@@ -970,6 +979,17 @@ describe("the Codex App Server runtime", () => {
       expect.objectContaining({ cwd: ["C:\\work", "c:\\work"], sortKey: "updated_at" }),
     ]);
     expect(spawned[0]?.args).not.toContain("mcp_servers.noctis.command");
+    expect(spawned[0]?.child.killed).toBe(true);
+  });
+
+  it("reads the 5-hour and weekly limits Codex reports, from an app-server it then stops", async () => {
+    const { runtime: codex, spawned } = runtime(HAPPY);
+
+    expect(await codex.readLimits?.("C:\\work", { PATH: "C:\\bin" })).toEqual({
+      fiveHour: { usedPercent: 14, resetsAt: new Date(1_792_435_888_000).toISOString() },
+      weekly: { usedPercent: 10, resetsAt: new Date(1_793_003_158_000).toISOString() },
+    });
+    expect(spawned[0]?.requests.has("account/rateLimits/read")).toBe(true);
     expect(spawned[0]?.child.killed).toBe(true);
   });
 

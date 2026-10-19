@@ -28,6 +28,7 @@ import {
   RuntimeGrantConstraintsSchema,
   SessionHistoryPayloadSchema,
   SessionListPayloadSchema,
+  UsageLimitsPayloadSchema,
   RuntimeTurnEvidenceSchema,
   RuntimeTurnPayloadSchema,
   RuntimeWarmPayloadSchema,
@@ -609,6 +610,29 @@ const sessionHistory: Adapter = async (payload, context) => {
 };
 
 /**
+ * The subscription limits an agent the folder is shared with reports. The
+ * folder only places the ask under the grant that runs the agent's turns;
+ * the limits are the account's, not the folder's.
+ */
+const usageLimits: Adapter = async (payload, context) => {
+  const request = UsageLimitsPayloadSchema.parse(payload);
+  const folder = sharedFolder(context.grants, request.rootGrantId);
+  const runtime = context.runtimes[request.providerId];
+
+  if (folder?.providers.includes(request.providerId) !== true) {
+    throw new AdapterRefused(`that folder is not shared with ${request.providerId}`);
+  }
+
+  if (runtime?.readLimits === undefined) {
+    throw new AdapterRefused(`${request.providerId} does not report its limits`);
+  }
+
+  const real = await resolveInSharedFolder(context.grants, request.rootGrantId, "");
+
+  return runtime.readLimits(real, childEnvironment(context.env));
+};
+
+/**
  * Every capability this agent can execute. A job naming anything else is refused
  * before it runs, so the set of things a node can do is this object, not whatever
  * the core happens to send.
@@ -624,5 +648,6 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "session.list": sessionList,
   "session.history": sessionHistory,
   "screen.view": createScreenView(),
+  "usage.limits": usageLimits,
   ...createHealthAdapters(),
 };

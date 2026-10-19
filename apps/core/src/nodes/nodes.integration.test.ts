@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { NodeServerFrame, RuntimeAsk } from "@noctis/contracts";
+import type {
+  NodeServerFrame,
+  RuntimeAsk,
+  RuntimeProviderId,
+  UsageLimits,
+} from "@noctis/contracts";
 import {
   NODE_ENVELOPE_VERSION,
   NodeJobAssignmentSchema,
@@ -21,6 +26,150 @@ import { enqueueJobInTransaction, LEASE_MS, MAX_ATTEMPTS } from "./jobs.js";
 import { grantCapability } from "./registry.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
+
+describe("GET /limits", () => {
+  const providers = ["claude", "codex"] as const;
+  const probe = (providerId: RuntimeProviderId) => ({
+    providerId,
+    available: true,
+    authMode: providerId === "claude" ? "claude_ai" : "chatgpt",
+    models: [],
+  });
+  const roots = [
+    { grantId: "first", path: process.cwd(), mode: "read" },
+    { grantId: "second", path: process.cwd(), mode: "read" },
+  ];
+
+  it("requires owner authentication even when serving a web root, and accepts a session", async () => {
+    const core = await startTestCore({ webRoot: process.cwd() });
+    expect((await fetch(`${core.base}/limits`)).status).toBe(401);
+    expect(
+      (await fetch(`${core.base}/limits`, { headers: { authorization: "Bearer wrong" } })).status,
+    ).toBe(401);
+    const login = await fetch(`${core.base}/session/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    const cookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const response = await fetch(`${core.base}/limits`, { headers: { cookie } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      limits: [
+        { providerId: "claude", problem: "No connected PC runs Claude" },
+        { providerId: "codex", problem: "No connected PC runs Codex" },
+      ],
+    });
+  });
+
+  it("reports unavailable providers when probes lack a matching grant or a connection", async () => {
+    const core = await startTestCore();
+    const ungranted = await pairFake(core);
+    await grant(core, ungranted.nodeId, "runtime.turn", {
+      idempotencyKey: "ungranted-provider",
+      constraints: { providers: ["codex"], roots },
+    });
+    const node = await openFake(core, ungranted, { providers: [probe("claude")] });
+    const offline = await pairFake(core, { hostId: "offline", fingerprint: "offline" });
+    await grant(core, offline.nodeId, "runtime.turn", {
+      idempotencyKey: "offline-provider",
+      constraints: { providers: ["codex"], roots },
+    });
+    const disconnected = await openFake(core, offline, { providers: [probe("codex")] });
+    disconnected.close();
+    await waitFor(() => !core.core.dispatcher.isConnected(offline.nodeId), "node disconnected");
+    expect(await read(core, "/limits")).toEqual({
+      status: 200,
+      body: {
+        limits: [
+          { providerId: "claude", problem: "No connected PC runs Claude" },
+          { providerId: "codex", problem: "No connected PC runs Codex" },
+        ],
+      },
+    });
+    expect(node.jobs()).toHaveLength(0);
+  });
+
+  it("asks the first eligible node and root for both providers in parallel", async () => {
+    const core = await startTestCore();
+    const nodes = [];
+    for (const hostId of ["first-pc", "second-pc"]) {
+      const paired = await pairFake(core, { hostId, fingerprint: hostId });
+      await grant(core, paired.nodeId, "runtime.turn", {
+        idempotencyKey: `limits-${hostId}`,
+        constraints: { providers, roots },
+      });
+      nodes.push({
+        ...paired,
+        hostId,
+        node: await openFake(core, paired, { providers: providers.map(probe) }),
+      });
+    }
+    nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+    const chosen = nodes[0]!;
+    const pending = read(core, "/limits");
+    await waitFor(() => chosen.node.jobs().length === 2, "both usage jobs before either answers");
+    const answers: Record<(typeof providers)[number], UsageLimits> = {
+      claude: {
+        fiveHour: { usedPercent: 19, resetsAt: "2026-10-19T18:30:00.442Z" },
+        weekly: { usedPercent: 68, resetsAt: "2026-10-22T10:00:00.442Z" },
+      },
+      codex: { weekly: { usedPercent: 101 } },
+    };
+    for (const frame of chosen.node.jobs()) {
+      const assignment = NodeJobAssignmentSchema.parse(JSON.parse(frame.assignment));
+      const { providerId } = assignment.payload as { providerId: (typeof providers)[number] };
+      expect(assignment.capability).toBe("usage.limits");
+      expect(assignment.payload).toEqual({ rootGrantId: "first", providerId });
+      chosen.node.result(assignment.jobId, answers[providerId]);
+    }
+    expect(await pending).toEqual({
+      status: 200,
+      body: {
+        limits: providers.map((providerId) => ({
+          providerId,
+          hostId: chosen.hostId,
+          ...answers[providerId],
+        })),
+      },
+    });
+    expect(nodes[1]!.node.jobs()).toHaveLength(0);
+  });
+
+  it.each(providers)("keeps the other provider's answer when %s fails", async (failed) => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    await grant(core, paired.nodeId, "runtime.turn", {
+      idempotencyKey: "limits-grant",
+      constraints: { providers, roots },
+    });
+    const node = await openFake(core, paired, { providers: providers.map(probe) });
+    const pending = read(core, "/limits");
+    await waitFor(() => node.jobs().length === 2, "both usage jobs");
+    for (const frame of node.jobs()) {
+      const assignment = NodeJobAssignmentSchema.parse(JSON.parse(frame.assignment));
+      const { providerId } = assignment.payload as { providerId: RuntimeProviderId };
+      node.frame({
+        kind: "result",
+        jobId: assignment.jobId,
+        outcome: providerId === failed ? "failed" : "succeeded",
+        ...(providerId === failed
+          ? { evidence: null, failureReason: "Provider usage is unavailable" }
+          : { evidence: { fiveHour: { usedPercent: 7 } } }),
+      });
+    }
+    expect(await pending).toEqual({
+      status: 200,
+      body: {
+        limits: providers.map((providerId) =>
+          providerId === failed
+            ? { providerId, problem: "Provider usage is unavailable" }
+            : { providerId, hostId: "workstation", fiveHour: { usedPercent: 7 } },
+        ),
+      },
+    });
+  });
+});
 
 describe("authenticated owner presence frames", () => {
   it("requires hello, uses the socket's identity and persists only state edges", async () => {

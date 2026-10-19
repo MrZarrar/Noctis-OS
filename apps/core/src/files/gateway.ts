@@ -7,6 +7,7 @@ import type {
   OrchestrationEvent,
   RuntimeProviderId,
   SessionExchange,
+  UsageLimits,
 } from "@noctis/contracts";
 import { CAPABILITY_CONTRACTS } from "@noctis/contracts";
 
@@ -131,6 +132,10 @@ export interface FileGateway {
     context: CommandContext,
     at: { nodeId: string; rootGrantId: string },
   ): Promise<{ sessions: ExternalSession[] }>;
+  limits(
+    context: CommandContext,
+    at: { nodeId: string; rootGrantId: string; providerId: RuntimeProviderId },
+  ): Promise<UsageLimits>;
   /** One of those sessions' last exchanges: what was said before Noctis picked it up. */
   history(
     context: CommandContext,
@@ -193,7 +198,7 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
 
   function run<T>(
     context: CommandContext,
-    capability: "file.list" | "file.read" | "session.list" | "session.history",
+    capability: "file.list" | "file.read" | "session.list" | "session.history" | "usage.limits",
     at: { nodeId: string; rootGrantId: string },
     payload: Record<string, unknown>,
   ): Promise<T> {
@@ -255,6 +260,7 @@ export function createFileGateway(deps: { kernel: Kernel; dispatcher: Dispatcher
     list: (context, at) =>
       run<FileListEvidence>(context, "file.list", at, { relativePath: at.relativePath }),
     sessions: (context, at) => run(context, "session.list", at, {}),
+    limits: (context, at) => run(context, "usage.limits", at, { providerId: at.providerId }),
     history: (context, at) =>
       run(context, "session.history", at, {
         providerId: at.providerId,

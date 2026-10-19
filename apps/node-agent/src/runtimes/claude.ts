@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type {
@@ -30,6 +31,8 @@ import type {
   RuntimeTargets,
   RuntimeTurnEvidence,
   SessionExchange,
+  UsageLimits,
+  UsageWindow,
 } from "@noctis/contracts";
 import {
   MAX_HISTORY_EXCHANGES,
@@ -110,6 +113,8 @@ export interface ClaudeRuntimeOptions {
   env?: NodeJS.ProcessEnv;
   /** How long a thread's CLI waits for its next message before it is closed. */
   idleMs?: number;
+  /** Tests answer the limits request without a network. */
+  fetch?: typeof fetch;
 }
 
 /** On Windows the CLI offers PowerShell where it would offer Bash; both take `command`. */
@@ -274,6 +279,84 @@ function fields(input: unknown): ToolInput {
   const parsed = ToolInputSchema.safeParse(input);
 
   return parsed.success ? parsed.data : {};
+}
+
+/**
+ * What Claude Code's own `/usage` reads. Not a published API, so anything it
+ * does not answer the way it does today is reported as unavailable.
+ */
+const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const CLAUDE_USAGE_TIMEOUT_MS = 15_000;
+
+const ClaudeCredentialsSchema = z.object({
+  claudeAiOauth: z.object({ accessToken: z.string().min(1) }),
+});
+
+const ClaudeUsageWindowSchema = z
+  .object({ utilization: z.number().min(0), resets_at: z.string().nullish() })
+  .nullish();
+
+const ClaudeUsageSchema = z.object({
+  five_hour: ClaudeUsageWindowSchema,
+  seven_day: ClaudeUsageWindowSchema,
+});
+
+function claudeWindow(window: z.infer<typeof ClaudeUsageWindowSchema>): UsageWindow | undefined {
+  if (window === null || window === undefined) {
+    return undefined;
+  }
+
+  return {
+    usedPercent: window.utilization,
+    ...(typeof window.resets_at === "string"
+      ? { resetsAt: new Date(window.resets_at).toISOString() }
+      : {}),
+  };
+}
+
+/**
+ * The limits Claude reports for the account Claude Code is signed in with.
+ * The token is only read: Claude Code refreshes it itself, and two writers to
+ * its credentials file would sign one of them out.
+ */
+async function readClaudeLimits(
+  env: NodeJS.ProcessEnv,
+  request: typeof fetch,
+): Promise<UsageLimits> {
+  const configDir =
+    env.CLAUDE_CONFIG_DIR ?? join(env.USERPROFILE ?? env.HOME ?? homedir(), ".claude");
+  let token: string;
+
+  try {
+    token = ClaudeCredentialsSchema.parse(
+      JSON.parse(await readFile(join(configDir, ".credentials.json"), "utf8")),
+    ).claudeAiOauth.accessToken;
+  } catch {
+    throw new AdapterRefused("Claude Code is not signed in on this PC");
+  }
+
+  const response = await request(CLAUDE_USAGE_URL, {
+    headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+    signal: AbortSignal.timeout(CLAUDE_USAGE_TIMEOUT_MS),
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    throw new AdapterRefused("Claude's sign-in has lapsed: open Claude Code once to refresh it");
+  }
+
+  const usage = ClaudeUsageSchema.safeParse(response.ok ? await response.json() : undefined);
+
+  if (!usage.success) {
+    throw new AdapterRefused(`Claude did not report its limits (${String(response.status)})`);
+  }
+
+  const fiveHour = claudeWindow(usage.data.five_hour);
+  const weekly = claudeWindow(usage.data.seven_day);
+
+  return {
+    ...(fiveHour === undefined ? {} : { fiveHour }),
+    ...(weekly === undefined ? {} : { weekly }),
+  };
 }
 
 function clip(text: string, max: number): string {
@@ -1175,6 +1258,8 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         await (options.getSessionMessages ?? sdkGetSessionMessages)(sessionRef, { dir: cwd }),
       );
     },
+    readLimits: (_cwd: string, env: NodeJS.ProcessEnv) =>
+      readClaudeLimits(env, options.fetch ?? fetch),
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
 

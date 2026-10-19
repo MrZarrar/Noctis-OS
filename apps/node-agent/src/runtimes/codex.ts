@@ -12,6 +12,8 @@ import type {
   RuntimeProbe,
   RuntimeTurnEvidence,
   SessionExchange,
+  UsageLimits,
+  UsageWindow,
 } from "@noctis/contracts";
 import {
   MAX_HISTORY_EXCHANGES,
@@ -205,6 +207,21 @@ const TurnsListResponseSchema = z
 
 /** How long a listing may take before the folder is reported as having no Codex threads. */
 const LIST_TIMEOUT_MS = 15_000;
+
+const RateLimitWindowSchema = z
+  .object({
+    usedPercent: z.number().min(0),
+    windowDurationMins: z.number().nullish(),
+    resetsAt: z.number().nullish(),
+  })
+  .nullish();
+
+const RateLimitsResponseSchema = z.object({
+  rateLimits: z.object({ primary: RateLimitWindowSchema, secondary: RateLimitWindowSchema }),
+});
+
+const FIVE_HOUR_MINS = 300;
+const WEEK_MINS = 7 * 24 * 60;
 
 /**
  * The spellings of a Windows path a Codex client may have recorded. The
@@ -1165,11 +1182,48 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
     }));
   }
 
+  /**
+   * The limits Codex reports for the signed-in ChatGPT account. Matched by
+   * window length rather than by primary and secondary, which name the order
+   * the server sent them in, not what they are.
+   */
+  async function readLimits(cwd: string, env: NodeJS.ProcessEnv): Promise<UsageLimits> {
+    const read = await askAppServer(cwd, env, "account/rateLimits/read", async (rpc) =>
+      RateLimitsResponseSchema.parse(await rpc.request("account/rateLimits/read", {})),
+    );
+
+    if (read === undefined) {
+      throw new AdapterRefused("codex_not_found");
+    }
+
+    const windows = [read.rateLimits.primary, read.rateLimits.secondary];
+    const window = (mins: number): UsageWindow | undefined => {
+      const found = windows.find((candidate) => candidate?.windowDurationMins === mins);
+
+      return found === null || found === undefined
+        ? undefined
+        : {
+            usedPercent: found.usedPercent,
+            ...(typeof found.resetsAt === "number"
+              ? { resetsAt: new Date(found.resetsAt * 1000).toISOString() }
+              : {}),
+          };
+    };
+    const fiveHour = window(FIVE_HOUR_MINS);
+    const weekly = window(WEEK_MINS);
+
+    return {
+      ...(fiveHour === undefined ? {} : { fiveHour }),
+      ...(weekly === undefined ? {} : { weekly }),
+    };
+  }
+
   return {
     providerId: "codex",
     probe: (): Promise<RuntimeProbe> => probeCodexInstalled(options.env ?? process.env),
     listSessions,
     readHistory,
+    readLimits,
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
       const command = options.command ?? resolveCodexCommand({ env: input.env });

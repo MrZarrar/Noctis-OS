@@ -52,6 +52,7 @@ export const FRAME_BUDGET: Record<NodeCapability, number> = {
   /** A heartbeat every ten seconds for a run of up to fifteen minutes. */
   "health.run": 200,
   "health.decide": 200,
+  "usage.limits": 200,
 };
 
 /**

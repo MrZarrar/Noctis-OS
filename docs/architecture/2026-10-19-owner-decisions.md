@@ -151,3 +151,30 @@ hover at least.
   progress panel while they search, and to wait for the pick.
 - The card renderer was handed to Codex (`docs/handoffs/2026-10-19-options-panel-renderer.md`): the host is always
   visible, the full address on hover, focus and in the accessible name, opened in a new tab.
+
+## 4. Claude and Codex usage limits on Presence
+
+**Asked (owner):** see the 5-hour and weekly usage for Claude and Codex, and when each resets. Not calculated from
+tokens or anything else Noctis counts.
+
+**Found:** both providers report it directly, and neither read spends any allowance. Claude: the endpoint Claude
+Code's own `/usage` reads, with Claude Code's sign-in (`five_hour`, `seven_day`). Codex: `account/rateLimits/read`
+on `codex app-server` (300-minute and 10080-minute windows). Probed live on the owner's PC first.
+
+**Decided (owner):** on Presence, not a page of its own.
+
+**Built:**
+
+- Node capability `usage.limits`, covered by the `runtime.turn` grant. The PC asks each provider and passes on
+  exactly what it says. Claude's sign-in file is only read, never refreshed, so Noctis cannot sign Claude Code out.
+  A lapsed sign-in says "open Claude Code once" instead of showing anything.
+- `GET /limits` on the core asks both providers at once, and one failing leaves the other standing.
+- Presence: a quiet two-row block left of the clock (under it on a phone). Each window has a bar, the percent, and
+  a countdown, or the weekday and time when the reset is a day or more away. Amber from 80%, red from 95%. It reads
+  every five minutes, since each read is a job on the PC.
+
+**Caveat:** Claude's usage endpoint is not a published API. If Anthropic changes it, Presence shows Claude as
+unavailable rather than a guess.
+
+**Process (owner):** Claude does design and frontend work. Codex takes non-visual slices and image or mockup
+generation. Codex built the core endpoint here; the Presence card was taken back from Codex part-way through.

@@ -13,6 +13,7 @@ import { useIsMobile } from "../layout/useIsMobile.js";
 import { buttonStyle } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ProductivityPresence } from "./ProductivityPresence.js";
+import { UsageLimits } from "./UsageLimits.js";
 import { useWakeWhileTyping } from "./CoreSettings.js";
 import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { PanelSheet, PanelTray, usePanelSheet } from "./PanelTray.js";
@@ -194,6 +195,7 @@ export function Presence({
               JESTER · ACTIVE
             </p>
           )}
+          {!mobile && <UsageLimits transport={transport} now={now} mobile={false} />}
           <time
             dateTime={now.toISOString()}
             aria-label={`${clock.time}, ${clock.day}`}
@@ -236,6 +238,8 @@ export function Presence({
               </span>
             )}
           </time>
+          {/* Under the clock on a phone, so the time stays the first thing seen. */}
+          {mobile && <UsageLimits transport={transport} now={now} mobile />}
         </div>
         <ProductivityPresence
           transport={transport}

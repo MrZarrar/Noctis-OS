@@ -124,6 +124,8 @@ export const NODE_CAPABILITIES = [
   "health.report",
   "health.run",
   "health.decide",
+  /** How much of a Claude or Codex subscription's 5-hour and weekly allowance is spent, as the provider reports it. */
+  "usage.limits",
 ] as const;
 
 export const NodeCapabilitySchema = z.enum(NODE_CAPABILITIES);
@@ -159,6 +161,7 @@ export const CAPABILITY_OPERATION_CLASS = {
   "health.run": "local_reversible_edit",
   /** A suggestion's status; `reset` undoes it. */
   "health.decide": "local_reversible_edit",
+  "usage.limits": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
 /**
@@ -170,7 +173,14 @@ export const CAPABILITY_OPERATION_CLASS = {
  */
 const GRANT_ALSO_COVERS: Partial<Record<NodeCapability, readonly NodeCapability[]>> = {
   // Waking an agent readies what a turn on that grant would run: no more than the turn.
-  "runtime.turn": ["file.list", "file.read", "session.list", "session.history", "runtime.warm"],
+  "runtime.turn": [
+    "file.list",
+    "file.read",
+    "session.list",
+    "session.history",
+    "runtime.warm",
+    "usage.limits",
+  ],
 };
 
 /** Whether a grant of `granted` lets a node run a job of `capability`. */
@@ -349,6 +359,30 @@ export const SessionHistoryEvidenceSchema = z
   .object({ exchanges: z.array(SessionExchangeSchema).max(MAX_HISTORY_EXCHANGES) })
   .strict();
 
+/** Asked of a folder shared with the agent, so the grant that runs its turns is what covers it. */
+export const UsageLimitsPayloadSchema = z
+  .object({
+    rootGrantId: z.string().trim().min(1).max(128),
+    providerId: RuntimeProviderIdSchema,
+  })
+  .strict();
+
+/** One allowance window. Past 100 is possible when a provider lets a turn finish over the line. */
+export const UsageWindowSchema = z
+  .object({
+    usedPercent: z.number().min(0).max(1000),
+    resetsAt: UtcTimestampSchema.optional(),
+  })
+  .strict();
+
+/** Either window is absent when the provider does not report it for this plan. */
+export const UsageLimitsEvidenceSchema = z
+  .object({ fiveHour: UsageWindowSchema.optional(), weekly: UsageWindowSchema.optional() })
+  .strict();
+
+export type UsageWindow = z.infer<typeof UsageWindowSchema>;
+export type UsageLimits = z.infer<typeof UsageLimitsEvidenceSchema>;
+
 export const VerificationNoopPayloadSchema = z
   .object({ note: z.string().trim().max(200).optional() })
   .strict();
@@ -407,6 +441,7 @@ export const CAPABILITY_CONTRACTS = {
   "health.report": { payload: HealthReportPayloadSchema, evidence: HealthReportEvidenceSchema },
   "health.run": { payload: HealthRunPayloadSchema, evidence: HealthRunEvidenceSchema },
   "health.decide": { payload: HealthDecidePayloadSchema, evidence: HealthDecideEvidenceSchema },
+  "usage.limits": { payload: UsageLimitsPayloadSchema, evidence: UsageLimitsEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 
 /**

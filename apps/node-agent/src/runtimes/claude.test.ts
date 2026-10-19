@@ -479,6 +479,57 @@ describe("the Claude Agent SDK runtime", () => {
     ]);
   });
 
+  it("reads the 5-hour and weekly limits Claude reports for the signed-in account", async () => {
+    const home = mkdtempSync(join(tmpdir(), "noctis-claude-home-"));
+    writeFileSync(
+      join(home, ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-test" } }),
+    );
+    const asked: { url: string; headers: Record<string, string> }[] = [];
+    const runtime = createClaudeRuntime({
+      fetch: (url, init) => {
+        asked.push({ url: url as string, headers: init?.headers as Record<string, string> });
+
+        return Promise.resolve(
+          Response.json({
+            five_hour: { utilization: 19.0, resets_at: "2026-10-19T18:30:00.442359+00:00" },
+            seven_day: { utilization: 68.0, resets_at: "2026-10-22T10:00:00.442377+00:00" },
+            seven_day_opus: null,
+          }),
+        );
+      },
+    });
+
+    expect(await runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home })).toEqual({
+      fiveHour: { usedPercent: 19, resetsAt: "2026-10-19T18:30:00.442Z" },
+      weekly: { usedPercent: 68, resetsAt: "2026-10-22T10:00:00.442Z" },
+    });
+    expect(asked).toEqual([
+      {
+        url: "https://api.anthropic.com/api/oauth/usage",
+        headers: expect.objectContaining({
+          Authorization: "Bearer sk-ant-oat-test",
+          "anthropic-beta": "oauth-2025-04-20",
+        }) as Record<string, string>,
+      },
+    ]);
+  });
+
+  it("says the sign-in has lapsed rather than guessing when Claude refuses the token", async () => {
+    const home = mkdtempSync(join(tmpdir(), "noctis-claude-home-"));
+    writeFileSync(
+      join(home, ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "expired" } }),
+    );
+    const runtime = createClaudeRuntime({
+      fetch: () => Promise.resolve(new Response("{}", { status: 401 })),
+    });
+
+    await expect(runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home })).rejects.toThrow(
+      /open Claude Code/,
+    );
+  });
+
   it("refuses an environment that still carries a billing key", async () => {
     const { query, calls } = scripted(list(init(), result()));
 

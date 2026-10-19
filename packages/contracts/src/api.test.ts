@@ -9,6 +9,7 @@ describe("the core's own paths", () => {
     "/digest?from=a&to=b",
     "/live-sessions",
     "/live-sessions/x/entries",
+    "/limits",
     "/visuals/content?node=n&root=r&path=a.html",
   ])("claims %s for the core, not the page", (path) => {
     expect(CORE_PATH_PATTERN.test(path)).toBe(true);

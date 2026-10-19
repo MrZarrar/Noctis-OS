@@ -9,6 +9,7 @@ import {
   FileReadEvidenceSchema,
   SessionHistoryEvidenceSchema,
   SessionListEvidenceSchema,
+  UsageLimitsEvidenceSchema,
 } from "@noctis/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -291,6 +292,52 @@ describe("session.history", () => {
       ADAPTERS["session.history"](
         { rootGrantId: "tu", providerId: "codex", sessionRef: "abc-1" },
         context(root, { runtimes: { codex: { ...reading([], []), providerId: "codex" } } }),
+      ),
+    ).rejects.toBeInstanceOf(AdapterRefused);
+  });
+});
+
+describe("usage.limits", () => {
+  const LIMITS = {
+    fiveHour: { usedPercent: 19, resetsAt: "2026-10-19T18:30:00.442Z" },
+    weekly: { usedPercent: 68, resetsAt: "2026-10-22T10:00:00.442Z" },
+  };
+
+  function limited(asked: unknown[]): Runtime {
+    return {
+      providerId: "claude",
+      probe: () => Promise.reject(new Error("not probed here")),
+      turn: () => Promise.reject(new Error("no turn here")),
+      readLimits: (cwd) => {
+        asked.push(cwd);
+
+        return Promise.resolve(LIMITS);
+      },
+    };
+  }
+
+  it("asks the agent the folder is shared with for the limits it reports", async () => {
+    const root = channel();
+    const asked: unknown[] = [];
+
+    expect(
+      UsageLimitsEvidenceSchema.parse(
+        await ADAPTERS["usage.limits"](
+          { rootGrantId: "tu", providerId: "claude" },
+          context(root, { runtimes: { claude: limited(asked) } }),
+        ),
+      ),
+    ).toEqual(LIMITS);
+    expect(asked).toEqual([realpathSync(root)]);
+  });
+
+  it("refuses an agent the folder is not shared with", async () => {
+    const root = channel();
+
+    await expect(
+      ADAPTERS["usage.limits"](
+        { rootGrantId: "tu", providerId: "codex" },
+        context(root, { runtimes: { codex: { ...limited([]), providerId: "codex" } } }),
       ),
     ).rejects.toBeInstanceOf(AdapterRefused);
   });
