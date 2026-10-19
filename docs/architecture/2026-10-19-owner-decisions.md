@@ -86,3 +86,43 @@ agents are told to stop before any of those. What does not: a click by screen po
 - The home node runs in session 0 with no desktop (ADR-0036), so nothing it opens would appear on the screen.
   `HOME-SETUP.md` section 6 moves it to the owner's logon session.
 - Jester has no `noctis_delegate`, so it says "ask Vesper" for another PC.
+
+## 2. First live tests, and what they showed
+
+**Found (owner's report and the turns' own items):**
+
+- "Open the vault" launched Obsidian through the desktop server. "The vault in Noctis" then waited on Windows-MCP,
+  which refuses to act while the owner is moving the mouse or typing and needs about ten seconds of quiet; the agent
+  polled it with `sleep 11` for two minutes and clicked the Vault icon in Chrome. It never used the `page` panel.
+- "Open health as a panel" looked for vault notes about health.
+- Both for one reason: Claude Code shows the model only the names of MCP tools until it searches for one, so the
+  page panel's description was never read. Asked for the Approvals panel, it searched first and got it right.
+- A question the agent asked (AskUserQuestion) showed only in Threads; Presence showed nothing, so the owner did
+  not know it was waiting.
+- A panel the agent opened belongs to the chat's thread, and Presence showed only its own panels, so the Approvals
+  panel appeared in Threads while the owner was on Presence.
+- Vesper said the MindVault "lives on the home PC". It does not: OneDrive keeps the same folder on both PCs, and the
+  core on the work PC already reads it for the Vault page, for recall above each message, and for inbox notes. Only
+  the home node had it shared with its agents, so at work the agents could not open notes themselves.
+
+**Decided (owner):**
+
+- Share the MindVault with the work PC's agents, read only, and the work repos (Neckermann and Anex Tour).
+- Playwriter and dassi are not used. Playwriter's one MCP tool, `execute`, runs whatever JavaScript the agent writes
+  with Node's full access, so Noctis cannot see what a step presses and every check is bypassed. dassi is a separate
+  paid AI agent in Chrome's side panel with its own models, which Noctis could neither see nor stop. Playwright MCP
+  Bridge stays: the owner's real Chrome and logins, one checkable step at a time.
+- The owner installed Playwright MCP Bridge and set `NOCTIS_BROWSER_EXTENSION_TOKEN` on the work PC.
+
+**Built:**
+
+- Work node grants: `work-vault` (`OneDrive\MindVault`, read), `neckermann-mobile`, `neckermann-customer`
+  (`neckermann-customer copy`), `anex-tour-api`, `anex-tour-mobile`, `anex-main` (`anex-main-original`), all write.
+- The agents' standing instructions name Noctis's pages and say "open the vault", "health as a panel" and the like
+  mean that page, opened with `noctis_propose_surface` `page`, never by driving Noctis's window; Obsidian only when
+  named.
+- Presence shows the current chat's panels beside its own, and the agent's questions with their options, with
+  "Waiting for your answer" while it waits.
+
+**Kept:** Windows-MCP yields to the owner's own mouse and keyboard. That is its safety, and opening Noctis pages
+directly removes the case that hit it.

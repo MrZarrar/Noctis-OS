@@ -3,6 +3,7 @@ import { JesterGlyph, identityAccent, semantic, typography } from "@noctis/ui";
 import { useEffect, useState } from "react";
 
 import { Markdown } from "../conversation/Markdown.js";
+import { MarkdownFiles } from "../conversation/MarkdownFiles.js";
 import { PromptForm } from "../conversation/PromptForm.js";
 import { intelligenceState } from "../conversation/intelligence-state.js";
 import { lastExchange } from "../conversation/last-exchange.js";
@@ -17,6 +18,7 @@ import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { PanelSheet, PanelTray, usePanelSheet } from "./PanelTray.js";
 import { PresenceSideColumn, usePresencePanels } from "./PresencePanels.js";
 import { AddPanel } from "./AddPanel.js";
+import { AgentQuestions, openQuestions } from "./AgentQuestions.js";
 import { pagePanelContext } from "./ThreadPanels.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { clockText, greetingFor, msToNextMinute } from "./clock.js";
@@ -29,22 +31,7 @@ export interface PresenceProps {
   renderPage?: SurfaceContext["renderPage"];
   identity: IdentityRuntimeState;
   transport: CoreTransport | undefined;
-  conversation: Pick<ConversationState, "models" | "defaultModel" | "canAttach" | "roots"> &
-    Partial<
-      Pick<
-        ConversationState,
-        | "thread"
-        | "messages"
-        | "turns"
-        | "streaming"
-        | "pendingApprovals"
-        | "error"
-        | "outputUrl"
-        | "startFresh"
-        | "startFreshIfIdle"
-        | "presencePanelsRevision"
-      >
-    >;
+  conversation: ConversationState;
   /** Whether a composer has the focus; the app's core reads the same signal. */
   listening: boolean;
   onSend: (text: string, options: SendOptions) => void;
@@ -83,10 +70,10 @@ export function Presence({
   // The last one stays in Threads, to be carried on from there.
   const startFreshIfIdle = conversation.startFreshIfIdle;
   useEffect(() => {
-    void startFreshIfIdle?.();
+    void startFreshIfIdle();
   }, [startFreshIfIdle]);
   const mobile = useIsMobile();
-  const panels = usePresencePanels(transport, conversation.presencePanelsRevision ?? 0, renderPage);
+  const panels = usePresencePanels(transport, conversation, renderPage);
   const sheet = usePanelSheet(panels);
   const identityId = identity.activeIdentityId ?? "vesper";
   // Only an agent that loads a model before it can answer sleeps: Jester, or
@@ -98,15 +85,8 @@ export function Presence({
   const until = identity.awakeUntil[identityId];
   const asleep = coldStart && (until === undefined || Date.parse(until) <= Date.now());
   const wakeWhileTyping = useWakeWhileTyping(transport);
-  const state = intelligenceState(
-    {
-      turns: conversation.turns ?? [],
-      streaming: conversation.streaming ?? new Map(),
-      pendingApprovals: conversation.pendingApprovals ?? [],
-    },
-    listening,
-    asleep,
-  );
+  const state = intelligenceState(conversation, listening, asleep);
+  const questions = openQuestions(conversation.turns);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     let timer = window.setTimeout(function tick() {
@@ -143,13 +123,8 @@ export function Presence({
   const today = todayLine(digest);
   const error = conversation.error ?? identity.error;
   const accent = identityAccent[identityId].primary;
-  const exchange = sent
-    ? lastExchange({
-        messages: conversation.messages ?? [],
-        turns: conversation.turns ?? [],
-        streaming: conversation.streaming ?? new Map(),
-      })
-    : undefined;
+  const exchange = sent ? lastExchange(conversation) : undefined;
+  const asking = conversation.turns.at(-1);
 
   return (
     <section
@@ -308,7 +283,9 @@ export function Presence({
               fontSize: 13,
             }}
           >
-            {STATE_WORDS[state]}
+            {state === "idle" && questions.length > 0
+              ? "Waiting for your answer"
+              : STATE_WORDS[state]}
           </p>
           {exchange === undefined ? (
             <p
@@ -357,6 +334,19 @@ export function Presence({
                   mobile={mobile}
                 />
               </div>
+              {questions.length > 0 && asking !== undefined && (
+                <div style={{ marginTop: 10 }}>
+                  <AgentQuestions
+                    key={asking.id}
+                    questions={questions}
+                    answerable
+                    onAnswer={(text) => {
+                      // On the model that asked, not the identity's default.
+                      onSend(text, { model: asking.model });
+                    }}
+                  />
+                </div>
+              )}
               {onOpenThread !== undefined && (
                 <button
                   type="button"
@@ -386,10 +376,10 @@ export function Presence({
             </button>
           )}
           {mobile && (
-            <>
+            <MarkdownFiles.Provider value={panels.imageUrl}>
               <PanelSheet panels={panels} sheet={sheet} />
               <PanelTray panels={panels} sheet={sheet} />
-            </>
+            </MarkdownFiles.Provider>
           )}
           <AddPanel
             transport={transport}
@@ -418,29 +408,27 @@ export function Presence({
             wakeWhileTyping={wakeWhileTyping}
           />
           {/* Not mid-turn: the turn would carry on in a thread Presence had just let go of. */}
-          {conversation.thread !== undefined &&
-            conversation.startFresh !== undefined &&
-            (state === "idle" || state === "listening") && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSent(false);
-                  void conversation.startFresh?.();
-                }}
-                style={{
-                  display: "block",
-                  margin: "8px auto 0",
-                  minHeight: 44,
-                  background: "transparent",
-                  border: "none",
-                  color: typography.color.muted,
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                New chat
-              </button>
-            )}
+          {conversation.thread !== undefined && (state === "idle" || state === "listening") && (
+            <button
+              type="button"
+              onClick={() => {
+                setSent(false);
+                void conversation.startFresh();
+              }}
+              style={{
+                display: "block",
+                margin: "8px auto 0",
+                minHeight: 44,
+                background: "transparent",
+                border: "none",
+                color: typography.color.muted,
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              New chat
+            </button>
+          )}
           {error !== undefined && (
             <p role="alert" style={{ color: semantic.error }}>
               {error}

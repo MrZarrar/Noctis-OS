@@ -229,6 +229,15 @@ describe("Threads desktop panels", () => {
       );
       assert.equal(stored.body.intents.filter((intent) => intent.kind === "page").length, 2);
       await page.getByRole("button", { name: "Presence", exact: true }).click();
+      // The chat's panels follow it to Presence. They float where + is, so they go first.
+      const presencePanels = page.getByRole("complementary", {
+        name: "Presence panels",
+        exact: true,
+      });
+      for (const title of ["Settings", "Files"]) {
+        await presencePanels.getByRole("heading", { name: title, exact: true, level: 1 }).waitFor();
+        await presencePanels.getByRole("button", { name: `Close ${title}`, exact: true }).click();
+      }
       await page.getByRole("button", { name: "Add panel", exact: true }).click();
       await page.getByRole("button", { name: "Open Approvals panel", exact: true }).click();
       await page

@@ -9,7 +9,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import type { RuntimeAnswer, RuntimeAsk, RuntimeItem, RuntimeTurnPayload } from "@noctis/contracts";
 import { RuntimeItemSchema, RuntimeTurnEvidenceSchema } from "@noctis/contracts";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeSink, RuntimeTurnInput, RuntimeUpload } from "./Runtime.js";
 import { ApprovalTimedOut } from "./Runtime.js";
@@ -340,6 +340,206 @@ const HAPPY: Scenario = {
 };
 
 describe("the Codex App Server runtime", () => {
+  describe("noctis_delegate", () => {
+    const args = {
+      runtime: "claude" as const,
+      prompt: "Inspect the other PC",
+      node: "work-pc",
+      threadId: "0199a000-0000-7000-8000-0000000000d1",
+    };
+    const result = {
+      delegationId: "0199a000-0000-7000-8000-0000000000d2",
+      outcome: "completed" as const,
+      threadId: args.threadId,
+      reply: "Ready",
+      outputs: [{ mediaType: "image/png", attachmentId: UPLOADED }],
+    };
+
+    function calling(arguments_: unknown, outcomes: unknown[], tool = "noctis_delegate"): Scenario {
+      return {
+        async turn(server, spawned) {
+          outcomes.push(
+            await server
+              .request("item/tool/call", {
+                threadId: spawned.threadId,
+                turnId: TURN_ID,
+                callId: "delegate-1",
+                tool,
+                arguments: arguments_,
+              })
+              .catch((error: unknown) => error),
+          );
+          server.notify("turn/completed", turnCompleted(spawned, "completed"));
+        },
+      };
+    }
+
+    it("advertises the shared delegation input on new threads and opts into dynamic tools", async () => {
+      const { runtime: codex, spawned } = runtime(HAPPY);
+      await codex.turn(input(), recorder().sink);
+
+      expect(spawned[0]?.requests.get("initialize")).toEqual([
+        expect.objectContaining({ capabilities: { experimentalApi: true } }),
+      ]);
+      expect(spawned[0]?.requests.get("thread/start")).toEqual([
+        expect.objectContaining({
+          dynamicTools: [
+            {
+              type: "function",
+              name: "noctis_delegate",
+              description: expect.stringContaining("wait for its answer") as string,
+              inputSchema: expect.objectContaining({
+                type: "object",
+                required: ["runtime", "prompt"],
+                additionalProperties: false,
+                properties: {
+                  runtime: expect.objectContaining({
+                    enum: ["codex", "claude", "hermes", "local"],
+                  }) as unknown,
+                  prompt: expect.objectContaining({ minLength: 1, maxLength: 20_000 }) as unknown,
+                  threadId: expect.any(Object) as unknown,
+                  node: expect.any(Object) as unknown,
+                },
+              }) as unknown,
+            },
+          ],
+        }),
+      ]);
+    });
+
+    it("waits for the current sink and returns the same result text on reused and resumed turns", async () => {
+      const outcomes: unknown[] = [];
+      const delegations: unknown[] = [];
+      const { runtime: codex, spawned } = runtime(calling(args, outcomes));
+      let release!: (value: typeof result) => void;
+      let entered!: () => void;
+      const delegated = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const first = recorder();
+      first.sink.delegate = (delegation) => {
+        delegations.push(delegation);
+        entered();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      };
+      const turn = codex.turn(input(), first.sink);
+      await delegated;
+      expect(outcomes).toEqual([]);
+      release(result);
+      const evidence = await turn;
+
+      const next = recorder();
+      next.sink.delegate = (delegation) => {
+        delegations.push(delegation);
+        return Promise.resolve(result);
+      };
+      await codex.turn(input({ sessionRef: evidence.sessionRef }), next.sink);
+      expect(spawned).toHaveLength(1);
+      spawned[0]?.child.kill();
+      await codex.turn(input({ sessionRef: evidence.sessionRef }), next.sink);
+      expect(spawned[1]?.requests.get("thread/resume")).toEqual([
+        expect.objectContaining({ threadId: evidence.sessionRef }),
+      ]);
+      expect(delegations).toEqual([args, args, args]);
+      expect(outcomes).toEqual(
+        Array.from({ length: 3 }, () => ({
+          contentItems: [
+            {
+              type: "inputText",
+              text: JSON.stringify({
+                outcome: result.outcome,
+                threadId: result.threadId,
+                reply: result.reply,
+                outputs: result.outputs,
+              }),
+            },
+          ],
+          success: true,
+        })),
+      );
+      await codex.close?.();
+    });
+
+    it.each(["failed", "refused"] as const)(
+      "returns a %s delegation as an error result",
+      async (outcome) => {
+        const outcomes: unknown[] = [];
+        const r = recorder();
+        r.sink.delegate = () => Promise.resolve({ ...result, outcome, reason: "unavailable" });
+        await runtime(calling(args, outcomes)).runtime.turn(input(), r.sink);
+        expect(outcomes).toEqual([
+          {
+            contentItems: [
+              {
+                type: "inputText",
+                text: JSON.stringify({
+                  outcome,
+                  threadId: result.threadId,
+                  reply: result.reply,
+                  outputs: result.outputs,
+                  reason: "unavailable",
+                }),
+              },
+            ],
+            success: false,
+          },
+        ]);
+      },
+    );
+
+    it.each([new Error("disconnected"), "disconnected"])(
+      "returns a thrown delegation failure as tool text (%s)",
+      async (error) => {
+        const outcomes: unknown[] = [];
+        const r = recorder();
+        r.sink.delegate = vi.fn<RuntimeSink["delegate"]>().mockRejectedValue(error);
+        await runtime(calling(args, outcomes)).runtime.turn(input(), r.sink);
+        expect(outcomes).toEqual([
+          {
+            contentItems: [
+              {
+                type: "inputText",
+                text: `delegation did not finish: ${error instanceof Error ? error.message : "unknown"}`,
+              },
+            ],
+            success: false,
+          },
+        ]);
+      },
+    );
+
+    it.each([
+      { ...args, prompt: "" },
+      { ...args, runtime: "unknown" },
+      { ...args, threadId: "not-a-uuid" },
+      { ...args, delegationId: result.delegationId },
+    ])("rejects invalid delegation arguments before calling the sink (%j)", async (invalid) => {
+      const outcomes: unknown[] = [];
+      let called = false;
+      const r = recorder();
+      r.sink.delegate = () => {
+        called = true;
+        return Promise.resolve(result);
+      };
+      await runtime(calling(invalid, outcomes)).runtime.turn(input(), r.sink);
+      expect(called).toBe(false);
+      expect(outcomes).toEqual([
+        expect.objectContaining({
+          success: false,
+          contentItems: [expect.objectContaining({ type: "inputText" })],
+        }),
+      ]);
+    });
+
+    it("refuses an unknown dynamic tool without delegating", async () => {
+      const outcomes: unknown[] = [];
+      await runtime(calling(args, outcomes, "other_tool")).runtime.turn(input(), recorder().sink);
+      expect(outcomes).toEqual([expect.objectContaining({ code: -32601 })]);
+    });
+  });
+
   it("advertises every proposable kind through the stdio MCP used by Codex", async () => {
     const directory = mkdtempSync(join(tmpdir(), "noctis-panel-tools-"));
     const client = new Client({ name: "panel-description-test", version: "1" });
@@ -509,7 +709,7 @@ describe("the Codex App Server runtime", () => {
     expect(s?.requests.get("initialize")).toEqual([
       {
         clientInfo: { name: "noctis-node-agent", title: null, version: "0.0.0" },
-        capabilities: null,
+        capabilities: { experimentalApi: true },
       },
     ]);
     expect(s?.requests.get("thread/start")).toEqual([
@@ -519,6 +719,9 @@ describe("the Codex App Server runtime", () => {
         approvalPolicy: "on-request",
         sandbox: "workspace-write",
         developerInstructions: expect.stringContaining("You are Vesper") as string,
+        dynamicTools: expect.arrayContaining([
+          expect.objectContaining({ name: "noctis_delegate" }),
+        ]) as unknown,
       },
     ]);
     expect(s?.requests.get("turn/start")).toEqual([
@@ -1038,7 +1241,15 @@ describe("the Codex App Server runtime", () => {
           }),
         );
         outcomes.push(
-          await server.request("item/tool/call", { itemId: "d1" }).catch((error: unknown) => error),
+          await server
+            .request("item/tool/call", {
+              threadId: spawned.threadId,
+              turnId: TURN_ID,
+              callId: "d1",
+              tool: "unknown",
+              arguments: {},
+            })
+            .catch((error: unknown) => error),
         );
         server.notify("turn/completed", turnCompleted(spawned, "completed"));
       },

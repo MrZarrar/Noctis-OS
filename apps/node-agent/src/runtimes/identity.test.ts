@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { PAGE_PANEL_PAGES } from "@noctis/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -145,6 +146,17 @@ describe("identityCard", () => {
     expect(ACTING_INSTRUCTIONS).toContain("ask");
     // Not a list of what it may do: a stance.
     expect(ACTING_INSTRUCTIONS).not.toMatch(/Start-Process|Playwright|Windows-MCP/);
+  });
+
+  it("names Noctis's own pages, so 'open the vault' opens the Vault page rather than an app", () => {
+    for (const page of PAGE_PANEL_PAGES) {
+      expect(ACTING_INSTRUCTIONS).toContain(page);
+    }
+
+    // Claude Code shows an MCP tool's description only after a search, so the card carries it.
+    expect(ACTING_INSTRUCTIONS).toContain('surfaceKind "page"');
+    expect(ACTING_INSTRUCTIONS).toContain("never by driving");
+    expect(ACTING_INSTRUCTIONS).toContain("Obsidian");
   });
 
   it("gives a local model with no tools no claim to act", () => {

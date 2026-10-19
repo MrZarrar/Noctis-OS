@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { AgentQuestions, answerText, questionsOf } from "./AgentQuestions.js";
+import { AgentQuestions, answerText, openQuestions, questionsOf } from "./AgentQuestions.js";
 
 const asked = {
   itemId: "tu-1",
@@ -41,6 +41,16 @@ describe("agent questions", () => {
     ]);
     expect(questionsOf({ ...asked, tool: "Read" })).toBeUndefined();
     expect(questionsOf({ ...asked, input: { questions: "nope" } })).toBeUndefined();
+  });
+
+  it("waits on the questions only of the latest turn, and only once it has ended", () => {
+    const said = { itemId: "m1", kind: "agent_message", status: "completed", text: "Hi" } as const;
+    const ended = { status: "completed", items: [said, asked] } as const;
+
+    expect(openQuestions([ended]).map((q) => q.header)).toEqual(["Scope", "Branch"]);
+    expect(openQuestions([{ ...ended, status: "running" }])).toEqual([]);
+    expect(openQuestions([ended, { status: "completed", items: [said] }])).toEqual([]);
+    expect(openQuestions([])).toEqual([]);
   });
 
   it("answers in one message, each question beside what was picked, skipping the unanswered", () => {

@@ -21,6 +21,8 @@ import type { RuntimeRootOption } from "../conversation/useConversation.js";
 export interface ThreadPanelSource {
   owner: "thread" | "objective" | "presence";
   composition: CompositionState;
+  /** Instead of the shared handoffs, for panels no conversation answers for. */
+  handoffs?: SurfaceContext;
 }
 export interface ThreadPanelsState {
   sources: readonly ThreadPanelSource[];

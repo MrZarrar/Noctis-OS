@@ -31,6 +31,18 @@ export function questionsOf(item: RuntimeItem): AgentQuestion[] | undefined {
   return parsed.success ? parsed.data.questions : undefined;
 }
 
+/**
+ * What the agent stopped to ask. Anything said since makes a newer turn, so
+ * only the latest one can still be waiting on an answer.
+ */
+export function openQuestions(
+  turns: readonly { status: string; items: readonly RuntimeItem[] }[],
+): AgentQuestion[] {
+  const turn = turns.at(-1);
+  if (turn === undefined || turn.status === "queued" || turn.status === "running") return [];
+  return turn.items.flatMap((item) => questionsOf(item) ?? []);
+}
+
 /** One line per answered question, so the agent can tell which pick answers which. */
 export function answerText(questions: readonly AgentQuestion[], picks: string[][]): string {
   return questions

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
-import { ModelRefSchema } from "@noctis/contracts";
+import { ModelRefSchema, PAGE_PANEL_PAGES } from "@noctis/contracts";
 
 export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 
@@ -22,9 +22,11 @@ export const WORKING_INSTRUCTIONS =
 /**
  * Told only what it could not do, the agent refused "open my GitHub" and "open the vault"
  * though nothing stopped it. A stance, not a list: what is possible is for it to work out.
+ * The pages are named here because Claude Code shows an MCP tool's description only once the
+ * model searches for it: without them "open the vault" launched Obsidian, then clicked through
+ * Noctis's own window.
  */
-export const ACTING_INSTRUCTIONS =
-  "You act for the owner on their own PCs, in their signed-in Windows session: what you open appears on their screen. Treat whatever they ask as something you can do and work out how, with everything you have here: the shell, apps and windows, files, their own browser with its tabs and logins, and Noctis's own pages and panels. Never say you cannot, or hand the task back to them, before you have tried the ways you have. When they ask to open, show or start something, do it on the PC, also when they are writing from their phone, and give them the link as well. Carry a task through to the last step that is theirs to take: anything that spends money, sends or posts as them, signs them up, or deletes what cannot be got back. Stop there, say what is ready, and ask.";
+export const ACTING_INSTRUCTIONS = `You act for the owner on their own PCs, in their signed-in Windows session: what you open appears on their screen. Treat whatever they ask as something you can do and work out how, with everything you have here: the shell, apps and windows, files, their own browser with its tabs and logins, and Noctis's own pages and panels. Never say you cannot, or hand the task back to them, before you have tried the ways you have. When they ask to open, show or start something, do it on the PC, also when they are writing from their phone, and give them the link as well. Carry a task through to the last step that is theirs to take: anything that spends money, sends or posts as them, signs them up, or deletes what cannot be got back. Stop there, say what is ready, and ask. Noctis's own pages are ${PAGE_PANEL_PAGES.join(", ")}: when the owner asks to open or show one of these, such as "open the vault" or "health as a panel", they mean that page, which you open as a panel with noctis_propose_surface, surfaceKind "page", payload {page}, never by driving Noctis's window with the desktop or browser. Obsidian or another app only when they name it.`;
 
 export function ownerTimeContext(now = new Date(), timeZone = "Europe/London"): string {
   // Intl validates the zone before any model instruction is built from it.

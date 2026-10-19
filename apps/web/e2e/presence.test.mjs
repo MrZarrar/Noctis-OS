@@ -50,6 +50,7 @@ function fixture() {
   let waiting = false;
   let sequence = 0;
   let messages = [];
+  const sent = [];
   const listeners = new Set();
   const emit = (type, streamType, streamId, payload = {}) => {
     sequence++;
@@ -92,6 +93,7 @@ function fixture() {
         if (path.startsWith("/approvals/")) return response(approval);
         if (path.startsWith("/threads")) return response(thread);
         if (path === "/commands/conversation.send") {
+          sent.push(args.body.text);
           turn.status = "running";
           messages = [
             {
@@ -109,6 +111,28 @@ function fixture() {
     },
   };
   globalThis.s6Fixture = {
+    sent,
+    ask() {
+      turn.status = "completed";
+      turn.items = [
+        { itemId: "m1", kind: "agent_message", status: "completed", text: "Before I start:" },
+        {
+          itemId: "q1",
+          kind: "tool_call",
+          status: "declined",
+          tool: "AskUserQuestion",
+          input: {
+            questions: [
+              {
+                question: "Which draft should I keep?",
+                options: [{ label: "The short one" }, { label: "The long one" }],
+              },
+            ],
+          },
+        },
+      ];
+      emit("identity.turn_completed.v1", "identity", thread.id);
+    },
     output() {
       turn.items.push({
         itemId: "o1",
@@ -397,6 +421,36 @@ it(
           2,
         ),
       );
+  },
+);
+
+it(
+  "shows the agent's questions in Presence and sends the answer",
+  { timeout: 60_000 },
+  async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.addInitScript(fixture);
+    const page = await context.newPage();
+    await page.goto(URL);
+    const status = page.getByRole("status");
+    await status.getByText("Ready when you are").waitFor();
+    await page.getByRole("textbox", { name: "Message Vesper" }).fill("Tidy the drafts");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.getByText("Tidy the drafts", { exact: true }).waitFor();
+    await page.getByRole("textbox", { name: "Message Vesper" }).blur();
+    await page.evaluate(() => globalThis.s6Fixture.ask());
+
+    const questions = page.locator("[data-agent-questions]");
+    await questions.getByText("Which draft should I keep?").waitFor();
+    await status.getByText("Waiting for your answer").waitFor();
+    await questions.getByRole("button", { name: "The short one" }).click();
+    await questions.getByRole("button", { name: "Send answer" }).click();
+    await page.waitForFunction(() => globalThis.s6Fixture.sent.length === 2);
+    assert.deepEqual(await page.evaluate(() => globalThis.s6Fixture.sent), [
+      "Tidy the drafts",
+      "Which draft should I keep? The short one",
+    ]);
+    await context.close();
   },
 );
 

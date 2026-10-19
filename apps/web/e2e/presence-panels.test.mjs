@@ -195,4 +195,32 @@ describe("Presence live briefs", () => {
       );
     },
   );
+  it(
+    "a panel the chat's own turn opens shows in Presence, and its choice answers on that chat",
+    { timeout: 120000 },
+    async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await openPresence();
+      await page.getByLabel("Message Vesper").fill("CHOICE: Alpha | Beta");
+      await page.getByLabel("Message Vesper").press("Enter");
+
+      const column = page.locator('aside[aria-label="Presence panels"]');
+      const use = column.getByRole("button", { name: "Use Alpha", exact: true });
+      await use.waitFor({ timeout: 20000 });
+      await waitFor(() => use.isEnabled(), Boolean, "the choice stayed disabled");
+      await noHorizontalOverflow();
+      await use.click();
+      await page.getByText("Hello Use Alpha", { exact: true }).waitFor({ timeout: 20000 });
+
+      await page.setViewportSize({ width: 400, height: 860 });
+      const chip = page.getByRole("button", { name: "Open panel Choices", exact: true });
+      await chip.waitFor();
+      await chip.click();
+      await page
+        .getByRole("region", { name: "Panel sheet" })
+        .getByRole("button", { name: "Use Beta", exact: true })
+        .waitFor();
+      await noHorizontalOverflow();
+    },
+  );
 });

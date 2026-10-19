@@ -13,7 +13,11 @@ import type {
   RuntimeTurnEvidence,
   SessionExchange,
 } from "@noctis/contracts";
-import { MAX_HISTORY_EXCHANGES, MAX_LISTED_SESSIONS } from "@noctis/contracts";
+import {
+  MAX_HISTORY_EXCHANGES,
+  MAX_LISTED_SESSIONS,
+  RuntimeDelegationSchema,
+} from "@noctis/contracts";
 import { classifyAsk, isConfirmLevel } from "@noctis/domain";
 import { z } from "zod";
 
@@ -28,6 +32,7 @@ import { childEnvironment } from "./env.js";
 import { trackChild } from "./orphans.js";
 import { killProcessTree, type KillableChild } from "./kill-tree.js";
 import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
+import { DELEGATE_TOOL_DESCRIPTION } from "../proposal-tools.js";
 import type { StdioServer } from "./mcp-config.js";
 import {
   BROWSER_SERVER,
@@ -101,6 +106,13 @@ const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
 const STDERR_TAIL_BYTES = 2_000;
 const NO_INPUT_TEXT =
   "Noctis does not answer runtime questions mid-turn; continue without the input.";
+const DelegateInputSchema = RuntimeDelegationSchema.omit({ delegationId: true });
+const DELEGATE_TOOL = {
+  type: "function",
+  name: "noctis_delegate",
+  description: DELEGATE_TOOL_DESCRIPTION,
+  inputSchema: z.toJSONSchema(DelegateInputSchema),
+};
 
 /* ------------------------------------------------------------------------ */
 /* Codex's shapes, not ours: loose objects reading only the fields used.     */
@@ -213,6 +225,13 @@ const CommandApprovalSchema = z
   })
   .loose();
 const ItemIdSchema = z.object({ itemId: z.string() }).loose();
+const DynamicToolCallSchema = z.object({
+  threadId: z.string(),
+  turnId: z.string(),
+  callId: z.string(),
+  tool: z.string(),
+  arguments: z.unknown(),
+});
 const PermissionsApprovalSchema = z
   .object({
     itemId: z.string(),
@@ -753,6 +772,33 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
 
         async request(method, params) {
           switch (method) {
+            case "item/tool/call": {
+              const p = DynamicToolCallSchema.parse(params);
+              if (p.tool !== DELEGATE_TOOL.name) {
+                throw new JsonRpcError(METHOD_NOT_FOUND, `noctis does not handle ${p.tool}`);
+              }
+
+              try {
+                const result = await sink.delegate(DelegateInputSchema.parse(p.arguments));
+                const text = JSON.stringify(result, (key, value: unknown) =>
+                  key === "delegationId" ? undefined : value,
+                );
+                return {
+                  contentItems: [{ type: "inputText", text }],
+                  success: result.outcome === "completed",
+                };
+              } catch (error) {
+                return {
+                  contentItems: [
+                    {
+                      type: "inputText",
+                      text: `delegation did not finish: ${error instanceof Error ? error.message : "unknown"}`,
+                    },
+                  ],
+                  success: false,
+                };
+              }
+            }
             case "item/commandExecution/requestApproval": {
               const p = CommandApprovalSchema.parse(params);
               const prior = started.get(p.itemId);
@@ -923,7 +969,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
         if (proc.threadId === undefined) {
           await rpc.request("initialize", {
             clientInfo: { name: "noctis-node-agent", title: null, version: AGENT_VERSION },
-            capabilities: null,
+            capabilities: { experimentalApi: true },
           });
 
           // `approval_policy` is refused as a config key by 0.154; the per-request field still takes it.
@@ -964,7 +1010,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           }
 
           proc.threadId ??= ThreadResponseSchema.parse(
-            await rpc.request("thread/start", thread),
+            await rpc.request("thread/start", { ...thread, dynamicTools: [DELEGATE_TOOL] }),
           ).thread.id;
           proc.sessionRef = proc.threadId;
         }

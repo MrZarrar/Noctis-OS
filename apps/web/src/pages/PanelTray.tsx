@@ -114,7 +114,7 @@ function entries(panels: ThreadPanelsState) {
         intent.kind === "media" ? MediaPayloadSchema.safeParse(intent.payload) : undefined;
       const thumbnail =
         media?.success && media.data.mediaType.startsWith("image/")
-          ? panels.handoffs.mediaUrl?.(media.data.source)
+          ? (source.handoffs ?? panels.handoffs).mediaUrl?.(media.data.source)
           : undefined;
       return [
         {
@@ -280,7 +280,7 @@ export function PanelSheet({
               },
             }}
             updates={composition.updates ?? {}}
-            handoffs={panels.handoffs}
+            handoffs={focused?.handoffs ?? panels.handoffs}
           />
         )
       )}

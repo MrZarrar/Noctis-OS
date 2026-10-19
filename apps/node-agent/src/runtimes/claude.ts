@@ -48,7 +48,11 @@ import { BILLING_KEYS } from "./env.js";
 import { trackChild } from "./orphans.js";
 import { killProcessTree, type KillableChild } from "./kill-tree.js";
 import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
-import { PRODUCTIVITY_TOOLS, proposalSchema } from "../proposal-tools.js";
+import {
+  DELEGATE_TOOL_DESCRIPTION,
+  PRODUCTIVITY_TOOLS,
+  proposalSchema,
+} from "../proposal-tools.js";
 import {
   BROWSER_SERVER,
   DESKTOP_SERVER,
@@ -587,7 +591,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         ),
         tool(
           "noctis_delegate",
-          "Hand work to another agent the owner runs (codex, claude, hermes, or local: a model on the PC's own GPU, text only, no tools, free) and wait for its answer. It runs in a Noctis thread of its own that the owner can open from any device. Returns the child's threadId, its reply and any files it produced; pass that threadId back to continue the same thread. Runs on this machine in the same folder unless `node` names another.",
+          DELEGATE_TOOL_DESCRIPTION,
           RuntimeDelegationSchema.omit({ delegationId: true }).shape,
           async (args) => {
             const current = proc.current;

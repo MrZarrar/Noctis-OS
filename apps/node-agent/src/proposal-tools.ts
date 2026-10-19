@@ -57,3 +57,7 @@ export function proposalSchema<
     (schema) => schema.shape.kind.value === kind,
   )! as Extract<(typeof RuntimeProposalSchema.options)[number], { shape: { kind: { value: K } } }>;
 }
+
+/** The same on every route that can wait for a child agent's answer. */
+export const DELEGATE_TOOL_DESCRIPTION =
+  "Hand work to another agent the owner runs (codex, claude, hermes, or local: a model on the PC's own GPU, text only, no tools, free) and wait for its answer. It runs in a Noctis thread of its own that the owner can open from any device. Returns the child's threadId, its reply and any files it produced; pass that threadId back to continue the same thread. Runs on this machine in the same folder unless `node` names another.";
