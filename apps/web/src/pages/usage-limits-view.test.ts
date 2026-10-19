@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { UsageLimitsSchema, resetText, windowSeverity } from "./usage-limits-view.js";
+import { UsageLimitsSchema, resetText, staleText, windowSeverity } from "./usage-limits-view.js";
 
 describe("UsageLimitsSchema", () => {
   it("takes one provider's windows beside another provider's problem", () => {
@@ -51,6 +51,19 @@ describe("resetText", () => {
   it("says when the provider gave no reset rather than inventing one", () => {
     expect(resetText(undefined, now)).toBe("—");
     expect(resetText(after(-1), now)).toBe("now");
+  });
+});
+
+describe("staleText", () => {
+  const now = new Date(2026, 9, 19, 16, 0);
+
+  it("says when a kept reading was taken once it is over ten minutes old", () => {
+    expect(staleText(new Date(2026, 9, 19, 15, 41).toISOString(), now)).toBe("as of 15:41");
+  });
+
+  it("stays quiet for a fresh reading or one with no time", () => {
+    expect(staleText(new Date(2026, 9, 19, 15, 55).toISOString(), now)).toBeUndefined();
+    expect(staleText(undefined, now)).toBeUndefined();
   });
 });
 

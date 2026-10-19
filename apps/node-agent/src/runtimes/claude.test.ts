@@ -487,6 +487,7 @@ describe("the Claude Agent SDK runtime", () => {
     );
     const asked: { url: string; headers: Record<string, string> }[] = [];
     const runtime = createClaudeRuntime({
+      now: () => Date.parse("2026-10-19T15:00:00.000Z"),
       fetch: (url, init) => {
         asked.push({ url: url as string, headers: init?.headers as Record<string, string> });
 
@@ -503,6 +504,7 @@ describe("the Claude Agent SDK runtime", () => {
     expect(await runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home })).toEqual({
       fiveHour: { usedPercent: 19, resetsAt: "2026-10-19T18:30:00.442Z" },
       weekly: { usedPercent: 68, resetsAt: "2026-10-22T10:00:00.442Z" },
+      checkedAt: "2026-10-19T15:00:00.000Z",
     });
     expect(asked).toEqual([
       {
@@ -527,6 +529,64 @@ describe("the Claude Agent SDK runtime", () => {
 
     await expect(runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home })).rejects.toThrow(
       /open Claude Code/,
+    );
+  });
+
+  it("asks Claude at most every five minutes and keeps its last reading through a 429", async () => {
+    const home = mkdtempSync(join(tmpdir(), "noctis-claude-home-"));
+    writeFileSync(
+      join(home, ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-test" } }),
+    );
+    let clock = Date.parse("2026-10-19T15:00:00.000Z");
+    const answers = [
+      Response.json({ five_hour: { utilization: 19, resets_at: null }, seven_day: null }),
+      new Response("{}", { status: 429, headers: { "Retry-After": "600" } }),
+    ];
+    let asked = 0;
+    const runtime = createClaudeRuntime({
+      now: () => clock,
+      fetch: () => {
+        asked += 1;
+
+        return Promise.resolve(answers.shift() ?? Response.json({}));
+      },
+    });
+    const read = () => runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home });
+    const first = {
+      fiveHour: { usedPercent: 19 },
+      checkedAt: "2026-10-19T15:00:00.000Z",
+    };
+
+    expect(await read()).toEqual(first);
+
+    clock += 4 * 60_000;
+    expect(await read()).toEqual(first);
+    expect(asked).toBe(1);
+
+    clock += 2 * 60_000;
+    expect(await read()).toEqual(first);
+    expect(asked).toBe(2);
+
+    // Claude asked for ten minutes' quiet; nine later it is still not asked.
+    clock += 9 * 60_000;
+    expect(await read()).toEqual(first);
+    expect(asked).toBe(2);
+  });
+
+  it("refuses rather than guesses when Claude limits the reads before any reading", async () => {
+    const home = mkdtempSync(join(tmpdir(), "noctis-claude-home-"));
+    writeFileSync(
+      join(home, ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-test" } }),
+    );
+    const runtime = createClaudeRuntime({
+      fetch: () =>
+        Promise.resolve(new Response("{}", { status: 429, headers: { "Retry-After": "289" } })),
+    });
+
+    await expect(runtime.readLimits?.("C:\\work", { CLAUDE_CONFIG_DIR: home })).rejects.toThrow(
+      /again in 5 min/,
     );
   });
 

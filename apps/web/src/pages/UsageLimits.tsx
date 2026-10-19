@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { UsageLimitsView } from "./usage-limits-view.js";
-import { UsageLimitsSchema, resetText, windowSeverity } from "./usage-limits-view.js";
+import { UsageLimitsSchema, resetText, staleText, windowSeverity } from "./usage-limits-view.js";
 
 /** Each read is a job on the PC, so not often; the countdowns tick on Presence's clock. */
 const REFRESH_MS = 5 * 60_000;
@@ -150,18 +150,22 @@ export function UsageLimits({
     >
       {limits.map((limit) => {
         const name = NAMES[limit.providerId] ?? limit.providerId;
+        const stale = limit.problem === undefined ? staleText(limit.checkedAt, now) : undefined;
 
         return (
           <div key={limit.providerId} style={{ display: "grid", gap: 4 }}>
-            <span
-              style={{
-                fontSize: 10,
-                letterSpacing: "0.14em",
-                color: typography.color.primary,
-                opacity: 0.85,
-              }}
-            >
-              {name.toUpperCase()}
+            <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.14em",
+                  color: typography.color.primary,
+                  opacity: 0.85,
+                }}
+              >
+                {name.toUpperCase()}
+              </span>
+              {stale !== undefined && <span style={{ fontSize: 10, opacity: 0.7 }}>{stale}</span>}
             </span>
             {limit.problem !== undefined ||
             (limit.fiveHour === undefined && limit.weekly === undefined) ? (

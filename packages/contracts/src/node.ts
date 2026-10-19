@@ -377,7 +377,12 @@ export const UsageWindowSchema = z
 
 /** Either window is absent when the provider does not report it for this plan. */
 export const UsageLimitsEvidenceSchema = z
-  .object({ fiveHour: UsageWindowSchema.optional(), weekly: UsageWindowSchema.optional() })
+  .object({
+    fiveHour: UsageWindowSchema.optional(),
+    weekly: UsageWindowSchema.optional(),
+    /** When the provider was asked, for a reading kept because it may not be asked again yet. */
+    checkedAt: UtcTimestampSchema.optional(),
+  })
   .strict();
 
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;

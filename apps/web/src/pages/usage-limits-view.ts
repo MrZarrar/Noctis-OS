@@ -9,6 +9,7 @@ export const UsageLimitsSchema = z.object({
       hostId: z.string().optional(),
       fiveHour: UsageWindowSchema.optional(),
       weekly: UsageWindowSchema.optional(),
+      checkedAt: z.iso.datetime({ offset: true }).optional(),
       problem: z.string().optional(),
     }),
   ),
@@ -46,6 +47,23 @@ export function resetText(resetsAt: string | undefined, now: Date): string {
   return minutes < 60
     ? `${String(minutes)}m`
     : `${String(Math.floor(minutes / 60))}h ${String(minutes % 60)}m`;
+}
+
+const STALE_MS = 10 * 60_000;
+
+const CLOCK = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/** A reading the PC kept because the provider may not be asked again yet. */
+export function staleText(checkedAt: string | undefined, now: Date): string | undefined {
+  if (checkedAt === undefined || now.getTime() - Date.parse(checkedAt) <= STALE_MS) {
+    return undefined;
+  }
+
+  return `as of ${CLOCK.format(new Date(checkedAt))}`;
 }
 
 export function windowSeverity(usedPercent: number): "normal" | "warning" | "error" {

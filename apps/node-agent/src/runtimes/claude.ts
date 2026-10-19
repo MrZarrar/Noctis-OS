@@ -115,6 +115,8 @@ export interface ClaudeRuntimeOptions {
   idleMs?: number;
   /** Tests answer the limits request without a network. */
   fetch?: typeof fetch;
+  /** Tests move the clock the limits reads are spaced by. */
+  now?: () => number;
 }
 
 /** On Windows the CLI offers PowerShell where it would offer Bash; both take `command`. */
@@ -287,6 +289,18 @@ function fields(input: unknown): ToolInput {
  */
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_USAGE_TIMEOUT_MS = 15_000;
+/**
+ * Claude Code reads the same endpoint for its own `/usage`, and the endpoint
+ * answers 429 with about five minutes' Retry-After when asked more often.
+ */
+const CLAUDE_USAGE_EVERY_MS = 5 * 60_000;
+
+/** Claude answered 429: it wants this long before it is asked again. */
+class ClaudeAskedForQuiet extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("Claude asked for quiet");
+  }
+}
 
 const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z.object({ accessToken: z.string().min(1) }),
@@ -339,6 +353,14 @@ async function readClaudeLimits(
     headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
     signal: AbortSignal.timeout(CLAUDE_USAGE_TIMEOUT_MS),
   });
+
+  if (response.status === 429) {
+    const seconds = Number(response.headers.get("retry-after"));
+
+    throw new ClaudeAskedForQuiet(
+      Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : CLAUDE_USAGE_EVERY_MS,
+    );
+  }
 
   if (response.status === 401 || response.status === 403) {
     throw new AdapterRefused("Claude's sign-in has lapsed: open Claude Code once to refresh it");
@@ -1230,6 +1252,10 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     });
   }
 
+  let lastLimits: UsageLimits | undefined;
+  let lastLimitsAt = 0;
+  let quietUntil = 0;
+
   return {
     providerId: "claude",
     probe: (): Promise<RuntimeProbe> => probeClaudeInstalled(options.env ?? process.env),
@@ -1258,8 +1284,47 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         await (options.getSessionMessages ?? sdkGetSessionMessages)(sessionRef, { dir: cwd }),
       );
     },
-    readLimits: (_cwd: string, env: NodeJS.ProcessEnv) =>
-      readClaudeLimits(env, options.fetch ?? fetch),
+    /**
+     * Claude's last real reading stands in while it may not be asked again,
+     * marked with when it was taken. Nothing is ever filled in between.
+     */
+    async readLimits(_cwd: string, env: NodeJS.ProcessEnv): Promise<UsageLimits> {
+      const now = (options.now ?? Date.now)();
+
+      if (lastLimits !== undefined && now - lastLimitsAt < CLAUDE_USAGE_EVERY_MS) {
+        return lastLimits;
+      }
+
+      try {
+        if (now < quietUntil) {
+          throw new ClaudeAskedForQuiet(quietUntil - now);
+        }
+
+        lastLimits = {
+          ...(await readClaudeLimits(env, options.fetch ?? fetch)),
+          checkedAt: new Date(now).toISOString(),
+        };
+        lastLimitsAt = now;
+
+        return lastLimits;
+      } catch (error) {
+        if (!(error instanceof ClaudeAskedForQuiet)) {
+          throw error;
+        }
+
+        quietUntil = Math.max(quietUntil, now + error.retryAfterMs);
+
+        if (lastLimits !== undefined) {
+          return lastLimits;
+        }
+
+        throw new AdapterRefused(
+          `Claude is limiting how often its usage is read: again in ${String(
+            Math.ceil((quietUntil - now) / 60_000),
+          )} min`,
+        );
+      }
+    },
     turn(input: RuntimeTurnInput, sink: RuntimeSink): Promise<RuntimeTurnEvidence> {
       const { payload, roots, signal } = input;
 
