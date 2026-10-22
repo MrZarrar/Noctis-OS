@@ -131,8 +131,8 @@ describe("DemoTransport", () => {
     await advance(10_000);
 
     expect(early).toBeGreaterThan(0);
-    expect(early).toBeLessThan(7);
-    expect(await count()).toBe(7);
+    expect(early).toBeLessThan(10);
+    expect(await count()).toBe(10);
   });
 
   it("runs the demo task with two delegated agents, asks, and opens Hardware once approved", async () => {

@@ -7,6 +7,7 @@ import {
   type Viewport,
   type WindowRect,
 } from "./arrange.js";
+import { larpEnabled } from "../larp/mode.js";
 
 export interface FloatingPanel {
   id: string;
@@ -48,10 +49,10 @@ const keyOf = (scope: string, id: string): string => JSON.stringify([scope, id])
 const byOpening = (a: FloatingEntry, b: FloatingEntry): number =>
   a.openedAt - b.openedAt || keyOf(a.scope, a.id).localeCompare(keyOf(b.scope, b.id));
 
-function tuckOldest(entries: readonly FloatingEntry[]): void {
+function tuckOldest(entries: readonly FloatingEntry[], maxOpen: number): void {
   const open = entries.filter((entry) => !entry.pinned && !entry.tucked);
   const untouched = open.filter((entry) => !entry.touched).sort(byOpening);
-  for (const entry of untouched.slice(0, Math.max(0, open.length - 4))) entry.tucked = true;
+  for (const entry of untouched.slice(0, Math.max(0, open.length - maxOpen))) entry.tucked = true;
 }
 
 export function floatingSlots(
@@ -86,7 +87,11 @@ export class FloatingPanels {
   private readonly appliedWindows = new Map<string, string | undefined>();
   private entries: readonly FloatingEntry[] = [];
 
-  constructor(private readonly storage?: () => BrowserStorage) {}
+  /** `maxOpen`: how many unpinned windows stay open before the oldest is tucked away. */
+  constructor(
+    private readonly storage?: () => BrowserStorage,
+    private readonly maxOpen = 4,
+  ) {}
 
   snapshot = (): readonly FloatingEntry[] => this.entries;
   subscribe = (listener: () => void): (() => void) => {
@@ -133,7 +138,7 @@ export class FloatingPanels {
     )
       return false;
     const open = this.entries.filter((value) => value.rect !== undefined && !value.pinned);
-    if (open.length >= 4 && open.every((value) => value.touched)) return false;
+    if (open.length >= this.maxOpen && open.every((value) => value.touched)) return false;
     entry.openedAt = Math.max(Date.now(), ...this.entries.map((value) => value.openedAt + 1));
     entry.tucked = false;
     entry.touched = false;
@@ -183,9 +188,9 @@ export class FloatingPanels {
       this.saved.set(group.scope, saved);
     }
     const candidates = next.filter((entry) => available.has(keyOf(entry.scope, entry.id)));
-    tuckOldest(candidates);
+    tuckOldest(candidates, this.maxOpen);
     const protectedOpen = candidates.filter((entry) => !entry.pinned && !entry.tucked);
-    if (protectedOpen.length > 4) {
+    if (protectedOpen.length > this.maxOpen) {
       // An unpinned or returning window waits rather than displacing one already in use.
       protectedOpen.sort((a, b) => {
         const admitted = (entry: FloatingEntry): boolean =>
@@ -198,7 +203,7 @@ export class FloatingPanels {
           );
         return Number(admitted(b)) - Number(admitted(a)) || byOpening(a, b);
       });
-      protectedOpen.slice(4).forEach((entry) => {
+      protectedOpen.slice(this.maxOpen).forEach((entry) => {
         entry.tucked = true;
       });
     }
@@ -268,4 +273,5 @@ export class FloatingPanels {
   }
 }
 
-export const floatingPanels = new FloatingPanels(() => window.localStorage);
+/** LARP mode lets the panel storm flood the screen rather than stopping at four. */
+export const floatingPanels = new FloatingPanels(() => window.localStorage, larpEnabled() ? 12 : 4);

@@ -15,7 +15,7 @@
     "panels": {
       "match": ["show me everything", "bring it all up", "open everything", "status report"],
       "replies": ["Bringing everything up."],
-      "intervalMs": 700,
+      "intervalMs": 500,
       "panels": [
         { "kind": "conversation", "threadTitle": "Candle shop landing page" },
         { "kind": "page", "page": "Nodes" },
@@ -23,6 +23,9 @@
         { "kind": "page", "page": "Missions" },
         { "kind": "page", "page": "Files" },
         { "kind": "page", "page": "Health" },
+        { "kind": "page", "page": "Reminders" },
+        { "kind": "page", "page": "Approvals" },
+        { "kind": "page", "page": "Notes" },
         { "kind": "hardware" }
       ]
     },

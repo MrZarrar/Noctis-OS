@@ -74,6 +74,14 @@ describe("browser floating panels", () => {
       updated: true,
     });
   });
+  it("keeps every panel open when the store allows more windows, as LARP mode's storm does", () => {
+    const store = new FloatingPanels(undefined, 12);
+    store.sync("owner", group([7, 3, 1, 6, 2, 5, 4].map((id) => panel(String(id)))));
+    expect(visible(store).sort()).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+    const rects = store.snapshot().flatMap(({ rect }) => (rect === undefined ? [] : [rect]));
+    expect(new Set(rects.map(({ x, y }) => `${String(x)},${String(y)}`)).size).toBe(7);
+  });
+
   it("tucks the oldest openings after four, regardless of plan order", () => {
     const store = new FloatingPanels();
     store.sync("owner", group([7, 3, 1, 6, 2, 5, 4].map((id) => panel(String(id)))));
