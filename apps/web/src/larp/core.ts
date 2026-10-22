@@ -36,7 +36,7 @@ type FixtureTurn = Omit<Turn, "threadId" | "identityId" | "model"> & { model: st
 
 export interface LarpCoreOptions {
   /** Shows an OS notification; the browser wires this to the service worker. */
-  notify?: (title: string, body: string, url: string) => void;
+  notify?: (title: string, body: string, url: string, tag: string) => void;
   /** `approval` starts with the demo task already waiting on the owner (a tapped notification). */
   seed?: "approval";
 }
@@ -46,6 +46,8 @@ export interface LarpCore {
   subscribe: (options: SubscribeOptions) => () => void;
   /** The phone shot: the demo approval, fast-forwarded, raised after a delay. */
   raiseApprovalIn: (ms: number) => void;
+  /** The lock-screen shot: the wake-up banner, alone, after a delay. Touches no state. */
+  raiseBannerIn: (ms: number) => void;
 }
 
 const HOME = { nodeId: LARP_IDS.homeNode, hostId: "Home PC" } as const;
@@ -511,7 +513,14 @@ export function createLarpCore(options: LarpCoreOptions = {}): LarpCore {
       outcome: approval.outcome,
       ...(turn.jobId === undefined ? {} : { nodeJobId: turn.jobId }),
     });
-    if (!quiet) options.notify?.(spec.notificationTitle, spec.notificationBody, "/?larp=approval");
+    if (!quiet) {
+      options.notify?.(
+        spec.notificationTitle,
+        spec.notificationBody,
+        "/?larp=approval",
+        "larp-approval",
+      );
+    }
   }
 
   function fastForwardDemo(notify: boolean): void {
@@ -523,7 +532,12 @@ export function createLarpCore(options: LarpCoreOptions = {}): LarpCore {
     const pending = approvals.at(-1);
     if (notify && pending !== undefined) {
       const spec = script.demoTask.approval;
-      options.notify?.(spec.notificationTitle, spec.notificationBody, "/?larp=approval");
+      options.notify?.(
+        spec.notificationTitle,
+        spec.notificationBody,
+        "/?larp=approval",
+        "larp-approval",
+      );
     }
   }
 
@@ -912,5 +926,10 @@ export function createLarpCore(options: LarpCoreOptions = {}): LarpCore {
       return () => listeners.delete(subscriber);
     },
     raiseApprovalIn: (ms) => later(ms, () => fastForwardDemo(true)),
+    raiseBannerIn: (ms) =>
+      later(ms, () => {
+        const banner = script.wakeBanner;
+        options.notify?.(banner.title, banner.body, banner.url, "larp-wake");
+      }),
   };
 }

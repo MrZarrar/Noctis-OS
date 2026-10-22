@@ -29,13 +29,16 @@ export class DemoTransport implements CoreTransport {
   readonly #areas: readonly LarpArea[];
   readonly #latencyMs: number | undefined;
   /** Controls the Settings page offers while filming. */
-  readonly larp: { raiseApprovalIn: (ms: number) => void };
+  readonly larp: { raiseApprovalIn: (ms: number) => void; raiseBannerIn: (ms: number) => void };
 
   constructor(options: DemoTransportOptions = {}) {
     this.#core = createLarpCore(options);
     this.#areas = options.areas ?? [];
     this.#latencyMs = options.latencyMs;
-    this.larp = { raiseApprovalIn: this.#core.raiseApprovalIn };
+    this.larp = {
+      raiseApprovalIn: this.#core.raiseApprovalIn,
+      raiseBannerIn: this.#core.raiseBannerIn,
+    };
   }
 
   request(method: CoreMethod, path: string, body?: unknown): Promise<CoreResponse> {

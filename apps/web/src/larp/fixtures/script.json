@@ -1,6 +1,7 @@
 {
   "_readme": "LARP mode's scripted behaviour. Each 'match' list holds phrases; a message containing any of them (any case) runs that script. Scripts are tried top to bottom: wake, benchmark, panels, demoTask, then the identity's fallback lines. Times are milliseconds. A line list cycles, one line per ask.",
   "typing": { "charsPerSecond": 110, "thinkMs": 1400, "settleMs": 500 },
+  "wakeBanner": { "title": "Wake up, daddy's home", "body": "", "url": "/?screen=Presence" },
   "vesper": {
     "wake": {
       "match": ["wake up"],

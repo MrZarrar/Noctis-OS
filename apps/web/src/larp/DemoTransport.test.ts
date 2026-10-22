@@ -180,6 +180,7 @@ describe("DemoTransport", () => {
       "Vesper needs your approval",
       "Restart the node agent on Home PC to load the Hardware panel?",
       "/?larp=approval",
+      "larp-approval",
     );
     const approvals = (await transport.request("GET", "/approvals")).body as {
       approvals: Array<{ consequenceSummary: string; confirmedAt?: string }>;
@@ -191,6 +192,28 @@ describe("DemoTransport", () => {
           approval.confirmedAt === undefined,
       ),
     ).toBe(true);
+  });
+
+  it("sends the wake-up banner after the delay, on its own tag, opening Presence", async () => {
+    const fetch = vi.fn(() => Promise.reject(new Error("network")));
+    vi.stubGlobal("fetch", fetch);
+    const notify = vi.fn();
+    const { transport, events } = setup({ notify });
+
+    transport.larp.raiseBannerIn(10_000);
+    await advance(9_900);
+    expect(notify).not.toHaveBeenCalled();
+    await advance(200);
+
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Wake up, daddy's home",
+      "",
+      "/?screen=Presence",
+      "larp-wake",
+    );
+    expect(events).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it("asks for DESTROY before a destructive approval goes through", async () => {

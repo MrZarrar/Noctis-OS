@@ -8,7 +8,7 @@ import { larpEnabled, setLarpEnabled } from "./mode.js";
 
 /** What `DemoTransport` offers the filming controls, without importing its fixtures here. */
 interface LarpControls {
-  larp: { raiseApprovalIn: (ms: number) => void };
+  larp: { raiseApprovalIn: (ms: number) => void; raiseBannerIn: (ms: number) => void };
 }
 
 const hasControls = (
@@ -23,6 +23,7 @@ export function LarpSettings({ transport }: { transport: CoreTransport | undefin
   const on = larpEnabled();
   const [busy, setBusy] = useState(hardwareBusy);
   const [queued, setQueued] = useState(false);
+  const [bannerQueued, setBannerQueued] = useState(false);
 
   const toggle = (): void => {
     setLarpEnabled(!on);
@@ -70,6 +71,19 @@ export function LarpSettings({ transport }: { transport: CoreTransport | undefin
               style={buttonStyle}
             >
               {queued ? "Approval arrives in 10 s" : "Send the demo approval in 10 s"}
+            </button>
+            <button
+              type="button"
+              disabled={bannerQueued}
+              onClick={() => {
+                transport.larp.raiseBannerIn(10_000);
+                setBannerQueued(true);
+                // Ready again once it has fired, for the next take.
+                setTimeout(() => setBannerQueued(false), 10_000);
+              }}
+              style={buttonStyle}
+            >
+              {bannerQueued ? "Banner arrives in 10 s" : "Send the wake-up banner in 10 s"}
             </button>
             <button
               type="button"
