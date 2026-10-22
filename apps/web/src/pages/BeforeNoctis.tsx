@@ -10,7 +10,7 @@ import { SectionHeading } from "../layout/Page.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { agentName } from "./conversations-view.js";
 
-const HistorySchema = z.object({ exchanges: z.array(SessionExchangeSchema) }).strict();
+export const HistorySchema = z.object({ exchanges: z.array(SessionExchangeSchema) }).strict();
 
 const bubble = {
   maxWidth: `min(${String(typography.measurePx)}px, 88%)`,

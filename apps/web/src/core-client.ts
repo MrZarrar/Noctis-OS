@@ -16,11 +16,25 @@ export function coreBaseUrl(): string {
   return (import.meta.env.VITE_CORE_URL as string | undefined) ?? window.location.origin;
 }
 
+/**
+ * LARP mode's transport, installed at boot when the toggle is on (see
+ * `larp/install.ts`). While it is set, nothing below talks to the core.
+ */
+let larp: CoreTransport | undefined;
+
+export function installLarpTransport(transport: CoreTransport | undefined): void {
+  larp = transport;
+}
+
 /** True when there is no Tauri bridge and no build-time token: this page must log in. */
 export function needsLogin(): boolean {
   const token = import.meta.env.VITE_CORE_TOKEN as string | undefined;
 
-  return tauriTransportFromGlobal() === undefined && (token === undefined || token === "");
+  return (
+    larp === undefined &&
+    tauriTransportFromGlobal() === undefined &&
+    (token === undefined || token === "")
+  );
 }
 
 /**
@@ -38,6 +52,10 @@ export function needsLogin(): boolean {
  * tokenless page says before it has logged in. Every caller already handles it.
  */
 export function resolveCoreTransport(csrf?: string): CoreTransport | undefined {
+  if (larp !== undefined) {
+    return larp;
+  }
+
   const tauri = tauriTransportFromGlobal();
 
   if (tauri !== undefined) {

@@ -13,7 +13,7 @@ import { SettingRow } from "./CoreSettings.js";
  * The geofence is set in the phone's Shortcuts app; Noctis only hears the name.
  */
 
-const PlacesViewSchema = z.object({
+export const PlacesViewSchema = z.object({
   events: z.array(z.object({ place: z.string(), transition: z.string(), at: z.string() })),
   visits: z.array(
     z.object({

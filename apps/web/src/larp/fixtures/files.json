@@ -1,0 +1,118 @@
+{
+  "roots": [
+    {
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "grantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+      "files": [
+        {
+          "path": "README.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Projects\n\nSmall builds and experiments from Home PC.\n\n- Lantern: hardware monitoring and window restore work.\n- Paperbird: pocket planners and a small launch experiment.\n\nOpen the folders for source, notes and design frames.\n"
+        },
+        {
+          "path": "Lantern/README.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Lantern\n\nA compact hardware monitoring panel for Home PC and Work PC.\n\n## Next pass\n\n- Keep the labels stable as readings move.\n- Review keyboard focus.\n- Add the restore regression to the release checklist.\n\n![Hardware panel](design/hardware-panel.png)\n"
+        },
+        {
+          "path": "Lantern/src/metrics.ts",
+          "contentType": "text/plain",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "export interface Reading { cpu: number; memory: number; gpu: number; }\n\nexport function clampReading(value: number): number {\n  return Math.max(0, Math.min(100, value));\n}\n"
+        },
+        {
+          "path": "Lantern/src/restore.ts",
+          "contentType": "text/plain",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "export function restorePanels(regions: string[], panels: { region: string }[]) {\n  const ready = new Set(regions);\n  return panels.filter((panel) => ready.has(panel.region));\n}\n"
+        },
+        {
+          "path": "Lantern/tests/restore.test.ts",
+          "contentType": "text/plain",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "import { expect, test } from 'vitest';\nimport { restorePanels } from '../src/restore';\n\ntest('waits for the target region', () => {\n  expect(restorePanels([], [{ region: 'side' }])).toEqual([]);\n});\n"
+        },
+        {
+          "path": "Lantern/docs/release-checklist.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Release checklist\n\n- [x] Reproduce the restore bug\n- [x] Add the focused regression\n- [x] Check file previews\n- [ ] Review keyboard navigation\n- [ ] Capture the finished hardware panel\n"
+        },
+        {
+          "path": "Lantern/design/hardware-panel.png",
+          "contentType": "image/svg+xml",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"800\" viewBox=\"0 0 1200 800\"><rect width=\"1200\" height=\"800\" fill=\"#080f1a\"/><rect x=\"64\" y=\"64\" width=\"1072\" height=\"672\" rx=\"28\" fill=\"#111e2d\" stroke=\"#314558\"/><g font-family=\"sans-serif\" fill=\"#edf4fc\"><text x=\"112\" y=\"150\" font-size=\"42\">Lantern hardware panel</text><text x=\"112\" y=\"200\" font-size=\"22\" fill=\"#a8bacb\">Home PC and Work PC</text><text x=\"112\" y=\"300\" font-size=\"24\">CPU</text><text x=\"112\" y=\"420\" font-size=\"24\">Memory</text><text x=\"112\" y=\"540\" font-size=\"24\">GPU</text></g><g fill=\"#21354a\"><rect x=\"270\" y=\"260\" width=\"800\" height=\"56\" rx=\"10\"/><rect x=\"270\" y=\"380\" width=\"800\" height=\"56\" rx=\"10\"/><rect x=\"270\" y=\"500\" width=\"800\" height=\"56\" rx=\"10\"/></g><g fill=\"#4ea5b8\"><rect x=\"270\" y=\"260\" width=\"460\" height=\"56\" rx=\"10\"/><rect x=\"270\" y=\"380\" width=\"590\" height=\"56\" rx=\"10\"/><rect x=\"270\" y=\"500\" width=\"320\" height=\"56\" rx=\"10\"/></g><path d=\"M112 662 L200 640 280 648 360 610 440 620 520 590 600 618 680 580 760 600 850 560 940 590 1070 550\" fill=\"none\" stroke=\"#7dc7d8\" stroke-width=\"4\"/></svg>"
+        },
+        {
+          "path": "Lantern/design/queue-inspector.png",
+          "contentType": "image/svg+xml",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"800\"><rect width=\"1200\" height=\"800\" fill=\"#0c1420\"/><g font-family=\"sans-serif\"><text x=\"80\" y=\"120\" font-size=\"44\" fill=\"#eef5ff\">Queue inspector</text><text x=\"80\" y=\"170\" font-size=\"24\" fill=\"#98abc4\">Work in progress and recent results</text><g fill=\"#17283d\" stroke=\"#304761\"><rect x=\"80\" y=\"230\" width=\"420\" height=\"450\" rx=\"20\"/><rect x=\"530\" y=\"230\" width=\"590\" height=\"450\" rx=\"20\"/></g><g fill=\"#b8d4f4\" font-size=\"26\"><text x=\"112\" y=\"300\">Restore regression</text><text x=\"112\" y=\"390\">Hardware labels</text><text x=\"112\" y=\"480\">File previews</text><text x=\"565\" y=\"300\">Review complete</text></g><path d=\"M565 365H1050M565 405H970M565 445H1020\" stroke=\"#3f6387\" stroke-width=\"12\"/><rect x=\"565\" y=\"550\" width=\"280\" height=\"56\" rx=\"12\" fill=\"#397b9c\"/><text x=\"595\" y=\"587\" fill=\"white\" font-size=\"24\">Open task thread</text></g></svg>"
+        },
+        {
+          "path": "Paperbird/launch.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-21T14:30:00Z",
+          "content": "# Paperbird launch\n\nStart with one pocket planner and a refill bundle. Use the cream cover for the first photograph. Compare packaging costs before ordering the trial batch.\n"
+        },
+        {
+          "path": "Paperbird/pricing.csv",
+          "contentType": "text/csv",
+          "modifiedAt": "2026-10-21T14:30:00Z",
+          "content": "product,materials,packaging,trial_price\npocket_planner,3.10,0.85,12.00\nplanner_and_refill,4.20,1.10,17.00\n"
+        },
+        {
+          "path": "Paperbird/cover-study.png",
+          "contentType": "image/svg+xml",
+          "modifiedAt": "2026-10-21T14:30:00Z",
+          "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"800\"><rect width=\"1200\" height=\"800\" fill=\"#e8dfd0\"/><ellipse cx=\"620\" cy=\"670\" rx=\"400\" ry=\"45\" fill=\"#b7a58b\" opacity=\".3\"/><g transform=\"translate(330 150) rotate(-8 180 240)\"><rect x=\"12\" y=\"14\" width=\"360\" height=\"480\" rx=\"14\" fill=\"#9c876a\"/><rect width=\"360\" height=\"480\" rx=\"14\" fill=\"#f8f1df\"/><path d=\"M28 0V480\" stroke=\"#d7c9ac\" stroke-width=\"3\"/><text x=\"65\" y=\"180\" font-family=\"serif\" font-size=\"44\" fill=\"#4d5046\">Paperbird</text><text x=\"68\" y=\"224\" font-family=\"sans-serif\" font-size=\"18\" fill=\"#7e7e6e\">Small daily wins.</text><path d=\"M85 320 Q180 250 270 320 Q170 310 145 370 Q145 325 85 320\" fill=\"#97a38b\"/></g><g transform=\"translate(770 245) rotate(9)\"><rect width=\"200\" height=\"330\" rx=\"8\" fill=\"#c4ad8c\"/><text x=\"32\" y=\"170\" font-family=\"serif\" font-size=\"26\" fill=\"#514938\">Refill notes</text></g></svg>"
+        }
+      ]
+    },
+    {
+      "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "grantId": "01a05c32-6e20-7df3-8f8a-d7b7bd466e3e",
+      "files": [
+        {
+          "path": "README.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Documents\n\nResearch notes, project handoffs and launch planning from Work PC.\n\nStart with the research digest or the Paperbird launch brief.\n"
+        },
+        {
+          "path": "Research/offline-queues.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Offline queues\n\nKeep pending work visible during a disconnect. An acknowledgement settles the item. Repeated submissions keep the same idempotency key.\n\n## Experiment\n\nDisconnect briefly while a result arrives and compare recovery behaviour.\n"
+        },
+        {
+          "path": "Research/weekly-digest.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Weekly research digest\n\n## Useful findings\n\nFocused tests made the restore bug easier to reproduce. File previews should retain their last accepted content across panel moves.\n\n## Next experiment\n\nCompare the queue inspector with its detail pane open by default.\n"
+        },
+        {
+          "path": "Planning/paperbird-brief.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-21T14:30:00Z",
+          "content": "# Paperbird launch brief\n\nA pocket planner for small daily wins.\n\n## First batch\n\nUse recycled packaging and a cream cover. Compare the single planner with a planner and refill bundle. Photograph the samples in daylight.\n"
+        },
+        {
+          "path": "Planning/launch-board.png",
+          "contentType": "image/svg+xml",
+          "modifiedAt": "2026-10-21T14:30:00Z",
+          "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"800\"><rect width=\"1200\" height=\"800\" fill=\"#192626\"/><g font-family=\"sans-serif\"><text x=\"80\" y=\"120\" font-size=\"44\" fill=\"#e8e4d8\">Paperbird launch board</text><text x=\"80\" y=\"170\" font-size=\"24\" fill=\"#a3b8aa\">Samples, pricing and the first batch</text><rect x=\"80\" y=\"230\" width=\"600\" height=\"450\" rx=\"20\" fill=\"#28403a\"/><rect x=\"720\" y=\"230\" width=\"400\" height=\"205\" rx=\"20\" fill=\"#b79d72\"/><rect x=\"720\" y=\"465\" width=\"400\" height=\"215\" rx=\"20\" fill=\"#e8dfc8\"/><g font-size=\"30\" fill=\"#e8e4d8\"><text x=\"120\" y=\"300\">Launch checklist</text><text x=\"120\" y=\"385\" font-size=\"24\">Cover study complete</text><text x=\"120\" y=\"455\" font-size=\"24\">Pricing experiment ready</text><text x=\"120\" y=\"525\" font-size=\"24\">Packaging sample to choose</text></g><g fill=\"#3a3c30\" font-size=\"28\"><text x=\"755\" y=\"310\">Cream cover</text><text x=\"755\" y=\"365\" font-size=\"20\">Pocket planner</text><text x=\"755\" y=\"545\">Recycled card</text><text x=\"755\" y=\"600\" font-size=\"20\">Trial packaging</text></g></g></svg>"
+        },
+        {
+          "path": "Handoffs/window-restore.md",
+          "contentType": "text/markdown",
+          "modifiedAt": "2026-10-22T10:45:00Z",
+          "content": "# Window restore handoff\n\nThe regions must exist before their saved panels are attached.\n\nThe regression covers an empty secondary screen. Review focus after closing the viewer and returning to the file list.\n"
+        }
+      ]
+    }
+  ]
+}

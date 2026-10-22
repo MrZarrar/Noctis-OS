@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MAX_TEXT_PREVIEW_BYTES } from "@noctis/domain";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
-const PreviewSchema = z
+export const PreviewSchema = z
   .object({ text: z.string().max(MAX_TEXT_PREVIEW_BYTES), truncated: z.boolean() })
   .strict();
 export async function readFileText(

@@ -26,7 +26,7 @@ import {
  */
 
 const ListSchema = z.object({ conversations: z.array(ConversationSummarySchema) }).strict();
-const SessionsSchema = z.object({ sessions: z.array(ExternalSessionSchema) }).strict();
+export const SessionsSchema = z.object({ sessions: z.array(ExternalSessionSchema) }).strict();
 const CreatedSchema = z.object({ id: z.string() }).loose();
 
 type Summary = z.infer<typeof ListSchema>["conversations"][number];

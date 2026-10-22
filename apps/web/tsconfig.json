@@ -8,6 +8,6 @@
     "lib": ["ES2024", "DOM"],
     "types": ["react", "react-dom"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.json"],
   "references": [{ "path": "../../packages/contracts" }, { "path": "../../packages/ui" }]
 }

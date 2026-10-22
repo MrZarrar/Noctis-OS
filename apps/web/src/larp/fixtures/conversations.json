@@ -1,0 +1,401 @@
+{
+  "_readme": "LARP mode's past conversations and approvals. Dates are written around 2026-10-22 and move so that day is today. Threads need UUIDv7 ids; message and turn ids are free text.",
+  "models": {
+    "claude": { "providerId": "claude", "model": "claude-opus-5-5", "label": "Opus 5.5" },
+    "codex": { "providerId": "codex", "model": "gpt-5.6-sol", "label": "GPT-5.6 Sol" },
+    "hermes": { "providerId": "hermes", "model": "hermes-agent", "label": "Hermes" },
+    "local": { "providerId": "local", "model": "qwen3.5-9b", "label": "Qwen3.5 9B" }
+  },
+  "threads": [
+    {
+      "thread": {
+        "id": "01a13eca-2e80-7c32-acb3-06a1d4bad948",
+        "identityId": "vesper",
+        "kind": "named",
+        "title": "Candle shop landing page",
+        "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+        "rootGrantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+        "providerId": "claude",
+        "revision": 6,
+        "createdAt": "2026-10-20T18:02:11.000Z",
+        "updatedAt": "2026-10-20T18:41:37.000Z"
+      },
+      "messages": [
+        {
+          "id": "m-candle-1",
+          "role": "user",
+          "body": "Build a one-page site for the candle shop. Hero, three products, a signup form. Keep it fast.",
+          "createdAt": "2026-10-20T18:02:11.000Z"
+        },
+        {
+          "id": "m-candle-2",
+          "role": "identity",
+          "body": "Done. The page is in `candle-shop/index.html` on Home PC.\n\n- Hero with the autumn range photo and one call to action\n- Three product cards (Cedar, Fig, Sea Salt) with prices\n- Signup form posting to the mailing list endpoint, validated in the browser\n\nLighthouse scores 99 for performance and 100 for accessibility. Want a dark variant for the evening drop?",
+          "createdAt": "2026-10-20T18:24:50.000Z"
+        },
+        {
+          "id": "m-candle-3",
+          "role": "user",
+          "body": "Yes, and make the Fig card the featured one.",
+          "createdAt": "2026-10-20T18:30:02.000Z"
+        },
+        {
+          "id": "m-candle-4",
+          "role": "identity",
+          "body": "Fig is featured now, with a soft glow border, and the dark variant follows the system setting. Both versions are in the preview.",
+          "createdAt": "2026-10-20T18:41:37.000Z"
+        }
+      ],
+      "turns": [
+        {
+          "id": "t-candle-1",
+          "userMessageId": "m-candle-1",
+          "jobId": "01a13eca-c665-7633-9fb4-9c7573bf7054",
+          "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+          "model": "claude",
+          "status": "completed",
+          "replyMessageId": "m-candle-2",
+          "startedAt": "2026-10-20T18:02:12.000Z",
+          "completedAt": "2026-10-20T18:24:50.000Z",
+          "items": [
+            {
+              "itemId": "c1",
+              "kind": "command",
+              "status": "completed",
+              "command": "npm create vite@latest candle-shop -- --template vanilla-ts",
+              "exitCode": 0
+            },
+            {
+              "itemId": "c2",
+              "kind": "file_change",
+              "status": "completed",
+              "paths": [
+                "candle-shop/index.html",
+                "candle-shop/src/style.css",
+                "candle-shop/src/signup.ts"
+              ],
+              "summary": "Hero, product grid and signup form"
+            },
+            {
+              "itemId": "c3",
+              "kind": "command",
+              "status": "completed",
+              "command": "npx lighthouse http://localhost:5173 --quiet",
+              "output": "Performance 99, Accessibility 100, Best practices 100",
+              "exitCode": 0
+            },
+            {
+              "itemId": "c4",
+              "kind": "agent_message",
+              "status": "completed",
+              "text": "Done. The page is in candle-shop/index.html on Home PC."
+            }
+          ]
+        },
+        {
+          "id": "t-candle-2",
+          "userMessageId": "m-candle-3",
+          "jobId": "01a13ecb-b96d-74c5-a927-37d25de1d72b",
+          "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+          "model": "claude",
+          "status": "completed",
+          "replyMessageId": "m-candle-4",
+          "startedAt": "2026-10-20T18:30:03.000Z",
+          "completedAt": "2026-10-20T18:41:37.000Z",
+          "items": [
+            {
+              "itemId": "c5",
+              "kind": "file_change",
+              "status": "completed",
+              "paths": ["candle-shop/src/style.css", "candle-shop/index.html"],
+              "summary": "Featured Fig card and a dark variant"
+            },
+            {
+              "itemId": "c6",
+              "kind": "agent_message",
+              "status": "completed",
+              "text": "Fig is featured now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "thread": {
+        "id": "01a13eca-4ce1-7aa0-ac45-638cf035eaf9",
+        "identityId": "vesper",
+        "kind": "named",
+        "title": "E-bike battery research",
+        "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+        "providerId": "codex",
+        "revision": 3,
+        "createdAt": "2026-10-19T12:15:40.000Z",
+        "updatedAt": "2026-10-19T12:33:09.000Z"
+      },
+      "messages": [
+        {
+          "id": "m-bike-1",
+          "role": "user",
+          "body": "Compare the three e-bike batteries we shortlisted. Range, weight, cycle life, price per Wh.",
+          "createdAt": "2026-10-19T12:15:40.000Z"
+        },
+        {
+          "id": "m-bike-2",
+          "role": "identity",
+          "body": "| Pack | Capacity | Weight | Cycle life | £ per Wh |\n| --- | --- | --- | --- | --- |\n| Volta 500 | 500 Wh | 2.9 kg | 900 | £0.92 |\n| Ridgeline 625 | 625 Wh | 3.4 kg | 1,000 | £0.88 |\n| Coastal 720 | 720 Wh | 4.1 kg | 700 | £0.81 |\n\nRidgeline is the best balance: 25% more range than Volta for half a kilo, and the longest cycle life. Coastal is cheapest per Wh but loses capacity fastest. The full notes are in the Vault under reference.",
+          "createdAt": "2026-10-19T12:33:09.000Z"
+        }
+      ],
+      "turns": [
+        {
+          "id": "t-bike-1",
+          "userMessageId": "m-bike-1",
+          "jobId": "01a13ecb-0327-776b-a81f-649bef33a8dc",
+          "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+          "model": "codex",
+          "status": "completed",
+          "replyMessageId": "m-bike-2",
+          "startedAt": "2026-10-19T12:15:41.000Z",
+          "completedAt": "2026-10-19T12:33:09.000Z",
+          "items": [
+            {
+              "itemId": "b1",
+              "kind": "tool_call",
+              "status": "completed",
+              "tool": "web.search",
+              "output": "14 sources: manufacturer spec sheets, two long-term reviews, one teardown"
+            },
+            {
+              "itemId": "b2",
+              "kind": "tool_call",
+              "status": "completed",
+              "tool": "vault.recall",
+              "output": "3 notes: E-bike shortlist, Commute plan, Battery care"
+            },
+            {
+              "itemId": "b3",
+              "kind": "agent_message",
+              "status": "completed",
+              "text": "Ridgeline is the best balance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "thread": {
+        "id": "01a13eca-6b42-741f-a312-0e5ad6f20c64",
+        "identityId": "vesper",
+        "kind": "named",
+        "title": "Fix the flaky upload test",
+        "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+        "rootGrantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+        "providerId": "codex",
+        "revision": 4,
+        "createdAt": "2026-10-21T09:47:03.000Z",
+        "updatedAt": "2026-10-21T10:06:58.000Z"
+      },
+      "messages": [
+        {
+          "id": "m-bug-1",
+          "role": "user",
+          "body": "The upload test in the invoice app fails one run in five. Find out why and fix it.",
+          "createdAt": "2026-10-21T09:47:03.000Z"
+        },
+        {
+          "id": "m-bug-2",
+          "role": "identity",
+          "body": "Found it. The test awaited the upload request but not the thumbnail job it starts, so on a slow run the assertion read the old row.\n\nThe fix waits for the job's completion event instead of a fixed 200 ms sleep. 50 runs in a row pass now, and the suite is 1.8 s faster because the sleep is gone.",
+          "createdAt": "2026-10-21T10:06:58.000Z"
+        }
+      ],
+      "turns": [
+        {
+          "id": "t-bug-1",
+          "userMessageId": "m-bug-1",
+          "jobId": "01a13eca-e4c6-7976-a01d-ae9cbcb9f8a9",
+          "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+          "model": "codex",
+          "status": "completed",
+          "replyMessageId": "m-bug-2",
+          "startedAt": "2026-10-21T09:47:04.000Z",
+          "completedAt": "2026-10-21T10:06:58.000Z",
+          "items": [
+            {
+              "itemId": "u1",
+              "kind": "command",
+              "status": "completed",
+              "command": "for i in $(seq 20); do npx vitest run upload.test.ts; done",
+              "output": "16 passed, 4 failed: expected 'ready', received 'pending'",
+              "exitCode": 1
+            },
+            {
+              "itemId": "u2",
+              "kind": "file_change",
+              "status": "completed",
+              "paths": ["invoice-app/src/upload.test.ts"],
+              "summary": "Wait for thumbnail.completed instead of sleeping"
+            },
+            {
+              "itemId": "u3",
+              "kind": "command",
+              "status": "completed",
+              "command": "for i in $(seq 50); do npx vitest run upload.test.ts; done",
+              "output": "50 passed",
+              "exitCode": 0
+            },
+            { "itemId": "u4", "kind": "agent_message", "status": "completed", "text": "Found it." }
+          ]
+        }
+      ]
+    },
+    {
+      "thread": {
+        "id": "01a13eca-89a3-7317-b9e0-554f5d199b4f",
+        "identityId": "vesper",
+        "kind": "named",
+        "title": "Weekly pricing review",
+        "providerId": "claude",
+        "revision": 2,
+        "createdAt": "2026-10-22T07:30:00.000Z",
+        "updatedAt": "2026-10-22T07:36:12.000Z"
+      },
+      "messages": [
+        {
+          "id": "m-price-1",
+          "role": "user",
+          "body": "Run the weekly pricing review for the shop.",
+          "createdAt": "2026-10-22T07:30:00.000Z"
+        },
+        {
+          "id": "m-price-2",
+          "role": "identity",
+          "body": "Three changes worth making this week:\n\n1. Sea Salt sold out twice. Raise it from £18 to £20; it is still under the two nearest competitors.\n2. The gift set converts at 1.1%. Bundle a free matchbox instead of cutting the price.\n3. Shipping over £40 is free, and 62% of orders land between £34 and £39. A £35 threshold would lift basket size.\n\nI've put the reasoning in the Vault. Nothing changes on the shop until you say so.",
+          "createdAt": "2026-10-22T07:36:12.000Z"
+        }
+      ],
+      "turns": [
+        {
+          "id": "t-price-1",
+          "userMessageId": "m-price-1",
+          "jobId": "01a13ecb-2188-75d2-a580-da1640b550b0",
+          "model": "claude",
+          "status": "completed",
+          "replyMessageId": "m-price-2",
+          "startedAt": "2026-10-22T07:30:01.000Z",
+          "completedAt": "2026-10-22T07:36:12.000Z",
+          "items": [
+            {
+              "itemId": "p1",
+              "kind": "tool_call",
+              "status": "completed",
+              "tool": "shop.orders",
+              "output": "212 orders, last 7 days"
+            },
+            {
+              "itemId": "p2",
+              "kind": "agent_message",
+              "status": "completed",
+              "text": "Three changes worth making this week."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "thread": {
+        "id": "01a13eca-a804-79a5-b485-49a75aa16871",
+        "identityId": "jester",
+        "kind": "named",
+        "title": "Roast the landing page copy",
+        "providerId": "hermes",
+        "revision": 2,
+        "createdAt": "2026-10-21T21:10:00.000Z",
+        "updatedAt": "2026-10-21T21:11:30.000Z"
+      },
+      "messages": [
+        {
+          "id": "m-roast-1",
+          "role": "user",
+          "body": "Be honest. Is the candle shop headline any good?",
+          "createdAt": "2026-10-21T21:10:00.000Z"
+        },
+        {
+          "id": "m-roast-2",
+          "role": "identity",
+          "body": "\"Light up your life\" was taken by a 1977 ballad. Try \"Small batch. Slow burn.\" It says what you sell and it sounds like you mean it.",
+          "createdAt": "2026-10-21T21:11:30.000Z"
+        }
+      ],
+      "turns": [
+        {
+          "id": "t-roast-1",
+          "userMessageId": "m-roast-1",
+          "model": "hermes",
+          "status": "completed",
+          "replyMessageId": "m-roast-2",
+          "startedAt": "2026-10-21T21:10:01.000Z",
+          "completedAt": "2026-10-21T21:11:30.000Z",
+          "items": [
+            {
+              "itemId": "r1",
+              "kind": "agent_message",
+              "status": "completed",
+              "text": "Small batch. Slow burn."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "approvals": [
+    {
+      "id": "01a13ecb-3fe9-7d2f-866b-9289912e48cb",
+      "actorId": "vesper",
+      "operationClass": "publish",
+      "capability": "site.publish_preview",
+      "target": { "type": "site", "id": "candle-shop-preview", "hostId": "Home PC" },
+      "consequenceSummary": "Publish the candle shop preview to the staging link",
+      "reversibility": "reversible",
+      "outcome": "require_confirmation",
+      "policyId": "owner-approval",
+      "reasonCodes": ["publish_needs_owner"],
+      "requestedAt": "2026-10-20T18:40:10.000Z",
+      "decidedAt": "2026-10-20T18:40:10.000Z",
+      "confirmedAt": "2026-10-20T18:40:31.000Z",
+      "confirmedBy": "owner",
+      "executedAt": "2026-10-20T18:40:33.000Z"
+    },
+    {
+      "id": "01a13ecb-5e4a-713f-94ab-d28c0e2c498c",
+      "actorId": "vesper",
+      "operationClass": "message_send",
+      "capability": "mail.send",
+      "target": { "type": "mailing_list", "id": "candle-shop-subscribers" },
+      "consequenceSummary": "Email 1,240 subscribers about the Sea Salt price change",
+      "reversibility": "irreversible",
+      "outcome": "require_confirmation",
+      "policyId": "owner-approval",
+      "reasonCodes": ["message_send_needs_owner"],
+      "requestedAt": "2026-10-22T07:37:00.000Z",
+      "decidedAt": "2026-10-22T07:37:00.000Z",
+      "declinedAt": "2026-10-22T07:52:44.000Z",
+      "declinedBy": "owner"
+    },
+    {
+      "id": "01a13ecb-7cab-73c2-8f11-84457ae4f7e1",
+      "actorId": "codex",
+      "operationClass": "destructive",
+      "capability": "files.delete",
+      "target": { "type": "folder", "id": "Work PC/Documents/build-cache", "hostId": "Work PC" },
+      "consequenceSummary": "Delete 14.2 GB of old build caches on Work PC",
+      "reversibility": "irreversible",
+      "outcome": "require_typed_confirmation",
+      "confirmationPhrase": "DESTROY",
+      "policyId": "destructive-typed",
+      "reasonCodes": ["destructive_needs_typed_confirmation"],
+      "requestedAt": "2026-10-22T08:05:00.000Z",
+      "decidedAt": "2026-10-22T08:05:00.000Z"
+    }
+  ]
+}

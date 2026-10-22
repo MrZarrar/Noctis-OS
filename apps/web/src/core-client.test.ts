@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { coreBaseUrl, needsLogin, resolveCoreTransport } from "./core-client.js";
+import {
+  coreBaseUrl,
+  installLarpTransport,
+  needsLogin,
+  resolveCoreTransport,
+} from "./core-client.js";
+import { DemoTransport } from "./larp/DemoTransport.js";
 import { BrowserTransport } from "./transport/BrowserTransport.js";
 import { SessionTransport } from "./transport/SessionTransport.js";
 
@@ -11,6 +17,7 @@ function servedFrom(origin: string): void {
 }
 
 afterEach(() => {
+  installLarpTransport(undefined);
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -74,5 +81,18 @@ describe("resolveCoreTransport", () => {
     vi.stubEnv("VITE_CORE_TOKEN", TOKEN);
 
     expect(resolveCoreTransport("csrf-value")).toBeInstanceOf(BrowserTransport);
+  });
+});
+
+describe("LARP mode", () => {
+  it("answers every page from the demo transport and needs no login", () => {
+    servedFrom("https://noctis.tail.ts.net");
+    const demo = new DemoTransport({ latencyMs: 0 });
+
+    installLarpTransport(demo);
+
+    expect(needsLogin()).toBe(false);
+    expect(resolveCoreTransport()).toBe(demo);
+    expect(resolveCoreTransport("csrf-value")).toBe(demo);
   });
 });

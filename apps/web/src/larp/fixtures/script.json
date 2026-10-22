@@ -1,0 +1,210 @@
+{
+  "_readme": "LARP mode's scripted behaviour. Each 'match' list holds phrases; a message containing any of them (any case) runs that script. Scripts are tried top to bottom: wake, benchmark, panels, demoTask, then the identity's fallback lines. Times are milliseconds. A line list cycles, one line per ask.",
+  "typing": { "charsPerSecond": 110, "thinkMs": 1400, "settleMs": 500 },
+  "vesper": {
+    "wake": {
+      "match": ["wake up"],
+      "replies": ["Welcome home. Both PCs are up and the Vault is indexed."]
+    },
+    "benchmark": {
+      "match": ["benchmark", "stress test", "load test"],
+      "replies": ["Running the benchmark on both PCs now. Watch the Hardware panel."],
+      "loadMs": 45000
+    },
+    "panels": {
+      "match": ["show me everything", "bring it all up", "open everything", "status report"],
+      "replies": ["Bringing everything up."],
+      "intervalMs": 700,
+      "panels": [
+        { "kind": "conversation", "threadTitle": "Candle shop landing page" },
+        { "kind": "page", "page": "Nodes" },
+        { "kind": "page", "page": "Vault" },
+        { "kind": "page", "page": "Missions" },
+        { "kind": "page", "page": "Files" },
+        { "kind": "page", "page": "Health" },
+        { "kind": "hardware" }
+      ]
+    },
+    "fallback": [
+      "Noted. I'll keep an eye on it.",
+      "Done. It's in the Vault under today.",
+      "Both PCs are quiet. Nothing needs you right now."
+    ]
+  },
+  "jester": {
+    "takeover": {
+      "match": ["take over", "daddy's home", "daddys home"],
+      "replies": [
+        "Daddy's home? Cute.",
+        "Vesper's sweet. I'm not. I'll take it from here.",
+        "She said welcome home. I say welcome to my house.",
+        "Wake up, daddy's home. Adorable. Now sit down."
+      ]
+    },
+    "fallback": [
+      "Ask nicely and I might.",
+      "Already done. You were too slow to notice.",
+      "Vesper would have asked permission. I just did it.",
+      "Fine. But I'm keeping the credit."
+    ]
+  },
+  "demoTask": {
+    "match": ["hardware panel", "monitoring panel", "hardware monitor", "cpu and gpu panel"],
+    "node": "Home PC",
+    "approval": {
+      "summary": "Restart the node agent on Home PC to load the Hardware panel?",
+      "capability": "node.restart_agent",
+      "notificationTitle": "Vesper needs your approval",
+      "notificationBody": "Restart the node agent on Home PC to load the Hardware panel?"
+    },
+    "agents": {
+      "claude": {
+        "label": "Claude",
+        "task": "Build the Hardware panel: one card per PC with CPU, RAM, GPU and VRAM as live bars.",
+        "report": "Hardware panel built and registered. Six tests pass."
+      },
+      "codex": {
+        "label": "Codex",
+        "task": "Add a hardware sampler to the node agent that reports CPU, RAM, GPU and VRAM once a second, test first.",
+        "report": "Sampler added with four tests, red then green. Typecheck clean."
+      }
+    },
+    "steps": [
+      {
+        "at": 0,
+        "agent": "vesper",
+        "say": "On it. Routing this to Home PC. Claude takes the panel, Codex writes the sampler in the node agent, and I'll ask before anything restarts."
+      },
+      { "at": 6000, "agent": "claude", "start": true },
+      { "at": 6600, "agent": "codex", "start": true },
+      {
+        "at": 7200,
+        "agent": "claude",
+        "say": "Plan:\n\n1. Read the surface registry and the Nodes page cards.\n2. Add a `hardware` surface with one card per PC.\n3. Draw CPU, RAM, GPU and VRAM as meters using the existing motion tokens.\n4. Feed it from the node agent's sample stream."
+      },
+      {
+        "at": 8400,
+        "agent": "codex",
+        "say": "Reading the node agent's job loop and its hello payload before touching anything."
+      },
+      {
+        "at": 12500,
+        "agent": "codex",
+        "command": "rg -n \"hello\" apps/node-agent/src --type ts",
+        "output": "apps/node-agent/src/connection.ts:88:  send({ kind: \"hello\", capabilities, runtimes })\napps/node-agent/src/connection.ts:131:  // the hello is the node's first frame",
+        "exitCode": 0,
+        "durationMs": 1400
+      },
+      {
+        "at": 14500,
+        "agent": "claude",
+        "command": "rg -n \"export const REGISTRY\" apps/web/src/surfaces",
+        "output": "apps/web/src/surfaces/registry.ts:64:export const REGISTRY = {",
+        "exitCode": 0,
+        "durationMs": 1100
+      },
+      { "at": 17200, "agent": "codex", "say": "Writing the failing test for the sampler first." },
+      {
+        "at": 19500,
+        "agent": "claude",
+        "file": ["apps/web/src/surfaces/HardwarePanel.tsx"],
+        "summary": "New panel: a card per PC, four animated meters each"
+      },
+      {
+        "at": 21500,
+        "agent": "codex",
+        "file": ["apps/node-agent/src/hardware/sampler.test.ts"],
+        "summary": "Four cases: percentages, no GPU, a slow nvidia-smi, units"
+      },
+      {
+        "at": 25500,
+        "agent": "codex",
+        "command": "npx vitest run apps/node-agent/src/hardware",
+        "output": "FAIL  apps/node-agent/src/hardware/sampler.test.ts\n  x reports CPU, RAM, GPU and VRAM as percentages\n    Error: Cannot find module './sampler.js'\n Test Files  1 failed (1)\n      Tests  4 failed (4)",
+        "exitCode": 1,
+        "durationMs": 2600
+      },
+      {
+        "at": 27000,
+        "agent": "claude",
+        "say": "The meter is one component reused four times:\n\n```tsx\nfunction Meter({ label, value }: { label: string; value: number }) {\n  return (\n    <div className=\"meter\">\n      <span>{label}</span>\n      <motion.i animate={{ width: `${value}%` }} transition={spring} />\n      <b>{Math.round(value)}%</b>\n    </div>\n  );\n}\n```"
+      },
+      {
+        "at": 31500,
+        "agent": "codex",
+        "file": ["apps/node-agent/src/hardware/sampler.ts"],
+        "summary": "CPU and RAM from os, GPU and VRAM from nvidia-smi, sampled every second"
+      },
+      {
+        "at": 36500,
+        "agent": "claude",
+        "file": ["apps/web/src/surfaces/registry.ts", "apps/web/src/surfaces/renderers.tsx"],
+        "summary": "Registered the hardware surface and its renderer"
+      },
+      {
+        "at": 38500,
+        "agent": "codex",
+        "say": "The sampler reads the CPU from two `os.cpus()` snapshots a second apart:\n\n```ts\nexport async function sample(): Promise<HardwareSample> {\n  const before = os.cpus();\n  await sleep(1000);\n  const cpu = busyShare(before, os.cpus());\n  const ram = 1 - os.freemem() / os.totalmem();\n  const gpu = await readNvidiaSmi().catch(() => undefined);\n  return { cpu, ram, gpu: gpu?.util, vram: gpu?.memory };\n}\n```"
+      },
+      {
+        "at": 44500,
+        "agent": "claude",
+        "command": "npx vitest run apps/web/src/surfaces/HardwarePanel.test.ts",
+        "output": " ok renders one card per node\n ok clamps values to 0..100\n ok animates a change instead of jumping\n Test Files  1 passed (1)\n      Tests  6 passed (6)",
+        "exitCode": 0,
+        "durationMs": 3100
+      },
+      {
+        "at": 47500,
+        "agent": "codex",
+        "command": "npx vitest run apps/node-agent/src/hardware",
+        "output": " ok reports CPU, RAM, GPU and VRAM as percentages\n ok falls back when no GPU is present\n ok times out a slow nvidia-smi\n ok reports VRAM in MiB and as a share\n Test Files  1 passed (1)\n      Tests  4 passed (4)",
+        "exitCode": 0,
+        "durationMs": 2900
+      },
+      {
+        "at": 52500,
+        "agent": "claude",
+        "say": "Panel is in and six tests pass. It shows live data as soon as the sampler reports."
+      },
+      {
+        "at": 54500,
+        "agent": "codex",
+        "command": "npm run typecheck",
+        "output": "> tsc -b --pretty false\n\nDone with no errors.",
+        "exitCode": 0,
+        "durationMs": 4200
+      },
+      { "at": 57500, "agent": "claude", "done": true },
+      {
+        "at": 60500,
+        "agent": "codex",
+        "say": "Sampler is green and typed. The node agent needs a restart to load it."
+      },
+      { "at": 64000, "agent": "codex", "done": true },
+      {
+        "at": 67000,
+        "agent": "vesper",
+        "say": "Both agents are done. Ten tests pass on Home PC. The node agent has to restart to load the sampler."
+      },
+      { "at": 72000, "agent": "vesper", "approval": true }
+    ],
+    "afterApproval": [
+      {
+        "at": 600,
+        "agent": "vesper",
+        "command": "noctis-node restart --host \"Home PC\"",
+        "output": "node agent stopped\nnode agent started with the hardware sampler\nHome PC is back online",
+        "exitCode": 0,
+        "durationMs": 2600
+      },
+      { "at": 3800, "agent": "vesper", "panel": "hardware" },
+      {
+        "at": 4400,
+        "agent": "vesper",
+        "say": "The Hardware panel is on Presence. Both PCs are reporting."
+      },
+      { "at": 7500, "agent": "vesper", "done": true }
+    ]
+  }
+}

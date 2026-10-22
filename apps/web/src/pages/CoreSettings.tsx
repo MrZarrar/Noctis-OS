@@ -24,7 +24,7 @@ const SettingViewSchema = z.object({
   ignoredStartUp: z.string().optional(),
 });
 
-const ConfigurationSchema = z.object({
+export const ConfigurationSchema = z.object({
   settings: z.array(SettingViewSchema),
   startUp: z.array(z.object({ name: z.string(), value: z.string() })),
 });

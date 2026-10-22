@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App.js";
 import { MotionPolicy } from "./layout/motion.js";
+import { larpEnabled } from "./larp/mode.js";
 import { PopoutProvider } from "./workbench/PopoutProvider.js";
 
 import "@fontsource/inter/400.css";
@@ -17,12 +18,21 @@ if (container === null) {
   throw new Error("#root is missing from index.html");
 }
 
-createRoot(container).render(
-  <StrictMode>
-    <MotionPolicy>
-      <PopoutProvider>
-        <App />
-      </PopoutProvider>
-    </MotionPolicy>
-  </StrictMode>,
-);
+async function boot(root: HTMLElement): Promise<void> {
+  // LARP mode loads only when this device turned it on in Settings.
+  if (larpEnabled()) {
+    (await import("./larp/install.js")).installLarp();
+  }
+
+  createRoot(root).render(
+    <StrictMode>
+      <MotionPolicy>
+        <PopoutProvider>
+          <App />
+        </PopoutProvider>
+      </MotionPolicy>
+    </StrictMode>,
+  );
+}
+
+void boot(container);

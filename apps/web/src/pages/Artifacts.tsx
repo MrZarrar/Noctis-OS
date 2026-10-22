@@ -11,7 +11,7 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
  * an import puts bytes on a named host with a checksum.
  */
 
-const ArtifactSchema = z.object({
+export const ArtifactSchema = z.object({
   id: z.string(),
   kind: z.enum(["local_artifact", "external_reference"]),
   title: z.string(),

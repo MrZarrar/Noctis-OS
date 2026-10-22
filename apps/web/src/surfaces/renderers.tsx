@@ -35,6 +35,7 @@ import { PANEL_PROPOSABLE_KINDS } from "@noctis/contracts";
 import type { RecallEvidenceView } from "@noctis/ui";
 import type { ReactNode } from "react";
 
+import { HardwarePanel } from "../larp/HardwarePanel.js";
 import { LiveBriefSurface } from "./LiveBrief.js";
 import { OptionsPanel } from "./OptionsPanel.js";
 import { FileDocument } from "./FileDocument.js";
@@ -284,6 +285,7 @@ const RENDERERS: Record<
       ))}
     </>
   ),
+  hardware: () => <HardwarePanel />,
   source_state: (
     payload: Parameters<typeof SourceStateSurface>[0] & { sourceId: string },
     context: SurfaceContext,

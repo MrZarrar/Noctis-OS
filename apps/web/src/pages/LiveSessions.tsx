@@ -18,8 +18,8 @@ import { agentName, ago } from "./conversations-view.js";
  * with its own app, or Remote Control, or continuing it as a Noctis thread.
  */
 
-const SessionsSchema = z.object({ sessions: z.array(LiveSessionSchema) });
-const EntriesSchema = z.object({ entries: z.array(LiveEntrySchema) });
+export const SessionsSchema = z.object({ sessions: z.array(LiveSessionSchema) });
+export const EntriesSchema = z.object({ entries: z.array(LiveEntrySchema) });
 
 /** ponytail: polled while open. The ledger's `bridge.session_updated.v1` is the push upgrade. */
 const POLL_MS = 3000;

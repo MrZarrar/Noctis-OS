@@ -1,0 +1,507 @@
+{
+  "reminders": [
+    {
+      "id": "01a05c33-0000-7000-8000-000000000001",
+      "revision": 0,
+      "createdAt": "2026-10-19T09:00:00Z",
+      "updatedAt": "2026-10-22T09:00:00Z",
+      "text": "Review the hardware panel sketch",
+      "note": "Check the CPU and memory labels before the next pass.",
+      "trigger": { "kind": "at", "at": "2026-10-22T12:00:00Z" },
+      "status": "due",
+      "nextDueAt": "2026-10-22T12:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000002",
+      "revision": 0,
+      "createdAt": "2026-10-20T09:00:00Z",
+      "updatedAt": "2026-10-22T09:00:00Z",
+      "text": "Review Paperbird sample feedback",
+      "note": "Compare the cream stock with recycled white.",
+      "trigger": { "kind": "at", "at": "2026-10-22T11:00:00Z" },
+      "status": "due",
+      "nextDueAt": "2026-10-22T11:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000003",
+      "revision": 0,
+      "createdAt": "2026-10-21T09:00:00Z",
+      "updatedAt": "2026-10-22T09:00:00Z",
+      "text": "Review Codex test results",
+      "note": "The window restore bug has a focused regression.",
+      "trigger": { "kind": "at", "at": "2026-10-22T17:00:00Z" },
+      "status": "pending",
+      "nextDueAt": "2026-10-22T17:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000004",
+      "revision": 0,
+      "createdAt": "2026-10-20T09:00:00Z",
+      "updatedAt": "2026-10-20T09:00:00Z",
+      "text": "Tidy the release checklist",
+      "trigger": { "kind": "at", "at": "2026-10-23T09:00:00Z" },
+      "status": "pending",
+      "nextDueAt": "2026-10-23T09:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000005",
+      "revision": 0,
+      "createdAt": "2026-10-19T09:00:00Z",
+      "updatedAt": "2026-10-19T09:00:00Z",
+      "text": "Compare print supplier quotes",
+      "note": "Use the same order size for both quotes.",
+      "trigger": { "kind": "at", "at": "2026-10-24T10:00:00Z" },
+      "status": "pending",
+      "nextDueAt": "2026-10-24T10:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000006",
+      "revision": 0,
+      "createdAt": "2026-10-21T09:00:00Z",
+      "updatedAt": "2026-10-21T09:00:00Z",
+      "text": "Plan the next build session",
+      "note": "Start with the offline queue indicator.",
+      "trigger": { "kind": "at", "at": "2026-10-25T16:00:00Z" },
+      "status": "pending",
+      "nextDueAt": "2026-10-25T16:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000007",
+      "revision": 0,
+      "createdAt": "2026-10-18T09:00:00Z",
+      "updatedAt": "2026-10-18T09:00:00Z",
+      "text": "Review the weekly research digest",
+      "trigger": { "kind": "at", "at": "2026-10-26T08:00:00Z" },
+      "status": "pending",
+      "nextDueAt": "2026-10-26T08:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000008",
+      "revision": 1,
+      "createdAt": "2026-10-17T09:00:00Z",
+      "updatedAt": "2026-10-21T18:00:00Z",
+      "text": "Refresh the product screenshots",
+      "trigger": { "kind": "at", "at": "2026-10-21T18:00:00Z" },
+      "status": "done"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000020",
+      "revision": 0,
+      "createdAt": "2026-10-16T09:00:00Z",
+      "updatedAt": "2026-10-16T09:00:00Z",
+      "text": "Check keyboard focus in the file viewer",
+      "note": "Try tabbing through the phone layout.",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000021",
+      "revision": 0,
+      "createdAt": "2026-10-17T09:00:00Z",
+      "updatedAt": "2026-10-17T09:00:00Z",
+      "text": "Draft the Paperbird launch page",
+      "note": "Lead with the pocket planner and one clear photograph.",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000022",
+      "revision": 0,
+      "createdAt": "2026-10-18T09:00:00Z",
+      "updatedAt": "2026-10-18T09:00:00Z",
+      "text": "Compare packaging samples",
+      "note": "Keep the parcel below the next postage band.",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000023",
+      "revision": 0,
+      "createdAt": "2026-10-19T09:00:00Z",
+      "updatedAt": "2026-10-19T09:00:00Z",
+      "text": "Document the restore sequence",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000024",
+      "revision": 0,
+      "createdAt": "2026-10-20T09:00:00Z",
+      "updatedAt": "2026-10-20T09:00:00Z",
+      "text": "Review the research reading list",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000025",
+      "revision": 1,
+      "createdAt": "2026-10-21T09:00:00Z",
+      "updatedAt": "2026-10-22T10:00:00Z",
+      "text": "Fix the duplicate reminder badge",
+      "trigger": null,
+      "status": "done"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000026",
+      "revision": 0,
+      "createdAt": "2026-10-22T09:00:00Z",
+      "updatedAt": "2026-10-22T09:00:00Z",
+      "text": "Choose a name for the queue inspector",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000027",
+      "revision": 0,
+      "createdAt": "2026-10-22T10:00:00Z",
+      "updatedAt": "2026-10-22T10:00:00Z",
+      "text": "Write the Friday changelog",
+      "note": "Mention window restore and keyboard navigation.",
+      "trigger": null,
+      "status": "pending"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000040",
+      "revision": 1,
+      "createdAt": "2026-10-20T09:00:00Z",
+      "updatedAt": "2026-10-22T09:00:00Z",
+      "text": "Review the project board",
+      "trigger": {
+        "kind": "repeat",
+        "rule": {
+          "kind": "weekly",
+          "daysOfWeek": [1, 2, 3, 4, 5],
+          "timeOfDay": "18:00",
+          "timeZone": "Europe/London"
+        }
+      },
+      "status": "pending",
+      "nextDueAt": "2026-10-22T17:00:00Z"
+    }
+  ],
+  "notes": [
+    {
+      "id": "01a05c33-0000-7000-8000-000000000100",
+      "revision": 0,
+      "createdAt": "2026-10-22T09:00:00Z",
+      "updatedAt": "2026-10-22T10:00:00Z",
+      "title": "Hardware panel direction",
+      "body": "Show Home PC and Work PC together. Keep CPU, RAM and GPU easy to scan. Claude is checking the event stream. Codex owns the focused tests.",
+      "identityId": "vesper",
+      "threadId": "01a05c32-79d8-7b53-b509-ff2ea1738ca8"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000101",
+      "revision": 0,
+      "createdAt": "2026-10-21T09:00:00Z",
+      "updatedAt": "2026-10-21T10:00:00Z",
+      "title": "Paperbird launch ideas",
+      "body": "A pocket planner for small daily wins. Start with a cream cover and recycled packaging. Test the first batch with a small audience."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000102",
+      "revision": 0,
+      "createdAt": "2026-10-20T09:00:00Z",
+      "updatedAt": "2026-10-20T10:00:00Z",
+      "title": "Window restore bug",
+      "body": "The last active panel was restored before its region existed. Restore regions first, then attach saved panels. The regression covers an empty secondary screen."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000103",
+      "revision": 0,
+      "createdAt": "2026-10-19T09:00:00Z",
+      "updatedAt": "2026-10-19T10:00:00Z",
+      "title": "Research queue",
+      "body": "Read the notes on offline queues and optimistic updates. Compare recovery after a brief disconnect. Keep the retry indicator visible until the acknowledgement arrives."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000104",
+      "revision": 0,
+      "createdAt": "2026-10-18T09:00:00Z",
+      "updatedAt": "2026-10-18T10:00:00Z",
+      "title": "Pricing experiment",
+      "body": "Compare a pocket planner with a planner and refill bundle. Ask whether the cover matters more than the interior paper. Include packaging in the margin sheet."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000105",
+      "revision": 0,
+      "createdAt": "2026-10-17T09:00:00Z",
+      "updatedAt": "2026-10-17T10:00:00Z",
+      "title": "Build plan",
+      "body": "Finish file previews, then review keyboard focus. Capture the result in a short recording."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000106",
+      "revision": 0,
+      "createdAt": "2026-10-16T09:00:00Z",
+      "updatedAt": "2026-10-16T10:00:00Z",
+      "title": "Queue inspector review",
+      "body": "The detail pane helps when several tasks finish together. Keep the last selected item when switching tabs."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000107",
+      "revision": 0,
+      "createdAt": "2026-10-21T13:00:00Z",
+      "updatedAt": "2026-10-21T14:00:00Z",
+      "title": "Supplier samples",
+      "body": "The recycled card has a warmer tone. Compare folded edges under daylight before placing a trial order."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000108",
+      "revision": 0,
+      "createdAt": "2026-10-22T11:00:00Z",
+      "updatedAt": "2026-10-22T12:00:00Z",
+      "title": "Friday handoff",
+      "body": "Record passing checks and the restore reproduction. Leave the next session with a clear starting point."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "01a05c33-0000-7000-8000-000000000200",
+      "revision": 2,
+      "createdAt": "2026-10-16T09:00:00Z",
+      "updatedAt": "2026-10-22T08:04:00Z",
+      "name": "Morning project digest",
+      "prompt": "Summarise the open build work and the next useful step.",
+      "model": { "providerId": "claude", "model": "claude-sonnet-4-6" },
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "rootGrantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+      "identityId": "vesper",
+      "threadMode": "new",
+      "maxRunMinutes": 20,
+      "trigger": {
+        "kind": "repeat",
+        "rule": {
+          "kind": "weekly",
+          "daysOfWeek": [1, 2, 3, 4, 5],
+          "timeOfDay": "09:00",
+          "timeZone": "Europe/London"
+        }
+      },
+      "paused": false,
+      "consecutiveFailures": 0,
+      "nextDueAt": "2026-10-23T08:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000201",
+      "revision": 2,
+      "createdAt": "2026-10-16T09:00:00Z",
+      "updatedAt": "2026-10-22T11:04:00Z",
+      "name": "Regression test review",
+      "prompt": "Review focused tests for the window restore fix.",
+      "model": { "providerId": "codex", "model": "gpt-5.6" },
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "rootGrantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+      "identityId": "vesper",
+      "threadMode": "new",
+      "maxRunMinutes": 20,
+      "trigger": {
+        "kind": "repeat",
+        "rule": {
+          "kind": "weekly",
+          "daysOfWeek": [1, 2, 3, 4, 5],
+          "timeOfDay": "12:00",
+          "timeZone": "Europe/London"
+        }
+      },
+      "paused": false,
+      "consecutiveFailures": 0,
+      "nextDueAt": "2026-10-23T11:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000202",
+      "revision": 2,
+      "createdAt": "2026-10-16T09:00:00Z",
+      "updatedAt": "2026-10-21T16:04:00Z",
+      "name": "Paperbird research roundup",
+      "prompt": "Summarise packaging research and pricing experiments.",
+      "model": { "providerId": "hermes", "model": "hermes" },
+      "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "rootGrantId": "01a05c32-6e20-7df3-8f8a-d7b7bd466e3e",
+      "identityId": "jester",
+      "threadMode": "new",
+      "maxRunMinutes": 20,
+      "trigger": {
+        "kind": "repeat",
+        "rule": {
+          "kind": "weekly",
+          "daysOfWeek": [1, 2, 3, 4, 5],
+          "timeOfDay": "17:00",
+          "timeZone": "Europe/London"
+        }
+      },
+      "paused": false,
+      "consecutiveFailures": 0,
+      "nextDueAt": "2026-10-22T16:00:00Z"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000203",
+      "revision": 1,
+      "createdAt": "2026-10-16T09:00:00Z",
+      "updatedAt": "2026-10-21T18:04:00Z",
+      "name": "Evening reading notes",
+      "prompt": "Collect useful passages from the research queue.",
+      "model": { "providerId": "local", "model": "qwen3.5" },
+      "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "rootGrantId": "01a05c32-6e20-7df3-8f8a-d7b7bd466e3e",
+      "identityId": "vesper",
+      "threadMode": "new",
+      "maxRunMinutes": 20,
+      "trigger": {
+        "kind": "repeat",
+        "rule": {
+          "kind": "weekly",
+          "daysOfWeek": [1, 2, 3, 4, 5],
+          "timeOfDay": "19:00",
+          "timeZone": "Europe/London"
+        }
+      },
+      "paused": true,
+      "consecutiveFailures": 0,
+      "nextDueAt": "2026-10-22T18:00:00Z"
+    }
+  ],
+  "runs": [
+    {
+      "id": "01a05c33-0000-7000-8000-000000000300",
+      "taskId": "01a05c33-0000-7000-8000-000000000200",
+      "status": "completed",
+      "startedAt": "2026-10-22T08:00:00Z",
+      "completedAt": "2026-10-22T08:04:00Z",
+      "result": "The hardware panel labels and file previews are ready for the next build.",
+      "threadId": "01a05c32-79d8-7b53-b509-ff2ea1738ca8"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000301",
+      "taskId": "01a05c33-0000-7000-8000-000000000200",
+      "status": "completed",
+      "startedAt": "2026-10-21T08:00:00Z",
+      "completedAt": "2026-10-21T08:03:00Z",
+      "result": "Collected the build plan and highlighted the restore regression."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000302",
+      "taskId": "01a05c33-0000-7000-8000-000000000200",
+      "status": "completed",
+      "startedAt": "2026-10-19T08:00:00Z",
+      "completedAt": "2026-10-19T08:03:00Z",
+      "result": "Prepared the release checklist for the week."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000310",
+      "taskId": "01a05c33-0000-7000-8000-000000000201",
+      "status": "completed",
+      "startedAt": "2026-10-22T11:00:00Z",
+      "completedAt": "2026-10-22T11:04:00Z",
+      "result": "The restore regression is covered. Focused checks pass, including the empty secondary screen.",
+      "threadId": "01a05c32-79d8-7b53-b509-ff2ea1738ca8"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000311",
+      "taskId": "01a05c33-0000-7000-8000-000000000201",
+      "status": "completed",
+      "startedAt": "2026-10-20T11:00:00Z",
+      "completedAt": "2026-10-20T11:05:00Z",
+      "result": "Found the ordering issue between regions and saved panels."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000320",
+      "taskId": "01a05c33-0000-7000-8000-000000000202",
+      "status": "needs_you",
+      "startedAt": "2026-10-21T16:00:00Z",
+      "completedAt": "2026-10-21T16:04:00Z",
+      "reason": "Choose the packaging sample for the trial batch.",
+      "threadId": "01a05c32-79d8-7b53-b509-ff2ea1738ca8"
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000321",
+      "taskId": "01a05c33-0000-7000-8000-000000000202",
+      "status": "completed",
+      "startedAt": "2026-10-19T16:00:00Z",
+      "completedAt": "2026-10-19T16:04:00Z",
+      "result": "Compared paper samples and bundle options. The cream cover is the strongest first experiment."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000330",
+      "taskId": "01a05c33-0000-7000-8000-000000000203",
+      "status": "completed",
+      "startedAt": "2026-10-21T18:00:00Z",
+      "completedAt": "2026-10-21T18:04:00Z",
+      "result": "Collected useful passages on offline queues and recovery."
+    },
+    {
+      "id": "01a05c33-0000-7000-8000-000000000331",
+      "taskId": "01a05c33-0000-7000-8000-000000000203",
+      "status": "completed",
+      "startedAt": "2026-10-16T18:00:00Z",
+      "completedAt": "2026-10-16T18:03:00Z",
+      "result": "Filed the reading notes for the next review."
+    }
+  ],
+  "places": {
+    "visits": [
+      {
+        "place": "Work",
+        "start": "2026-10-22T08:30:00Z",
+        "end": "2026-10-22T12:15:00Z",
+        "minutes": 225
+      },
+      {
+        "place": "Home",
+        "start": "2026-10-21T18:30:00Z",
+        "end": "2026-10-21T23:00:00Z",
+        "minutes": 270
+      },
+      {
+        "place": "Gym",
+        "start": "2026-10-21T17:05:00Z",
+        "end": "2026-10-21T18:10:00Z",
+        "minutes": 65
+      },
+      {
+        "place": "Work",
+        "start": "2026-10-21T08:45:00Z",
+        "end": "2026-10-21T16:40:00Z",
+        "minutes": 475
+      },
+      {
+        "place": "Gym",
+        "start": "2026-10-20T18:00:00Z",
+        "end": "2026-10-20T19:05:00Z",
+        "minutes": 65
+      }
+    ],
+    "events": [
+      { "place": "Work", "transition": "leave", "at": "2026-10-22T12:15:00Z" },
+      { "place": "Work", "transition": "arrive", "at": "2026-10-22T08:30:00Z" },
+      { "place": "Home", "transition": "leave", "at": "2026-10-21T23:00:00Z" },
+      { "place": "Home", "transition": "arrive", "at": "2026-10-21T18:30:00Z" },
+      { "place": "Gym", "transition": "leave", "at": "2026-10-21T18:10:00Z" },
+      { "place": "Gym", "transition": "arrive", "at": "2026-10-21T17:05:00Z" }
+    ]
+  },
+  "digest": {
+    "from": "2026-10-22T00:00:00Z",
+    "to": "2026-10-22T23:59:00Z",
+    "turns": { "total": 18, "completed": 17, "failed": 0, "cancelled": 1 },
+    "agents": [
+      { "providerId": "claude", "turns": 8 },
+      { "providerId": "codex", "turns": 6 },
+      { "providerId": "hermes", "turns": 3 },
+      { "providerId": "local", "turns": 1 }
+    ],
+    "threads": [
+      {
+        "threadId": "01a05c32-79d8-7b53-b509-ff2ea1738ca8",
+        "identityId": "vesper",
+        "title": "Build a hardware monitoring panel",
+        "turns": 18,
+        "failed": 0
+      }
+    ],
+    "files": 12,
+    "outputs": 5,
+    "approvals": { "asked": 3, "approved": 2, "declined": 0, "unanswered": 1 },
+    "vault": { "filed": 7, "waiting": 1 }
+  }
+}

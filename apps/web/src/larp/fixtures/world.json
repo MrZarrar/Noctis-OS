@@ -1,0 +1,668 @@
+{
+  "nodes": [
+    {
+      "id": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "hostId": "Home PC",
+      "status": "online",
+      "fingerprint": "fictional-device-1",
+      "agentVersion": "0.1.0",
+      "lastSeenAt": "2026-10-22T12:25:00Z",
+      "providers": [
+        {
+          "providerId": "claude",
+          "available": true,
+          "authMode": "claude_ai",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "claude",
+              "model": "claude-opus-4-6",
+              "label": "Claude Opus"
+            }
+          ]
+        },
+        {
+          "providerId": "codex",
+          "available": true,
+          "authMode": "chatgpt",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "codex",
+              "model": "gpt-5.6-sol",
+              "label": "GPT-5.6 Sol"
+            }
+          ]
+        },
+        {
+          "providerId": "hermes",
+          "available": true,
+          "authMode": "local",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "hermes",
+              "model": "hermes-local",
+              "label": "Hermes"
+            }
+          ]
+        },
+        {
+          "providerId": "local",
+          "available": true,
+          "authMode": "local",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "local",
+              "model": "local-reasoner",
+              "label": "Local Reasoner"
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-01T09:00:00Z",
+      "updatedAt": "2026-10-22T12:25:00Z",
+      "connected": true
+    },
+    {
+      "id": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "hostId": "Work PC",
+      "status": "online",
+      "fingerprint": "fictional-device-2",
+      "agentVersion": "0.1.0",
+      "lastSeenAt": "2026-10-22T12:25:00Z",
+      "providers": [
+        {
+          "providerId": "claude",
+          "available": true,
+          "authMode": "claude_ai",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "claude",
+              "model": "claude-opus-4-6",
+              "label": "Claude Opus"
+            }
+          ]
+        },
+        {
+          "providerId": "codex",
+          "available": true,
+          "authMode": "chatgpt",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "codex",
+              "model": "gpt-5.6-sol",
+              "label": "GPT-5.6 Sol"
+            }
+          ]
+        },
+        {
+          "providerId": "hermes",
+          "available": true,
+          "authMode": "local",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "hermes",
+              "model": "hermes-local",
+              "label": "Hermes"
+            }
+          ]
+        },
+        {
+          "providerId": "local",
+          "available": true,
+          "authMode": "local",
+          "version": "1.0.0",
+          "models": [
+            {
+              "providerId": "local",
+              "model": "local-reasoner",
+              "label": "Local Reasoner"
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-01T09:00:00Z",
+      "updatedAt": "2026-10-22T12:25:00Z",
+      "connected": true
+    },
+    {
+      "id": "01a05c32-6650-71cf-9c45-241c7821e154",
+      "hostId": "Phone",
+      "status": "online",
+      "fingerprint": "fictional-device-3",
+      "agentVersion": "0.1.0",
+      "lastSeenAt": "2026-10-22T12:25:00Z",
+      "providers": [],
+      "createdAt": "2026-10-01T09:00:00Z",
+      "updatedAt": "2026-10-22T12:25:00Z",
+      "connected": true
+    }
+  ],
+  "grants": [
+    {
+      "id": "01a05c32-8000-7000-8000-000000000001",
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "capability": "runtime.turn",
+      "operationClass": "read_inspect",
+      "constraintsVersion": 1,
+      "constraints": {
+        "providers": ["claude", "codex", "hermes", "local"],
+        "roots": [
+          {
+            "grantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+            "path": "C:\\Fable\\Projects",
+            "mode": "write",
+            "localOnly": false
+          }
+        ]
+      },
+      "grantedAt": "2026-10-01T09:00:00Z"
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000002",
+      "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "capability": "runtime.turn",
+      "operationClass": "read_inspect",
+      "constraintsVersion": 1,
+      "constraints": {
+        "providers": ["claude", "codex", "hermes", "local"],
+        "roots": [
+          {
+            "grantId": "01a05c32-6e20-7df3-8f8a-d7b7bd466e3e",
+            "path": "C:\\Fable\\Documents",
+            "mode": "read",
+            "localOnly": false
+          }
+        ]
+      },
+      "grantedAt": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "catalogue": [
+    {
+      "providerId": "claude",
+      "model": "claude-opus-4-6",
+      "label": "Claude Opus"
+    },
+    {
+      "providerId": "codex",
+      "model": "gpt-5.6-sol",
+      "label": "GPT-5.6 Sol"
+    },
+    {
+      "providerId": "hermes",
+      "model": "hermes-local",
+      "label": "Hermes"
+    },
+    {
+      "providerId": "local",
+      "model": "local-reasoner",
+      "label": "Local Reasoner"
+    }
+  ],
+  "defaults": {
+    "vesper": {
+      "providerId": "claude",
+      "model": "claude-opus-4-6",
+      "label": "Claude Opus"
+    },
+    "jester": {
+      "providerId": "hermes",
+      "model": "hermes-local",
+      "label": "Hermes"
+    }
+  },
+  "permissions": [
+    {
+      "id": "01a05c32-8000-7000-8000-000000000010",
+      "actorId": "vesper",
+      "capability": "git.push",
+      "operationClass": "external_write",
+      "constraints": {
+        "targetType": "repository",
+        "targetIds": ["lantern-kit"],
+        "hostIds": ["Home PC"]
+      },
+      "grantedAt": "2026-10-20T09:00:00Z",
+      "grantedBy": "owner",
+      "expiresAt": "2026-10-29T18:00:00Z"
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000011",
+      "actorId": "jester",
+      "capability": "file.write",
+      "operationClass": "local_reversible_edit",
+      "constraints": {
+        "targetType": "folder",
+        "targetIds": ["01a05c32-6a38-7d48-9a6c-6f870f17d2df"],
+        "hostIds": ["Home PC"]
+      },
+      "grantedAt": "2026-10-21T10:00:00Z",
+      "grantedBy": "owner"
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000012",
+      "actorId": "vesper",
+      "capability": "git.push",
+      "operationClass": "external_write",
+      "constraints": {
+        "targetType": "repository",
+        "targetIds": ["copper-notes"]
+      },
+      "grantedAt": "2026-10-15T08:00:00Z",
+      "grantedBy": "owner",
+      "revokedAt": "2026-10-19T16:00:00Z",
+      "revokedReason": "The review branch was merged."
+    }
+  ],
+  "configuration": {
+    "settings": [
+      {
+        "key": "digestAt",
+        "label": "Daily digest",
+        "help": "When the daily summary is ready.",
+        "kind": "time",
+        "value": "08:00",
+        "source": "default"
+      },
+      {
+        "key": "promoterAt",
+        "label": "File the inbox nightly",
+        "help": "When new notes are filed into the Vault.",
+        "kind": "time",
+        "value": "21:30",
+        "source": "default"
+      },
+      {
+        "key": "healthRunAt",
+        "label": "Weekly health run (Sundays)",
+        "help": "When the weekly glucose report is refreshed.",
+        "kind": "time",
+        "value": "09:00",
+        "source": "default"
+      },
+      {
+        "key": "vaultWrites",
+        "label": "Let Noctis write to the Vault",
+        "help": "Changes require the usual approval.",
+        "kind": "boolean",
+        "value": false,
+        "source": "default"
+      },
+      {
+        "key": "sessionTtlHours",
+        "label": "Stay logged in for (hours)",
+        "help": "Applies to the next login on each device.",
+        "kind": "integer",
+        "value": 720,
+        "source": "default"
+      },
+      {
+        "key": "logLevel",
+        "label": "Core log detail",
+        "help": "How much detail appears in the core log.",
+        "kind": "choice",
+        "value": "info",
+        "source": "default",
+        "choices": ["debug", "info", "warn", "error"]
+      },
+      {
+        "key": "showAllPages",
+        "label": "Show unfinished pages",
+        "help": "Show Missions, Artifacts and Automations in the rail.",
+        "kind": "boolean",
+        "value": true,
+        "source": "ui"
+      },
+      {
+        "key": "wakeWhileTyping",
+        "label": "Wake an agent as I start typing",
+        "help": "Prepare the local agent while you write.",
+        "kind": "boolean",
+        "value": true,
+        "source": "default"
+      },
+      {
+        "key": "remoteDesktops",
+        "label": "Remote desktops",
+        "help": "PCs available for remote control.",
+        "kind": "list",
+        "value": [],
+        "source": "default"
+      },
+      {
+        "key": "places",
+        "label": "Places",
+        "help": "Names used by arrival and departure automations.",
+        "kind": "places",
+        "value": ["home", "work", "gym"],
+        "source": "default",
+        "automation": true
+      },
+      {
+        "key": "placeVisitMinutes",
+        "label": "Count a visit after (minutes)",
+        "help": "Minimum time spent at a place.",
+        "kind": "integer",
+        "value": 20,
+        "source": "default",
+        "automation": true
+      }
+    ],
+    "startUp": [
+      {
+        "name": "Node runtime",
+        "value": "22.23.2"
+      },
+      {
+        "name": "Agent access",
+        "value": "Subscription and local runtimes"
+      },
+      {
+        "name": "Push notifications",
+        "value": "Configured"
+      },
+      {
+        "name": "Remote desktop gateway",
+        "value": "Off"
+      }
+    ]
+  },
+  "limits": [
+    {
+      "providerId": "claude",
+      "hostId": "Home PC",
+      "fiveHour": {
+        "usedPercent": 28,
+        "resetsAt": "2026-10-22T17:00:00Z"
+      },
+      "weekly": {
+        "usedPercent": 34,
+        "resetsAt": "2026-10-26T09:00:00Z"
+      },
+      "checkedAt": "2026-10-22T12:25:00Z"
+    },
+    {
+      "providerId": "codex",
+      "hostId": "Home PC",
+      "fiveHour": {
+        "usedPercent": 19,
+        "resetsAt": "2026-10-22T18:00:00Z"
+      },
+      "weekly": {
+        "usedPercent": 23,
+        "resetsAt": "2026-10-27T09:00:00Z"
+      },
+      "checkedAt": "2026-10-22T12:25:00Z"
+    }
+  ],
+  "liveSessions": [
+    {
+      "id": "01a05c32-8000-7000-8000-000000000020",
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "hostId": "Home PC",
+      "providerId": "claude",
+      "sessionRef": "lantern-panel-claude",
+      "cwd": "C:\\Fable\\Projects",
+      "title": "Hardware panel: metrics and responsive layout",
+      "status": "live",
+      "startedAt": "2026-10-22T11:35:00Z",
+      "updatedAt": "2026-10-22T12:24:00Z"
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000021",
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "hostId": "Home PC",
+      "providerId": "codex",
+      "sessionRef": "lantern-panel-codex",
+      "cwd": "C:\\Fable\\Projects",
+      "title": "Fix stale metrics after reconnect",
+      "status": "live",
+      "startedAt": "2026-10-22T11:48:00Z",
+      "updatedAt": "2026-10-22T12:25:00Z"
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000022",
+      "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "hostId": "Work PC",
+      "providerId": "claude",
+      "sessionRef": "papertrail-pricing",
+      "cwd": "C:\\Fable\\Documents",
+      "title": "Papertrail: pricing research and launch checklist",
+      "status": "ended",
+      "startedAt": "2026-10-21T09:10:00Z",
+      "updatedAt": "2026-10-21T10:18:00Z"
+    }
+  ],
+  "liveEntries": {
+    "01a05c32-8000-7000-8000-000000000020": [
+      {
+        "id": "01a05c32-8000-7000-8000-000000000030",
+        "role": "user",
+        "body": "Build a hardware panel with one card per PC. Keep the numbers readable on a phone.",
+        "createdAt": "2026-10-22T12:10:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000031",
+        "role": "agent",
+        "body": "I have checked the metrics contract. CPU, RAM, GPU and VRAM will share one refresh cycle. I am building the cards around that snapshot.",
+        "createdAt": "2026-10-22T12:14:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000032",
+        "role": "user",
+        "body": "Include a clear offline state.",
+        "createdAt": "2026-10-22T12:18:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000033",
+        "role": "agent",
+        "body": "The reconnect case is covered. The last sample stays visible while the node reconnects, with its timestamp alongside it. The phone layout uses a single column.",
+        "createdAt": "2026-10-22T12:22:00Z"
+      }
+    ],
+    "01a05c32-8000-7000-8000-000000000021": [
+      {
+        "id": "01a05c32-8000-7000-8000-000000000040",
+        "role": "user",
+        "body": "Track down the stale GPU bar after reconnect.",
+        "createdAt": "2026-10-22T12:10:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000041",
+        "role": "agent",
+        "body": "The old timer closes over the previous node snapshot. I have a focused test reproducing the stale value.",
+        "createdAt": "2026-10-22T12:14:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000042",
+        "role": "user",
+        "body": "Keep the change small.",
+        "createdAt": "2026-10-22T12:18:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000043",
+        "role": "agent",
+        "body": "The subscription now refreshes from the current snapshot. The reconnect test passes and the original bar animation is preserved.",
+        "createdAt": "2026-10-22T12:22:00Z"
+      }
+    ],
+    "01a05c32-8000-7000-8000-000000000022": [
+      {
+        "id": "01a05c32-8000-7000-8000-000000000050",
+        "role": "user",
+        "body": "Compare pricing options for a small invoice reminder tool.",
+        "createdAt": "2026-10-21T10:10:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000051",
+        "role": "agent",
+        "body": "The simplest launch has a free tier for five clients and a paid tier for recurring reminders. I have collected the assumptions in the pricing note.",
+        "createdAt": "2026-10-21T10:14:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000052",
+        "role": "user",
+        "body": "Make the launch checklist practical.",
+        "createdAt": "2026-10-21T10:18:00Z"
+      },
+      {
+        "id": "01a05c32-8000-7000-8000-000000000053",
+        "role": "agent",
+        "body": "The checklist covers a sample workspace, a billing dry run and an export check. The first pilot can start with invited businesses.",
+        "createdAt": "2026-10-21T10:22:00Z"
+      }
+    ]
+  },
+  "sessions": [
+    {
+      "nodeId": "01a05c32-5e80-7208-b379-6be0ea7e7440",
+      "rootGrantId": "01a05c32-6a38-7d48-9a6c-6f870f17d2df",
+      "sessions": [
+        {
+          "providerId": "claude",
+          "sessionRef": "lantern-panel-claude",
+          "title": "Hardware panel: metrics and responsive layout",
+          "lastActiveAt": "2026-10-22T12:25:00Z",
+          "source": "cli"
+        },
+        {
+          "providerId": "codex",
+          "sessionRef": "lantern-panel-codex",
+          "title": "Fix stale metrics after reconnect",
+          "lastActiveAt": "2026-10-22T12:25:00Z",
+          "source": "vscode"
+        },
+        {
+          "providerId": "claude",
+          "sessionRef": "copper-notes-search",
+          "title": "Copper Notes: faster title search",
+          "lastActiveAt": "2026-10-21T16:10:00Z",
+          "source": "cli"
+        }
+      ]
+    },
+    {
+      "nodeId": "01a05c32-6268-7bb3-8ea8-bdf01e4b8b7a",
+      "rootGrantId": "01a05c32-6e20-7df3-8f8a-d7b7bd466e3e",
+      "sessions": [
+        {
+          "providerId": "claude",
+          "sessionRef": "papertrail-pricing",
+          "title": "Papertrail: pricing research and launch checklist",
+          "lastActiveAt": "2026-10-21T10:18:00Z",
+          "source": "vscode"
+        },
+        {
+          "providerId": "codex",
+          "sessionRef": "papertrail-export",
+          "title": "Check invoice export edge cases",
+          "lastActiveAt": "2026-10-20T14:45:00Z",
+          "source": "cli"
+        }
+      ]
+    }
+  ],
+  "history": {
+    "01a05c32-7208-797b-a748-83607258daa4": [
+      {
+        "prompt": "Help me plan a small invoice reminder tool.",
+        "reply": "Start with a client list, due dates and a weekly digest. The first pilot can use a sample business workspace."
+      },
+      {
+        "prompt": "What should I validate first?",
+        "reply": "Check whether recurring reminders save enough time to support a paid tier. I have added that assumption to the Papertrail pricing note."
+      }
+    ],
+    "01a05c32-75f0-7296-ab05-58adc8e575fb": [
+      {
+        "prompt": "Review the Copper Notes search box.",
+        "reply": "The title match is doing the heavy lifting. Add a short empty state and keep the keyboard focus on the results."
+      }
+    ],
+    "01a05c32-79d8-7b53-b509-ff2ea1738ca8": [
+      {
+        "prompt": "Sketch a hardware panel for both PCs.",
+        "reply": "Use one snapshot per PC with CPU, RAM, GPU and VRAM. Keep a single column on the phone and place the sample time beside each machine."
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "id": "01a05c32-8000-7000-8000-000000000070",
+      "kind": "local_artifact",
+      "title": "Hardware panel implementation plan",
+      "uri": "data:text/markdown;charset=utf-8,%23%20Hardware%20panel%0A%0AOne%20metrics%20snapshot%20per%20PC.%20CPU%2C%20RAM%2C%20GPU%20and%20VRAM%20refresh%20together.%20The%20reconnect%20test%20protects%20the%20last%20sample.%0A",
+      "mediaType": "text/markdown",
+      "hostId": "Home PC",
+      "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "importedAs": null
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000071",
+      "kind": "local_artifact",
+      "title": "Papertrail pricing research",
+      "uri": "data:text/markdown;charset=utf-8,%23%20Papertrail%20pricing%0A%0AFree%3A%20five%20clients.%20Paid%3A%20recurring%20reminders%20and%20export%20history.%20Validate%20the%20weekly%20time%20saved%20with%20a%20small%20invited%20pilot.%0A",
+      "mediaType": "text/markdown",
+      "hostId": "Work PC",
+      "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "importedAs": null
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000072",
+      "kind": "local_artifact",
+      "title": "Reconnect test results",
+      "uri": "data:text/plain;charset=utf-8,PASS%20metrics%20reconnect%0APASS%20previous%20snapshot%20retained%0APASS%20phone%20layout%0A",
+      "mediaType": "text/plain",
+      "hostId": "Home PC",
+      "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "importedAs": null
+    },
+    {
+      "id": "01a05c32-8000-7000-8000-000000000073",
+      "kind": "local_artifact",
+      "title": "Copper Notes release checklist",
+      "uri": "data:text/markdown;charset=utf-8,%23%20Release%20checklist%0A%0A-%20Check%20title%20search%0A-%20Export%20a%20sample%20workspace%0A-%20Confirm%20keyboard%20navigation%0A",
+      "mediaType": "text/markdown",
+      "hostId": "Home PC",
+      "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "importedAs": null
+    }
+  ],
+  "agentQuestions": [
+    {
+      "question": "Which view should open after the hardware panel is ready?",
+      "header": "Open view",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Both PCs",
+          "description": "Show Home PC and Work PC together."
+        },
+        {
+          "label": "Home PC",
+          "description": "Focus the panel on Home PC."
+        }
+      ]
+    }
+  ],
+  "pushPublicKey": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "settingDefaults": {
+    "digestAt": "",
+    "promoterAt": "",
+    "healthRunAt": "",
+    "vaultWrites": false,
+    "sessionTtlHours": 720,
+    "logLevel": "info",
+    "showAllPages": false,
+    "wakeWhileTyping": true,
+    "remoteDesktops": [],
+    "places": [],
+    "placeVisitMinutes": 20
+  }
+}

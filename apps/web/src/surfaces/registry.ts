@@ -20,7 +20,7 @@ import {
   VaultRecallPayloadSchema,
   VisualPayloadSchema,
 } from "@noctis/contracts";
-import type { z } from "zod";
+import { z } from "zod";
 
 /**
  * The Surface registry (Section 5.3).
@@ -212,6 +212,13 @@ export const REGISTRY = {
      * decide, not a renderer's.
      */
     sourceRefresh: true,
+  },
+  /** LARP mode only for now: no real core proposes it, and its readings are fictional. */
+  hardware: {
+    payloadVersion: 1,
+    schema: z.object({}).strict(),
+    sizes: ["standard", "wide", "stage"],
+    title: "Hardware",
   },
 } as const satisfies Record<string, SurfaceRegistryEntry>;
 

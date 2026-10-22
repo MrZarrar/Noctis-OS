@@ -21,7 +21,7 @@ import { VaultLock } from "./VaultLock.js";
  * one-way navigation that loses the objective.
  */
 
-const GraphSchema = z.object({
+export const GraphSchema = z.object({
   nodes: z.array(
     z.object({
       id: z.string(),
@@ -49,13 +49,13 @@ const GraphSchema = z.object({
   truncated: z.boolean(),
 });
 
-const StatusSchema = z.object({
+export const StatusSchema = z.object({
   configured: z.boolean(),
   live: z.boolean(),
   writesEnabled: z.boolean(),
 });
 
-const RecallSchema = z.object({
+export const RecallSchema = z.object({
   entityIds: z.array(z.string()),
   evidence: z.array(
     z.object({
@@ -69,8 +69,8 @@ const RecallSchema = z.object({
   freshness: z.enum(["current", "stale", "unavailable", "unknown"]),
 });
 
-const NoteSchema = z.object({ path: z.string(), title: z.string(), text: z.string() });
-const EditsSchema = z.object({ edits: z.array(VaultEditSchema) });
+export const NoteSchema = z.object({ path: z.string(), title: z.string(), text: z.string() });
+export const EditsSchema = z.object({ edits: z.array(VaultEditSchema) });
 
 /** The opened node's note: being read, read, or a name nobody has written a note for. */
 export type NoteState =

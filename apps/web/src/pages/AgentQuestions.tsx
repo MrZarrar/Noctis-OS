@@ -6,7 +6,7 @@ import { z } from "zod";
 import { buttonStyle, glass } from "../layout/Page.js";
 
 /** Claude Code's AskUserQuestion input. Not ours, so only what is shown is read. */
-const QuestionsSchema = z.object({
+export const QuestionsSchema = z.object({
   questions: z
     .array(
       z.object({

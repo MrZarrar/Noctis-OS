@@ -8,6 +8,8 @@ import { modelKey, modelLabel } from "../conversation/PromptForm.js";
 import { RuntimeRootOptionSchema } from "../conversation/useConversation.js";
 import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
 import { Picker } from "../layout/Picker.js";
+import { LarpSettings } from "../larp/LarpSettings.js";
+import { larpEnabled } from "../larp/mode.js";
 import { CoreSettings } from "./CoreSettings.js";
 import type { PushState } from "../notify/subscribe.js";
 import { enablePush, initialPushState } from "../notify/subscribe.js";
@@ -43,12 +45,12 @@ const PermissionSchema = z.object({
   revokedReason: z.string().optional(),
 });
 
-const PermissionsSchema = z.object({ permissions: z.array(PermissionSchema) });
+export const PermissionsSchema = z.object({ permissions: z.array(PermissionSchema) });
 
 type Permission = z.infer<typeof PermissionSchema>;
 
 /** `GET /models` (ADR-0026): what connected nodes offer, and what each identity defaults to. */
-const ModelsSchema = z
+export const ModelsSchema = z
   .object({
     catalogue: z.array(ModelRefSchema),
     defaults: z
@@ -303,6 +305,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
       title="Settings"
       subtitle="Defaults, notifications, standing permissions and how Noctis runs"
     >
+      {/* First while it is on, so a device in LARP mode says so the moment Settings opens. */}
+      {larpEnabled() && <LarpSettings transport={transport} />}
       <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>
         <SectionHeading>Default model</SectionHeading>
         <p style={{ margin: 0, maxWidth: typography.measurePx, color: typography.color.muted }}>
@@ -436,6 +440,8 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
       )}
 
       <CoreSettings transport={transport} />
+
+      {!larpEnabled() && <LarpSettings transport={transport} />}
 
       {onSignedOut !== undefined && (
         <section style={{ ...glass, padding: spacing.lg, display: "grid", gap: spacing.md }}>

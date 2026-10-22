@@ -24,11 +24,11 @@ import { folderGrant, sharedFolders } from "./folders-view.js";
 import type { MirrorFps, MirrorState, MirrorWidth } from "./mirror-view.js";
 import { createMirrorDiagnostics, mirrorAllowed, mirrorPath } from "./mirror-view.js";
 
-const HostsSchema = z.object({ hosts: z.array(RemoteDesktopTargetSchema) });
-const NodesSchema = z.object({
+export const HostsSchema = z.object({ hosts: z.array(RemoteDesktopTargetSchema) });
+export const NodesSchema = z.object({
   nodes: z.array(NodeDescriptorSchema.extend({ connected: z.boolean() })),
 });
-const GrantsSchema = z.object({
+export const GrantsSchema = z.object({
   grants: z.array(
     z.object({
       capability: z.string(),
@@ -39,7 +39,7 @@ const GrantsSchema = z.object({
   ),
 });
 
-const RootIdsSchema = z.object({ roots: z.array(z.object({ grantId: z.string() })) });
+export const RootIdsSchema = z.object({ roots: z.array(z.object({ grantId: z.string() })) });
 
 type NodeView = z.infer<typeof NodesSchema>["nodes"][number];
 
