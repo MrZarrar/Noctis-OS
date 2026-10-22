@@ -21,7 +21,7 @@ if (container === null) {
 async function boot(root: HTMLElement): Promise<void> {
   // LARP mode loads only when this device turned it on in Settings.
   if (larpEnabled()) {
-    (await import("./larp/install.js")).installLarp();
+    await (await import("./larp/install.js")).installLarp();
   }
 
   createRoot(root).render(
