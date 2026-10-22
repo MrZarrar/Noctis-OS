@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   SAMPLE_RATE,
   createClapDetector,
+  missingWindows,
   parseAudioDevices,
-  parseScreens,
   windowLaunches,
 } from "./clap.js";
 
@@ -135,31 +135,26 @@ describe("the ffmpeg device list", () => {
 });
 
 describe("the two windows", () => {
-  const screens = parseScreens("False 2560 252\r\nTrue 0 0\r\n");
+  const [presence, vault] = windowLaunches("https://noctis.example", String.raw`C:\profiles`);
 
-  it("puts Presence on the primary monitor and the Vault on the other", () => {
-    const [presence, vault] = windowLaunches(
-      "https://noctis.example",
-      screens,
-      String.raw`C:\profiles`,
-    );
-
-    expect(presence).toContain("--app=https://noctis.example/?screen=Presence");
-    expect(presence).toContain("--window-position=40,40");
-    expect(presence).toContain(String.raw`--user-data-dir=C:\profiles\presence`);
-    expect(vault).toContain("--app=https://noctis.example/?screen=Vault");
-    expect(vault).toContain("--window-position=2600,292");
-    expect(vault).toContain(String.raw`--user-data-dir=C:\profiles\vault`);
+  it("puts Presence on monitor 1 and the Vault on monitor 2, each in its own profile", () => {
+    expect(presence).toMatchObject({ name: "presence", monitor: 1 });
+    expect(presence?.profile).toBe(String.raw`C:\profiles\presence`);
+    expect(presence?.args).toContain("--app=https://noctis.example/?screen=Presence");
+    expect(presence?.args).toContain(String.raw`--user-data-dir=C:\profiles\presence`);
+    expect(vault).toMatchObject({ name: "vault", monitor: 2 });
+    expect(vault?.args).toContain("--app=https://noctis.example/?screen=Vault");
+    expect(vault?.args).toContain(String.raw`--user-data-dir=C:\profiles\vault`);
   });
 
-  it("puts both on the one monitor when there is only one", () => {
-    const [presence, vault] = windowLaunches(
-      "https://noctis.example",
-      parseScreens("True 0 0"),
-      String.raw`C:\profiles`,
+  it("launches only the windows the placer could not find", () => {
+    expect(missingWindows(["presence", "vault"], "placed presence\r\n")).toEqual(["vault"]);
+    expect(missingWindows(["presence", "vault"], "placed presence\r\nplaced vault\r\n")).toEqual(
+      [],
     );
+  });
 
-    expect(presence).toContain("--window-position=40,40");
-    expect(vault).toContain("--window-position=40,40");
+  it("treats a placer that printed nothing as finding nothing", () => {
+    expect(missingWindows(["presence", "vault"], "")).toEqual(["presence", "vault"]);
   });
 });

@@ -4087,3 +4087,15 @@ A double clap at the home PC opens Presence on monitor 1 and the Vault on monito
 | The capture command against Microphone (G55) for one second                                                             | 31,040 bytes of 16 kHz mono                     |
 
 Not verified: a real double clap, the windows landing on each monitor, and the login in each new profile. Those need the owner (HOME-SETUP step 8) after the work core is redeployed. Full suite not run.
+
+### 2026-10-22 Clap to open: reuse and maximise
+
+Owner's live test: the clap works, but windows did not open maximised and a second clap opened fresh windows. A Win32 placer (PowerShell, in `clap.ts`) now finds each profile's Chrome window, restores, moves, maximises and raises it, and the node launches only the windows it could not find.
+
+| Command/check                                                                  | Result                                      |
+| ------------------------------------------------------------------------------ | ------------------------------------------- |
+| `clap.test.ts` (`windowLaunches` per monitor, `missingWindows`)                | red then green, 11/11                       |
+| `npx tsc -b apps/node-agent`; ESLint and Prettier on `clap.ts`, `clap.test.ts` | exit 0                                      |
+| The placer run once against the owner's open clap windows                      | `placed presence`, `placed vault` in 977 ms |
+
+Not verified by eye: the maximised result on each monitor after a real clap.

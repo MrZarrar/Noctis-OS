@@ -482,6 +482,9 @@ access your microphone".
 **First clap:** each window has a Chrome profile of its own (that is what lets each one open on its own monitor), so
 both open at the login screen. Type the core token once in each; the cookie lasts thirty days.
 
+Clap again while they are open, minimised or moved, and the same two windows come back to their monitors, maximised
+and in front. Only a window you closed opens fresh.
+
 **Tuning.** Two claps count when the second lands 150 to 800 ms after the first. Loud steady sound such as music
 blocks it rather than setting it off.
 

@@ -19,7 +19,91 @@ const ONSET_RATIO = 4;
 const BACKGROUND_WEIGHT = 0.02;
 const RETRY_MS = 30_000;
 const CHROME = String.raw`C:\Program Files\Google\Chrome\Application\chrome.exe`;
-const SCREENS = String.raw`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::AllScreens | % { "$($_.Primary) $($_.Bounds.X) $($_.Bounds.Y)" }`;
+/** How long a launched window has to appear before the placer gives up on it. */
+const LAUNCH_WAIT_SECONDS = 20;
+
+/**
+ * Finds each profile's Chrome window, restores it, moves it to its monitor,
+ * maximises it there and raises it, printing "placed <name>" for each one it
+ * found. Reads its request from NOCTIS_CLAP_PLACE, so no value is ever spliced
+ * into the script. Chrome's own `--start-maximized` is ignored beside a
+ * position, and a launch never reuses an open window, which is why this exists.
+ */
+const PLACER = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class NoctisClapWindows {
+  delegate bool EnumProc(IntPtr window, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr data);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr window);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint relation);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int size);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  // The browser's titled, unowned top-level window. Chrome keeps hidden helper windows of the same class.
+  public static IntPtr Find(int[] pids) {
+    var owned = new HashSet<uint>();
+    foreach (var pid in pids) owned.Add((uint)pid);
+    var found = IntPtr.Zero;
+    EnumWindows((window, data) => {
+      uint pid;
+      GetWindowThreadProcessId(window, out pid);
+      if (!owned.Contains(pid) || !IsWindowVisible(window) || GetWindowTextLength(window) == 0 || GetWindow(window, 4) != IntPtr.Zero) return true;
+      var name = new StringBuilder(64);
+      GetClassName(window, name, 64);
+      if (name.ToString() != "Chrome_WidgetWin_1") return true;
+      found = window;
+      return false;
+    }, IntPtr.Zero);
+    return found;
+  }
+  public static void Place(IntPtr window, int x, int y, int width, int height) {
+    ShowWindow(window, 9);
+    SetWindowPos(window, IntPtr.Zero, x, y, width, height, 0x0014);
+    ShowWindow(window, 3);
+    // Topmost and straight back raises it above everything without pinning it there.
+    SetWindowPos(window, new IntPtr(-1), 0, 0, 0, 0, 0x0013);
+    SetWindowPos(window, new IntPtr(-2), 0, 0, 0, 0, 0x0013);
+    SetForegroundWindow(window);
+  }
+}
+'@
+[NoctisClapWindows]::SetProcessDPIAware() | Out-Null
+Add-Type -AssemblyName System.Windows.Forms
+$request = $env:NOCTIS_CLAP_PLACE | ConvertFrom-Json
+$screens = [System.Windows.Forms.Screen]::AllScreens
+$primary = $screens | Where-Object Primary | Select-Object -First 1
+$other = $screens | Where-Object { -not $_.Primary } | Select-Object -First 1
+if ($null -eq $other) { $other = $primary }
+$deadline = (Get-Date).AddSeconds($request.wait)
+$pending = @($request.windows)
+while ($true) {
+  $processes = @(Get-CimInstance Win32_Process | Where-Object Name -eq $request.exe)
+  $left = @()
+  foreach ($target in $pending) {
+    $flag = "--user-data-dir=$($target.profile)"
+    $pids = @($processes | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($flag) } | ForEach-Object { [int]$_.ProcessId })
+    $window = if ($pids.Count -gt 0) { [NoctisClapWindows]::Find($pids) } else { [IntPtr]::Zero }
+    if ($window -ne [IntPtr]::Zero) {
+      $area = if ($target.monitor -eq 1) { $primary.WorkingArea } else { $other.WorkingArea }
+      [NoctisClapWindows]::Place($window, $area.X, $area.Y, $area.Width, $area.Height)
+      "placed $($target.name)"
+    } else {
+      $left += $target
+    }
+  }
+  $pending = $left
+  if ($pending.Count -eq 0 -or (Get-Date) -ge $deadline) { break }
+  Start-Sleep -Milliseconds 250
+}
+`;
 
 /**
  * Hears a double clap in 16 kHz mono samples, fed in chunks of any size.
@@ -99,52 +183,50 @@ export function parseAudioDevices(listing: string): string[] {
   );
 }
 
-export interface Screen {
-  primary: boolean;
-  x: number;
-  y: number;
-}
-
-/** Lines of "<Primary> <X> <Y>", as the PowerShell query prints them. */
-export function parseScreens(text: string): Screen[] {
-  return text.split(/\r?\n/).flatMap((line) => {
-    const [primary, x, y] = line.trim().split(/\s+/);
-    return x === undefined || y === undefined
-      ? []
-      : [{ primary: primary === "True", x: Number(x), y: Number(y) }];
-  });
+export interface ClapWindow {
+  name: string;
+  /** 1 is the primary monitor, 2 the first other one (or the primary when there is none). */
+  monitor: 1 | 2;
+  profile: string;
+  args: string[];
 }
 
 /**
- * Chrome's arguments for the two windows: Presence on the primary monitor, the
- * Vault on the other. Each has a profile of its own because Chrome honours
- * `--window-position` only when the launch starts a new browser process; a
- * second window in a profile already open lands where the first one did.
+ * Presence on monitor 1 and the Vault on monitor 2. Each has a Chrome profile
+ * of its own, which is how the placer tells the two windows apart.
  */
-export function windowLaunches(
-  pageUrl: string,
-  screens: readonly Screen[],
-  profiles: string,
-): string[][] {
-  const primary = screens.find((screen) => screen.primary) ?? screens[0] ?? { x: 0, y: 0 };
-  const other = screens.find((screen) => !screen.primary) ?? primary;
-
+export function windowLaunches(pageUrl: string, profiles: string): ClapWindow[] {
   return (
     [
-      ["Presence", primary],
-      ["Vault", other],
+      ["Presence", 1],
+      ["Vault", 2],
     ] as const
-  ).map(([page, screen]) => [
-    `--user-data-dir=${win32.join(profiles, page.toLowerCase())}`,
-    `--app=${new URL(`/?screen=${page}`, pageUrl).toString()}`,
-    // ponytail: a point just inside the monitor, then maximised there. Mixed DPI
-    // scaling can shift it; set NOCTIS_CLAP_BROWSER to Edge or move the
-    // monitors' arrangement if a window lands on the wrong one.
-    `--window-position=${String(screen.x + 40)},${String(screen.y + 40)}`,
-    "--start-maximized",
-    "--no-first-run",
-    "--no-default-browser-check",
-  ]);
+  ).map(([page, monitor]) => {
+    const profile = win32.join(profiles, page.toLowerCase());
+    return {
+      name: page.toLowerCase(),
+      monitor,
+      profile,
+      args: [
+        `--user-data-dir=${profile}`,
+        `--app=${new URL(`/?screen=${page}`, pageUrl).toString()}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+      ],
+    };
+  });
+}
+
+/** The windows the placer did not report placing, so a placer that failed outright launches them all. */
+export function missingWindows(names: readonly string[], output: string): string[] {
+  const placed = new Set(
+    output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("placed "))
+      .map((line) => line.slice("placed ".length)),
+  );
+  return names.filter((name) => !placed.has(name));
 }
 
 function firstMic(ffmpeg: string): Promise<string | undefined> {
@@ -161,14 +243,35 @@ function firstMic(ffmpeg: string): Promise<string | undefined> {
   });
 }
 
-function screens(): Promise<Screen[]> {
+/** Places whichever of `windows` are open; resolves to the names it could not find. */
+function place(exe: string, windows: readonly ClapWindow[], wait: number): Promise<string[]> {
+  const request = {
+    exe,
+    wait,
+    windows: windows.map(({ name, monitor, profile }) => ({ name, monitor, profile })),
+  };
   return new Promise((resolve) => {
     execFile(
       "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", SCREENS],
-      { windowsHide: true },
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(PLACER, "utf16le").toString("base64"),
+      ],
+      {
+        windowsHide: true,
+        timeout: (wait + 30) * 1000,
+        env: { ...process.env, NOCTIS_CLAP_PLACE: JSON.stringify(request) },
+      },
       (_error, stdout) => {
-        resolve(parseScreens(stdout));
+        resolve(
+          missingWindows(
+            windows.map((window) => window.name),
+            stdout,
+          ),
+        );
       },
     );
   });
@@ -202,18 +305,35 @@ export async function startClapToOpen(
   let child: ChildProcess | undefined;
   let retry: NodeJS.Timeout | undefined;
 
+  let opening = false;
+
+  /** Brings back the windows already open, and launches only the ones that are not. */
   const open = async (): Promise<void> => {
-    for (const args of windowLaunches(pageUrl, await screens(), profiles)) {
-      spawn(browser, args, { detached: true, stdio: "ignore", windowsHide: false })
-        .on("error", (error) => {
-          log("warn", "clap to open could not start the browser", {
-            browser,
-            error: error.message,
-          });
-        })
-        .unref();
+    if (opening) return;
+    opening = true;
+    try {
+      const windows = windowLaunches(pageUrl, profiles);
+      const exe = win32.basename(browser);
+      const missing = await place(exe, windows, 0);
+      const launched = windows.filter((window) => missing.includes(window.name));
+      for (const window of launched) {
+        spawn(browser, window.args, { detached: true, stdio: "ignore", windowsHide: false })
+          .on("error", (error) => {
+            log("warn", "clap to open could not start the browser", {
+              browser,
+              error: error.message,
+            });
+          })
+          .unref();
+      }
+      const unplaced = launched.length === 0 ? [] : await place(exe, launched, LAUNCH_WAIT_SECONDS);
+      log("info", "double clap: opened Noctis", {
+        launched: launched.map((window) => window.name),
+        unplaced,
+      });
+    } finally {
+      opening = false;
     }
-    log("info", "double clap: opened Noctis");
   };
 
   const listen = (): void => {
