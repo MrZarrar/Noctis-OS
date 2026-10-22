@@ -22,16 +22,21 @@ export interface HardwareMachine {
   gpuName: string;
   ramGb: number;
   vramGb: number;
+  /** The clock the CPU row shows runs from base at idle to boost at full load. */
+  baseGhz: number;
+  boostGhz: number;
 }
 
 export const MACHINES: readonly HardwareMachine[] = [
   {
     id: "home",
     name: "Home PC",
-    cpuName: "Ryzen 9 7950X",
-    gpuName: "RTX 4090",
-    ramGb: 64,
-    vramGb: 24,
+    cpuName: "Ryzen 7 9700X",
+    gpuName: "RTX 5070",
+    ramGb: 32,
+    vramGb: 12,
+    baseGhz: 3.8,
+    boostGhz: 5.5,
   },
   {
     id: "work",
@@ -40,6 +45,8 @@ export const MACHINES: readonly HardwareMachine[] = [
     gpuName: "RTX 4070 Ti",
     ramGb: 32,
     vramGb: 12,
+    baseGhz: 3.4,
+    boostGhz: 5.6,
   },
 ];
 

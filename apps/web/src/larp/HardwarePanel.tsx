@@ -90,7 +90,11 @@ function MachineCard({
         {machine.cpuName} · {machine.gpuName}
       </p>
       <Sparkline values={history} />
-      <Meter label="CPU" value={cpu} detail={`${(3.4 + cpu * 0.018).toFixed(1)} GHz`} />
+      <Meter
+        label="CPU"
+        value={cpu}
+        detail={`${(machine.baseGhz + ((machine.boostGhz - machine.baseGhz) * cpu) / 100).toFixed(1)} GHz`}
+      />
       <Meter
         label="RAM"
         value={sample?.ram ?? 0}
