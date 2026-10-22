@@ -316,8 +316,8 @@
         "label": "Show unfinished pages",
         "help": "Show Missions, Artifacts and Automations in the rail.",
         "kind": "boolean",
-        "value": true,
-        "source": "ui"
+        "value": false,
+        "source": "default"
       },
       {
         "key": "wakeWhileTyping",

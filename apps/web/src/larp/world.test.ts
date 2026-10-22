@@ -12,7 +12,7 @@ import { ArtifactSchema } from "../pages/Artifacts.js";
 import { QuestionsSchema } from "../pages/AgentQuestions.js";
 import { HistorySchema } from "../pages/BeforeNoctis.js";
 import { SessionsSchema as ExternalSessionsSchema } from "../pages/Conversations.js";
-import { ConfigurationSchema } from "../pages/CoreSettings.js";
+import { ConfigurationSchema, allPagesChoice } from "../pages/CoreSettings.js";
 import { EntriesSchema, SessionsSchema, sharedRootFor } from "../pages/LiveSessions.js";
 import { GrantsSchema, HostsSchema, NodesSchema, RootIdsSchema } from "../pages/Nodes.js";
 import { ModelsSchema, PermissionsSchema } from "../pages/Settings.js";
@@ -82,6 +82,10 @@ describe("LARP world", () => {
     }
     expect(read("/remote/hosts", HostsSchema).hosts).toEqual([]);
     expect(area.contentUrl?.(`/nodes/${LARP_IDS.homeNode}/screen?fps=15`)).toBeUndefined();
+  });
+
+  it("keeps the unfinished pages out of the rail, as a fresh core does", () => {
+    expect(allPagesChoice(read("/configuration", ConfigurationSchema).settings)).not.toBe(true);
   });
 
   it("serves configuration, healthy usage and artifacts using the page schemas", () => {

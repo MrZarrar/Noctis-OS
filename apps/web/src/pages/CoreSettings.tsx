@@ -375,11 +375,37 @@ function nextKey(): string {
   return `web-configuration-${String(keySequence)}-${String(Date.now())}`;
 }
 
+/**
+ * Every reader of the configuration, so a setting saved here reaches the rail at
+ * once. The rail reads it in App, a different hook instance from this page's, and
+ * used to keep its first answer until the page reloaded.
+ */
+const configurationReaders = new Set<() => void>();
+
+export function onConfigurationChanged(reader: () => void): () => void {
+  configurationReaders.add(reader);
+  return () => {
+    configurationReaders.delete(reader);
+  };
+}
+
+export function configurationChanged(): void {
+  for (const reader of configurationReaders) reader();
+}
+
 function useConfiguration(
   transport: CoreTransport | undefined,
 ): [z.infer<typeof ConfigurationSchema> | undefined, () => void] {
   const [configuration, setConfiguration] = useState<z.infer<typeof ConfigurationSchema>>();
   const [revision, setRevision] = useState(0);
+
+  useEffect(
+    () =>
+      onConfigurationChanged(() => {
+        setRevision((current) => current + 1);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (transport === undefined) {
@@ -408,7 +434,7 @@ function useConfiguration(
 }
 
 export function CoreSettings({ transport }: { transport: CoreTransport | undefined }): JSX.Element {
-  const [configuration, reread] = useConfiguration(transport);
+  const [configuration] = useConfiguration(transport);
   const [error, setError] = useState<string>();
 
   const send = useCallback(
@@ -429,9 +455,9 @@ export function CoreSettings({ transport }: { transport: CoreTransport | undefin
             ? "That is not a valid value for this setting. Nothing was changed."
             : "The core did not save that.",
       );
-      reread();
+      configurationChanged();
     },
-    [transport, reread],
+    [transport],
   );
 
   if (configuration === undefined) {

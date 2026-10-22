@@ -1,9 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SettingView } from "./CoreSettings.js";
-import { CoreSettingsView, allPagesChoice } from "./CoreSettings.js";
+import {
+  CoreSettingsView,
+  allPagesChoice,
+  configurationChanged,
+  onConfigurationChanged,
+} from "./CoreSettings.js";
 
 const settings: SettingView[] = [
   {
@@ -153,5 +158,18 @@ describe("the rail's unfinished pages", () => {
   it("leaves the build's own switch alone until the owner chooses", () => {
     expect(allPagesChoice(view(false, "default"))).toBeUndefined();
     expect(allPagesChoice(undefined)).toBeUndefined();
+  });
+});
+
+describe("a saved setting", () => {
+  it("tells every reader of the configuration to read it again, so the rail follows at once", () => {
+    const rail = vi.fn();
+    const stop = onConfigurationChanged(rail);
+
+    configurationChanged();
+    stop();
+    configurationChanged();
+
+    expect(rail).toHaveBeenCalledOnce();
   });
 });

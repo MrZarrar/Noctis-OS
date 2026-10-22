@@ -49,6 +49,7 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
           justifyItems: "center",
           gap: spacing.xs,
           minHeight: 56,
+          minWidth: 0,
           flexShrink: 0,
           font: `${String(typography.scale.xs)}px ${typography.family}`,
           letterSpacing: typography.tracking.wide,
@@ -58,7 +59,8 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
           isolation: "isolate",
           border: "none",
           borderRadius: corner.md,
-          padding: `${String(spacing.sm)}px ${String(spacing.xs)}px`,
+          // No side padding: the column is narrow, and "Reminders" needs all of it.
+          padding: `${String(spacing.sm)}px 0`,
           cursor: "pointer",
         }}
       >
@@ -81,7 +83,16 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
           />
         )}
         <NavIcon item={name} />
-        {name}
+        <span
+          style={{
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {name}
+        </span>
         {badge}
       </button>
     );
@@ -94,6 +105,10 @@ export function Rail({ active, onSelect, allPages = false, counts }: RailProps):
         display: "flex",
         flexDirection: "column",
         overflowY: "auto",
+        // Sideways scroll, or a scrollbar taking room from the column, both push
+        // the icons off centre. The column still scrolls; it shows no bar.
+        overflowX: "hidden",
+        scrollbarWidth: "none",
         minHeight: 0,
         gap: spacing.xs,
         width: 84,
