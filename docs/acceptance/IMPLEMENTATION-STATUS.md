@@ -4074,3 +4074,16 @@ Claude's and Codex's 5-hour and weekly limits, as each provider reports them, on
 | Fixture screenshots at 1100px and 390px (normal, over 80/95%, provider unavailable)                                                       | checked by eye                                           |
 
 Not verified end to end against the live core and node agent: that needs both restarted on the new build. Node is 22.23.1 here, not the pinned 22.23.2.
+
+## 2026-10-22 Clap to open
+
+A double clap at the home PC opens Presence on monitor 1 and the Vault on monitor 2, as Chrome app windows with a profile each. `apps/node-agent/src/clap.ts` (detector, ffmpeg capture, launches), started from `main.ts` only when `NOCTIS_CLAP=1`; the page reads `?screen=` (`linkedScreen`).
+
+| Command/check                                                                                                           | Result                                          |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `clap.test.ts` (double, chunked, single, far apart, quiet, long sounds, claps over music, device list, window launches) | red then green, 10/10                           |
+| `thread-link.test.ts` (`linkedScreen`)                                                                                  | red then green                                  |
+| `npx tsc -b apps/node-agent`; web `tsc --noEmit`; ESLint and Prettier on changed files                                  | exit 0, apart from the in-progress `larp/` work |
+| The capture command against Microphone (G55) for one second                                                             | 31,040 bytes of 16 kHz mono                     |
+
+Not verified: a real double clap, the windows landing on each monitor, and the login in each new profile. Those need the owner (HOME-SETUP step 8) after the work core is redeployed. Full suite not run.

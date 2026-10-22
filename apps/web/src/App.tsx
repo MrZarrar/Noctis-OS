@@ -1,6 +1,6 @@
 import type { ConversationalIdentityId } from "@noctis/contracts";
 import { ConversationThreadSchema } from "@noctis/contracts";
-import { linkedThread } from "./navigation/thread-link.js";
+import { linkedScreen, linkedThread } from "./navigation/thread-link.js";
 import {
   HIDDEN_ITEMS,
   NAV_ITEMS,
@@ -154,7 +154,8 @@ function Workbench({
   onSignedOut?: () => void;
 }): JSX.Element {
   const [productivityFocus, setProductivityFocus] = useState<{ id: string; task: boolean }>();
-  const [active, setActive] = useState<RailItem>("Presence");
+  const initialPage = useRef<RailItem>(linkedScreen(window.location.href) ?? "Presence");
+  const [active, setActive] = useState<RailItem>(initialPage.current);
   const initialThreadLink = useRef(linkedThread(window.location.href));
   const [linkError, setLinkError] = useState<string>();
   const [handoff, setHandoff] = useState<VaultHandoff>();
@@ -242,7 +243,7 @@ function Workbench({
   // The first entry names the page the app opened on; back from any page
   // lands on the one before it.
   useEffect(() => {
-    history.replaceState({ page: "Presence", depth: 0 } satisfies HistoryEntry, "");
+    history.replaceState({ page: initialPage.current, depth: 0 } satisfies HistoryEntry, "");
     const onPop = (event: PopStateEvent): void => {
       const page = entryPage(event.state);
       if (page !== undefined) {

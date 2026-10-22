@@ -459,3 +459,37 @@ prints one line for each file.
    `noctis-show/.shots/`: say so in the thread and it will try another way.
 3. Ask Vesper "open the vault". The Vault page opens as a panel in Noctis, not Obsidian.
 4. Ask Vesper anything that needs a paragraph back. The reply has no em dashes.
+
+## 8. Clap to open Noctis
+
+Added 22 October 2026. Clap twice and the home PC opens two Noctis windows: Presence maximised on monitor 1 (the
+primary) and the Vault maximised on monitor 2. The node listens through the ffmpeg from step 2, on the first
+microphone it finds (here, Microphone (G55)). It is off until you turn it on, and it only listens while the node runs
+in your own session (step 6.1).
+
+The work PC's core needs redeploying first, so the page understands `?screen=Vault`. Until then both windows open on
+Presence.
+
+**Turn it on**, then sign out and back in so the logon task sees it, and restart the node as in step 7:
+
+```powershell
+[Environment]::SetEnvironmentVariable("NOCTIS_CLAP", "1", "User")
+```
+
+Windows must let desktop apps use the microphone: Settings, Privacy and security, Microphone, "Let desktop apps
+access your microphone".
+
+**First clap:** each window has a Chrome profile of its own (that is what lets each one open on its own monitor), so
+both open at the login screen. Type the core token once in each; the cookie lasts thirty days.
+
+**Tuning.** Two claps count when the second lands 150 to 800 ms after the first. Loud steady sound such as music
+blocks it rather than setting it off.
+
+| Variable                | Default                 | Meaning                                                                                                           |
+| ----------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `NOCTIS_CLAP_THRESHOLD` | `0.3`                   | How loud a clap must be, 0 to 1. The node logs `clap heard` with each clap's peak; set this a little under yours. |
+| `NOCTIS_CLAP_MIC`       | the first audio device  | A microphone by its exact ffmpeg name.                                                                            |
+| `NOCTIS_CLAP_BROWSER`   | Chrome in Program Files | Another Chromium browser, such as Edge's `msedge.exe`.                                                            |
+
+**Turn it off:** `[Environment]::SetEnvironmentVariable("NOCTIS_CLAP", $null, "User")`, sign out and in, and
+restart the node.
