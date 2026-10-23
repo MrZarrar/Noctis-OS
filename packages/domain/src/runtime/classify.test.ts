@@ -150,7 +150,7 @@ const ROWS: Row[] = [
   ],
   [
     "a nested PowerShell inside the wrapped one",
-    command(`powershell.exe -Command "Get-Date; pwsh -File run.ps1"`),
+    command(`powershell.exe -Command "Get-Date; pwsh -Command run"`),
     "external_write",
     "partially_reversible",
     CMD,
@@ -199,14 +199,78 @@ const ROWS: Row[] = [
     CMD,
   ],
   ["sh -c", command(`make && sh -c 'printf hi'`), "external_write", "partially_reversible", CMD],
+  /**
+   * A script handed over on the command line is in plain sight, and no more hidden than
+   * `python script.py`, which was always local. Asking for every `python -c` that read a
+   * JSON file was most of what the owner was asked to approve.
+   */
   [
-    "node -e",
-    command(`node -e "require('child_process').execSync('x')"`),
+    "python -c inside a root runs like a script",
+    command(`python -c "import json; print(json.load(open('a.json')))"`),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
+  [
+    "python -c outside every root",
+    command(`python -c "print(1)"`, OUTSIDE),
     "external_write",
     "partially_reversible",
     CMD,
   ],
-  ["python -c", command(`python -c "import os"`), "external_write", "partially_reversible", CMD],
+  ["node -e inside a root", command(`node -e "console.log(1)"`), "local_reversible_edit", "reversible", CMD],
+  [
+    "node -e still shows a push it names",
+    command(`node -e "require('child_process').execSync('git push')"`),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "a quoted heredoc's backticks are text",
+    command("cat > notes.md <<'MD'
+Run `npm test` first.
+MD"),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
+  [
+    "python reading a quoted heredoc",
+    command('cd repo && python - <<"PY"
+s = "a `b`"
+PY
+echo done'),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
+  [
+    "an unquoted heredoc still substitutes backticks",
+    command("cat > a.txt <<EOF
+`whoami`
+EOF"),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "a backtick after a quoted heredoc",
+    command("cat > a <<'X'
+hi
+X
+echo `whoami`"),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "powershell -File runs a script like any other",
+    command("powershell -ExecutionPolicy Bypass -File scripts\deploy\work-pc.ps1"),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
   [
     "&& is not the call operator",
     command("npm test && npm run lint"),
