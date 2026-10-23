@@ -162,6 +162,92 @@ function core(overrides: Record<string, CoreResponse> = {}): Scripted {
 }
 
 describe("createConversation", () => {
+  it.each([true, false])(
+    "does not duplicate a reply committed just before cancellation (in the read: %s)",
+    async (committedInRead) => {
+      const scripted = core({
+        "POST /commands/conversation.cancel": {
+          status: 200,
+          body: { ...runningTurn, status: "cancelled" },
+        },
+      });
+      const store = createConversation(scripted.transport, "vesper", undefined);
+      store.start();
+      await vi.waitFor(() => expect(store.getState().turns).toHaveLength(1));
+      scripted.live().onFrame?.({
+        kind: "runtime_delta",
+        envelopeVersion: 1,
+        threadId: THREAD_ID,
+        jobId: JOB_ID,
+        itemId: "partial",
+        text: "Reply",
+      });
+      scripted.answer(`GET /threads/${THREAD_ID}/turns`, {
+        status: 200,
+        body: {
+          turns: [
+            {
+              ...runningTurn,
+              status: "cancelled",
+              items: committedInRead
+                ? [{ itemId: "partial", kind: "agent_message", status: "completed", text: "Reply" }]
+                : [],
+            },
+          ],
+        },
+      });
+      await store.cancel(JOB_ID);
+      if (!committedInRead) {
+        scripted
+          .live()
+          .onEvent(
+            event("identity.message_added.v1", "identity", THREAD_ID, { itemId: "partial" }),
+          );
+        await vi.waitFor(() => expect(store.getState().partialReplies.size).toBe(0));
+      }
+      expect(store.getState().streaming.size).toBe(0);
+      expect(store.getState().partialReplies.size).toBe(0);
+      store.close();
+    },
+  );
+
+  it("stops accepting deltas for a cancelled job while keeping the partial reply", async () => {
+    const scripted = core({
+      "POST /commands/conversation.cancel": {
+        status: 200,
+        body: { ...runningTurn, status: "cancelled" },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+    store.start();
+    await vi.waitFor(() => expect(store.getState().turns).toHaveLength(1));
+    const delta: ServerFrame = {
+      kind: "runtime_delta",
+      envelopeVersion: 1,
+      threadId: THREAD_ID,
+      jobId: JOB_ID,
+      itemId: "partial",
+      text: "Kept",
+    };
+    scripted.live().onFrame?.(delta);
+    scripted.answer(`GET /threads/${THREAD_ID}/turns`, {
+      status: 200,
+      body: { turns: [{ ...runningTurn, status: "cancelled" }] },
+    });
+    await store.cancel(JOB_ID);
+    scripted.live().onFrame?.({ ...delta, text: " late" });
+    expect(store.getState().turns[0]?.status).toBe("cancelled");
+    expect(store.getState().streaming.size).toBe(0);
+    expect(store.getState().partialReplies.get(`${JOB_ID}:partial`)).toBe("Kept");
+    scripted.live().onFrame?.({ ...delta, jobId: "next-job", text: "Next" });
+    expect(store.getState().streaming.get("partial")).toBe("Next");
+    expect(store.getState().partialReplies.get(`${JOB_ID}:partial`)).toBe("Kept");
+    expect(
+      scripted.calls.find((call) => call.path === "/commands/conversation.cancel")?.body,
+    ).toMatchObject({ jobId: JOB_ID });
+    store.close();
+  });
+
   it("pins a delayed default free-chat choice to its original thread after another client starts fresh", async () => {
     const scripted = core({
       "POST /commands/conversation.start_fresh": {

@@ -116,8 +116,8 @@ export function ProductivityReceipt({
       {id && !message && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {proposal.kind !== "note" && !suggestedUpdate && (
-            <button disabled={busy} style={buttonStyle} onClick={() => void act()}>
-              {proposal.kind === "reminder" ? "Undo" : "Turn on"}
+            <button disabled={busy} aria-busy={busy} style={buttonStyle} onClick={() => void act()}>
+              {busy ? "Saving..." : proposal.kind === "reminder" ? "Undo" : "Turn on"}
             </button>
           )}
           {onOpen && (

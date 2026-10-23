@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import { AutomationSettings } from "./AutomationSettings.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
@@ -54,7 +55,7 @@ export function Control({
   onSet,
 }: {
   setting: SettingView;
-  onSet: (key: string, value: unknown) => void;
+  onSet: (key: string, value: unknown) => void | Promise<void>;
 }): JSX.Element {
   const id = `setting-${setting.key}`;
   // Keyed by the value, so a re-read after a save redraws the field.
@@ -69,7 +70,7 @@ export function Control({
           type="time"
           defaultValue={typeof setting.value === "string" ? setting.value : ""}
           onBlur={(event) => {
-            if (event.target.value !== setting.value) onSet(setting.key, event.target.value);
+            if (event.target.value !== setting.value) void onSet(setting.key, event.target.value);
           }}
           style={fieldStyle}
         />
@@ -82,7 +83,7 @@ export function Control({
           type="checkbox"
           defaultChecked={setting.value === true}
           onChange={(event) => {
-            onSet(setting.key, event.target.checked);
+            void onSet(setting.key, event.target.checked);
           }}
           // The touch floor: a bare checkbox is 13px.
           style={{ width: 44, height: 44, margin: 0 }}
@@ -98,7 +99,7 @@ export function Control({
           defaultValue={typeof setting.value === "number" ? setting.value : ""}
           onBlur={(event) => {
             const value = Number(event.target.value);
-            if (value !== setting.value) onSet(setting.key, value);
+            if (value !== setting.value) void onSet(setting.key, value);
           }}
           style={{ ...fieldStyle, maxWidth: 140 }}
         />
@@ -110,7 +111,7 @@ export function Control({
           id={id}
           defaultValue={typeof setting.value === "string" ? setting.value : undefined}
           onChange={(event) => {
-            onSet(setting.key, event.target.value);
+            void onSet(setting.key, event.target.value);
           }}
           style={{ ...fieldStyle, maxWidth: 160 }}
         >
@@ -126,9 +127,7 @@ export function Control({
         <Places
           key={key}
           places={z.array(z.string()).safeParse(setting.value).data ?? []}
-          onSave={(places) => {
-            onSet(setting.key, places);
-          }}
+          onSave={(places) => onSet(setting.key, places)}
         />
       );
     case "list":
@@ -136,9 +135,7 @@ export function Control({
         <RemoteHosts
           key={key}
           hosts={RemoteHostsSchema.safeParse(setting.value).data ?? []}
-          onSave={(hosts) => {
-            onSet(setting.key, hosts);
-          }}
+          onSave={(hosts) => onSet(setting.key, hosts)}
         />
       );
   }
@@ -150,7 +147,7 @@ function Places({
   onSave,
 }: {
   places: readonly string[];
-  onSave: (places: string[]) => void;
+  onSave: (places: string[]) => void | Promise<void>;
 }): JSX.Element {
   const [rows, setRows] = useState<string[]>([...places]);
 
@@ -189,15 +186,12 @@ function Places({
         >
           Add a place
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            onSave(rows.filter((row) => row !== ""));
-          }}
-          style={buttonStyle}
+        <ActionButton
+          onAction={() => onSave(rows.filter((row) => row !== ""))}
+          pendingLabel="Saving..."
         >
           Save places
-        </button>
+        </ActionButton>
       </div>
     </div>
   );
@@ -209,7 +203,7 @@ function RemoteHosts({
   onSave,
 }: {
   hosts: readonly RemoteHost[];
-  onSave: (hosts: RemoteHost[]) => void;
+  onSave: (hosts: RemoteHost[]) => void | Promise<void>;
 }): JSX.Element {
   const [rows, setRows] = useState<RemoteHost[]>([...hosts]);
   const field = (index: number, name: keyof RemoteHost, label: string): JSX.Element => (
@@ -263,15 +257,9 @@ function RemoteHosts({
         >
           Add a host
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            onSave(rows);
-          }}
-          style={buttonStyle}
-        >
+        <ActionButton onAction={() => onSave(rows)} pendingLabel="Saving...">
           Save hosts
-        </button>
+        </ActionButton>
       </div>
     </div>
   );
@@ -283,8 +271,8 @@ export function SettingRow({
   onReset,
 }: {
   setting: SettingView;
-  onSet: (key: string, value: unknown) => void;
-  onReset: (key: string) => void;
+  onSet: (key: string, value: unknown) => void | Promise<void>;
+  onReset: (key: string) => void | Promise<void>;
 }): JSX.Element {
   return (
     <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
@@ -297,15 +285,9 @@ export function SettingRow({
       </p>
       {setting.source === "ui" && (
         <div>
-          <button
-            type="button"
-            onClick={() => {
-              onReset(setting.key);
-            }}
-            style={buttonStyle}
-          >
+          <ActionButton onAction={() => onReset(setting.key)} pendingLabel="Resetting...">
             Reset
-          </button>
+          </ActionButton>
         </div>
       )}
     </div>
@@ -321,8 +303,8 @@ export function CoreSettingsView({
 }: {
   settings: readonly SettingView[];
   startUp: ReadonlyArray<{ name: string; value: string }>;
-  onSet: (key: string, value: unknown) => void;
-  onReset: (key: string) => void;
+  onSet: (key: string, value: unknown) => void | Promise<void>;
+  onReset: (key: string) => void | Promise<void>;
   error?: string;
 }): JSX.Element {
   return (
@@ -443,19 +425,23 @@ export function CoreSettings({ transport }: { transport: CoreTransport | undefin
         return;
       }
 
-      const response = await transport.request("POST", `/commands/${name}`, {
-        idempotencyKey: nextKey(),
-        ...body,
-      });
+      try {
+        const response = await transport.request("POST", `/commands/${name}`, {
+          idempotencyKey: nextKey(),
+          ...body,
+        });
 
-      setError(
-        response.status === 200
-          ? undefined
-          : response.status === 400
-            ? "That is not a valid value for this setting. Nothing was changed."
-            : "The core did not save that.",
-      );
-      configurationChanged();
+        setError(
+          response.status === 200
+            ? undefined
+            : response.status === 400
+              ? "That is not a valid value for this setting. Nothing was changed."
+              : "The core did not save that.",
+        );
+        configurationChanged();
+      } catch (failure: unknown) {
+        setError(failure instanceof Error ? failure.message : "The core could not save that.");
+      }
     },
     [transport],
   );
@@ -469,8 +455,8 @@ export function CoreSettings({ transport }: { transport: CoreTransport | undefin
     );
   }
 
-  const onSet = (key: string, value: unknown) => void send("settings.set", { key, value });
-  const onReset = (key: string) => void send("settings.reset", { key });
+  const onSet = (key: string, value: unknown) => send("settings.set", { key, value });
+  const onReset = (key: string) => send("settings.reset", { key });
 
   return (
     <>

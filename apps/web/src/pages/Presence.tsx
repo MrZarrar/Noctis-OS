@@ -11,6 +11,8 @@ import type { ConversationState, SendOptions } from "../conversation/useConversa
 import type { IdentityRuntimeState } from "../identities/useIdentityRuntime.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { buttonStyle } from "../layout/Page.js";
+import { usePendingAction } from "../layout/ActionButton.js";
+import { isTurnRunning } from "./turn-activity.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ProductivityPresence } from "./ProductivityPresence.js";
 import { UsageLimits } from "./UsageLimits.js";
@@ -87,6 +89,10 @@ export function Presence({
   const asleep = coldStart && (until === undefined || Date.parse(until) <= Date.now());
   const wakeWhileTyping = useWakeWhileTyping(transport);
   const state = intelligenceState(conversation, listening, asleep);
+  const stop = usePendingAction();
+  const activeTurn = conversation.turns.findLast(
+    (turn) => isTurnRunning(turn) && turn.jobId !== undefined,
+  );
   const questions = openQuestions(conversation.turns);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -396,11 +402,26 @@ export function Presence({
             })}
             onAdded={() => panels.sources.forEach((source) => source.composition.refresh())}
           />
+          {stop.error !== undefined && (
+            <p role="alert" style={{ color: semantic.error }}>
+              {stop.error}
+            </p>
+          )}
           <PromptForm
             identityId={identityId}
             models={conversation.models}
             defaultModel={conversation.defaultModel}
             disabled={transport === undefined}
+            steering={activeTurn !== undefined}
+            stopping={stop.pending}
+            {...(activeTurn?.jobId === undefined
+              ? {}
+              : {
+                  onStop: () => {
+                    const jobId = activeTurn.jobId;
+                    if (jobId !== undefined) void stop.run(() => conversation.cancel(jobId));
+                  },
+                })}
             canAttach={conversation.canAttach}
             roots={conversation.roots}
             {...(conversation.thread === undefined ? {} : { threadId: conversation.thread.id })}

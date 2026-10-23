@@ -10,6 +10,7 @@ import {
 import { material, semantic } from "@noctis/ui";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { buttonStyle } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import { SnoozeChoices } from "./SnoozeChoices.js";
 import { productivityCommand } from "./Productivity.js";
 export function ProductivityPresence({
@@ -117,16 +118,17 @@ export function ProductivityPresence({
           }}
         >
           <span style={{ flex: "1 1 180px" }}>{r.text}</span>
-          <button disabled={busy} style={buttonStyle} onClick={() => void act(r)}>
+          <ActionButton disabled={busy} onAction={() => act(r)} pendingLabel="Saving...">
             Done
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             disabled={busy}
             style={buttonStyle}
-            onClick={() => void act(r, { until: new Date(Date.now() + 3600000).toISOString() })}
+            onAction={() => act(r, { until: new Date(Date.now() + 3600000).toISOString() })}
+            pendingLabel="Snoozing..."
           >
             Snooze 1 hour
-          </button>
+          </ActionButton>
           <SnoozeChoices
             disabled={busy}
             nodes={nodes}

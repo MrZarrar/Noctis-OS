@@ -95,7 +95,10 @@ const ModelsSchema = z
   .strict();
 
 /* Event payloads are this repo's own (conversation/service.ts, authority/service.ts). */
-const MessageAddedPayloadSchema = z.object({ itemId: z.string().min(1).optional() });
+const MessageAddedPayloadSchema = z.object({
+  itemId: z.string().min(1).optional(),
+  turnId: z.string().min(1).optional(),
+});
 const TurnItemPayloadSchema = z.object({ turnId: z.string().min(1), item: RuntimeItemSchema });
 const DecisionPayloadSchema = z.object({
   requestId: z.string().min(1),
@@ -117,6 +120,7 @@ export interface ConversationSnapshot {
   turns: readonly Turn[];
   /** Streamed text by item id, until the committed message replaces it. */
   streaming: ReadonlyMap<string, string>;
+  partialReplies: ReadonlyMap<string, string>;
   pendingApprovals: readonly ApprovalRecord[];
   models: readonly ModelRef[];
   defaultModel: ModelRef | undefined;
@@ -189,6 +193,7 @@ const EMPTY: ConversationSnapshot = {
   messages: [],
   turns: [],
   streaming: new Map(),
+  partialReplies: new Map(),
   pendingApprovals: [],
   models: [],
   defaultModel: undefined,
@@ -239,6 +244,7 @@ export function createConversation(
         : (attachmentId) => transport.contentUrl?.(`/attachments/${attachmentId}/content`) ?? "",
   };
   let generation = 0;
+  const streamingJobs = new Map<string, string>();
   // A child's effect runs before its parent's, so Presence can ask before App starts the store.
   let markLoaded = (): void => undefined;
   const firstLoad = new Promise<void>((resolve) => {
@@ -312,7 +318,24 @@ export function createConversation(
     const page = await read(`/threads/${threadId}/turns`, TurnsSchema, "turns");
 
     if (page !== undefined) {
-      set({ turns: page.turns });
+      const streaming = new Map(state.streaming);
+      const partialReplies = new Map(state.partialReplies);
+      for (const [itemId, jobId] of streamingJobs) {
+        const turn = page.turns.find((turn) => turn.jobId === jobId);
+        if (turn?.status === "cancelled" || turn?.status === "failed") {
+          const text = streaming.get(itemId);
+          const committed = turn.items.some(
+            (item) =>
+              item.itemId === itemId &&
+              item.kind === "agent_message" &&
+              item.status === "completed",
+          );
+          if (text && !committed) partialReplies.set(`${jobId}:${itemId}`, text);
+          streaming.delete(itemId);
+          streamingJobs.delete(itemId);
+        }
+      }
+      set({ turns: page.turns, streaming, partialReplies });
     }
   }
 
@@ -355,7 +378,15 @@ export function createConversation(
     const response = await transport.request("GET", threadPath());
 
     if (response.status === 404) {
-      set({ thread: undefined, messages: [], turns: [], pendingApprovals: [] });
+      streamingJobs.clear();
+      set({
+        thread: undefined,
+        messages: [],
+        turns: [],
+        pendingApprovals: [],
+        streaming: new Map(),
+        partialReplies: new Map(),
+      });
       return;
     }
 
@@ -371,6 +402,10 @@ export function createConversation(
       return;
     }
 
+    if (state.thread?.id !== thread.data.id) {
+      streamingJobs.clear();
+      set({ streaming: new Map(), partialReplies: new Map() });
+    }
     set({ thread: thread.data });
     await Promise.all([
       loadMessages(thread.data.id),
@@ -380,15 +415,18 @@ export function createConversation(
     await loadPendingApprovals();
   }
 
-  function clearStreaming(itemId: string): void {
-    if (!state.streaming.has(itemId)) {
-      return;
-    }
-
+  function clearStreaming(itemId: string, jobId?: string): void {
     const streaming = new Map(state.streaming);
-
-    streaming.delete(itemId);
-    set({ streaming });
+    const partialReplies = new Map(state.partialReplies);
+    if (jobId === undefined || streamingJobs.get(itemId) === jobId) {
+      streaming.delete(itemId);
+      streamingJobs.delete(itemId);
+    }
+    for (const key of partialReplies.keys()) {
+      if (jobId === undefined ? key.endsWith(`:${itemId}`) : key === `${jobId}:${itemId}`)
+        partialReplies.delete(key);
+    }
+    set({ streaming, partialReplies });
   }
 
   function upsertTurn(turn: Turn): void {
@@ -414,7 +452,7 @@ export function createConversation(
     upsertTurn({ ...turn, items, status });
 
     if (item.kind === "agent_message" && item.status === "completed") {
-      clearStreaming(item.itemId);
+      clearStreaming(item.itemId, turn.jobId);
     }
   }
 
@@ -469,7 +507,10 @@ export function createConversation(
         const payload = MessageAddedPayloadSchema.safeParse(event.payload);
 
         if (payload.success && payload.data.itemId !== undefined) {
-          clearStreaming(payload.data.itemId);
+          clearStreaming(
+            payload.data.itemId,
+            state.turns.find((turn) => turn.id === payload.data.turnId)?.jobId,
+          );
         }
 
         void loadMessages(event.streamId);
@@ -543,6 +584,11 @@ export function createConversation(
       return;
     }
 
+    const turn = state.turns.find((turn) => turn.jobId === frame.jobId);
+    if (turn !== undefined && turn.status !== "running" && turn.status !== "queued") {
+      return;
+    }
+
     // Either test says "this thread": the send has returned the turn (so the
     // job is known) before the node can stream anything for it.
     if (frame.threadId !== state.thread?.id && !jobIds().has(frame.jobId)) {
@@ -551,6 +597,7 @@ export function createConversation(
 
     const streaming = new Map(state.streaming);
 
+    streamingJobs.set(frame.itemId, frame.jobId);
     streaming.set(frame.itemId, (streaming.get(frame.itemId) ?? "") + frame.text);
     set({ streaming });
   }

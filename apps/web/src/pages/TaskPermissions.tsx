@@ -3,6 +3,7 @@ import { StandingPermissionSchema, type StandingPermission } from "@noctis/contr
 import { z } from "zod";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { buttonStyle, fieldStyle } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import { productivityCommand } from "./Productivity.js";
 export function TaskPermissions({
   transport,
@@ -138,8 +139,8 @@ export function TaskPermissions({
               />
             </label>
           ))}
-          <button disabled={busy || !transport} style={buttonStyle}>
-            Grant for this task
+          <button disabled={busy || !transport} aria-busy={busy} style={buttonStyle}>
+            {busy ? "Saving..." : "Grant for this task"}
           </button>
         </form>
       )}
@@ -149,9 +150,9 @@ export function TaskPermissions({
             {p.capability}: {p.constraints.targetIds.join(", ")}
             {p.expiresAt ? ` (expires ${p.expiresAt})` : ""}
           </p>
-          <button disabled={busy} style={buttonStyle} onClick={() => void revoke(p.id)}>
+          <ActionButton disabled={busy} onAction={() => revoke(p.id)} pendingLabel="Revoking...">
             Revoke
-          </button>
+          </ActionButton>
         </div>
       ))}
     </details>

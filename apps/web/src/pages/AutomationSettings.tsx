@@ -3,7 +3,8 @@ import { spacing, typography } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
-import { SectionHeading, buttonStyle, glass } from "../layout/Page.js";
+import { SectionHeading, glass } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { SettingView } from "./CoreSettings.js";
 import { SettingRow } from "./CoreSettings.js";
@@ -99,10 +100,10 @@ export function AutomationsView({
   origin: string;
   link?: string;
   places?: PlacesView;
-  onSet: (key: string, value: unknown) => void;
-  onReset: (key: string) => void;
-  onShowLink: () => void;
-  onNewLink: () => void;
+  onSet: (key: string, value: unknown) => void | Promise<void>;
+  onReset: (key: string) => void | Promise<void>;
+  onShowLink: () => void | Promise<void>;
+  onNewLink: () => void | Promise<void>;
 }): JSX.Element {
   const automations = settings.filter((setting) => setting.automation === true);
   const named = z
@@ -123,17 +124,17 @@ export function AutomationsView({
       <SectionHeading>Phone</SectionHeading>
       {link === undefined ? (
         <div>
-          <button type="button" onClick={onShowLink} style={buttonStyle}>
+          <ActionButton onAction={onShowLink} pendingLabel="Loading...">
             Show phone setup
-          </button>
+          </ActionButton>
         </div>
       ) : (
         <>
           <PhoneSetup places={named.data ?? []} origin={origin} link={link} />
           <div>
-            <button type="button" onClick={onNewLink} style={buttonStyle}>
+            <ActionButton onAction={onNewLink} pendingLabel="Creating...">
               New link (the old one stops working)
-            </button>
+            </ActionButton>
           </div>
         </>
       )}
@@ -160,8 +161,8 @@ export function AutomationSettings({
 }: {
   transport: CoreTransport | undefined;
   settings: readonly SettingView[];
-  onSet: (key: string, value: unknown) => void;
-  onReset: (key: string) => void;
+  onSet: (key: string, value: unknown) => void | Promise<void>;
+  onReset: (key: string) => void | Promise<void>;
 }): JSX.Element {
   const [link, setLink] = useState<string>();
   const [places, setPlaces] = useState<PlacesView>();
@@ -184,15 +185,14 @@ export function AutomationSettings({
   }, [transport]);
 
   const fetchLink = useCallback(
-    (method: "GET" | "POST") => {
-      void transport
-        ?.request(method, "/places/link")
-        .then((response) => {
-          const parsed = z.object({ token: z.string() }).safeParse(response.body);
-
-          if (parsed.success) setLink(parsed.data.token);
-        })
-        .catch(() => undefined);
+    async (method: "GET" | "POST") => {
+      if (transport === undefined) return;
+      const response = await transport.request(method, "/places/link");
+      const parsed = z.object({ token: z.string() }).safeParse(response.body);
+      if (response.status !== 200 || !parsed.success) {
+        throw new Error("Could not load the phone setup link. Try again.");
+      }
+      setLink(parsed.data.token);
     },
     [transport],
   );
@@ -205,12 +205,8 @@ export function AutomationSettings({
       {...(places === undefined ? {} : { places })}
       onSet={onSet}
       onReset={onReset}
-      onShowLink={() => {
-        fetchLink("GET");
-      }}
-      onNewLink={() => {
-        fetchLink("POST");
-      }}
+      onShowLink={() => fetchLink("GET")}
+      onNewLink={() => fetchLink("POST")}
     />
   );
 }

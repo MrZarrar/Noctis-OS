@@ -2,7 +2,8 @@ import { spacing, typography } from "@noctis/ui";
 import { z } from "zod";
 
 import { Markdown } from "../conversation/Markdown.js";
-import { buttonStyle, glass } from "../layout/Page.js";
+import { glass } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 
 export const VaultEditSchema = z.object({
   id: z.string(),
@@ -27,11 +28,13 @@ export function VaultEdits({
   onUndo,
   onApply,
   onDecline,
+  disabled = false,
 }: {
   edits: readonly VaultEdit[];
-  onUndo: (editId: string) => void;
-  onApply: (editId: string) => void;
-  onDecline: (editId: string) => void;
+  onUndo: (editId: string) => void | Promise<void>;
+  onApply: (editId: string) => void | Promise<void>;
+  onDecline: (editId: string) => void | Promise<void>;
+  disabled?: boolean;
 }): JSX.Element {
   return (
     <section
@@ -59,18 +62,30 @@ export function VaultEdits({
           <p style={muted}>Source: {edit.source}</p>
           {edit.status === "applied" ? (
             <div>
-              <button type="button" onClick={() => onUndo(edit.id)} style={buttonStyle}>
+              <ActionButton
+                disabled={disabled}
+                onAction={() => onUndo(edit.id)}
+                pendingLabel="Undoing..."
+              >
                 Undo
-              </button>
+              </ActionButton>
             </div>
           ) : edit.status === "pending" ? (
             <div style={{ display: "flex", gap: spacing.sm, flexWrap: "wrap" }}>
-              <button type="button" onClick={() => onApply(edit.id)} style={buttonStyle}>
+              <ActionButton
+                disabled={disabled}
+                onAction={() => onApply(edit.id)}
+                pendingLabel="Applying..."
+              >
                 Apply
-              </button>
-              <button type="button" onClick={() => onDecline(edit.id)} style={buttonStyle}>
+              </ActionButton>
+              <ActionButton
+                disabled={disabled}
+                onAction={() => onDecline(edit.id)}
+                pendingLabel="Declining..."
+              >
                 Decline
-              </button>
+              </ActionButton>
             </div>
           ) : (
             <p style={muted}>{edit.status}</p>

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ConversationState, Turn } from "../conversation/useConversation.js";
 import { Threads } from "./Threads.js";
+import { Presence } from "./Presence.js";
 
 const turn: Turn = {
   id: "turn-1",
@@ -52,6 +53,7 @@ function conversationWith(turns: Turn[]): ConversationState {
     ],
     turns,
     streaming: new Map([["stream-1", "Still working"]]),
+    partialReplies: new Map(),
     pendingApprovals: [],
     models: [],
     defaultModel: undefined,
@@ -72,6 +74,82 @@ function conversationWith(turns: Turn[]): ConversationState {
 }
 
 describe("Threads timeline", () => {
+  it("also offers Stop in Presence while a turn is active", () => {
+    const markup = renderToStaticMarkup(
+      createElement(Presence, {
+        identity: {
+          activeIdentityId: "vesper",
+          activeObjectiveId: undefined,
+          protocolIds: [],
+          activate: () => Promise.resolve(),
+          setActiveObjectiveId: () => undefined,
+          toggleNoir: () => undefined,
+          error: undefined,
+          awakeUntil: {},
+          wake: () => Promise.resolve(),
+        },
+        transport: undefined,
+        conversation: conversationWith([turn]),
+        listening: false,
+        onSend: () => undefined,
+      }),
+    );
+    expect(markup).toContain(">Stop<");
+  });
+
+  it("keeps a stopped partial reply without announcing that the agent is typing", () => {
+    const conversation = conversationWith([{ ...turn, status: "cancelled" }]);
+    conversation.streaming = new Map();
+    conversation.partialReplies = new Map([["job-1:stream-1", "Still working"]]);
+    const markup = renderToStaticMarkup(
+      createElement(Threads, {
+        identityId: "vesper",
+        conversation,
+        connected: true,
+      }),
+    );
+    expect(markup).toContain("Still working");
+    expect(markup).not.toContain("(typing)");
+    expect(markup).toContain("(partial reply)");
+  });
+
+  it("keeps an interrupted reply before a later exchange", () => {
+    const conversation = conversationWith([
+      { ...turn, status: "cancelled", completedAt: "2026-10-07T10:01:00Z" },
+    ]);
+    conversation.streaming = new Map();
+    conversation.partialReplies = new Map([["job-1:stream-1", "Interrupted reply"]]);
+    conversation.messages = [
+      ...conversation.messages,
+      {
+        id: "later",
+        threadId: "thread-1",
+        role: "user",
+        body: "After stop",
+        createdAt: "2026-10-07T10:02:00Z",
+      },
+    ];
+    const markup = renderToStaticMarkup(
+      createElement(Threads, { identityId: "vesper", conversation, connected: true }),
+    );
+    expect(markup.indexOf("Interrupted reply")).toBeLessThan(markup.indexOf("After stop"));
+  });
+
+  it("offers Stop in the composer for a running or queued job, and removes it when settled", () => {
+    for (const status of ["running", "queued", "completed", "failed", "cancelled"] as const) {
+      const markup = renderToStaticMarkup(
+        createElement(Threads, {
+          identityId: "vesper",
+          conversation: conversationWith([{ ...turn, status }]),
+          connected: true,
+        }),
+      );
+      const composer = markup.slice(markup.indexOf("data-panel-composer"));
+
+      expect(composer.includes(">Stop<")).toBe(status === "running" || status === "queued");
+    }
+  });
+
   it("shows semantic message times, live activity and an agent map action", () => {
     const markup = renderToStaticMarkup(
       createElement(Threads, {
@@ -153,7 +231,7 @@ describe("Threads timeline", () => {
     expect(details).not.toContain("report.pdf");
     expect(markup).toContain("Here is your result");
     expect(markup).toContain("Still working");
-    expect(markup).toContain("Cancel");
+    expect(markup).toContain("Stop");
     expect(markup).toContain("/outputs/image-attachment");
     expect(markup).toContain("/outputs/file-attachment");
   });

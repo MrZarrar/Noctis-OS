@@ -56,6 +56,8 @@ export interface PromptFormProps {
   current?: { model?: ModelRef; rootGrantId?: string };
   /** A turn is still working: what is sent now joins it, so the box says so. */
   steering?: boolean;
+  onStop?: () => void;
+  stopping?: boolean;
   /** Under the identity switch: the clock, and the usage of the agent the picker is set to. */
   status?: (providerId: string | undefined) => ReactNode;
   onSend: (text: string, options: SendOptions) => void;
@@ -331,6 +333,8 @@ export function PromptForm({
   threadId,
   current,
   steering = false,
+  onStop,
+  stopping = false,
   status,
   onSend,
   onSwitchIdentity,
@@ -395,7 +399,7 @@ export function PromptForm({
   const submit = (): void => {
     const trimmed = text.trim();
 
-    if (disabled || trimmed === "") {
+    if (disabled || stopping || trimmed === "") {
       return;
     }
 
@@ -562,12 +566,23 @@ export function PromptForm({
             Wake
           </button>
         )}
+        {steering && onStop !== undefined && (
+          <button
+            type="button"
+            disabled={disabled || stopping}
+            aria-busy={stopping}
+            onClick={onStop}
+            style={buttonStyle}
+          >
+            {stopping ? "Stopping..." : "Stop"}
+          </button>
+        )}
         <button
           type="submit"
-          disabled={disabled || text.trim() === ""}
+          disabled={disabled || stopping || text.trim() === ""}
           style={{
             ...sendStyle[identityId],
-            opacity: disabled || text.trim() === "" ? 0.55 : 1,
+            opacity: disabled || stopping || text.trim() === "" ? 0.55 : 1,
             cursor: disabled ? "default" : "pointer",
           }}
         >

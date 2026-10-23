@@ -846,6 +846,84 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
   });
 
   it(
+    "stops a turn from the composer, preserves the draft and can retry a refused stop",
+    { timeout: 60000 },
+    async () => {
+      await openChat();
+      await prompt("ASK: wait for me to stop");
+      await waitFor(
+        readPage,
+        (state) => state.approvals.length > 0 && state.turns.some((status) => status === "running"),
+        "the turn did not wait for approval",
+      );
+      const composer = page.locator("[data-panel-composer]");
+      const draft = page.getByRole("textbox", { name: "Message Vesper", exact: true });
+      await draft.fill("Keep this draft");
+      let release;
+      const held = new Promise((resolve) => {
+        release = resolve;
+      });
+      let requests = 0;
+      await page.route(
+        "**/commands/conversation.cancel",
+        async (route) => {
+          requests += 1;
+          await held;
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { message: "Try stopping again" } }),
+          });
+        },
+        { times: 1 },
+      );
+      await composer.getByRole("button", { name: "Stop", exact: true }).click();
+      const stopping = composer.getByRole("button", { name: "Stopping...", exact: true });
+      await stopping.waitFor();
+      assert.equal(await stopping.isDisabled(), true);
+      assert.equal(await stopping.getAttribute("aria-busy"), "true");
+      assert.equal(
+        await composer.getByRole("button", { name: "Send", exact: true }).isDisabled(),
+        true,
+      );
+      await draft.press("Enter");
+      assert.equal(await draft.inputValue(), "Keep this draft");
+      const evidence = join(REPO_ROOT, ".noctis", "actions", "evidence");
+      mkdirSync(evidence, { recursive: true });
+      for (const width of [1900, 390]) {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+        await stopping.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: join(evidence, `stop-${String(width)}.png`) });
+        assert.equal(
+          await page.evaluate(() => document.documentElement.scrollWidth > globalThis.innerWidth),
+          false,
+        );
+      }
+      await page.setViewportSize({ width: 1900, height: 1000 });
+      await stopping.dispatchEvent("click");
+      assert.equal(requests, 1);
+      release();
+      await page.getByText(/conversation.cancel was refused.*Try stopping again/).waitFor();
+      await composer.getByRole("button", { name: "Stop", exact: true }).click();
+      await waitFor(
+        readPage,
+        (state) => state.turns.at(-1) === "cancelled",
+        "the turn did not stop",
+      );
+      assert.equal(await composer.getByRole("button", { name: "Stop", exact: true }).count(), 0);
+      assert.equal(await draft.inputValue(), "Keep this draft");
+      await draft.press("Enter");
+      await waitFor(
+        readPage,
+        (state) =>
+          state.turns.at(-1) === "completed" &&
+          state.messages.some((text) => text === "Vesper: Hello Keep this draft"),
+        "the conversation could not continue after stopping",
+      );
+    },
+  );
+
+  it(
     "shows a session the PC's hooks report, read only, as it goes",
     { timeout: 60_000 },
     async () => {

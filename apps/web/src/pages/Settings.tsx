@@ -7,6 +7,7 @@ import { z } from "zod";
 import { modelKey, modelLabel } from "../conversation/PromptForm.js";
 import { RuntimeRootOptionSchema } from "../conversation/useConversation.js";
 import { Page, SectionHeading, buttonStyle, glass } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import { Picker } from "../layout/Picker.js";
 import { LarpSettings } from "../larp/LarpSettings.js";
 import { larpEnabled } from "../larp/mode.js";
@@ -416,9 +417,7 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
               <PermissionRow
                 key={permission.id}
                 permission={permission}
-                onRevoke={() => {
-                  void revoke(permission);
-                }}
+                onRevoke={() => revoke(permission)}
               />
             ))}
           </ul>
@@ -452,15 +451,9 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
             stops being told when the core forgets the subscription that hung off the session.
           </p>
           <div>
-            <button
-              type="button"
-              onClick={() => {
-                void signOut();
-              }}
-              style={buttonStyle}
-            >
+            <ActionButton onAction={signOut} pendingLabel="Signing out...">
               Sign out
-            </button>
+            </ActionButton>
           </div>
         </section>
       )}
@@ -499,7 +492,7 @@ function PermissionRow({
   onRevoke,
 }: {
   permission: Permission;
-  onRevoke?: () => void;
+  onRevoke?: () => void | Promise<void>;
 }): JSX.Element {
   const revoked = permission.revokedAt !== undefined;
 
@@ -535,9 +528,9 @@ function PermissionRow({
       ) : (
         onRevoke !== undefined && (
           <div>
-            <button type="button" onClick={onRevoke} style={buttonStyle}>
+            <ActionButton onAction={onRevoke} pendingLabel="Revoking...">
               Revoke {permission.capability}
-            </button>
+            </ActionButton>
           </div>
         )
       )}

@@ -2,6 +2,7 @@ import { semantic, spacing, typography } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 
 import { buttonStyle, fieldStyle } from "../layout/Page.js";
+import { usePendingAction } from "../layout/ActionButton.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 import type { PasscodeStatus } from "./vault-lock.js";
@@ -21,21 +22,22 @@ export function VaultLock({
 }): JSX.Element | null {
   const [status, setStatus] = useState<PasscodeStatus>();
   const [passcode, setPasscode] = useState("");
-  const [message, setMessage] = useState<string>();
+  const { pending, error: message, run } = usePendingAction();
 
   useEffect(() => {
     if (transport === undefined) {
       return;
     }
 
-    void transport.request("GET", "/passcode").then((response) => {
+    void run(async () => {
+      const response = await transport.request("GET", "/passcode");
       const parsed = PasscodeStatusSchema.safeParse(response.body);
 
       if (parsed.success) {
         setStatus(parsed.data);
       }
     });
-  }, [transport]);
+  }, [transport, run]);
 
   const act = useCallback(
     async (action: "setup" | "unlock" | "lock") => {
@@ -43,23 +45,24 @@ export function VaultLock({
         return;
       }
 
-      const response = await transport.request(
-        "POST",
-        `/passcode/${action}`,
-        action === "lock" ? {} : { passcode },
-      );
-      const parsed = PasscodeStatusSchema.safeParse(response.body);
+      await run(async () => {
+        const response = await transport.request(
+          "POST",
+          `/passcode/${action}`,
+          action === "lock" ? {} : { passcode },
+        );
+        const parsed = PasscodeStatusSchema.safeParse(response.body);
 
-      if (response.status === 200 && parsed.success) {
-        setStatus(parsed.data);
-        setPasscode("");
-        setMessage(undefined);
-        onChange();
-      } else {
-        setMessage(passcodeRefusal(response.body));
-      }
+        if (response.status === 200 && parsed.success) {
+          setStatus(parsed.data);
+          setPasscode("");
+          onChange();
+        } else {
+          throw new Error(passcodeRefusal(response.body));
+        }
+      });
     },
-    [transport, passcode, onChange],
+    [transport, passcode, onChange, run],
   );
 
   if (status === undefined) {
@@ -70,9 +73,20 @@ export function VaultLock({
     return (
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ color: typography.color.muted }}>Sensitive notes are shown.</span>
-        <button type="button" onClick={() => void act("lock")} style={buttonStyle}>
-          Lock
+        <button
+          type="button"
+          disabled={pending}
+          aria-busy={pending}
+          onClick={() => void act("lock")}
+          style={buttonStyle}
+        >
+          {pending ? "Locking..." : "Lock"}
         </button>
+        {message !== undefined && (
+          <span role="alert" style={{ color: semantic.error }}>
+            {message}
+          </span>
+        )}
       </div>
     );
   }
@@ -95,6 +109,7 @@ export function VaultLock({
           pattern="[0-9]*"
           maxLength={8}
           value={passcode}
+          disabled={pending}
           aria-label={status.configured ? "Passcode" : "New passcode, 4 to 8 digits"}
           placeholder={status.configured ? "Passcode" : "New passcode, 4 to 8 digits"}
           onChange={(event) => {
@@ -102,11 +117,20 @@ export function VaultLock({
           }}
           style={{ ...fieldStyle, flex: 1 }}
         />
-        <button type="submit" style={buttonStyle}>
-          {status.configured ? "Show sensitive" : "Set passcode"}
+        <button type="submit" disabled={pending} aria-busy={pending} style={buttonStyle}>
+          {pending
+            ? status.configured
+              ? "Unlocking..."
+              : "Saving..."
+            : status.configured
+              ? "Show sensitive"
+              : "Set passcode"}
         </button>
       </div>
-      <span style={{ color: message === undefined ? typography.color.muted : semantic.error }}>
+      <span
+        role={message === undefined ? undefined : "alert"}
+        style={{ color: message === undefined ? typography.color.muted : semantic.error }}
+      >
         {message ??
           (status.configured
             ? "Notes marked sensitive are hidden."

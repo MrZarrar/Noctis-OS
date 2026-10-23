@@ -228,38 +228,28 @@ const ROWS: Row[] = [
   ],
   [
     "a quoted heredoc's backticks are text",
-    command("cat > notes.md <<'MD'
-Run `npm test` first.
-MD"),
+    command("cat > notes.md <<'MD'\nRun `npm test` first.\nMD"),
     "local_reversible_edit",
     "reversible",
     CMD,
   ],
   [
     "python reading a quoted heredoc",
-    command('cd repo && python - <<"PY"
-s = "a `b`"
-PY
-echo done'),
+    command('cd repo && python - <<"PY"\ns = "a `b`"\nPY\necho done'),
     "local_reversible_edit",
     "reversible",
     CMD,
   ],
   [
     "an unquoted heredoc still substitutes backticks",
-    command("cat > a.txt <<EOF
-`whoami`
-EOF"),
+    command("cat > a.txt <<EOF\n`whoami`\nEOF"),
     "external_write",
     "partially_reversible",
     CMD,
   ],
   [
     "a backtick after a quoted heredoc",
-    command("cat > a <<'X'
-hi
-X
-echo `whoami`"),
+    command("cat > a <<'X'\nhi\nX\necho `whoami`"),
     "external_write",
     "partially_reversible",
     CMD,

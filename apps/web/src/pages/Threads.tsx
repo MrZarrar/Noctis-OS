@@ -32,6 +32,7 @@ import { AddPanel } from "./AddPanel.js";
 import { CompanionColumn } from "./CompanionColumn.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
+import { usePendingAction } from "../layout/ActionButton.js";
 import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ProductivityReceipt, type OpenProductivity } from "./ProductivityReceipt.js";
@@ -245,6 +246,8 @@ function TurnRow({
   onOpenProductivity,
   turn,
   onCancel,
+  stopping,
+  connected,
   outputUrl,
   written,
   onOpenFile,
@@ -257,6 +260,8 @@ function TurnRow({
   onOpenProductivity: OpenProductivity | undefined;
   turn: Turn;
   onCancel: () => void;
+  stopping: boolean;
+  connected: boolean;
   outputUrl: ((attachmentId: string) => string) | undefined;
   written: ReadonlyArray<FileTarget<RuntimeRootOption>>;
   onOpenFile: ((target: FileTarget<RuntimeRootOption>) => void) | undefined;
@@ -307,8 +312,14 @@ function TurnRow({
         </span>
         <span style={{ flex: 1 }} />
         {running && turn.jobId !== undefined && (
-          <button type="button" onClick={onCancel} style={buttonStyle}>
-            Cancel
+          <button
+            type="button"
+            disabled={!connected || stopping}
+            aria-busy={stopping}
+            onClick={onCancel}
+            style={buttonStyle}
+          >
+            {stopping ? "Stopping..." : "Stop"}
           </button>
         )}
       </p>
@@ -423,6 +434,7 @@ type Approval = ConversationState["pendingApprovals"][number];
 
 type Entry =
   | { kind: "message"; at: string; message: Message }
+  | { kind: "partial"; at: string; message: Message }
   | { kind: "turn"; at: string; turn: Turn }
   | { kind: "approval"; at: string; approval: Approval };
 
@@ -440,9 +452,24 @@ function timelineOf(
   messages: readonly Message[],
   turns: readonly Turn[],
   approvals: readonly Approval[],
+  partialReplies: ReadonlyMap<string, string>,
 ): Entry[] {
   return [
     ...messages.map((message): Entry => ({ kind: "message", at: message.createdAt, message })),
+    ...[...partialReplies].flatMap(([id, body]): Entry[] => {
+      const turn = turns.find(
+        (turn) => turn.jobId !== undefined && id.startsWith(`${turn.jobId}:`),
+      );
+      if (turn === undefined) return [];
+      const at = turn.completedAt ?? turn.startedAt;
+      return [
+        {
+          kind: "partial",
+          at,
+          message: { id, body, role: "identity", threadId: turn.threadId, createdAt: at },
+        },
+      ];
+    }),
     ...turns.map((turn): Entry => ({ kind: "turn", at: turn.startedAt, turn })),
     ...approvals.map((approval): Entry => ({
       kind: "approval",
@@ -454,7 +481,8 @@ function timelineOf(
 
 /** One key per row across every kind, so a message and a turn never share one. */
 function entryKey(entry: Entry): string {
-  if (entry.kind === "message") return `${entry.message.role}:${entry.message.id}`;
+  if (entry.kind === "message" || entry.kind === "partial")
+    return `${entry.kind === "partial" ? "partial:" : ""}${entry.message.role}:${entry.message.id}`;
   return entry.kind === "turn" ? `turn:${entry.turn.id}` : `approval:${entry.approval.id}`;
 }
 const streamKey = (itemId: string): string => `streaming-${itemId}`;
@@ -519,6 +547,8 @@ export function Threads({
   const delegated = thread?.parentThreadId !== undefined;
   const [now, setNow] = useState(Date.now);
   const running = turns.some(isTurnRunning);
+  const activeTurn = turns.findLast((turn) => isTurnRunning(turn) && turn.jobId !== undefined);
+  const stop = usePendingAction();
   useEffect(() => {
     setNow(Date.now());
     if (!running) return;
@@ -563,7 +593,7 @@ export function Threads({
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
   const roleLabel = (role: string): string =>
     role === "user" ? "You" : role === "identity" ? displayName : "System";
-  const timeline = timelineOf(messages, turns, pendingApprovals);
+  const timeline = timelineOf(messages, turns, pendingApprovals, conversation.partialReplies);
   const latestTurn = timeline.findLast((entry) => entry.kind === "turn");
   const arrived = useArrivals(
     [...timeline.map(entryKey), ...[...streaming.keys()].map(streamKey)],
@@ -738,7 +768,7 @@ export function Threads({
 
               <ul aria-label="Conversation" style={{ ...listStyle, gap: spacing.md }}>
                 {timeline.map((entry) => {
-                  if (entry.kind === "message") {
+                  if (entry.kind === "message" || entry.kind === "partial") {
                     const time = messageTime(entry.message.createdAt, now);
                     return (
                       <motion.li
@@ -762,6 +792,7 @@ export function Threads({
                           }}
                         >
                           {roleLabel(entry.message.role)}
+                          {entry.kind === "partial" && " (partial reply)"}
                           <span style={spoken}>: </span>
                           <time
                             dateTime={entry.message.createdAt}
@@ -800,9 +831,12 @@ export function Threads({
                         }}
                         onCancel={() => {
                           if (entry.turn.jobId !== undefined) {
-                            void conversation.cancel(entry.turn.jobId);
+                            const jobId = entry.turn.jobId;
+                            void stop.run(() => conversation.cancel(jobId));
                           }
                         }}
+                        stopping={stop.pending}
+                        connected={connected}
                       />
                     );
                   }
@@ -849,7 +883,6 @@ export function Threads({
                   );
                 })}
 
-                {/* In progress, so always last: it is the newest thing on the page. */}
                 {[...streaming.entries()].map(([itemId, text]) => (
                   <motion.li
                     key={streamKey(itemId)}
@@ -867,7 +900,8 @@ export function Threads({
                         color: identityAccent.vesper.primary,
                       }}
                     >
-                      {displayName} (typing)<span style={spoken}>: </span>
+                      {displayName} (typing)
+                      <span style={spoken}>: </span>
                     </span>
                     <Markdown text={text} />
                   </motion.li>
@@ -921,6 +955,11 @@ export function Threads({
               }}
             >
               {mobile && <PanelTray panels={panels} sheet={panelSheet} />}
+              {stop.error !== undefined && (
+                <p role="alert" style={{ color: semantic.error, margin: 0 }}>
+                  {stop.error}
+                </p>
+              )}
               <PromptForm
                 // Per identity, not per thread: the unstarted thread getting its id (first
                 // send, first panel) must not discard a draft, file or model in progress.
@@ -936,6 +975,15 @@ export function Threads({
                 {...(thread === undefined ? {} : { threadId: thread.id })}
                 {...(current === undefined ? {} : { current })}
                 steering={running}
+                stopping={stop.pending}
+                {...(activeTurn?.jobId === undefined
+                  ? {}
+                  : {
+                      onStop: () => {
+                        const jobId = activeTurn.jobId;
+                        if (jobId !== undefined) void stop.run(() => conversation.cancel(jobId));
+                      },
+                    })}
                 // The time, and the allowance of the agent this thread is about
                 // to run on, where the owner decides whether to send.
                 status={(providerId) => (

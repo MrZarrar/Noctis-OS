@@ -24,6 +24,28 @@ const turn = (overrides: Partial<Turn> = {}): Turn => ({
 });
 
 describe("lastExchange", () => {
+  it("keeps the cancelled turn's partial reply in Presence and leaves earlier turns out", () => {
+    expect(
+      lastExchange({
+        messages: [message("m-you", "user", "Continue")],
+        turns: [
+          turn({
+            status: "cancelled",
+            jobId: "job",
+            items: [
+              { itemId: "partial", kind: "agent_message", status: "in_progress", text: "Short" },
+            ],
+          }),
+        ],
+        streaming: new Map(),
+        partialReplies: new Map([
+          ["old-job:partial", "Earlier"],
+          ["job:partial", "Short, with the rest kept"],
+        ]),
+      })?.reply,
+    ).toBe("Short, with the rest kept");
+  });
+
   it("is nothing before anything was said", () => {
     expect(lastExchange({ messages: [], turns: [], streaming: new Map() })).toBeUndefined();
   });

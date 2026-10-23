@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { nextKey } from "../idempotency.js";
 import { Page, SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import { Picker } from "../layout/Picker.js";
 import { useIsMobile } from "../layout/useIsMobile.js";
 import { mountRemoteDesktop } from "../remote/component.js";
@@ -580,13 +581,12 @@ function Folders({
               <span style={chipStyle}>
                 {folder.mode === "write" ? "read and write" : "read only"}
               </span>
-              <button
+              <ActionButton
                 type="button"
                 aria-label={`Stop sharing ${folder.path}`}
                 disabled={sharing}
-                onClick={() => {
-                  void unshare(folder);
-                }}
+                onAction={() => unshare(folder)}
+                pendingLabel="Stopping..."
                 style={{
                   marginLeft: "auto",
                   minHeight: 44,
@@ -598,7 +598,7 @@ function Folders({
                 }}
               >
                 Stop sharing
-              </button>
+              </ActionButton>
             </li>
           ))}
         </ul>
@@ -643,16 +643,15 @@ function Folders({
             options={ACCESS_OPTIONS}
           />
         </div>
-        <button
+        <ActionButton
           type="button"
           disabled={sharing || path.trim() === "" || node === undefined}
-          onClick={() => {
-            void share();
-          }}
+          onAction={share}
+          pendingLabel="Sharing..."
           style={primaryButton}
         >
           Share folder
-        </button>
+        </ActionButton>
       </div>
       {problem !== undefined && (
         <p role="alert" style={{ margin: 0, color: semantic.error }}>
@@ -872,16 +871,15 @@ function Mirror({
               {host} is not allowed to show its screen. Mirroring stays off until you allow it here:
               sharing folders with the agents does not include it.
             </p>
-            <button
+            <ActionButton
               type="button"
               disabled={allowing}
-              onClick={() => {
-                void allow();
-              }}
+              onAction={allow}
+              pendingLabel="Allowing..."
               style={primaryButton}
             >
               Allow mirroring this PC
-            </button>
+            </ActionButton>
           </>
         )}
 
@@ -1088,8 +1086,13 @@ function Health({
               {granted ? (
                 <>
                   <span style={chipStyle}>Allowed</span>
-                  <button type="submit" disabled={allowing} style={buttonStyle}>
-                    Stop
+                  <button
+                    type="submit"
+                    disabled={allowing}
+                    aria-busy={allowing}
+                    style={buttonStyle}
+                  >
+                    {allowing ? "Stopping..." : "Stop"}
                   </button>
                 </>
               ) : (
@@ -1111,9 +1114,10 @@ function Health({
                   <button
                     type="submit"
                     disabled={allowing || status === undefined || repo.trim() === ""}
+                    aria-busy={allowing}
                     style={primaryButton}
                   >
-                    Allow health on this PC
+                    {allowing ? "Allowing..." : "Allow health on this PC"}
                   </button>
                 </>
               )}

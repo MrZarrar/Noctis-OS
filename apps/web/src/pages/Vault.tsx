@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { Markdown } from "../conversation/Markdown.js";
 import { Page, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
+import { ActionButton, usePendingAction } from "../layout/ActionButton.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 import type { VaultEdit } from "./VaultEdits.js";
@@ -114,7 +115,9 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
   const [query, setQuery] = useState("");
   const [recall, setRecall] = useState<z.infer<typeof RecallSchema> & { query: string }>();
   const [error, setError] = useState<string>();
-  const [commandError, setCommandError] = useState<string>();
+  const { pending: changing, error: commandError, run: change } = usePendingAction();
+  const { pending: searching, error: searchError, run: find } = usePendingAction();
+  const [notice, setNotice] = useState<string>();
   const [edits, setEdits] = useState<readonly VaultEdit[]>([]);
   const [truncated, setTruncated] = useState<{ shown: number; total: number }>();
   const [revision, setRevision] = useState(0);
@@ -224,78 +227,80 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
   const editCommand = useCallback(
     async (
-      command: "undo_edit" | "apply_revision" | "decline_revision" | "promote_now",
+      command: "undo_edit" | "apply_revision" | "decline_revision" | "promote_now" | "reindex",
       editId?: string,
     ) => {
       if (transport === undefined) {
         return;
       }
 
-      try {
+      await change(async () => {
+        setNotice(undefined);
         const response = await transport.request("POST", `/commands/vault.${command}`, {
           idempotencyKey: nextKey(),
           ...(editId === undefined ? {} : { editId }),
         });
 
-        if (response.status === 200) {
-          setCommandError(undefined);
-        } else {
+        if (response.status !== 200) {
           const body = response.body as { error?: { message?: unknown }; message?: unknown } | null;
           const message = body?.error?.message ?? body?.message;
-          setCommandError(
+          throw new Error(
             typeof message === "string" ? message : "The core refused the Vault change.",
           );
         }
-      } catch (failure: unknown) {
-        setCommandError(failure instanceof Error ? failure.message : "Could not change the Vault.");
-      } finally {
+        if (command === "promote_now") {
+          const result = z
+            .object({ notes: z.int().nonnegative(), turnId: z.string().optional() })
+            .safeParse(response.body);
+          if (!result.success || (result.data.notes > 0 && result.data.turnId === undefined)) {
+            throw new Error(
+              "The core returned a promotion result that does not match its contract.",
+            );
+          }
+          setNotice(
+            result.data.notes === 0
+              ? "No inbox notes are waiting to be promoted."
+              : `Promotion started for ${String(result.data.notes)} inbox ${result.data.notes === 1 ? "note" : "notes"}. Follow its progress in the Vault upkeep conversation.`,
+          );
+        } else {
+          setNotice(
+            {
+              reindex: "Vault index updated.",
+              undo_edit: "Vault edit undone.",
+              apply_revision: "Revision applied.",
+              decline_revision: "Revision declined.",
+            }[command],
+          );
+        }
+        setError(undefined);
         setRevision((current) => current + 1);
-      }
+      });
     },
-    [transport],
+    [transport, change],
   );
-
-  const reindex = useCallback(async () => {
-    if (transport === undefined) {
-      return;
-    }
-
-    const response = await transport.request("POST", "/commands/vault.reindex", {
-      idempotencyKey: nextKey(),
-    });
-
-    if (response.status === 200) {
-      setRevision((current) => current + 1);
-      setError(undefined);
-    } else {
-      setError(
-        response.status === 404
-          ? "No Vault is configured. Set NOCTIS_VAULT_ROOT to a test Vault."
-          : "The core refused to reindex",
-      );
-    }
-  }, [transport]);
 
   const search = useCallback(async () => {
     if (transport === undefined || query.trim() === "") {
       return;
     }
 
-    const response = await transport.request(
-      "GET",
-      `/vault/recall?query=${encodeURIComponent(query.trim())}&limit=10`,
-    );
+    await find(async () => {
+      const response = await transport.request(
+        "GET",
+        `/vault/recall?query=${encodeURIComponent(query.trim())}&limit=10`,
+      );
 
-    const parsed = RecallSchema.safeParse(response.body);
+      const parsed = RecallSchema.safeParse(response.body);
 
-    if (response.status === 200 && parsed.success) {
-      setRecall({ ...parsed.data, query: query.trim() });
-      setFocus(firstDrawnHit(parsed.data.entityIds, nodes));
-      setError(undefined);
-    } else {
-      setError("The core returned a recall that does not match its contract");
-    }
-  }, [transport, query, nodes]);
+      if (response.status === 200 && parsed.success) {
+        setRecall({ ...parsed.data, query: query.trim() });
+        setFocus(firstDrawnHit(parsed.data.entityIds, nodes));
+        setError(undefined);
+      } else {
+        throw new Error("The core returned a recall that does not match its contract");
+      }
+    });
+  }, [transport, query, nodes, find]);
 
   return (
     <Page
@@ -308,28 +313,31 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
               Return to the Objective
             </button>
           )}
-          <button
-            type="button"
-            disabled={transport === undefined}
-            onClick={() => {
-              void editCommand("promote_now");
-            }}
-            style={buttonStyle}
+          <ActionButton
+            disabled={transport === undefined || changing}
+            onAction={() => editCommand("promote_now")}
+            pendingLabel="Starting..."
           >
             Promote now
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void reindex();
-            }}
-            style={buttonStyle}
+          </ActionButton>
+          <ActionButton
+            disabled={transport === undefined || changing}
+            onAction={() => editCommand("reindex")}
+            pendingLabel="Indexing..."
           >
             Reindex
-          </button>
+          </ActionButton>
         </>
       }
     >
+      <div role="status" aria-live="polite" style={{ color: typography.color.muted }}>
+        {notice}
+      </div>
+      {commandError !== undefined && (
+        <p role="alert" style={{ color: semantic.error, margin: 0 }}>
+          {commandError}
+        </p>
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -348,10 +356,20 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
             style={fieldStyle}
           />
         </label>
-        <button type="submit" style={buttonStyle}>
-          Search
+        <button
+          type="submit"
+          disabled={transport === undefined || searching || query.trim() === ""}
+          aria-busy={searching}
+          style={buttonStyle}
+        >
+          {searching ? "Searching..." : "Search"}
         </button>
       </form>
+      {searchError !== undefined && (
+        <p role="alert" style={{ color: semantic.error, margin: 0 }}>
+          {searchError}
+        </p>
+      )}
 
       <VaultLock
         transport={transport}
@@ -392,20 +410,15 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 
       <VaultEdits
         edits={edits}
-        onUndo={(editId) => {
-          void editCommand("undo_edit", editId);
-        }}
-        onApply={(editId) => {
-          void editCommand("apply_revision", editId);
-        }}
-        onDecline={(editId) => {
-          void editCommand("decline_revision", editId);
-        }}
+        disabled={transport === undefined || changing}
+        onUndo={(editId) => editCommand("undo_edit", editId)}
+        onApply={(editId) => editCommand("apply_revision", editId)}
+        onDecline={(editId) => editCommand("decline_revision", editId)}
       />
 
-      {(commandError ?? error) !== undefined && (
+      {error !== undefined && (
         <p role="alert" style={{ color: semantic.error, margin: 0 }}>
-          {commandError ?? error}
+          {error}
         </p>
       )}
     </Page>

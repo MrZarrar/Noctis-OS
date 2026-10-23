@@ -214,6 +214,7 @@ describe("Markdown file providers", () => {
     ],
     turns: [],
     streaming: new Map([["stream", "![streamed](C:/repo/shots/streamed.png)"]]),
+    partialReplies: new Map(),
     pendingApprovals: [],
     models: [],
     defaultModel: undefined,

@@ -134,6 +134,43 @@ describe("waking from the composer", () => {
 });
 
 describe("while a turn is working", () => {
+  it("offers Stop beside Send without disabling steering or requiring a draft", () => {
+    const markup = renderToStaticMarkup(
+      createElement(PromptForm, {
+        identityId: "vesper",
+        models: [],
+        defaultModel: undefined,
+        disabled: false,
+        onSend: () => undefined,
+        steering: true,
+        onStop: () => undefined,
+      }),
+    );
+
+    expect(markup).toMatch(/<button[^>]*type="button"[^>]*>Stop<\/button>/);
+    expect(markup).toContain('placeholder="Add to what Vesper is doing..."');
+    expect(markup).toContain(">Send<");
+  });
+
+  it("shows an acknowledged stop request while it waits for the core", () => {
+    const markup = renderToStaticMarkup(
+      createElement(PromptForm, {
+        identityId: "vesper",
+        models: [],
+        defaultModel: undefined,
+        disabled: false,
+        onSend: () => undefined,
+        steering: true,
+        stopping: true,
+        onStop: () => undefined,
+      }),
+    );
+
+    expect(markup).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*>Stopping\.\.\.<\/button>/,
+    );
+  });
+
   it("says a message joins the running turn", () => {
     const markup = (steering: boolean): string =>
       renderToStaticMarkup(

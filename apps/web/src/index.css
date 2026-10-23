@@ -31,6 +31,47 @@ select {
   font-family: inherit;
 }
 
+button {
+  transition:
+    scale 100ms ease,
+    filter 100ms ease,
+    opacity 100ms ease;
+}
+
+button:enabled:active {
+  scale: 0.97;
+  filter: brightness(1.25);
+}
+
+button:disabled {
+  cursor: default !important;
+  opacity: 0.55;
+}
+
+button[aria-busy="true"] {
+  cursor: progress !important;
+  opacity: 0.85;
+}
+
+button[aria-busy="true"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.5em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: noctis-button-spin 800ms linear infinite;
+}
+
+@keyframes noctis-button-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
 /* The Home Screen app must never zoom: there is no browser chrome to zoom back
    out with. A double-tap zooms unless taps are plain manipulation, and iOS
    zooms into any field under 16px as it takes focus. `!important` because the
@@ -94,6 +135,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  button:enabled:active {
+    scale: none;
+  }
   * {
     transition: none !important;
     animation: none !important;
