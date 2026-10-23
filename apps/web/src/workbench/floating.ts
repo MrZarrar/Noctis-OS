@@ -30,7 +30,8 @@ export interface FloatingGroup {
 const SavedEntrySchema = z.object({
   id: z.string(),
   openedAt: z.number().finite(),
-  touched: z.boolean(),
+  /** Shown by hand from the more list, so the limit leaves it open. */
+  shown: z.boolean().default(false),
   tucked: z.boolean(),
   updated: z.boolean(),
   revision: z.string(),
@@ -50,9 +51,10 @@ const byOpening = (a: FloatingEntry, b: FloatingEntry): number =>
   a.openedAt - b.openedAt || keyOf(a.scope, a.id).localeCompare(keyOf(b.scope, b.id));
 
 function tuckOldest(entries: readonly FloatingEntry[], maxOpen: number): void {
-  const open = entries.filter((entry) => !entry.pinned && !entry.tucked);
-  const untouched = open.filter((entry) => !entry.touched).sort(byOpening);
-  for (const entry of untouched.slice(0, Math.max(0, open.length - maxOpen))) entry.tucked = true;
+  const open = entries
+    .filter((entry) => !entry.pinned && !entry.shown && !entry.tucked)
+    .sort(byOpening);
+  for (const entry of open.slice(0, Math.max(0, open.length - maxOpen))) entry.tucked = true;
 }
 
 export function floatingSlots(
@@ -87,7 +89,7 @@ export class FloatingPanels {
   private readonly appliedWindows = new Map<string, string | undefined>();
   private entries: readonly FloatingEntry[] = [];
 
-  /** `maxOpen`: how many unpinned windows stay open before the oldest is tucked away. */
+  /** `maxOpen`: how many arriving windows stay open before the oldest is tucked away. */
   constructor(
     private readonly storage?: () => BrowserStorage,
     private readonly maxOpen = 4,
@@ -120,13 +122,6 @@ export class FloatingPanels {
     this.rebuild();
   }
 
-  touch(scope: string, id: string): void {
-    const entry = this.saved.get(scope)?.find((value) => value.id === id);
-    if (entry === undefined || entry.touched) return;
-    entry.touched = true;
-    this.rebuild();
-  }
-
   reopen(scope: string, id: string): boolean {
     const entry = this.saved.get(scope)?.find((value) => value.id === id);
     const group = [...this.groups.values()].find(
@@ -137,11 +132,9 @@ export class FloatingPanels {
       !group?.panels.some((panel) => panel.id === id && panel.size !== undefined)
     )
       return false;
-    const open = this.entries.filter((value) => value.rect !== undefined && !value.pinned);
-    if (open.length >= this.maxOpen && open.every((value) => value.touched)) return false;
     entry.openedAt = Math.max(Date.now(), ...this.entries.map((value) => value.openedAt + 1));
     entry.tucked = false;
-    entry.touched = false;
+    entry.shown = true;
     entry.updated = false;
     this.rebuild();
     return true;
@@ -161,7 +154,7 @@ export class FloatingPanels {
             id: panel.id,
             openedAt: panel.requestedAt,
             revision: panel.revision,
-            touched: false,
+            shown: false,
             tucked: false,
             updated: false,
           };
@@ -189,24 +182,6 @@ export class FloatingPanels {
     }
     const candidates = next.filter((entry) => available.has(keyOf(entry.scope, entry.id)));
     tuckOldest(candidates, this.maxOpen);
-    const protectedOpen = candidates.filter((entry) => !entry.pinned && !entry.tucked);
-    if (protectedOpen.length > this.maxOpen) {
-      // An unpinned or returning window waits rather than displacing one already in use.
-      protectedOpen.sort((a, b) => {
-        const admitted = (entry: FloatingEntry): boolean =>
-          this.entries.some(
-            (old) =>
-              old.scope === entry.scope &&
-              old.id === entry.id &&
-              old.rect !== undefined &&
-              !old.pinned,
-          );
-        return Number(admitted(b)) - Number(admitted(a)) || byOpening(a, b);
-      });
-      protectedOpen.slice(this.maxOpen).forEach((entry) => {
-        entry.tucked = true;
-      });
-    }
 
     const placed: WindowRect[] = [];
     const openings: FloatingEntry[] = [];

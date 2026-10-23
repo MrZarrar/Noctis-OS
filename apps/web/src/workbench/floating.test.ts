@@ -51,14 +51,13 @@ describe("browser floating panels", () => {
     ]);
   });
 
-  it("keeps the cap when a protected pinned panel is unpinned", () => {
+  it("keeps the cap when a pinned panel is unpinned", () => {
     const store = new FloatingPanels();
     const initial = [1, 2, 3, 4].map((id) => panel(String(id)));
     store.sync("owner", group([...initial, { ...panel("5"), pinned: true }]));
-    [...initial, panel("5")].forEach(({ id }) => store.touch("thread", id));
     store.sync("owner", group([...initial, panel("5")]));
-    expect(visible(store)).toEqual(["1", "2", "3", "4"]);
-    expect(store.snapshot().find(({ id }) => id === "5")?.tucked).toBe(true);
+    expect(visible(store)).toEqual(["2", "3", "4", "5"]);
+    expect(store.snapshot().find(({ id }) => id === "1")?.tucked).toBe(true);
   });
 
   it("marks a hidden primary update even while its displayed revision is retained", () => {
@@ -122,25 +121,34 @@ describe("browser floating panels", () => {
     expect(floating.some((entry) => entry.tucked)).toBe(true);
   });
 
-  it("protects owner-touched panels and excludes pinned panels from the limit", () => {
+  it("excludes pinned panels from the limit", () => {
     const store = new FloatingPanels();
     const initial = [1, 2, 3, 4].map((id) => panel(String(id)));
     store.sync("owner", group(initial));
-    store.touch("thread", "1");
     store.sync("owner", group([...initial, { ...panel("5"), pinned: true }, panel("6")]));
-    expect(visible(store).sort()).toEqual(["1", "3", "4", "5", "6"]);
-    expect(store.snapshot().find(({ id }) => id === "2")?.tucked).toBe(true);
+    expect(visible(store).sort()).toEqual(["2", "3", "4", "5", "6"]);
+    expect(store.snapshot().find(({ id }) => id === "1")?.tucked).toBe(true);
   });
 
-  it("tucks an arriving panel if every open panel is protected", () => {
+  it("shows an arriving panel and tucks the oldest, even one the owner is using", () => {
     const store = new FloatingPanels();
     const initial = [1, 2, 3, 4].map((id) => panel(String(id)));
     store.sync("owner", group(initial));
-    initial.forEach(({ id }) => store.touch("thread", id));
     store.sync("owner", group([...initial, panel("5")]));
-    expect(visible(store)).toEqual(["1", "2", "3", "4"]);
-    expect(store.reopen("thread", "5")).toBe(false);
-    expect(visible(store)).toHaveLength(4);
+    expect(visible(store)).toEqual(["2", "3", "4", "5"]);
+    expect(store.snapshot().find(({ id }) => id === "1")?.tucked).toBe(true);
+  });
+
+  it("keeps panels the owner shows from the more list open past the limit", () => {
+    const store = new FloatingPanels();
+    const panels = [1, 2, 3, 4, 5, 6].map((id) => panel(String(id)));
+    store.sync("owner", group(panels));
+    expect(store.reopen("thread", "1")).toBe(true);
+    expect(store.reopen("thread", "2")).toBe(true);
+    expect(visible(store).sort()).toEqual(["1", "2", "3", "4", "5", "6"]);
+    store.sync("owner", group([...panels, panel("7")]));
+    expect(visible(store).sort()).toEqual(["1", "2", "4", "5", "6", "7"]);
+    expect(store.snapshot().find(({ id }) => id === "3")?.tucked).toBe(true);
   });
 
   it("keeps updates tucked and gives a restored panel a fresh opening", () => {
@@ -162,7 +170,7 @@ describe("browser floating panels", () => {
       openedAt: openAt,
     });
     expect(store.reopen("thread", "1")).toBe(true);
-    expect(visible(store).sort()).toEqual(["1", "3", "4", "5"]);
+    expect(visible(store).sort()).toEqual(["1", "2", "3", "4", "5"]);
     expect(store.snapshot().find(({ id }) => id === "1")).toMatchObject({
       tucked: false,
       updated: false,
@@ -170,7 +178,7 @@ describe("browser floating panels", () => {
     expect(store.snapshot().find(({ id }) => id === "1")?.openedAt).toBeGreaterThan(5);
   });
 
-  it("persists hiding, interaction and update marks per browser and scope", () => {
+  it("persists hiding, shown and update marks per browser and scope", () => {
     const values = new Map<string, string>();
     const storage = {
       getItem: (key: string) => values.get(key) ?? null,
@@ -181,7 +189,6 @@ describe("browser floating panels", () => {
     const first = new FloatingPanels(() => storage);
     const panels = [1, 2, 3, 4, 5].map((id) => panel(String(id)));
     first.sync("owner", group(panels));
-    first.touch("thread", "2");
     const restored = new FloatingPanels(() => storage);
     restored.sync(
       "owner",
@@ -191,8 +198,12 @@ describe("browser floating panels", () => {
       tucked: true,
       updated: true,
     });
+    restored.reopen("thread", "1");
     restored.sync("owner", group([...panels, panel("6")]));
-    expect(visible(restored).sort()).toEqual(["2", "4", "5", "6"]);
+    expect(visible(restored).sort()).toEqual(["1", "3", "4", "5", "6"]);
+    const again = new FloatingPanels(() => storage);
+    again.sync("owner", group([...panels, panel("6")]));
+    expect(visible(again).sort()).toEqual(["1", "3", "4", "5", "6"]);
     restored.sync("owner", group([panel("1")], "other-thread"));
     expect(visible(restored)).toEqual(["1"]);
   });
@@ -239,7 +250,7 @@ describe("browser floating panels", () => {
       panels: [...input.panels, panel("3"), panel("4"), panel("5")],
     });
     expect(store.reopen("thread", "1")).toBe(true);
-    expect(visible(store)).toHaveLength(4);
+    expect(visible(store)).toHaveLength(5);
   });
 
   it("keeps the original size when a viewport shrinks and grows", () => {

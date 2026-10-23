@@ -74,3 +74,29 @@ its own turn next, as before. While a turn works, the composer says "Add to what
 
 **Built:** above Threads' composer, beside the core: the time and date, and the 5-hour and weekly meters of the agent
 the picker is set to (Claude or Codex; none for local agents).
+
+## 6. The four-panel limit
+
+**Asked (owner):** new panels went into "+N more" once four were open. The newest should show and the oldest
+should go into the more list. Showing a panel from the more list should ignore the limit, so the owner can open as
+many as they want by hand.
+
+**Cause.** Any click or focus on a panel marked it "touched", and touched panels were never tucked. Once the open
+four had all been clicked, every new arrival went straight into the more list, and Show refused with "Pin or close
+an open panel to make room".
+
+**Built:** the limit tucks the oldest arrivals, whether or not they were used. A panel shown from the more list is
+marked shown, stays open past the limit, and keeps that mark across reloads. Pinned panels stay outside the limit
+as before. The "touched" mark is gone.
+
+## 7. Approvals Claude Code would not ask for
+
+**Asked (owner):** Noctis asks for approval on simple reads and file writes.
+
+**Found.** The approvals table shows today's asks were nearly all `python -c` reading a JSON fixture, a quoted
+heredoc writing a file whose text contained backticks, and `powershell -File scripts\deploy\work-pc.ps1`. The
+classifier calls all three "hides what it runs" and makes them external writes. `git push` asks too, by design.
+
+**Open:** a classifier change (treat `python -c` and `node -e` like any script, ignore backticks inside a quoted
+heredoc body, let `powershell -File` run like any script) is written as tests but not applied. Claude Code's own
+safety check refused to run them because the change loosens Noctis's approval gate, so it waits for the owner.

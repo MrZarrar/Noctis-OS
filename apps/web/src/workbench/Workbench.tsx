@@ -301,7 +301,6 @@ export function Workbench({
     return saved;
   };
   const saveWindow = (id: string, rect: WindowRect): void => {
-    floatingPanels.touch(shelfScope, id);
     setPreview(undefined);
     setArrangeError(write({ [id]: rect }) ? undefined : SAVE_FAILED);
   };
@@ -504,7 +503,6 @@ export function Workbench({
                   }
             }
             onFocus={() => {
-              floatingPanels.touch(shelfScope, slot.surfaceId);
               const box = popped ? null : boxOf(slot.surfaceId);
               if (box !== null) {
                 moving.current = {
@@ -571,14 +569,8 @@ export function Workbench({
       <div
         key={id}
         data-panel-window={id}
-        onPointerDownCapture={() => {
-          floatingPanels.touch(shelfScope, id);
-          raiseWindows([id]);
-        }}
-        onFocusCapture={() => {
-          floatingPanels.touch(shelfScope, id);
-          raiseWindows([id]);
-        }}
+        onPointerDownCapture={() => raiseWindows([id])}
+        onFocusCapture={() => raiseWindows([id])}
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
         onPointerCancel={cancel}
@@ -648,7 +640,7 @@ export function Workbench({
           panels={floatingShelf.filter((entry) => entry.tucked)}
           onShow={(entry) => {
             if (!floatingPanels.reopen(entry.scope, entry.id)) {
-              setArrangeError("Pin or close an open panel to make room, then try again.");
+              setArrangeError("That panel is no longer available.");
               return;
             }
             setArrangeError(undefined);
