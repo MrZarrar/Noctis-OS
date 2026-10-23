@@ -101,6 +101,10 @@ classifier calls all three "hides what it runs" and makes them external writes. 
 heredoc body, let `powershell -File` run like any script) is written as tests but not applied. Claude Code's own
 safety check refused to run them because the change loosens Noctis's approval gate, so it waits for the owner.
 
+**Decided (owner, later the same day):** apply it. **Applied:** the classifier change is in
+`packages/domain/src/runtime/classify.ts`. Claude Code's safety check again refused to run the classifier tests
+in-session, so the owner runs `npx vitest run packages/domain/src/runtime/classify.test.ts` before it is committed.
+
 ## 8. LARP options and recall content for the reveal video
 
 Commit 5565490 added an options panel and a recall panel to LARP mode with content nobody had approved.
@@ -120,3 +124,48 @@ Commit 5565490 added an options panel and a recall panel to LARP mode with conte
 Peter Parker?" returns all four, and each quote carries a redaction. The keyboard pictures are Codex photos, stored
 as JPEG inside an SVG so the files area serves them unchanged. The recording brief (R2 and R7) needs the subject
 changed from Mira Tallow to Peter Parker.
+
+## 9. Approval cards a person can read, and Vault links
+
+**Asked (owner):** an approval card showed a whole shell command with an inline Python script as its "Requested
+action", with "Some effects may not be undone", for a command that only read files. Cards should outline what the
+action does with the code collapsed, and the same goes for other raw text in Noctis, such as links in the Vault.
+
+**Found:** the card asked because of section 7's `python -c` rule. The summary was the raw command, clipped to
+2,000 characters. Vault notes are Markdown, which does not know Obsidian's `[[Name]]`, so the brackets showed.
+
+**Decided and built:**
+
+- An ask's headline is what the agent said the command is for: Claude's Bash `description`, or Codex's `reason`.
+  When neither exists, a plain outline built from the command (`Runs git show and an inline Python script`).
+- The exact command is kept on the approval (`consequenceDetail`, migration 0024) and shown under a collapsed
+  "Command" on the card, in Threads and on the Approvals page.
+- Command rows in a turn's Details show the description with the command and its output folded away.
+- In a Vault note, `[[Name]]` opens that note in the sphere, `[[Name|text]]` shows only the text, and a name with no
+  note is plain text. Recall quotes stay verbatim.
+
+**Not done (owner):** no restart of the work PC and no home PC step. The owner is using Noctis and restarts it
+themselves.
+
+## 10. Vesper on the agent's own auto mode
+
+**Asked (owner):** Claude's and Codex's auto modes are good at deciding when approval is needed. Vesper should
+inherit them and only ask when the agent itself would have asked; Noctis's approval system stays for Jester.
+
+**Found:** Vesper on Claude already ran in Claude Code's auto mode, with Noctis's classifier stopping anything it
+called confirm-level before auto mode saw it. Codex already only asked when Codex asked, but Noctis turned its
+network off every turn although the owner's `~/.codex` turns it on, so every networked command asked. Jester always
+runs on Hermes, which has no auto mode. Codex's own auto-review (`approvals_reviewer = "auto_review"`) would also take
+MCP prompts, which is where the browser and desktop checks live, so Noctis leaves the reviewer to the owner's config.
+
+**Decided (owner):** do it, and keep the browser and desktop checks. Recorded as ADR-0037.
+
+**Built:**
+
+- Claude: the gate only stops a browser or desktop step that commits the owner (buy, pay, send, post, opening a
+  shell) and a write into a read-only folder. Everything else is Claude's auto mode; its own asks still arrive as
+  cards.
+- Codex: the network follows the owner's `sandbox_workspace_write.network_access`, read with `config/read` when the
+  app-server starts, and stays off when that cannot be read.
+- Hermes (Jester and local models): unchanged.
+- Vesper's card no longer says every action that leaves the PC needs an approval.

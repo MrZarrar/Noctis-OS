@@ -44,6 +44,8 @@ export type ApprovalOutcome =
 export interface ApprovalSurfaceProps {
   id: string;
   consequenceSummary: string;
+  /** The exact command the summary describes. Shown collapsed, for anyone who wants to check. */
+  consequenceDetail?: string;
   operationClass: string;
   capability: string;
   targetType: string;
@@ -85,6 +87,7 @@ const OUTCOME_WORDS: Readonly<Record<ApprovalOutcome, string>> = {
  */
 export function ApprovalSurface({
   consequenceSummary,
+  consequenceDetail,
   operationClass,
   capability,
   targetType,
@@ -130,6 +133,30 @@ export function ApprovalSurface({
           : ` Estimated cost: GBP ${estimatedCostGbp.toFixed(2)}.`}
       </p>
       <p style={{ margin: 0, color: typography.color.muted }}>{OUTCOME_WORDS[outcome]}.</p>
+      {consequenceDetail !== undefined && consequenceDetail.trim() !== "" && (
+        <details style={{ minWidth: 0 }}>
+          <summary style={{ minHeight: 44, lineHeight: "44px", cursor: "pointer" }}>
+            Command
+          </summary>
+          <pre
+            style={{
+              margin: 0,
+              maxHeight: 320,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              fontFamily: typography.monoFamily,
+              fontSize: typography.scale.xs,
+              background: material.fill,
+              border: `1px solid ${material.border}`,
+              borderRadius: corner.sm,
+              padding: spacing.sm,
+            }}
+          >
+            {consequenceDetail}
+          </pre>
+        </details>
+      )}
       <details style={{ minWidth: 0 }}>
         <summary style={{ minHeight: 44, lineHeight: "44px", cursor: "pointer" }}>Details</summary>
         <dl

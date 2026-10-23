@@ -1218,6 +1218,40 @@ describe("conversation service", () => {
     expect(node.answers()).toHaveLength(0);
   });
 
+  it("an approval keeps the exact command beside the outline it asks in", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+
+    await setDefault(core);
+    await send(core, "ask-with-command");
+    await waitFor(() => node.jobs().length === 1, "the turn");
+
+    const command = `git show origin/main:a.json > a.tmp.json; python -c "print(1)"`;
+    node.frame({
+      kind: "ask",
+      jobId: lastTurnJob(node).assignment.jobId,
+      ask: {
+        ...ASK,
+        summary: "Runs git show and an inline Python script",
+        detail: { command, cwd: directory },
+        askedBy: "runtime",
+      },
+    });
+
+    let approval: Body | undefined;
+    await waitFor(async () => {
+      const response = await read(core, "/approvals");
+      approval = (response.body.approvals as Body[]).find((a) => a.askId === ASK.askId);
+      return approval !== undefined;
+    }, "the approval");
+
+    expect(approval).toMatchObject({
+      consequenceSummary: "Runs git show and an inline Python script",
+      consequenceDetail: command,
+    });
+  });
+
   it("an ask under an active Objective is allowed automatically; a free-chat ask waits for the human", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));

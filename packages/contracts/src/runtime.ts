@@ -377,6 +377,8 @@ export const RuntimeItemSchema = z.discriminatedUnion("kind", [
       ...ItemBase,
       kind: z.literal("command"),
       command: z.string().max(4000),
+      /** What the agent said the command is for, when it said. */
+      description: z.string().max(500).optional(),
       cwd: z.string().max(1024).optional(),
       output: z.string().max(4000).optional(),
       exitCode: z.int().optional(),

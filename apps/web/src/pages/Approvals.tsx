@@ -28,6 +28,7 @@ const ApprovalSchema = z.object({
   taskId: z.string().optional(),
   actorId: z.string(),
   consequenceSummary: z.string(),
+  consequenceDetail: z.string().optional(),
   operationClass: OperationClassSchema,
   capability: z.string(),
   target: z.object({ type: z.string(), id: z.string(), hostId: z.string().optional() }),
@@ -169,6 +170,9 @@ export function Approvals({ transport }: { transport: CoreTransport | undefined 
               <ApprovalSurface
                 id={approval.id}
                 consequenceSummary={approval.consequenceSummary}
+                {...(approval.consequenceDetail === undefined
+                  ? {}
+                  : { consequenceDetail: approval.consequenceDetail })}
                 operationClass={approval.operationClass}
                 capability={approval.capability}
                 targetType={approval.target.type}

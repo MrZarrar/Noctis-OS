@@ -99,9 +99,10 @@ const SHELL_WRAPPER = new RegExp(
     String.raw`^\s*(?:"[^"]*?cmd(?:\.exe)?"|(?:\S*[\/])?cmd(?:\.exe)?)\s+\/[ck]\s+([\s\S]+)$`,
     String.raw`^\s*(?:"[^"]*?(?:bash|sh|zsh)(?:\.exe)?"|(?:\S*[\/])?(?:bash|sh|zsh)(?:\.exe)?)\s+-l?c\s+([\s\S]+)$`,
   ].join("|"),
+  "i",
 );
 
-function unwrap(command: string): string {
+export function unwrap(command: string): string {
   let current = command;
 
   // Bounded: a wrapper inside a wrapper is plausible, a deeper one is not worth a loop.

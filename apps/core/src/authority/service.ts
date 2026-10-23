@@ -63,6 +63,7 @@ type ApprovalRow = {
   capability: string;
   target_json: string;
   consequence_summary: string;
+  consequence_detail: string | null;
   reversibility: string;
   estimated_cost_gbp: number | null;
   outcome: string | null;
@@ -84,7 +85,7 @@ type ApprovalRow = {
 };
 
 const APPROVAL_COLUMNS = `id, objective_id, mission_id, actor_id, operation_class, capability,
-                          target_json, consequence_summary, reversibility, estimated_cost_gbp,
+                          target_json, consequence_summary, consequence_detail, reversibility, estimated_cost_gbp,
                           outcome, policy_id, reason_codes_json, permission_id,
                           confirmation_phrase, requested_at, decided_at, confirmed_at,
                           confirmed_by, executed_at, execution_evidence_version,
@@ -124,6 +125,7 @@ function toApproval(row: ApprovalRow): ApprovalRecord | undefined {
     capability: row.capability,
     target: JSON.parse(row.target_json) as unknown,
     consequenceSummary: row.consequence_summary,
+    ...(row.consequence_detail === null ? {} : { consequenceDetail: row.consequence_detail }),
     reversibility: row.reversibility,
     ...(row.estimated_cost_gbp === null ? {} : { estimatedCostGbp: row.estimated_cost_gbp }),
     outcome: row.outcome,
@@ -312,10 +314,10 @@ export function requestAuthority(
       tx.prepare(
         `INSERT INTO approvals
            (id, objective_id, mission_id, actor_id, operation_class, capability, target_json,
-            consequence_summary, reversibility, estimated_cost_gbp, idempotency_key,
-            outcome, policy_id, reason_codes_json, permission_id, confirmation_phrase,
-            requested_at, decided_at, node_job_id, ask_id, task_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            consequence_summary, consequence_detail, reversibility, estimated_cost_gbp,
+            idempotency_key, outcome, policy_id, reason_codes_json, permission_id,
+            confirmation_phrase, requested_at, decided_at, node_job_id, ask_id, task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         command.objectiveId ?? null,
@@ -325,6 +327,7 @@ export function requestAuthority(
         command.capability,
         JSON.stringify(command.target),
         command.consequenceSummary,
+        command.consequenceDetail ?? null,
         command.reversibility,
         // ponytail: REAL. Fine for an estimate shown to a human before approval.
         // Convert to integer pence the moment anything sums or reconciles it.

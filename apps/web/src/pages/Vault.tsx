@@ -4,6 +4,7 @@ import type { RecallEvidenceView } from "@noctis/ui";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
+import type { WikiLinkResolver } from "../conversation/Markdown.js";
 import { Markdown } from "../conversation/Markdown.js";
 import { Page, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import { ActionButton, usePendingAction } from "../layout/ActionButton.js";
@@ -406,7 +407,22 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
         onFocus={setFocus}
       />
 
-      {note !== undefined && focusName !== undefined && <VaultNote name={focusName} state={note} />}
+      {note !== undefined && focusName !== undefined && (
+        <VaultNote
+          name={focusName}
+          state={note}
+          openLink={(target) => {
+            const key = target.toLowerCase();
+            const node = nodes.find((n) => n.name.toLowerCase() === key);
+
+            return node === undefined
+              ? undefined
+              : () => {
+                  setFocus(node.id);
+                };
+          }}
+        />
+      )}
 
       <VaultEdits
         edits={edits}
@@ -426,7 +442,15 @@ export function Vault({ transport, focusId, onReturn }: VaultProps): JSX.Element
 }
 
 /** What the opened node's own note says, under the sphere. */
-export function VaultNote({ name, state }: { name: string; state: NoteState }): JSX.Element {
+export function VaultNote({
+  name,
+  state,
+  openLink,
+}: {
+  name: string;
+  state: NoteState;
+  openLink?: WikiLinkResolver;
+}): JSX.Element {
   return (
     <section aria-label={`Note: ${name}`} style={{ ...glass, padding: spacing.lg, minWidth: 0 }}>
       <h2 style={{ margin: 0, fontSize: typography.scale.md }}>{name}</h2>
@@ -436,7 +460,10 @@ export function VaultNote({ name, state }: { name: string; state: NoteState }): 
             {state.path}
           </p>
           <div style={{ maxWidth: typography.measurePx, lineHeight: 1.55 }}>
-            <Markdown text={state.text} />
+            <Markdown
+              text={state.text}
+              {...(openLink === undefined ? {} : { wikiLinks: openLink })}
+            />
           </div>
         </>
       )}

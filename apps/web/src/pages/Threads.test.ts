@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ConversationState, Turn } from "../conversation/useConversation.js";
-import { Threads } from "./Threads.js";
+import { ItemRow, Threads } from "./Threads.js";
 import { Presence } from "./Presence.js";
 
 const turn: Turn = {
@@ -318,5 +318,41 @@ describe("Threads timeline", () => {
     expect(render(true)).toContain("Continue a session");
     expect(render(true)).not.toContain("Here is your result");
     expect(render(false)).not.toContain("Continue a session");
+  });
+});
+
+describe("a command row", () => {
+  it("reads as what the agent said it does, with the command and its output folded away", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ItemRow, {
+        item: {
+          itemId: "c1",
+          kind: "command",
+          status: "completed",
+          command: `python -c "print('x')"`,
+          description: "Print the fixture keys",
+          output: "vesper keys: options",
+          exitCode: 0,
+        },
+      }),
+    );
+    const visible = markup.split("<details")[0];
+    const folded = markup.match(/<details[^>]*>[\s\S]*<\/details>/)?.[0];
+
+    expect(visible).toContain("Print the fixture keys");
+    expect(visible).not.toContain("python");
+    expect(folded).toContain("python -c");
+    expect(folded).toContain("vesper keys: options");
+  });
+
+  it("says it ran a command when the agent gave no words for it", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ItemRow, {
+        item: { itemId: "c2", kind: "command", status: "completed", command: "git status" },
+      }),
+    );
+
+    expect(markup.split("<details")[0]).not.toContain("git status");
+    expect(markup).toContain("git status");
   });
 });

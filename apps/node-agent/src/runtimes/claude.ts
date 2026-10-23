@@ -41,7 +41,7 @@ import {
   RuntimeDelegationSchema,
   RuntimeProposalSchema,
 } from "@noctis/contracts";
-import { classifyAsk, isConfirmLevel } from "@noctis/domain";
+import { classifyAsk, isConfirmLevel, outlineCommand } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
@@ -79,11 +79,11 @@ import { createProcessPool, processKey } from "./sessions.js";
  * claude.ai subscription). It loads the owner's real setup: user, project and
  * local settings, CLAUDE.md, skills, plugins, hooks and MCP servers.
  *
- * Permissions are split by consequence. The CLI runs in auto mode and decides
- * the everyday itself. A `PreToolUse` hook classifies every call with
- * `classifyAsk` and stops only the Section 9.1 confirm-level ones until the
- * core answers. When the CLI's own permission system asks, `canUseTool`
- * forwards that to the owner as well.
+ * Permissions are the CLI's own: it runs in auto mode, and when that wants a
+ * person, `canUseTool` brings the ask to the owner. A `PreToolUse` hook keeps
+ * two things auto mode cannot see: a step on the owner's screen that commits
+ * them (those tools are pre-allowed, so auto mode never reviews them), and a
+ * write into a folder lent only for reading.
  *
  * The Noctis proposal tools are hosted in-process with `createSdkMcpServer`:
  * an `sdk`-type server is relayed over the CLI child's stdio control channel,
@@ -382,6 +382,8 @@ async function readClaudeLimits(
   };
 }
 
+const SCREEN_TOOL = new RegExp(`^mcp__(?:${BROWSER_SERVER}|${DESKTOP_SERVER})__`);
+
 function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
 }
@@ -411,7 +413,7 @@ function describeCall(
     return {
       itemId,
       kind: "command",
-      summary: clip(command, 2000).trim() || "run a command",
+      summary: clip(input.description?.trim() || outlineCommand(command), 2000),
       operationClass: cls.operationClass,
       reversibility: cls.reversibility,
       capability: cls.capability,
@@ -476,6 +478,7 @@ function toolItem(
       ...base,
       kind: "command",
       command: clip(input.command ?? "", 4000),
+      ...(input.description?.trim() ? { description: clip(input.description.trim(), 500) } : {}),
       cwd: clip(input.cwd ?? roots.cwd, 1024),
       ...(output === undefined ? {} : { output: clip(output, 4000) }),
     };
@@ -1005,8 +1008,16 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
 
           const ask = describeCall(toolName, toolInput, clip(toolUseId, 128), roots);
 
+          // Claude's auto mode judges everything else, and when it wants a person,
+          // canUseTool brings that to the owner. Noctis keeps only what auto mode
+          // cannot see: the screen tools are pre-allowed, so it never reviews a click
+          // that buys or sends, and `additionalDirectories` lends the read-only
+          // folders as writable.
+          if (!(SCREEN_TOOL.test(toolName) || ask.kind === "file_change")) {
+            return {};
+          }
+
           if (!isConfirmLevel(ask.operationClass)) {
-            // Below confirm-level the agent's own permission system decides.
             return {};
           }
 

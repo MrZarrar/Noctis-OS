@@ -31,6 +31,8 @@ export const AuthorityRequestSchema = z
     capability: z.string().trim().min(1),
     target: AuthorityTargetSchema,
     consequenceSummary: z.string().trim().min(1),
+    /** The exact command or input the summary describes, kept so a person can check it. */
+    consequenceDetail: z.string().max(4000).optional(),
     reversibility: ReversibilitySchema,
     estimatedCostGbp: z.number().nonnegative().optional(),
     idempotencyKey: IdempotencyKeySchema,
@@ -106,6 +108,8 @@ export const ApprovalRecordSchema = z
     capability: z.string().trim().min(1),
     target: AuthorityTargetSchema,
     consequenceSummary: z.string().trim().min(1),
+    /** The exact command or input the summary describes, kept so a person can check it. */
+    consequenceDetail: z.string().max(4000).optional(),
     reversibility: ReversibilitySchema,
     estimatedCostGbp: z.number().nonnegative().optional(),
     outcome: AuthorityOutcomeSchema,

@@ -413,3 +413,20 @@ the account that must own the process.
 anyone logs in, and, under ADR-0035, in a console session an RDP connection has just evicted. That is
 correct for headless turns and wrong for GUI tools, so "desktop ready" stays a state the node reports
 separately from "worker authenticated" rather than one being assumed from the other.
+
+## ADR-0037: Vesper asks when its own agent would ask
+
+**Decision:** On Claude Code and Codex, the agent's own permission system decides what needs the
+owner, and Noctis relays those asks. Noctis's classifier no longer stops Vesper's commands or MCP
+calls on its own. Owner decision, 2026-10-23, overriding the "deterministic code owns authority" rule
+and Section 9.1's default confirmation for external writes, for those two runtimes only.
+
+**Why.** Claude Code's auto mode and Codex's on-request approvals judge context a pattern table
+cannot: a `python -c` that only prints JSON, a push the owner just asked for. Noctis's extra gate
+asked about the first and added little on the second.
+
+**What Noctis keeps.** A step on the owner's browser or desktop that buys, sends, posts or opens a
+shell still asks, because those tools are pre-allowed and the agent never reviews them. A write into a
+folder lent only for reading still asks, because the SDK lends every extra folder as writable. Codex
+runs with the owner's own network setting from `config/read`, off when it cannot be read. Hermes,
+and so Jester, has no auto mode and keeps Noctis's classifier for everything.

@@ -40,4 +40,34 @@ describe("ApprovalSurface", () => {
     expect(markup).toContain("Confirm");
     expect(markup).toContain("Decline");
   });
+
+  it("leads with the outline and keeps the exact command collapsed under it", () => {
+    const command = `git show origin/main:a.json > a.tmp.json; python -c "print('<hi>')"`;
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalSurface, {
+        id: "approval-2",
+        consequenceSummary: "Print the Vesper options from origin/main",
+        consequenceDetail: command,
+        operationClass: "external_write",
+        capability: "runtime.command",
+        targetType: "command",
+        targetId: "git show",
+        reversibility: "partially_reversible",
+        outcome: "require_confirmation",
+        reasonCodes: ["runtime_asked"],
+        onConfirm: () => undefined,
+      }),
+    );
+    const visible = markup.split("<details")[0];
+    const commandBox = markup.match(
+      /<details[^>]*>\s*<summary[^>]*>Command<\/summary>[\s\S]*?<\/details>/,
+    )?.[0];
+
+    expect(visible).toContain("Print the Vesper options from origin/main");
+    expect(visible).not.toContain("python");
+    expect(commandBox).toBeDefined();
+    expect(commandBox).not.toMatch(/<details[^>]*\sopen(?:=|\s|>)/);
+    expect(commandBox).toContain("<pre");
+    expect(commandBox).toContain("print(&#x27;&lt;hi&gt;&#x27;)");
+  });
 });

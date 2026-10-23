@@ -20,7 +20,7 @@ import {
   MAX_LISTED_SESSIONS,
   RuntimeDelegationSchema,
 } from "@noctis/contracts";
-import { classifyAsk, isConfirmLevel } from "@noctis/domain";
+import { classifyAsk, isConfirmLevel, outlineCommand } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
@@ -163,6 +163,19 @@ const TokenUsageSchema = z
   })
   .loose();
 const ThreadResponseSchema = z.object({ thread: z.object({ id: z.string() }).loose() }).loose();
+/** Only the one setting Noctis takes from the owner's own Codex config. */
+const NetworkConfigSchema = z
+  .object({
+    config: z
+      .object({
+        sandbox_workspace_write: z
+          .object({ network_access: z.boolean().nullish() })
+          .loose()
+          .nullish(),
+      })
+      .loose(),
+  })
+  .loose();
 const ThreadListResponseSchema = z
   .object({
     data: z.array(
@@ -239,6 +252,7 @@ const CommandApprovalSchema = z
     itemId: z.string(),
     command: z.string().nullable().optional(),
     cwd: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
   })
   .loose();
 const ItemIdSchema = z.object({ itemId: z.string() }).loose();
@@ -457,6 +471,8 @@ interface CodexProcess extends LiveProcess {
   proposals: ProposalChannel;
   /** Codex's thread, once `thread/start` or `thread/resume` has answered. */
   threadId: string | undefined;
+  /** The owner's own `sandbox_workspace_write.network_access`, read once per process. */
+  networkAccess: boolean;
   current: CodexTurn | undefined;
   /** Kills the process if the current turn does not stop on its own after an interrupt. */
   killSoon(): void;
@@ -519,6 +535,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       key,
       sessionRef: undefined,
       threadId: undefined,
+      networkAccess: false,
       current: undefined,
       rpc,
       proposals,
@@ -641,15 +658,15 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       });
     });
 
-    // The network stays off whatever ~/.codex says: an external write then has
-    // to escalate, and an escalation is an ask the owner answers.
-    const sandboxPolicy = {
+    // The network is whatever the owner's own Codex config says, so Vesper on Codex asks
+    // exactly when Codex would ask in the owner's own app. Read at the handshake below.
+    const sandboxPolicy = (): unknown => ({
       type: "workspaceWrite",
       writableRoots: roots.writable,
-      networkAccess: false,
+      networkAccess: proc.networkAccess,
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
-    };
+    });
     let fail: (error: Error) => void = () => undefined;
 
     /**
@@ -833,7 +850,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
                 await decide({
                   itemId: clip(p.itemId, 128),
                   kind: "command",
-                  summary: clip(command, 2000).trim() || "run a command",
+                  summary: clip(p.reason?.trim() || outlineCommand(command), 2000),
                   operationClass: cls.operationClass,
                   reversibility: cls.reversibility,
                   capability: cls.capability,
@@ -989,6 +1006,13 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             capabilities: { experimentalApi: true },
           });
 
+          // An app-server too old to answer keeps the network off, as before.
+          const config = NetworkConfigSchema.safeParse(
+            await rpc.request("config/read", { cwd: roots.cwd }).catch(() => undefined),
+          );
+          proc.networkAccess =
+            config.success && config.data.config.sandbox_workspace_write?.network_access === true;
+
           // `approval_policy` is refused as a config key by 0.154; the per-request field still takes it.
           const card = identityCard({
             identityId: payload.identityId,
@@ -1047,7 +1071,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
                 text_elements: [],
               },
             ],
-            sandboxPolicy,
+            sandboxPolicy: sandboxPolicy(),
           }),
         ).turn.id;
 

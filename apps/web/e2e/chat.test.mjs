@@ -301,7 +301,10 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       const command = done.items.find((item) => item.kind === "command");
 
       assert.ok(command.text.includes(ASK_COMMAND), command.text);
-      assert.ok(command.text.includes("→ hi"), `no output shown: ${command.text}`);
+      assert.ok(
+        /Command and output[\s\S]*hi$/.test(command.text),
+        `no output shown: ${command.text}`,
+      );
       assert.deepEqual(done.errors, []);
     },
   );

@@ -202,6 +202,9 @@ export function approvalPayload(approval: ApprovalRecord): unknown {
   return ApprovalPayloadSchema.parse({
     id: approval.id,
     consequenceSummary: approval.consequenceSummary,
+    ...(approval.consequenceDetail === undefined
+      ? {}
+      : { consequenceDetail: approval.consequenceDetail }),
     operationClass: approval.operationClass,
     capability: approval.capability,
     targetType: approval.target.type,

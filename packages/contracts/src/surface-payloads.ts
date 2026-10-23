@@ -290,6 +290,7 @@ export const ApprovalPayloadSchema = z
   .object({
     id: z.string().min(1),
     consequenceSummary: z.string().min(1),
+    consequenceDetail: z.string().max(4000).optional(),
     operationClass: z.string().min(1),
     capability: z.string().min(1),
     targetType: z.string().min(1),

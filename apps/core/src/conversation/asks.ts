@@ -50,6 +50,7 @@ export function handleAsk(
     capability: ask.capability,
     target: ask.target,
     consequenceSummary: ask.summary,
+    ...(ask.detail?.command === undefined ? {} : { consequenceDetail: ask.detail.command }),
     reversibility: ask.reversibility,
     nodeJobId: jobId,
     askId: ask.askId,

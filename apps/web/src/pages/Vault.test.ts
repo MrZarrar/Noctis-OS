@@ -36,3 +36,25 @@ it("shows the opened node's note as Markdown, with where it lives", () => {
 it("says plainly when a name has no note behind it", () => {
   expect(note({ kind: "none" })).toContain("No note has been written for Tolga yet");
 });
+
+it("turns a wikilink into a link to that note, and an unwritten one into plain words", () => {
+  const markup = renderToStaticMarkup(
+    createElement(VaultNote, {
+      name: "Hardware panel",
+      state: {
+        kind: "note",
+        path: "projects/hardware-panel.md",
+        text: "Related: [[Mira Tallow]], [[Orin Valecrest|Orin]], [[Nobody Yet]] and [[Mira Tallow#Role]].",
+      },
+      openLink: (target: string) => (target === "Nobody Yet" ? undefined : () => undefined),
+    }),
+  );
+
+  expect(markup).not.toContain("[[");
+  expect(markup).toMatch(/<button[^>]*>Mira Tallow<\/button>/);
+  expect(markup).toMatch(/<button[^>]*>Orin<\/button>/);
+  expect(markup).not.toContain("Orin Valecrest");
+  expect(markup).not.toMatch(/<button[^>]*>Nobody Yet<\/button>/);
+  expect(markup).toContain("Nobody Yet");
+  expect(markup.match(/<button[^>]*>Mira Tallow<\/button>/g)).toHaveLength(2);
+});

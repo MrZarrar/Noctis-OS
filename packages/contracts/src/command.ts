@@ -118,6 +118,7 @@ export const RequestAuthorityCommandSchema = z
     capability: z.string().trim().min(1),
     target: AuthorityTargetSchema,
     consequenceSummary: z.string().trim().min(1).max(2000),
+    consequenceDetail: z.string().max(4000).optional(),
     reversibility: ReversibilitySchema,
     estimatedCostGbp: z.number().nonnegative().optional(),
     /** Set when a runtime ask raised the request, so the answer can find its way back. */

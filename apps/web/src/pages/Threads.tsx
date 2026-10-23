@@ -156,16 +156,21 @@ export function ItemRow({
       return <span>message · {item.status}</span>;
     case "command":
       return (
-        <span>
-          command · {item.status} · <code style={mono}>{item.command}</code>
-          {item.output !== undefined && (
-            <>
-              {" → "}
-              <code style={mono}>{item.output}</code>
-            </>
-          )}
-          {item.exitCode !== undefined && ` (exit ${String(item.exitCode)})`}
-        </span>
+        <div style={{ minWidth: 0 }}>
+          <span>
+            {item.description ?? "command"} · {item.status}
+            {item.exitCode !== undefined && ` (exit ${String(item.exitCode)})`}
+          </span>
+          <details style={{ minWidth: 0 }}>
+            <summary style={{ cursor: "pointer", color: typography.color.muted }}>
+              {item.output === undefined ? "Command" : "Command and output"}
+            </summary>
+            <pre style={{ ...mono, margin: 0 }}>{item.command}</pre>
+            {item.output !== undefined && (
+              <pre style={{ ...mono, margin: 0, color: typography.color.muted }}>{item.output}</pre>
+            )}
+          </details>
+        </div>
       );
     case "file_change":
       return (
@@ -859,6 +864,9 @@ export function Threads({
                       <ApprovalSurface
                         id={approval.id}
                         consequenceSummary={approval.consequenceSummary}
+                        {...(approval.consequenceDetail === undefined
+                          ? {}
+                          : { consequenceDetail: approval.consequenceDetail })}
                         operationClass={approval.operationClass}
                         capability={approval.capability}
                         targetType={approval.target.type}

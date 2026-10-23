@@ -292,8 +292,18 @@ dialog::backdrop {
   font-size: 0.88em;
 }
 
-.noctis-md a {
+.noctis-md a,
+.noctis-md .noctis-wikilink {
   color: #a99cf8;
+}
+
+.noctis-md .noctis-wikilink {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .noctis-md blockquote {

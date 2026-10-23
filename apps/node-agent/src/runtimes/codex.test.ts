@@ -112,6 +112,8 @@ interface Scenario {
   threads?: unknown[];
   /** The thread `thread/read` and `thread/turns/list` describe. */
   history?: { cwd: string; turns: unknown[] };
+  /** What `config/read` answers; absent, the request fails as an older app-server's would. */
+  config?: unknown;
 }
 
 function turnCompleted(spawned: Spawned, status: string): unknown {
@@ -150,6 +152,10 @@ function fakeAppServer(scenario: Scenario): { spawn: CodexSpawn; spawned: Spawne
       switch (method) {
         case "initialize":
           return Promise.resolve({ userAgent: "fake" });
+        case "config/read":
+          return scenario.config === undefined
+            ? Promise.reject(new JsonRpcError(-32601, method))
+            : Promise.resolve({ config: scenario.config, origins: {}, layers: null });
         case "thread/start":
           return Promise.resolve({ thread: { id: record.threadId } });
         case "thread/resume":
@@ -837,7 +843,7 @@ describe("the Codex App Server runtime", () => {
       {
         itemId: "c1",
         kind: "command",
-        summary: "echo hi",
+        summary: "Runs echo",
         operationClass: "read_inspect",
         reversibility: "reversible",
         capability: "runtime.command",
@@ -888,7 +894,7 @@ describe("the Codex App Server runtime", () => {
     expect(spawned[0]?.child.killed).toBe(false);
   });
 
-  it("runs workspace-write with approval on-request and the network off, Objective or not", async () => {
+  it("runs workspace-write with approval on-request, and the network off when the config is unread", async () => {
     const { runtime: codex, spawned } = runtime(HAPPY);
 
     await codex.turn(input({ objectiveActive: false }), recorder().sink);
@@ -905,6 +911,22 @@ describe("the Codex App Server runtime", () => {
           excludeTmpdirEnvVar: false,
           excludeSlashTmp: false,
         },
+      }),
+    ]);
+  });
+
+  it("keeps the network the owner's own Codex config gives it", async () => {
+    const { runtime: codex, spawned } = runtime({
+      ...HAPPY,
+      config: { sandbox_workspace_write: { network_access: true, writable_roots: [] } },
+    });
+
+    await codex.turn(input(), recorder().sink);
+
+    expect(spawned[0]?.requests.get("config/read")).toEqual([{ cwd: "C:\\work" }]);
+    expect(spawned[0]?.requests.get("turn/start")).toEqual([
+      expect.objectContaining({
+        sandboxPolicy: expect.objectContaining({ networkAccess: true }) as unknown,
       }),
     ]);
   });

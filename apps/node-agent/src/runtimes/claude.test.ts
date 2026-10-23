@@ -241,12 +241,20 @@ describe("the Claude Agent SDK runtime", () => {
     ]);
     expect(r.items).toEqual([
       { itemId: "msg-1", kind: "agent_message", status: "completed", text: "Hello" },
-      { itemId: "t1", kind: "command", status: "in_progress", command: "echo hi", cwd: "C:\\work" },
+      {
+        itemId: "t1",
+        kind: "command",
+        status: "in_progress",
+        command: "echo hi",
+        description: "greet",
+        cwd: "C:\\work",
+      },
       {
         itemId: "t1",
         kind: "command",
         status: "completed",
         command: "echo hi",
+        description: "greet",
         cwd: "C:\\work",
         output: "hi\n",
       },
@@ -679,55 +687,26 @@ describe("the Claude Agent SDK runtime", () => {
       };
     }
 
-    it("stops an external write before it runs, asks the core, and lets it run once confirmed", async () => {
-      const { r, gate } = await held("allow");
-
-      await expect(gate("Bash", { command: "git push origin main" })).resolves.toEqual(allowed);
-      expect(r.asks).toEqual([
-        {
-          itemId: "tu-1",
-          kind: "command",
-          summary: "git push origin main",
-          operationClass: "external_write",
-          reversibility: "partially_reversible",
-          capability: "runtime.command",
-          target: { type: "command", id: "git push origin main" },
-          detail: { command: "git push origin main", cwd: "C:\\work" },
-          askedBy: "noctis",
-        },
-      ]);
-    });
-
-    it("turns the core's deny into a deny, in the core's words or a fixed one", async () => {
-      await expect(
-        (await held("deny", "not now")).gate("Bash", { command: "git push" }),
-      ).resolves.toEqual(denied("not now"));
-      await expect(
-        (await held("deny")).gate("Write", { file_path: "C:\\elsewhere\\x.ts" }),
-      ).resolves.toEqual(denied("declined by Noctis authority"));
-    });
-
-    it("leaves everything below confirm-level to the agent's own permission system", async () => {
+    it("leaves commands, MCP calls and unknown tools to Claude's own auto mode", async () => {
       const { r, gate } = await held("deny");
 
       for (const [name, toolInput] of [
         ["Read", { file_path: "C:\\work\\a.ts" }],
         ["Glob", { pattern: "**/*.ts" }],
         ["Bash", { command: "git status" }],
-        [
-          "Bash",
-          {
-            command: `"C:\\WINDOWS\\powershell.exe" -Command "Get-Content -Raw 'C:\\x\\SKILL.md'"`,
-          },
-        ],
-        ["Bash", { command: "npm test" }],
+        ["Bash", { command: "git push origin main" }],
+        ["PowerShell", { command: "git push origin main" }],
+        ["Bash", { command: `python -c "print(1)"` }],
         ["Edit", { file_path: "C:\\work\\a.ts" }],
         ["Skill", { skill: "brainstorming" }],
         ["WebFetch", { url: "https://example.com" }],
-        ["WebSearch", { query: "noctis" }],
         ["Agent", { description: "look", subagent_type: "Explore" }],
         ["mcp__github__get_issue", { number: 1 }],
+        ["mcp__slack__send_message", { text: "hi" }],
         ["mcp__noctis__noctis_propose_surface", { surfaceKind: "card" }],
+        ["CronCreate", {}],
+        ["SendMessage", {}],
+        ["SomethingNew", {}],
       ] as const) {
         await expect(gate(name, toolInput), name).resolves.toEqual({});
       }
@@ -735,60 +714,24 @@ describe("the Claude Agent SDK runtime", () => {
       expect(r.asks).toEqual([]);
     });
 
-    it("reads a PowerShell call the way it reads Bash: on Windows the CLI has no Bash tool", async () => {
+    it("still stops a write into a folder Noctis lent only for reading", async () => {
       const { r, gate } = await held("allow");
 
-      await expect(gate("PowerShell", { command: "Get-ChildItem | Format-List" })).resolves.toEqual(
-        {},
-      );
-      await expect(gate("PowerShell", { command: "git push origin main" })).resolves.toEqual(
-        allowed,
-      );
-      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.summary])).toEqual([
-        ["command", "external_write", "git push origin main"],
-      ]);
+      await expect(gate("Write", { file_path: "C:\\ref\\b.ts" })).resolves.toEqual(allowed);
+      expect(
+        r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id, ask.askedBy]),
+      ).toEqual([["file_change", "external_write", "C:\\ref\\b.ts", "noctis"]]);
     });
 
-    it("leaves the CLI's local orchestration tools to it, and stops the ones that reach out", async () => {
-      const { r, gate } = await held("allow");
-
-      for (const name of [
-        "CronList",
-        "ListAgents",
-        "EnterWorktree",
-        "ExitWorktree",
-        "ReportFindings",
-        "ScheduleWakeup",
-        "Workflow",
-        "PushNotification",
-      ]) {
-        await expect(gate(name, {}), name).resolves.toEqual({});
-      }
-
-      for (const name of ["CronCreate", "RemoteTrigger", "SendMessage", "ShareOnboardingGuide"]) {
-        await gate(name, {});
-      }
-
-      expect(r.asks.map((ask) => [ask.target.id, ask.operationClass])).toEqual([
-        ["CronCreate", "external_write"],
-        ["RemoteTrigger", "external_write"],
-        ["SendMessage", "external_write"],
-        ["ShareOnboardingGuide", "external_write"],
-      ]);
-    });
-
-    it("stops an edit outside every writable root, an MCP send, and a tool it does not know", async () => {
-      const { r, gate } = await held("allow");
-
-      await gate("Write", { file_path: "C:\\ref\\b.ts" });
-      await gate("mcp__slack__send_message", { text: "hi" });
-      await gate("SomethingNew", {});
-
-      expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
-        ["file_change", "external_write", "C:\\ref\\b.ts"],
-        ["tool_call", "external_write", "mcp__slack__send_message"],
-        ["tool_call", "external_write", "SomethingNew"],
-      ]);
+    it("turns the core's deny into a deny, in the core's words or a fixed one", async () => {
+      await expect(
+        (await held("deny", "not now")).gate("mcp__browser__browser_click", {
+          element: "Place your order",
+        }),
+      ).resolves.toEqual(denied("not now"));
+      await expect(
+        (await held("deny")).gate("Write", { file_path: "C:\\elsewhere\\x.ts" }),
+      ).resolves.toEqual(denied("declined by Noctis authority"));
     });
 
     it("lets a step on the owner's screen run, asks before one that commits, and refuses raw code", async () => {
@@ -861,6 +804,20 @@ describe("the Claude Agent SDK runtime", () => {
       expect(r.asks).toEqual([]);
     });
 
+    it("asks in the words Claude gave the command, when it gave some", async () => {
+      const { r, agentAsks } = await held("allow");
+
+      await agentAsks("Bash", {
+        command: "git push origin main",
+        description: "Push the fix to GitHub",
+      });
+      await agentAsks("Bash", { command: "git push origin main" });
+      expect(r.asks.map((ask) => [ask.summary, ask.detail?.command, ask.askedBy])).toEqual([
+        ["Push the fix to GitHub", "git push origin main", "runtime"],
+        ["Runs git push", "git push origin main", "runtime"],
+      ]);
+    });
+
     it("turns the owner's no to the agent's ask into a deny", async () => {
       await expect(
         (await held("deny", "not now")).agentAsks("Bash", { command: "npm test" }),
@@ -872,7 +829,9 @@ describe("the Claude Agent SDK runtime", () => {
 
       r.sink.ask = () => Promise.reject(new ApprovalTimedOut("git push", 600_000));
 
-      await expect(gate("Bash", { command: "git push" })).resolves.toMatchObject({
+      await expect(
+        gate("mcp__browser__browser_click", { element: "Place your order" }),
+      ).resolves.toMatchObject({
         hookSpecificOutput: { permissionDecision: "deny" },
       });
       await expect(turn).rejects.toThrow(

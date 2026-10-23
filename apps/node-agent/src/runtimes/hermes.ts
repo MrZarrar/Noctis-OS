@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { RuntimeAsk, RuntimeItem, RuntimeProbe, RuntimeTurnEvidence } from "@noctis/contracts";
-import { classifyAsk, isConfirmLevel } from "@noctis/domain";
+import { classifyAsk, isConfirmLevel, outlineCommand } from "@noctis/domain";
 import { z } from "zod";
 
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
@@ -696,7 +696,7 @@ export function createHermesRuntime(options: HermesRuntimeOptions): Runtime {
           await decide({
             itemId: clip(p.toolCall.toolCallId, 128),
             kind: "command",
-            summary: clip(command, 2000).trim() || "run a command",
+            summary: clip(outlineCommand(command), 2000),
             operationClass: cls.operationClass,
             reversibility: cls.reversibility,
             capability: cls.capability,
