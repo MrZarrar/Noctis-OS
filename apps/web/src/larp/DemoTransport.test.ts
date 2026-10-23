@@ -167,7 +167,7 @@ describe("DemoTransport", () => {
 
     await transport.request("POST", "/commands/conversation.send", {
       identityId: "vesper",
-      text: "What do I know about Mira Tallow?",
+      text: "What do I know about Peter Parker?",
     });
     await advance(20_000);
 
@@ -175,9 +175,14 @@ describe("DemoTransport", () => {
     const recall = intents.filter((intent) => intent.kind === "vault_recall");
     expect(recall).toHaveLength(1);
     const payload = VaultRecallPayloadSchema.parse(recall[0]?.payload);
-    expect(payload.query).toContain("Mira Tallow");
-    expect(payload.evidence.length).toBeGreaterThan(0);
+    expect(payload.query).toContain("Peter Parker");
+    expect(payload.evidence.length).toBeGreaterThanOrEqual(3);
     expect(payload.evidence[0]?.quote.length).toBeGreaterThan(0);
+    // A spell took the other name from every record, so each note shows a redaction instead.
+    for (const evidence of payload.evidence) {
+      expect(evidence.quote).toContain("█");
+      expect(evidence.quote.toLowerCase()).not.toContain("spider");
+    }
   });
 
   it("runs the demo task with two delegated agents, asks, and opens Hardware once approved", async () => {

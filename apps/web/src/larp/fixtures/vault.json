@@ -4873,6 +4873,62 @@
       "x": -3.4000726902682423,
       "y": -8.35984177636095,
       "z": -3.2352283405992845
+    },
+    {
+      "id": "34963179-751d-4de8-89e7-c657e7315f79",
+      "itemId": "caa0a4e6-683b-473b-9671-b19ff8025f5d",
+      "path": "people/peter-parker.md",
+      "title": "Peter Parker",
+      "type": "person",
+      "text": "# Peter Parker\n\nPeter Parker. Physics student in Queens, freelance photographer, lives with his aunt.\n\nAlso known as: ████████████ (redacted by a spell)\n\nThe Vault cannot read that line. A spell went over every record that tied him to it: the name is still here, and what it was attached to is gone. Nobody remembers it, including whoever wrote these notes.\n\nPolite, always late, always has a reason.\n\nRelated: [[Peter Parker: photo invoices]], [[Peter Parker: timeline]], [[Peter Parker: the spell]], [[2026-10-22 work journal]].\n",
+      "sensitive": false,
+      "modifiedAt": "2026-10-22T09:10:00.000Z",
+      "indexedAt": "2026-10-22T10:40:00.000Z",
+      "x": -6.5,
+      "y": 4.2,
+      "z": 1.2
+    },
+    {
+      "id": "554cf06b-a402-43b5-80a5-7d1ae6c5e62e",
+      "itemId": "79a8c5c8-1bbb-48bb-9c7e-b9b4298f6146",
+      "path": "inbox/peter-parker-photo-invoices.md",
+      "title": "Peter Parker: photo invoices",
+      "type": "capture",
+      "text": "# Peter Parker: photo invoices\n\nPeter Parker sent an invoice for six night shots of the bridge, taken from somewhere no photographer could stand. How he got the angle: ██████████ (redacted).\n\nPay on Friday. He asked for cash, again.\n\nThe captions on all six were blank when they arrived, as if something had wiped them. Filed as found.\n\nRelated: [[Peter Parker]], [[Peter Parker: timeline]].\n",
+      "sensitive": false,
+      "modifiedAt": "2026-10-21T18:25:00.000Z",
+      "indexedAt": "2026-10-22T10:40:00.000Z",
+      "x": -6,
+      "y": 4.8,
+      "z": 0.6
+    },
+    {
+      "id": "e767145b-aa41-4004-bceb-a5921020e776",
+      "itemId": "e8e8fe83-a57d-4a27-8e69-5ece22d4791a",
+      "path": "reference/peter-parker-timeline.md",
+      "title": "Peter Parker: timeline",
+      "type": "reference",
+      "text": "# Peter Parker: timeline\n\nWhat the record still holds on Peter Parker, oldest first.\n\n- Started physics at the local college.\n- ████ ████████ ██ ███ ██████ (redacted)\n- Moved into a small flat on his own.\n- ███████████████ (redacted)\n\nEvery second line went when the spell did. The gaps are the same length in every copy, which is the only proof they were ever there.\n\nRelated: [[Peter Parker]], [[Peter Parker: the spell]].\n",
+      "sensitive": false,
+      "modifiedAt": "2026-10-20T12:00:00.000Z",
+      "indexedAt": "2026-10-22T10:40:00.000Z",
+      "x": -7,
+      "y": 5,
+      "z": 1.8
+    },
+    {
+      "id": "fed5ee15-78f3-48df-97cd-9489c0e11b50",
+      "itemId": "dc77ef3b-fc89-467f-a62b-0cea2d7a63a7",
+      "path": "reference/peter-parker-spell.md",
+      "title": "Peter Parker: the spell",
+      "type": "reference",
+      "text": "# Peter Parker: the spell\n\nA spell made the world forget who Peter Parker is. Every mention of ██████████ that pointed at him now reads like this: █████ (redacted).\n\nIt did not touch the name, his photos or his homework. It took the one fact, everywhere at once, including this Vault.\n\nRecall will keep showing the gaps. They are not a bug.\n\nRelated: [[Peter Parker]], [[Peter Parker: timeline]], [[Peter Parker: photo invoices]].\n",
+      "sensitive": false,
+      "modifiedAt": "2026-10-19T21:40:00.000Z",
+      "indexedAt": "2026-10-22T10:40:00.000Z",
+      "x": -5.8,
+      "y": 4,
+      "z": 2.2
     }
   ],
   "edges": [
@@ -21736,6 +21792,83 @@
       "id": "c19b5232-9a57-7231-ab70-8705bb7704e5",
       "source": "64d627b2-95f8-732f-aa25-2c98d78964d4",
       "target": "a5d44070-3b51-760d-a1ae-c3e191d762ba",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "65f701c8-7a69-4a42-b60e-eb6022a4ddc5",
+      "source": "34963179-751d-4de8-89e7-c657e7315f79",
+      "target": "554cf06b-a402-43b5-80a5-7d1ae6c5e62e",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "ff818d18-f52f-4ba6-a98e-9bbb22019c3c",
+      "source": "34963179-751d-4de8-89e7-c657e7315f79",
+      "target": "e767145b-aa41-4004-bceb-a5921020e776",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "750e5e79-3b58-489b-a863-8eae699e25c7",
+      "source": "34963179-751d-4de8-89e7-c657e7315f79",
+      "target": "fed5ee15-78f3-48df-97cd-9489c0e11b50",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "76835450-1665-4e7e-818a-dbb5560eb4fc",
+      "source": "34963179-751d-4de8-89e7-c657e7315f79",
+      "target": "823b99e0-a727-7cb2-ab00-7a2ee021859d",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "1cdc3820-a321-4b88-9940-3b2637e8ef03",
+      "source": "554cf06b-a402-43b5-80a5-7d1ae6c5e62e",
+      "target": "34963179-751d-4de8-89e7-c657e7315f79",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "7bff6f57-7583-491d-8816-44d35cb92c6c",
+      "source": "554cf06b-a402-43b5-80a5-7d1ae6c5e62e",
+      "target": "e767145b-aa41-4004-bceb-a5921020e776",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "20506365-5779-4cd0-832a-a9a379822d13",
+      "source": "e767145b-aa41-4004-bceb-a5921020e776",
+      "target": "34963179-751d-4de8-89e7-c657e7315f79",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "526fcdfa-dfac-4437-8700-43660b0d0549",
+      "source": "e767145b-aa41-4004-bceb-a5921020e776",
+      "target": "fed5ee15-78f3-48df-97cd-9489c0e11b50",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "aa0ec801-ba20-4758-be00-66d5d23195bf",
+      "source": "fed5ee15-78f3-48df-97cd-9489c0e11b50",
+      "target": "34963179-751d-4de8-89e7-c657e7315f79",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "735c7103-bbee-47f9-8251-f24a99b59808",
+      "source": "fed5ee15-78f3-48df-97cd-9489c0e11b50",
+      "target": "e767145b-aa41-4004-bceb-a5921020e776",
+      "type": "link",
+      "lifecycle": "resolved"
+    },
+    {
+      "id": "c7335e3e-bdc6-45f7-8ba6-a4b1e8ffb11f",
+      "source": "fed5ee15-78f3-48df-97cd-9489c0e11b50",
+      "target": "554cf06b-a402-43b5-80a5-7d1ae6c5e62e",
       "type": "link",
       "lifecycle": "resolved"
     }
