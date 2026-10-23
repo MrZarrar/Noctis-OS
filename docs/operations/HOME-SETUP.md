@@ -496,3 +496,15 @@ blocks it rather than setting it off.
 
 **Turn it off:** `[Environment]::SetEnvironmentVariable("NOCTIS_CLAP", $null, "User")`, sign out and in, and
 restart the node.
+
+## 9. Steering a running turn
+
+A message sent while a Claude or Codex turn is still working now reaches that turn. The node on this PC runs the
+agents, so it needs the new build.
+
+1. On the work PC, redeploy the core (`scripts/deploy/work-pc.ps1`). The core must know the `steered` frame before
+   this node sends one.
+2. Here: step 0, then `npm run build`, then restart the node (`.noctis/home-node.ps1`).
+
+Check: start a long Claude turn in Threads, then send "also add a one-line summary at the end" while it works. The
+message appears under the working turn rather than as a "Waiting to start" card, and the same turn's reply covers it.
