@@ -20,6 +20,7 @@ import conversationsFixture from "./fixtures/conversations.json" with { type: "j
 import script from "./fixtures/script.json" with { type: "json" };
 import { setHardwareLoad } from "./hardware.js";
 import { LARP_IDS } from "./ids.js";
+import { recallVault } from "./vault.js";
 
 /**
  * LARP mode's stand-in for the core's conversation side: threads, turns,
@@ -315,6 +316,12 @@ export function createLarpCore(options: LarpCoreOptions = {}): LarpCore {
       });
     } else if (matches(text, script.demoTask.match)) {
       runDemoTask(thread, turn, false);
+    } else if (matches(text, vesper.options.match)) {
+      reply(turn, nextLine("vesper.options", vesper.options.replies));
+      later(script.typing.thinkMs + vesper.options.delayMs, () => openOptionsPanel());
+    } else if (matches(text, vesper.recall.match)) {
+      reply(turn, nextLine("vesper.recall", vesper.recall.replies));
+      later(script.typing.thinkMs + vesper.recall.delayMs, () => openRecallPanel(text));
     } else {
       reply(turn, nextLine("vesper.fallback", vesper.fallback));
     }
@@ -651,6 +658,52 @@ export function createLarpCore(options: LarpCoreOptions = {}): LarpCore {
       payloadVersion: 1,
       sourceIds: [panelSource(`${panel.kind}:${panel.page ?? panel.threadTitle ?? ""}`)],
       payload,
+    });
+  }
+
+  /** What the agent found, for the owner to pick from. Pictures resolve through the files area. */
+  function openOptionsPanel(): void {
+    upsertIntent({
+      kind: "options",
+      role: "primary",
+      persistence: "restorable",
+      priority: 80,
+      minSize: "standard",
+      payloadVersion: 1,
+      sourceIds: [panelSource("options")],
+      payload: {
+        title: script.vesper.options.title,
+        options: script.vesper.options.options.map(({ image, ...option }) => ({
+          ...option,
+          image: {
+            from: "file",
+            nodeId: LARP_IDS.homeNode,
+            grantId: LARP_IDS.homeProjectsGrant,
+            relativePath: image,
+          },
+        })),
+      },
+    });
+  }
+
+  /** What the Vault handed the agent before it answered, with the notes it came from. */
+  function openRecallPanel(text: string): void {
+    const phrase = script.vesper.recall.match
+      .map((match) => {
+        const at = text.toLowerCase().indexOf(match);
+        return at === -1 ? "" : text.slice(at + match.length);
+      })
+      .find((rest) => rest.trim() !== "");
+    const query = (phrase ?? text).replace(/[?.!]+\s*$/, "").trim();
+    upsertIntent({
+      kind: "vault_recall",
+      role: "supporting",
+      persistence: "restorable",
+      priority: 70,
+      minSize: "standard",
+      payloadVersion: 1,
+      sourceIds: [panelSource("recall")],
+      payload: recallVault(query),
     });
   }
 

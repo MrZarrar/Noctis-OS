@@ -2,10 +2,12 @@ import {
   ApprovalRecordSchema,
   CompositionPlanSchema,
   ConversationThreadSchema,
+  OptionsPayloadSchema,
   OrchestrationEventSchema,
   ServerFrameSchema,
   SurfaceIntentSchema,
   SurfaceOverrideSchema,
+  VaultRecallPayloadSchema,
 } from "@noctis/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -133,6 +135,49 @@ describe("DemoTransport", () => {
     expect(early).toBeGreaterThan(0);
     expect(early).toBeLessThan(10);
     expect(await count()).toBe(10);
+  });
+
+  // Two surfaces the owner needs to film for the reveal. Neither existed in LARP mode, so they
+  // could only be shot with the real core and the owner's real data on screen.
+  it("opens one options panel when asked to find something", async () => {
+    const { transport } = setup();
+
+    await transport.request("POST", "/commands/conversation.send", {
+      identityId: "vesper",
+      text: "Find me a mechanical keyboard",
+    });
+    await advance(20_000);
+
+    const { intents } = SurfaceReadSchema.parse((await transport.request("GET", SURFACES)).body);
+    const options = intents.filter((intent) => intent.kind === "options");
+    expect(options).toHaveLength(1);
+    const payload = OptionsPayloadSchema.parse(options[0]?.payload);
+    expect(payload.options.length).toBeGreaterThanOrEqual(3);
+    // Every option carries the things the panel is for: a price, a reason, a link and a picture.
+    for (const option of payload.options) {
+      expect(option.price).toBeTruthy();
+      expect(option.detail).toBeTruthy();
+      expect(option.url).toBeTruthy();
+      expect(option.image).toBeDefined();
+    }
+  });
+
+  it("opens a recall panel with real evidence from the fixture Vault", async () => {
+    const { transport } = setup();
+
+    await transport.request("POST", "/commands/conversation.send", {
+      identityId: "vesper",
+      text: "What do I know about Mira Tallow?",
+    });
+    await advance(20_000);
+
+    const { intents } = SurfaceReadSchema.parse((await transport.request("GET", SURFACES)).body);
+    const recall = intents.filter((intent) => intent.kind === "vault_recall");
+    expect(recall).toHaveLength(1);
+    const payload = VaultRecallPayloadSchema.parse(recall[0]?.payload);
+    expect(payload.query).toContain("Mira Tallow");
+    expect(payload.evidence.length).toBeGreaterThan(0);
+    expect(payload.evidence[0]?.quote.length).toBeGreaterThan(0);
   });
 
   it("runs the demo task with two delegated agents, asks, and opens Hardware once approved", async () => {

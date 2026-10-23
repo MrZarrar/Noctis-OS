@@ -1,43 +1,177 @@
 {
-  "_readme": "LARP mode's scripted behaviour. Each 'match' list holds phrases; a message containing any of them (any case) runs that script. Scripts are tried top to bottom: wake, benchmark, panels, demoTask, then the identity's fallback lines. Times are milliseconds. A line list cycles, one line per ask.",
-  "typing": { "charsPerSecond": 110, "thinkMs": 1400, "settleMs": 500 },
-  "wakeBanner": { "title": "Wake up, daddy's home", "body": "", "url": "/?screen=Presence" },
+  "_readme": "LARP mode's scripted behaviour. Each 'match' list holds phrases; a message containing any of them (any case) runs that script. Scripts are tried top to bottom: wake, benchmark, panels, demoTask, options, recall, then the identity's fallback lines. Times are milliseconds. A line list cycles, one line per ask. 'options' opens one options panel from its own list; 'recall' opens a vault_recall panel built from the fixture Vault, using the words after the match phrase as the query.",
+  "typing": {
+    "charsPerSecond": 110,
+    "thinkMs": 1400,
+    "settleMs": 500
+  },
+  "wakeBanner": {
+    "title": "Wake up, daddy's home",
+    "body": "",
+    "url": "/?screen=Presence"
+  },
   "vesper": {
     "wake": {
-      "match": ["wake up"],
-      "replies": ["Welcome home. Both PCs are up and the Vault is indexed."]
+      "match": [
+        "wake up"
+      ],
+      "replies": [
+        "Welcome home. Both PCs are up and the Vault is indexed."
+      ]
     },
     "benchmark": {
-      "match": ["benchmark", "stress test", "load test"],
-      "replies": ["Running the benchmark on both PCs now. Watch the Hardware panel."],
+      "match": [
+        "benchmark",
+        "stress test",
+        "load test"
+      ],
+      "replies": [
+        "Running the benchmark on both PCs now. Watch the Hardware panel."
+      ],
       "loadMs": 45000
     },
     "panels": {
-      "match": ["show me everything", "bring it all up", "open everything", "status report"],
-      "replies": ["Bringing everything up."],
+      "match": [
+        "show me everything",
+        "bring it all up",
+        "open everything",
+        "status report"
+      ],
+      "replies": [
+        "Bringing everything up."
+      ],
       "intervalMs": 500,
       "panels": [
-        { "kind": "conversation", "threadTitle": "Candle shop landing page" },
-        { "kind": "page", "page": "Nodes" },
-        { "kind": "page", "page": "Vault" },
-        { "kind": "page", "page": "Missions" },
-        { "kind": "page", "page": "Files" },
-        { "kind": "page", "page": "Health" },
-        { "kind": "page", "page": "Reminders" },
-        { "kind": "page", "page": "Approvals" },
-        { "kind": "page", "page": "Notes" },
-        { "kind": "hardware" }
+        {
+          "kind": "conversation",
+          "threadTitle": "Candle shop landing page"
+        },
+        {
+          "kind": "page",
+          "page": "Nodes"
+        },
+        {
+          "kind": "page",
+          "page": "Vault"
+        },
+        {
+          "kind": "page",
+          "page": "Missions"
+        },
+        {
+          "kind": "page",
+          "page": "Files"
+        },
+        {
+          "kind": "page",
+          "page": "Health"
+        },
+        {
+          "kind": "page",
+          "page": "Reminders"
+        },
+        {
+          "kind": "page",
+          "page": "Approvals"
+        },
+        {
+          "kind": "page",
+          "page": "Notes"
+        },
+        {
+          "kind": "hardware"
+        }
       ]
     },
     "fallback": [
       "Noted. I'll keep an eye on it.",
       "Done. It's in the Vault under today.",
       "Both PCs are quiet. Nothing needs you right now."
-    ]
+    ],
+    "options": {
+      "match": [
+        "find me",
+        "shortlist",
+        "compare options",
+        "pick one for me"
+      ],
+      "replies": [
+        "Four that fit the budget. Prices are today's, and the reason is under each one."
+      ],
+      "delayMs": 1400,
+      "title": "Mechanical keyboards under GBP 200",
+      "options": [
+        {
+          "id": "halcyon-68",
+          "title": "Halcyon 68",
+          "price": "GBP 149",
+          "detail": "Hot-swap sockets, so switches change without soldering. Aluminium case, 68 keys. The arrow cluster survives the shrink, which the 60 per cent boards lose.",
+          "url": "https://example.com/halcyon-68",
+          "image": "shots/halcyon-68.png",
+          "action": {
+            "label": "Pick the Halcyon",
+            "message": "Go with the Halcyon 68."
+          }
+        },
+        {
+          "id": "orbit-tkl",
+          "title": "Orbit TKL",
+          "price": "GBP 179",
+          "detail": "Gasket mount, so it is the softest of the four to type on. PBT caps will not shine. Tenkeyless, which costs desk space you said you wanted back.",
+          "url": "https://example.com/orbit-tkl",
+          "image": "shots/orbit-tkl.png",
+          "action": {
+            "label": "Pick the Orbit",
+            "message": "Go with the Orbit TKL."
+          }
+        },
+        {
+          "id": "meridian-75",
+          "title": "Meridian 75",
+          "price": "GBP 132",
+          "detail": "The cheapest with a knob and south-facing LEDs, so the caps you already own will fit. Smallest layout that keeps a function row.",
+          "url": "https://example.com/meridian-75",
+          "image": "shots/meridian-75.png",
+          "action": {
+            "label": "Pick the Meridian",
+            "message": "Go with the Meridian 75."
+          }
+        },
+        {
+          "id": "lumen-compact",
+          "title": "Lumen Compact",
+          "price": "GBP 98",
+          "detail": "Wireless and low profile, so it travels between the two desks. Thinner feel than the others, and there is no knob.",
+          "url": "https://example.com/lumen-compact",
+          "image": "shots/lumen-compact.png",
+          "action": {
+            "label": "Pick the Lumen",
+            "message": "Go with the Lumen Compact."
+          }
+        }
+      ]
+    },
+    "recall": {
+      "match": [
+        "what do i know about",
+        "what do we know about",
+        "recall",
+        "look it up",
+        "look up"
+      ],
+      "replies": [
+        "Pulled from the Vault. The notes it came from are in the panel."
+      ],
+      "delayMs": 900
+    }
   },
   "jester": {
     "takeover": {
-      "match": ["take over", "daddy's home", "daddys home"],
+      "match": [
+        "take over",
+        "daddy's home",
+        "daddys home"
+      ],
       "replies": [
         "Daddy's home? Cute.",
         "Vesper's sweet. I'm not. I'll take it from here.",
@@ -53,7 +187,12 @@
     ]
   },
   "demoTask": {
-    "match": ["hardware panel", "monitoring panel", "hardware monitor", "cpu and gpu panel"],
+    "match": [
+      "hardware panel",
+      "monitoring panel",
+      "hardware monitor",
+      "cpu and gpu panel"
+    ],
     "node": "Home PC",
     "approval": {
       "summary": "Restart the node agent on Home PC to load the Hardware panel?",
@@ -79,8 +218,16 @@
         "agent": "vesper",
         "say": "On it. Routing this to Home PC. Claude takes the panel, Codex writes the sampler in the node agent, and I'll ask before anything restarts."
       },
-      { "at": 6000, "agent": "claude", "start": true },
-      { "at": 6600, "agent": "codex", "start": true },
+      {
+        "at": 6000,
+        "agent": "claude",
+        "start": true
+      },
+      {
+        "at": 6600,
+        "agent": "codex",
+        "start": true
+      },
       {
         "at": 7200,
         "agent": "claude",
@@ -107,17 +254,25 @@
         "exitCode": 0,
         "durationMs": 1100
       },
-      { "at": 17200, "agent": "codex", "say": "Writing the failing test for the sampler first." },
+      {
+        "at": 17200,
+        "agent": "codex",
+        "say": "Writing the failing test for the sampler first."
+      },
       {
         "at": 19500,
         "agent": "claude",
-        "file": ["apps/web/src/surfaces/HardwarePanel.tsx"],
+        "file": [
+          "apps/web/src/surfaces/HardwarePanel.tsx"
+        ],
         "summary": "New panel: a card per PC, four animated meters each"
       },
       {
         "at": 21500,
         "agent": "codex",
-        "file": ["apps/node-agent/src/hardware/sampler.test.ts"],
+        "file": [
+          "apps/node-agent/src/hardware/sampler.test.ts"
+        ],
         "summary": "Four cases: percentages, no GPU, a slow nvidia-smi, units"
       },
       {
@@ -136,13 +291,18 @@
       {
         "at": 31500,
         "agent": "codex",
-        "file": ["apps/node-agent/src/hardware/sampler.ts"],
+        "file": [
+          "apps/node-agent/src/hardware/sampler.ts"
+        ],
         "summary": "CPU and RAM from os, GPU and VRAM from nvidia-smi, sampled every second"
       },
       {
         "at": 36500,
         "agent": "claude",
-        "file": ["apps/web/src/surfaces/registry.ts", "apps/web/src/surfaces/renderers.tsx"],
+        "file": [
+          "apps/web/src/surfaces/registry.ts",
+          "apps/web/src/surfaces/renderers.tsx"
+        ],
         "summary": "Registered the hardware surface and its renderer"
       },
       {
@@ -179,19 +339,31 @@
         "exitCode": 0,
         "durationMs": 4200
       },
-      { "at": 57500, "agent": "claude", "done": true },
+      {
+        "at": 57500,
+        "agent": "claude",
+        "done": true
+      },
       {
         "at": 60500,
         "agent": "codex",
         "say": "Sampler is green and typed. The node agent needs a restart to load it."
       },
-      { "at": 64000, "agent": "codex", "done": true },
+      {
+        "at": 64000,
+        "agent": "codex",
+        "done": true
+      },
       {
         "at": 67000,
         "agent": "vesper",
         "say": "Both agents are done. Ten tests pass on Home PC. The node agent has to restart to load the sampler."
       },
-      { "at": 72000, "agent": "vesper", "approval": true }
+      {
+        "at": 72000,
+        "agent": "vesper",
+        "approval": true
+      }
     ],
     "afterApproval": [
       {
@@ -202,13 +374,21 @@
         "exitCode": 0,
         "durationMs": 2600
       },
-      { "at": 3800, "agent": "vesper", "panel": "hardware" },
+      {
+        "at": 3800,
+        "agent": "vesper",
+        "panel": "hardware"
+      },
       {
         "at": 4400,
         "agent": "vesper",
         "say": "The Hardware panel is on Presence. Both PCs are reporting."
       },
-      { "at": 7500, "agent": "vesper", "done": true }
+      {
+        "at": 7500,
+        "agent": "vesper",
+        "done": true
+      }
     ]
   }
 }
