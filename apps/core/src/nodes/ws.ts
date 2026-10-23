@@ -427,6 +427,13 @@ export function attachNodeSocket(deps: NodeSocketDeps): SocketRealm {
 
           return;
         }
+        case "steered":
+          // Not admitted like the frames above: the turn may have ended by the
+          // time the node answers, and that is the answer, not a protocol fault.
+          if (getJob(deps.kernel.db, frame.jobId)?.job.nodeId === nodeId) {
+            deps.runtime.onSteered(nodeId, frame.jobId, frame.steerId, frame.delivered);
+          }
+          return;
         case "result":
           onResult(frame.jobId, frame.outcome, frame.evidence, frame.failureReason);
           return;

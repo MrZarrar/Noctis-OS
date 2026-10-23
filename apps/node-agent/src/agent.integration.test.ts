@@ -645,6 +645,31 @@ describe("a runtime turn through the real core", () => {
     );
   });
 
+  it("THE GATE: the owner's mid-turn message reaches the running turn, and a late one is turned away", async () => {
+    const { core, credential, seen } = await turnReadyAgent();
+    const steered: Array<{ steerId: string; delivered: boolean }> = [];
+    core.core.runtimeFrames.subscribe({
+      onSteered: (_nodeId, _jobId, steerId, delivered) => steered.push({ steerId, delivered }),
+    });
+
+    const id = await enqueueTurn(core, "turn-steer", "STEER: wait for me");
+    await waitFor(() => seen.deltas.some((delta) => delta.jobId === id), "the turn to start");
+
+    const steerId = "0199a000-0000-7000-8000-0000000000b1";
+    expect(core.core.dispatcher.sendSteer(credential.nodeId, id, steerId, "use blue")).toBe(true);
+
+    await waitFor(async () => (await status(core, id)) === "succeeded", "the turn to succeed");
+    expect(steered).toEqual([{ steerId, delivered: true }]);
+    expect(seen.items.map((entry) => entry.item)).toContainEqual(
+      expect.objectContaining({ kind: "agent_message", text: "Steered: use blue" }),
+    );
+
+    const late = "0199a000-0000-7000-8000-0000000000b2";
+    core.core.dispatcher.sendSteer(credential.nodeId, id, late, "too late");
+    await waitFor(() => steered.length === 2, "the late steer's answer");
+    expect(steered[1]).toEqual({ steerId: late, delivered: false });
+  });
+
   it("THE GATE: a turn delegates an image, gets it back viewable, and continues the same child thread", async () => {
     const { core } = await turnReadyAgent();
     const created = await command(core, "objective.create", {

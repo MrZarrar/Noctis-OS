@@ -571,6 +571,19 @@ export const NodeFrameSchema = z.discriminatedUnion("kind", [
       delegation: RuntimeDelegationSchema,
     })
     .strict(),
+  /**
+   * Whether a `steer` reached the running turn. Not delivered (the turn had
+   * ended, or the agent cannot be steered), the core runs it as a turn of its own.
+   */
+  z
+    .object({
+      kind: z.literal("steered"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      steerId: UuidSchema,
+      delivered: z.boolean(),
+    })
+    .strict(),
 ]);
 
 /** Core -> node. */
@@ -618,6 +631,16 @@ export const NodeServerFrameSchema = z.discriminatedUnion("kind", [
       envelopeVersion: NodeEnvelopeVersionSchema,
       jobId: UuidSchema,
       answer: RuntimeAnswerSchema,
+    })
+    .strict(),
+  /** The owner's message to a turn that is still running, for the agent to take in as it works. */
+  z
+    .object({
+      kind: z.literal("steer"),
+      envelopeVersion: NodeEnvelopeVersionSchema,
+      jobId: UuidSchema,
+      steerId: UuidSchema,
+      text: z.string().min(1).max(20_000),
     })
     .strict(),
   /** How a `delegate` ended: the child thread, its reply and what it produced. */

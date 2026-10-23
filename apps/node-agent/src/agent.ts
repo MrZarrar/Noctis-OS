@@ -130,6 +130,8 @@ export function startAgent(options: AgentOptions): RunningAgent {
   const running = new Map<string, AbortController>();
   /** Per job, the asks whose answer has not arrived. Rejected on cancel and on disconnect. */
   const pendingAsks = new Map<string, Map<string, PendingAsk>>();
+  /** Per running turn, how its runtime takes the owner's mid-turn message. */
+  const steerers = new Map<string, (text: string) => boolean | Promise<boolean>>();
   /**
    * Per job, the delegations whose child turn has not ended. No timeout of
    * their own: the child's asks time out on the node that runs it, and the
@@ -322,6 +324,9 @@ export function startAgent(options: AgentOptions): RunningAgent {
       streamFile: (file) => streamFile(jobId, file, controller.signal),
       streamScreen: (screen) =>
         streamToCore(jobId, { "content-type": screen.contentType }, screen.body, controller.signal),
+      steerable(handler) {
+        steerers.set(jobId, handler);
+      },
       delegate(delegation) {
         if (controller.signal.aborted) {
           return Promise.reject(new AdapterRefused("job was cancelled"));
@@ -425,6 +430,7 @@ export function startAgent(options: AgentOptions): RunningAgent {
     } finally {
       releaseScheduled?.();
       running.delete(jobId);
+      steerers.delete(jobId);
       pendingAsks.delete(jobId);
       pendingDelegations.delete(jobId);
     }
@@ -440,6 +446,23 @@ export function startAgent(options: AgentOptions): RunningAgent {
 
     pendingDelegations.get(jobId)?.delete(result.delegationId);
     pending.resolve(result);
+  }
+
+  /** Always answered: a steer nothing took runs as a turn of its own on the core. */
+  async function onSteer(jobId: string, steerId: string, text: string): Promise<void> {
+    const steer = steerers.get(jobId);
+    let delivered = false;
+
+    try {
+      delivered = steer === undefined ? false : await steer(text);
+    } catch (error) {
+      log("warn", "a steer did not reach the turn", {
+        jobId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
+
+    send({ kind: "steered", envelopeVersion: NODE_ENVELOPE_VERSION, jobId, steerId, delivered });
   }
 
   function onAnswer(jobId: string, answer: RuntimeAnswer): void {
@@ -625,6 +648,9 @@ export function startAgent(options: AgentOptions): RunningAgent {
           return;
         case "delegated":
           onDelegated(frame.jobId, frame.result);
+          return;
+        case "steer":
+          void onSteer(frame.jobId, frame.steerId, frame.text);
           return;
       }
     });

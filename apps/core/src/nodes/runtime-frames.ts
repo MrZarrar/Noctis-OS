@@ -6,6 +6,8 @@ export interface RuntimeFrameHandlers {
   onDelta(nodeId: string, jobId: string, delta: RuntimeDelta): void;
   onAsk(nodeId: string, jobId: string, ask: RuntimeAsk): void;
   onDelegate(nodeId: string, jobId: string, delegation: RuntimeDelegation): void;
+  /** Whether a steer reached the running turn. */
+  onSteered(nodeId: string, jobId: string, steerId: string, delivered: boolean): void;
 }
 
 export interface RuntimeFrameHub extends RuntimeFrameHandlers {
@@ -45,6 +47,9 @@ export function createRuntimeFrameHub(onError?: (error: unknown) => void): Runti
     },
     onDelegate(nodeId, jobId, delegation) {
       each((handlers) => handlers.onDelegate?.(nodeId, jobId, delegation));
+    },
+    onSteered(nodeId, jobId, steerId, delivered) {
+      each((handlers) => handlers.onSteered?.(nodeId, jobId, steerId, delivered));
     },
     subscribe(handlers) {
       subscribers.add(handlers);

@@ -327,6 +327,31 @@ interface TurnRequest {
   attachmentIds: readonly string[];
   /** Run on this node or not at all. */
   nodeId?: string;
+  /** Already in the thread: a steer the running turn could not take. */
+  userMessageId?: string;
+}
+
+/** The owner's message on its way to a running turn, until the node says whether it landed. */
+interface PendingSteer {
+  context: CommandContext;
+  threadId: string;
+  messageId: string;
+  text: string;
+  model: ModelRef;
+  rootGrantId?: string;
+  nodeId?: string;
+}
+
+/** The turn still working on this thread, which a new message can steer. */
+function runningTurn(db: NoctisDatabase, threadId: string): Turn | undefined {
+  const row = db
+    .prepare(
+      `${TURN_SELECT} WHERE t.thread_id = ? AND t.status IN ('queued', 'running')
+        AND t.node_job_id IS NOT NULL ORDER BY t.started_at DESC, t.id DESC LIMIT 1`,
+    )
+    .get(threadId) as TurnRow | undefined;
+
+  return row === undefined ? undefined : toTurn(row);
 }
 
 /** A delegation the core is still working on: waiting for the owner, or for the child turn. */
@@ -640,18 +665,21 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       );
     }
 
-    const userMessageId = insertMessage(tx, kernel, thread.id, "user", request.text, at);
+    const userMessageId =
+      request.userMessageId ?? insertMessage(tx, kernel, thread.id, "user", request.text, at);
 
-    events.push(
-      draft(
-        context,
-        "identity",
-        thread.id,
-        "identity.message_added.v1",
-        { messageId: userMessageId, role: "user", turnId },
-        at,
-      ),
-    );
+    if (request.userMessageId === undefined) {
+      events.push(
+        draft(
+          context,
+          "identity",
+          thread.id,
+          "identity.message_added.v1",
+          { messageId: userMessageId, role: "user", turnId },
+          at,
+        ),
+      );
+    }
     let job: NodeJobRecord | undefined;
 
     if (selected !== undefined && primaryRootGrantId !== undefined) {
@@ -1010,6 +1038,9 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     return ok({ thread, model, rootGrantId });
   }
 
+  /** Steers on their way to a node, by steer id. Memory only: a restart forgets them. */
+  const steers = new Map<string, PendingSteer>();
+
   function sendMessage(
     context: CommandContext,
     command: SendConversationMessageCommand,
@@ -1017,6 +1048,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     const now = kernel.clock.now();
     const at = new Date(now).toISOString();
     const turnId = kernel.ids.nextId();
+    let steer: { id: string; nodeId: string; jobId: string } | undefined;
 
     const outcome = runCommand<Turn>(
       kernel,
@@ -1029,6 +1061,48 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         }
 
         const { thread, model, rootGrantId } = resolved.value;
+        const live = runningTurn(tx, thread.id);
+
+        // A message to a thread whose turn is still working joins that turn, the
+        // way VS Code takes one mid-run. Another model or folder, or a file to
+        // stage, needs a turn of its own.
+        if (
+          live?.jobId !== undefined &&
+          live.nodeId !== undefined &&
+          dispatcher.isConnected(live.nodeId) &&
+          (command.attachmentIds ?? []).length === 0 &&
+          (model === undefined ||
+            (model.providerId === live.model.providerId && model.model === live.model.model)) &&
+          (rootGrantId === undefined || rootGrantId === live.rootGrantId)
+        ) {
+          const messageId = insertMessage(tx, kernel, thread.id, "user", command.text, at);
+          const id = kernel.ids.nextId();
+
+          steer = { id, nodeId: live.nodeId, jobId: live.jobId };
+          steers.set(id, {
+            context,
+            threadId: thread.id,
+            messageId,
+            text: command.text,
+            model: live.model,
+            ...(live.rootGrantId === undefined ? {} : { rootGrantId: live.rootGrantId }),
+            ...(thread.nodeId === undefined ? {} : { nodeId: thread.nodeId }),
+          });
+
+          return ok({
+            value: live,
+            events: [
+              draft(
+                context,
+                "identity",
+                thread.id,
+                "identity.message_added.v1",
+                { messageId, role: "user", turnId: live.id },
+                at,
+              ),
+            ],
+          });
+        }
 
         return openTurn(
           tx,
@@ -1047,9 +1121,69 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       },
     );
 
+    if (steer !== undefined && outcome.ok) {
+      const pending = steers.get(steer.id);
+
+      if (
+        pending !== undefined &&
+        !dispatcher.sendSteer(steer.nodeId, steer.jobId, steer.id, pending.text)
+      ) {
+        onSteered(steer.nodeId, steer.jobId, steer.id, false);
+      }
+
+      return outcome;
+    }
+
     dispatchOpened(outcome);
 
     return outcome;
+  }
+
+  /**
+   * The node's word on a steer. Taken in, the running turn answers it. Not
+   * taken (the turn ended first, or the agent cannot be steered), the message
+   * runs as the next turn, on the model and in the folder the steered one had.
+   */
+  function onSteered(_nodeId: string, _jobId: string, steerId: string, delivered: boolean): void {
+    const pending = steers.get(steerId);
+
+    steers.delete(steerId);
+
+    if (pending === undefined || delivered) {
+      return;
+    }
+
+    const now = kernel.clock.now();
+    const turnId = kernel.ids.nextId();
+    const outcome = runCommand<Turn>(
+      kernel,
+      { scope: "conversation.steer_fallback", key: steerId, resultId: turnId },
+      (tx) => {
+        const thread = getThread(tx, pending.threadId);
+
+        if (thread === undefined) {
+          return conflict({ kind: "not_found", entity: "thread", id: pending.threadId });
+        }
+
+        return openTurn(
+          tx,
+          pending.context,
+          thread,
+          {
+            text: pending.text,
+            model: pending.model,
+            ...(pending.rootGrantId === undefined ? {} : { rootGrantId: pending.rootGrantId }),
+            ...(pending.nodeId === undefined ? {} : { nodeId: pending.nodeId }),
+            attachmentIds: [],
+            userMessageId: pending.messageId,
+          },
+          turnId,
+          now,
+        );
+      },
+    );
+
+    dispatchOpened(outcome);
   }
 
   /** A new conversation beside the identity's free one. */
@@ -1793,6 +1927,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     onDelta,
     onAsk,
     onDelegate,
+    onSteered,
   });
   const unsubscribeEvents = kernel.broker.subscribe(onEvents);
 
@@ -1812,6 +1947,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       unsubscribeEvents();
       pendingAsks.clear();
       delegations.clear();
+      steers.clear();
       threadByJob.clear();
     },
   };

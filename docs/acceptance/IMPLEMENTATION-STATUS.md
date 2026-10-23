@@ -4119,3 +4119,18 @@ A conversation keeps the model and folder it was last given, and the composer sh
 | LARP screenshots of Threads at 1440 px and 390 px                                                                           | checked by eye                                                                            |
 
 Not verified: a live turn on the home PC, and a real folder change resuming nothing in Claude Code. Node is 22.23.1 here, not the pinned 22.23.2.
+
+### 2026-10-23 Steering a running turn
+
+A message sent while the thread's turn is still working joins that turn instead of waiting behind it. Core to node `steer`, node to core `steered`. Claude: pushed onto the CLI's input with a uuid and `priority: "next"`; the turn ends once every steer uuid is in a result's `user_message_uuids`. Codex: `turn/steer` with `expectedTurnId`. A steer that is not delivered runs as the next turn on the same model and folder, reusing the message already in the thread. Another model or folder, or attachments, still make a new turn. The fake runtime has a `STEER:` branch.
+
+| Command/check                                                                                  | Result                                                                                       |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Core integration: steer reaches the turn; undelivered steer becomes its own turn               | red then green                                                                               |
+| Core integration: another model is a new turn                                                  | passed before and after (guards the rule)                                                    |
+| `claude.test.ts` steer (queued, folded), `codex.test.ts` `turn/steer`, agent integration steer | red then green                                                                               |
+| `npx vitest run` (TEMP/TMP under `.noctis/tmp`)                                                | 3055/3056; the one failure is `no-listener.test.ts` matching `clap.ts`, from the clap commit |
+| `npm run typecheck`; ESLint and Prettier on changed files                                      | exit 0                                                                                       |
+| e2e chat, phone, presence                                                                      | 30/34; the 4 failing are the pre-existing tab bar and rail ones                              |
+
+Not verified: a live steer against real Claude Code or Codex. Not restarted: the owner was using the work PC's Noctis, so the core and node there still run the previous build.

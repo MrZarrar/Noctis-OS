@@ -53,6 +53,8 @@ export interface Dispatcher {
   sendAnswer(nodeId: string, jobId: string, answer: RuntimeAnswer): boolean;
   /** How a delegation ended, on the parent turn's job. False if the node is not connected. */
   sendDelegated(nodeId: string, jobId: string, result: RuntimeDelegationResult): boolean;
+  /** The owner's message to a running turn. False if the node is not connected. */
+  sendSteer(nodeId: string, jobId: string, steerId: string, text: string): boolean;
   /**
    * Tells a connected node its grants changed. The node trusts only the grants
    * it was sent, so without this a new grant waits for the next reconnect.
@@ -298,6 +300,22 @@ export function createDispatcher(options: DispatcherOptions): Dispatcher {
         envelopeVersion: NODE_ENVELOPE_VERSION,
         jobId,
         result,
+      });
+      return true;
+    },
+    sendSteer(nodeId, jobId, steerId, text) {
+      const connection = connections.get(nodeId);
+
+      if (connection === undefined) {
+        return false;
+      }
+
+      connection.send({
+        kind: "steer",
+        envelopeVersion: NODE_ENVELOPE_VERSION,
+        jobId,
+        steerId,
+        text,
       });
       return true;
     },

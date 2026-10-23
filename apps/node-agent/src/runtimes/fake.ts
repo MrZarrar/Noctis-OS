@@ -17,6 +17,7 @@ export const FAKE_PROBE: RuntimeProbe = {
 };
 
 const SLOW_STEP_MS = 200;
+const STEER_WAIT_MS = 10_000;
 
 /**
  * The command the `ASK:` branch asks about.
@@ -48,6 +49,8 @@ class Cancelled extends Error {}
  *   - `WRITE:`    writes `notes/written.md` in its folder and reports the change
  *   - `DELEGATE:` asks codex for an `IMAGE:`, then asks again on the same
  *                 child thread, and reports both results as `delegated:<json>`
+ *   - `STEER:`    waits up to ten seconds for the owner's mid-turn message and
+ *                 answers it as `Steered: <text>` in the same turn
  */
 export function createFakeRuntime(): Runtime {
   return {
@@ -113,6 +116,30 @@ export function createFakeRuntime(): Runtime {
         sink.delta("m1", "lo");
         await step();
         item({ itemId: "m1", kind: "agent_message", status: "completed", text: finalText });
+
+        if (payload.prompt.includes("STEER:")) {
+          let open = true;
+          const told = await new Promise<string | undefined>((resolve) => {
+            const timer = setTimeout(() => resolve(undefined), STEER_WAIT_MS);
+            sink.steerable?.((text) => {
+              if (!open) return false;
+              clearTimeout(timer);
+              resolve(text);
+              return true;
+            });
+          });
+
+          open = false;
+
+          if (told !== undefined) {
+            item({
+              itemId: "s1",
+              kind: "agent_message",
+              status: "completed",
+              text: `Steered: ${told}`,
+            });
+          }
+        }
 
         if (payload.prompt.includes("ASK:")) {
           const command = FAKE_ASK_COMMAND;

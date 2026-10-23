@@ -133,6 +133,25 @@ describe("waking from the composer", () => {
   });
 });
 
+describe("while a turn is working", () => {
+  it("says a message joins the running turn", () => {
+    const markup = (steering: boolean): string =>
+      renderToStaticMarkup(
+        createElement(PromptForm, {
+          identityId: "vesper",
+          models: [],
+          defaultModel: undefined,
+          disabled: false,
+          onSend: () => undefined,
+          steering,
+        }),
+      );
+
+    expect(markup(true)).toContain('placeholder="Add to what Vesper is doing..."');
+    expect(markup(false)).toContain('placeholder="Ask Vesper..."');
+  });
+});
+
 describe("modelChoice", () => {
   const SONNET = { providerId: "claude" as const, model: "sonnet" };
   const HAIKU = { providerId: "claude" as const, model: "claude-haiku-5-5" };

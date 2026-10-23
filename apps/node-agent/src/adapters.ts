@@ -84,6 +84,8 @@ export interface AdapterContext {
   streamFile(file: StreamedFile): Promise<void>;
   /** Streams a live screen to the core for this job; rejects when the core hangs up. */
   streamScreen(screen: { contentType: string; body: ReadableStream<Uint8Array> }): Promise<void>;
+  /** Where the owner's mid-turn messages for this job go, once the runtime can take them. */
+  steerable?(handler: (text: string) => boolean | Promise<boolean>): void;
 }
 
 export type Adapter = (payload: unknown, context: AdapterContext) => Promise<unknown>;
@@ -332,6 +334,7 @@ const runtimeTurn: Adapter = async (payload, context) => {
     ask: (ask) => context.ask(ask),
     delegate: (delegation) => context.delegate(delegation),
     upload: (output) => context.uploadOutput(output),
+    steerable: (handler) => context.steerable?.(handler),
   };
 
   // Staged before the runtime starts, so a turn whose files could not be

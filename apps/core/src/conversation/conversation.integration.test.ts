@@ -2657,3 +2657,89 @@ describe("a conversation keeps the model and folder it was last given", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 });
+
+describe("steering a turn that is still running", () => {
+  const steers = (node: FakeNode) => node.frames.filter((frame) => frame.kind === "steer");
+
+  async function running(core: TestCore, node: FakeNode) {
+    await setDefault(core);
+    const first = await send(core, "steer-first");
+    await waitFor(() => node.jobs().length === 1, "the first job");
+    const { assignment } = lastTurnJob(node);
+    node.frame({ kind: "delta", jobId: assignment.jobId, delta: { itemId: "m1", text: "on it" } });
+    return { first, jobId: assignment.jobId, threadId: first.body.threadId as string };
+  }
+
+  async function userMessages(core: TestCore, threadId: string): Promise<Body[]> {
+    const messages = (await read(core, `/threads/${threadId}/messages`)).body.messages as Body[];
+    return messages.filter((message) => message.role === "user");
+  }
+
+  it("THE GATE: a message sent mid-turn goes to the running turn, not a new one", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const { first, jobId, threadId } = await running(core, node);
+
+    const steered = await send(core, "steer-second", { threadId, text: "use the blue one" });
+    expect(steered.status).toBe(200);
+    expect(steered.body.id).toBe(first.body.id);
+
+    await waitFor(() => steers(node).length === 1, "a steer frame");
+    expect(steers(node)[0]).toMatchObject({ kind: "steer", jobId, text: "use the blue one" });
+    node.frame({
+      kind: "steered",
+      jobId,
+      steerId: (steers(node)[0] as { steerId: string }).steerId,
+      delivered: true,
+    });
+
+    expect(node.jobs()).toHaveLength(1);
+    const said = await userMessages(core, threadId);
+    expect(said.map((message) => message.body)).toEqual(["prompt steer-first", "use the blue one"]);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("a message the running turn could not take runs as its own turn next", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory);
+    const { jobId, threadId } = await running(core, node);
+
+    await send(core, "steer-late", { threadId, text: "and then the red one" });
+    await waitFor(() => steers(node).length === 1, "a steer frame");
+    node.frame({
+      kind: "steered",
+      jobId,
+      steerId: (steers(node)[0] as { steerId: string }).steerId,
+      delivered: false,
+    });
+
+    await waitFor(() => node.jobs().length === 2, "a turn of its own");
+    const said = await userMessages(core, threadId);
+    expect(said).toHaveLength(2);
+    expect(lastTurnJob(node).payload).toMatchObject({ userMessageId: said[1]?.id });
+    expect(lastTurnJob(node).payload.prompt).toContain("and then the red one");
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("a message that picks another model, or brings a file, is a new turn", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const MINI = { providerId: "codex", model: "gpt-5.6-mini" };
+    const node = await connectFake(core, directory, {
+      providers: ["codex"],
+      probes: [{ ...CODEX_PROBE, models: [MODEL, MINI] }],
+    });
+    const { first, threadId } = await running(core, node);
+
+    const other = await send(core, "steer-model", { threadId, model: MINI });
+    expect(other.body.id).not.toBe(first.body.id);
+    await waitFor(() => node.jobs().length === 2, "the new turn");
+    expect(steers(node)).toHaveLength(0);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+});

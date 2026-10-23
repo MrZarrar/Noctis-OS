@@ -51,6 +51,12 @@ export interface RuntimeSink {
   delegate(delegation: Omit<RuntimeDelegation, "delegationId">): Promise<RuntimeDelegationResult>;
   /** Gives the core a file the turn made, so the owner can open it anywhere. Resolves to its attachment id. */
   upload(output: RuntimeUpload): Promise<string>;
+  /**
+   * Offered by a runtime whose agent can take the owner's message while it
+   * works. The handler says whether the message reached the running turn;
+   * false once the turn has ended, and the core runs it as a turn of its own.
+   */
+  steerable?(handler: (text: string) => boolean | Promise<boolean>): void;
 }
 
 export interface RuntimeUpload {

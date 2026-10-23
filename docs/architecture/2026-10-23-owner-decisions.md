@@ -59,7 +59,14 @@ message waits until the first finishes (the "Waiting to start" card). Both agent
 runtime already feeds the CLI through a streaming input queue that a mid-turn message could join, and Codex's
 app-server has a steer call for a running turn.
 
-**Open:** whether to build steering.
+**Decided (owner):** build it.
+
+**Built:** a message sent to a thread whose turn is still working goes into that turn. The core sends the node a
+`steer` frame instead of opening a turn. Claude gets it on the CLI's input queue with `priority: "next"`, so the
+agent folds it in between tool rounds, and the turn stays open until the CLI says it has answered that message.
+Codex gets `turn/steer` on the active turn. The node always replies `steered`. When the turn has ended, the agent
+cannot be steered (local models, Hermes), or the message picks another model or folder or brings a file, it runs as
+its own turn next, as before. While a turn works, the composer says "Add to what Vesper is doing...".
 
 ## 5. Usage limits and the time in Threads
 

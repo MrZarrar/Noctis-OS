@@ -1051,6 +1051,24 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
           }),
         ).turn.id;
 
+        sink.steerable?.(async (text) => {
+          if (settled || turnId === undefined || proc.threadId === undefined) {
+            return false;
+          }
+
+          try {
+            // Refused when the turn named is no longer the active one.
+            await rpc.request("turn/steer", {
+              threadId: proc.threadId,
+              expectedTurnId: turnId,
+              input: [{ type: "text", text, text_elements: [] }],
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        });
+
         if (signal.aborted) {
           // The abort raced the start; now that the turn has an id it can be interrupted.
           interrupt();

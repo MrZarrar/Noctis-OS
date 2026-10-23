@@ -54,6 +54,8 @@ export interface PromptFormProps {
   threadId?: string;
   /** What the thread's latest turn ran on, shown until the owner picks otherwise. */
   current?: { model?: ModelRef; rootGrantId?: string };
+  /** A turn is still working: what is sent now joins it, so the box says so. */
+  steering?: boolean;
   /** Under the identity switch: the clock, and the usage of the agent the picker is set to. */
   status?: (providerId: string | undefined) => ReactNode;
   onSend: (text: string, options: SendOptions) => void;
@@ -328,6 +330,7 @@ export function PromptForm({
   pinnedProvider,
   threadId,
   current,
+  steering = false,
   status,
   onSend,
   onSwitchIdentity,
@@ -499,7 +502,9 @@ export function PromptForm({
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "stretch" }}>
         <textarea
           aria-label={`Message ${displayName}`}
-          placeholder={promptPlaceholder(identityId)}
+          placeholder={
+            steering ? `Add to what ${displayName} is doing...` : promptPlaceholder(identityId)
+          }
           value={text}
           disabled={disabled}
           rows={2}

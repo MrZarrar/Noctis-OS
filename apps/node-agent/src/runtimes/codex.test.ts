@@ -185,6 +185,8 @@ function fakeAppServer(scenario: Scenario): { spawn: CodexSpawn; spawned: Spawne
           setTimeout(() => void scenario.turn(server, record), 0);
 
           return Promise.resolve({ turn: { id: TURN_ID } });
+        case "turn/steer":
+          return Promise.resolve({ turnId: TURN_ID });
         case "turn/interrupt":
           setTimeout(
             () => server.notify("turn/completed", turnCompleted(record, "interrupted")),
@@ -705,6 +707,36 @@ describe("the Codex App Server runtime", () => {
     });
 
     await expect(codex.turn(input(), recorder().sink)).rejects.toThrow(/exceeded 2048 bytes/);
+    await codex.close?.();
+  });
+
+  it("THE GATE: hands the owner's mid-turn message to the running turn with turn/steer", async () => {
+    let steer: ((text: string) => boolean | Promise<boolean>) | undefined;
+    let accepted: boolean | undefined;
+    const { runtime: codex, spawned } = runtime({
+      async turn(server, record) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        accepted = await steer?.("use the blue one");
+        server.notify("turn/completed", turnCompleted(record, "completed"));
+      },
+    });
+    const recorded = recorder();
+    recorded.sink.steerable = (handler) => {
+      steer = handler;
+    };
+
+    await codex.turn(input(), recorded.sink);
+
+    expect(accepted).toBe(true);
+    expect(spawned[0]?.requests.get("turn/steer")).toEqual([
+      {
+        threadId: "thread-1",
+        expectedTurnId: TURN_ID,
+        input: [{ type: "text", text: "use the blue one", text_elements: [] }],
+      },
+    ]);
+    expect(await steer?.("too late")).toBe(false);
+
     await codex.close?.();
   });
 

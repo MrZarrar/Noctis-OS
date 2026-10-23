@@ -935,6 +935,7 @@ export function Threads({
                 {...(thread?.providerId === undefined ? {} : { pinnedProvider: thread.providerId })}
                 {...(thread === undefined ? {} : { threadId: thread.id })}
                 {...(current === undefined ? {} : { current })}
+                steering={running}
                 // The time, and the allowance of the agent this thread is about
                 // to run on, where the owner decides whether to send.
                 status={(providerId) => (

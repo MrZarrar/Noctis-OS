@@ -1332,6 +1332,81 @@ describe("the Claude Agent SDK runtime", () => {
     expect(evidence).not.toHaveProperty("finalText");
   });
 
+  describe("steering a turn that is still running", () => {
+    type Steer = (text: string) => boolean | Promise<boolean>;
+    type Sent = { message: { content: unknown }; uuid?: string; priority?: string };
+    const textOf = (sent: Sent): string => {
+      const content = sent.message.content as Array<{ type: string; text?: string }> | string;
+      return typeof content === "string" ? content : (content[0]?.text ?? "");
+    };
+
+    it("THE GATE: takes the owner's message mid-turn and ends once the agent has answered it", async () => {
+      let steer: Steer | undefined;
+      const steered: Sent[] = [];
+      const { query } = scripted(async function* (params) {
+        yield init();
+        const prompts = (params.prompt as AsyncIterable<Sent>)[Symbol.asyncIterator]();
+        await prompts.next();
+        yield delta("working");
+
+        expect(await steer?.("use the blue one")).toBe(true);
+        const next = await prompts.next();
+        steered.push(next.value as Sent);
+
+        // The CLI answers its first prompt and still has the owner's queued.
+        yield result({ result: "drafted", queued_turn_count: 1, user_message_uuids: ["u-first"] });
+        yield assistant([{ type: "text", text: "blue it is" }]);
+        yield result({
+          result: "blue it is",
+          queued_turn_count: 0,
+          user_message_uuids: [(next.value as Sent).uuid],
+        });
+      });
+      const runtime = createClaudeRuntime({ query });
+      const recorded = recorder();
+      recorded.sink.steerable = (handler) => {
+        steer = handler;
+      };
+
+      const evidence = await runtime.turn(input(), recorded.sink);
+
+      expect(textOf(steered[0] as Sent)).toBe("use the blue one");
+      expect(steered[0]?.priority).toBe("next");
+      expect(typeof steered[0]?.uuid).toBe("string");
+      expect(evidence.finalText).toBe("blue it is");
+      expect(await steer?.("too late")).toBe(false);
+
+      await runtime.close?.();
+    });
+
+    it("ends with the turn when the agent folded the message into the work it was doing", async () => {
+      let steer: Steer | undefined;
+      const { query } = scripted(async function* (params) {
+        yield init();
+        const prompts = (params.prompt as AsyncIterable<Sent>)[Symbol.asyncIterator]();
+        await prompts.next();
+        expect(await steer?.("and blue")).toBe(true);
+        const next = await prompts.next();
+        yield result({
+          result: "both done",
+          queued_turn_count: 0,
+          user_message_uuids: ["u-first", (next.value as Sent).uuid],
+        });
+      });
+      const recorded = recorder();
+      recorded.sink.steerable = (handler) => {
+        steer = handler;
+      };
+      const runtime = createClaudeRuntime({ query });
+
+      await expect(runtime.turn(input(), recorded.sink)).resolves.toMatchObject({
+        finalText: "both done",
+      });
+
+      await runtime.close?.();
+    });
+  });
+
   describe("one CLI per thread", () => {
     /** A CLI kept open: one reply and one result for every message it is streamed. */
     function conversational() {

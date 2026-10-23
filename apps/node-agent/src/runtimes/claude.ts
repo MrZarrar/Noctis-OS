@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -588,7 +589,12 @@ interface ClaudeTurn {
 }
 
 interface ClaudeProcess extends LiveProcess {
-  send(prompt: string, timeZone?: string, targets?: RuntimeTargets): void;
+  send(
+    prompt: string,
+    timeZone?: string,
+    targets?: RuntimeTargets,
+    steer?: { uuid: ReturnType<typeof randomUUID>; priority: "next" },
+  ): void;
   current: ClaudeTurn | undefined;
   failure: Error | undefined;
   /** Sub-agent labels by the tool call that started them, kept across turns. */
@@ -625,7 +631,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       get alive() {
         return alive;
       },
-      send(prompt, timeZone, targets) {
+      send(prompt, timeZone, targets, steer) {
         inbox.push({
           type: "user",
           message: {
@@ -636,6 +642,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
             ],
           },
           parent_tool_use_id: null,
+          ...steer,
         });
       },
       close() {
@@ -882,6 +889,8 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
     let finalText: string | undefined;
     let usage: RuntimeTurnEvidence["usage"];
     let held: RuntimeTurnEvidence | undefined;
+    /** The owner's mid-turn messages the CLI has not yet said it answered. */
+    const steered = new Set<string>();
 
     function emit(item: RuntimeItem): void {
       if (item.status !== "in_progress") {
@@ -1151,9 +1160,26 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
                 outputTokens: message.usage.output_tokens,
               };
 
+              // A steer the CLI folded into this answer, or ran as its own turn
+              // since, is answered. One still queued keeps the turn open for
+              // its answer; a CLI too old to say which it took is taken at its word.
+              const answered =
+                message.user_message_uuids ??
+                (message.user_message_uuid === undefined ? undefined : [message.user_message_uuid]);
+
+              if (answered === undefined) {
+                steered.clear();
+              } else {
+                for (const uuid of answered) steered.delete(uuid);
+              }
+
               if (message.subtype === "success") {
                 if (message.result !== "") {
                   finalText = message.result;
+                }
+
+                if (!message.is_error && steered.size > 0) {
+                  break;
                 }
 
                 const outcome = evidence(message.is_error ? "failed" : "completed");
@@ -1245,6 +1271,19 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       proc.current = turn;
       signal.addEventListener("abort", cancel, { once: true });
       proc.send(payload.prompt, payload.ownerTimeZone, payload.targets);
+      sink.steerable?.((text) => {
+        // Background work the CLI is only finishing off belongs to an answer
+        // already given; the message is the next turn's.
+        if (settled || held !== undefined || proc.current !== turn || !proc.alive) {
+          return false;
+        }
+
+        const uuid = randomUUID();
+
+        steered.add(uuid);
+        proc.send(text, payload.ownerTimeZone, payload.targets, { uuid, priority: "next" });
+        return true;
+      });
 
       if (!proc.alive) {
         turn.stop(proc.failure ?? new Error("claude ended before the turn started"));
