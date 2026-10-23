@@ -2533,3 +2533,127 @@ describe("waking an agent before the owner sends", () => {
     expect(JSON.stringify(identities.body)).not.toContain("awakeUntil");
   });
 });
+
+describe("a conversation keeps the model and folder it was last given", () => {
+  const MINI = { providerId: "codex", model: "gpt-5.6-mini" };
+  const TWO_MODELS = {
+    providers: ["codex"],
+    probes: [{ ...CODEX_PROBE, models: [MODEL, MINI] }],
+  };
+
+  async function complete(core: TestCore, node: FakeNode, turnId: string, sessionRef: string) {
+    node.frame({
+      kind: "result",
+      jobId: lastTurnJob(node).assignment.jobId,
+      outcome: "succeeded",
+      evidence: { model: MODEL, sessionRef, itemCount: 1, stoppedReason: "completed" },
+    });
+    await waitFor(
+      async () => (await read(core, `/turns/${turnId}`)).body.status === "completed",
+      "the turn to complete",
+    );
+  }
+
+  async function shareSecondFolder(core: TestCore, node: FakeNode, path: string): Promise<void> {
+    const shared = await command(core, "node.grant_capability", {
+      idempotencyKey: "share-second",
+      nodeId: node.nodeId,
+      capability: "runtime.turn",
+      constraints: { providers: ["codex"], roots: [{ grantId: "later", path, mode: "write" }] },
+    });
+    expect(shared.status).toBe(200);
+  }
+
+  it("a message that names no model runs on the conversation's last model, not the default", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, TWO_MODELS);
+
+    await setDefault(core);
+    const first = await send(core, "sticky-1", { model: MINI });
+    await waitFor(() => node.jobs().length === 1, "the first job");
+    await complete(core, node, first.body.id as string, "sess-1");
+
+    await send(core, "sticky-2", { threadId: first.body.threadId });
+    await waitFor(() => node.jobs().length === 2, "the second job");
+
+    expect(lastTurnJob(node).payload.model).toEqual(MINI);
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("each turn says which folder it ran in", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    await connectFake(core, directory);
+
+    await setDefault(core);
+    const sent = await send(core, "folder-1");
+
+    expect(sent.body.rootGrantId).toBe("d");
+    const turns = await read(core, `/threads/${sent.body.threadId as string}/turns`);
+    expect((turns.body.turns as Body[])[0]?.rootGrantId).toBe("d");
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("another folder starts a fresh session and says so; the same folder resumes it", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const later = mkdtempSync(join(tmpdir(), "noctis-root-later-"));
+    const node = await connectFake(core, directory);
+    await shareSecondFolder(core, node, later);
+
+    await setDefault(core);
+    const first = await send(core, "move-1", { rootGrantId: "d" });
+    const threadId = first.body.threadId as string;
+    await waitFor(() => node.jobs().length === 1, "the first job");
+    await complete(core, node, first.body.id as string, "sess-d");
+
+    const moved = await send(core, "move-2", { threadId, rootGrantId: "later" });
+    await waitFor(() => node.jobs().length === 2, "the moved job");
+    expect(lastTurnJob(node).payload).toMatchObject({ primaryRootGrantId: "later" });
+    expect(lastTurnJob(node).payload.sessionRef).toBe(undefined);
+
+    const messages = (await read(core, `/threads/${threadId}/messages`)).body.messages as Body[];
+    const notes = messages.filter((message) => message.role === "system");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.body).toMatch(/fresh session/);
+
+    await complete(core, node, moved.body.id as string, "sess-later");
+    await send(core, "move-3", { threadId, rootGrantId: "later" });
+    await waitFor(() => node.jobs().length === 3, "the third job");
+    expect(lastTurnJob(node).payload.sessionRef).toBe("sess-later");
+
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(later, { recursive: true, force: true });
+  });
+
+  it("a continued session takes another model of its own agent, and keeps it", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, TWO_MODELS);
+    const adopted = await command(core, "conversation.adopt_session", {
+      idempotencyKey: "adopt-mini",
+      identityId: "vesper",
+      nodeId: node.nodeId,
+      rootGrantId: "d",
+      providerId: "codex",
+      sessionRef: "vscode-thread",
+      title: "Reveal video",
+    });
+    const threadId = adopted.body.id as string;
+
+    const first = await send(core, "pinned-mini", { threadId, model: MINI });
+    expect(first.status).toBe(200);
+    await waitFor(() => node.jobs().length === 1, "the first job");
+    expect(lastTurnJob(node).payload).toMatchObject({ model: MINI, forkSession: true });
+    await complete(core, node, first.body.id as string, "fork-1");
+
+    await send(core, "pinned-again", { threadId });
+    await waitFor(() => node.jobs().length === 2, "the second job");
+    expect(lastTurnJob(node).payload).toMatchObject({ model: MINI, sessionRef: "fork-1" });
+
+    rmSync(directory, { recursive: true, force: true });
+  });
+});

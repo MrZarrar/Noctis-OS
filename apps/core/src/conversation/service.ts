@@ -73,6 +73,8 @@ export interface Turn {
   jobId?: string;
   nodeId?: string;
   model: ModelRef;
+  /** The folder the turn ran in. Absent when nothing could run it. */
+  rootGrantId?: string;
   status: TurnStatus;
   items: RuntimeItem[];
   replyMessageId?: string;
@@ -99,6 +101,7 @@ type TurnRow = {
   node_job_id: string | null;
   node_id: string | null;
   model_json: string;
+  root_grant_id: string | null;
   status: string;
   items_json: string;
   reply_message_id: string | null;
@@ -117,7 +120,7 @@ type MessageRow = {
 };
 
 const TURN_SELECT = `SELECT t.id, t.thread_id, th.identity_id, th.objective_id, t.user_message_id,
-                            t.node_job_id, t.node_id, t.model_json, t.status, t.items_json,
+                            t.node_job_id, t.node_id, t.model_json, t.root_grant_id, t.status, t.items_json,
                             t.reply_message_id, t.failure_reason, t.started_at, t.completed_at
                        FROM identity_turns t
                        JOIN identity_threads th ON th.id = t.thread_id`;
@@ -134,6 +137,7 @@ function toTurn(row: TurnRow): Turn {
     ...(row.node_job_id === null ? {} : { jobId: row.node_job_id }),
     ...(row.node_id === null ? {} : { nodeId: row.node_id }),
     model: ModelRefSchema.parse(JSON.parse(row.model_json)),
+    ...(row.root_grant_id === null ? {} : { rootGrantId: row.root_grant_id }),
     status: row.status as TurnStatus,
     items: ItemsSchema.parse(JSON.parse(row.items_json)),
     ...(row.reply_message_id === null ? {} : { replyMessageId: row.reply_message_id }),
@@ -242,22 +246,34 @@ function latestSession(
   return row === undefined ? undefined : { nodeId: row.node_id, sessionRef: row.session_ref };
 }
 
-function sessionOn(
+/**
+ * The session a turn in this folder would continue. Claude Code files a
+ * session under the folder it ran in, so one kept for another folder cannot be
+ * picked up here: `moved` says so. A session from before folders were recorded
+ * is taken as it stands.
+ */
+function sessionIn(
   db: NoctisDatabase,
   threadId: string,
   providerId: string,
   nodeId: string,
-): { sessionRef: string; forkPending: boolean } | undefined {
+  rootGrantId: string,
+): { sessionRef: string; forkPending: boolean; moved: boolean } | undefined {
   const row = db
     .prepare(
-      `SELECT session_ref, fork_pending FROM identity_sessions
+      `SELECT session_ref, fork_pending, root_grant_id FROM identity_sessions
         WHERE thread_id = ? AND provider_id = ? AND node_id = ?`,
     )
-    .get(threadId, providerId, nodeId) as { session_ref: string; fork_pending: number } | undefined;
+    .get(threadId, providerId, nodeId) as
+    { session_ref: string; fork_pending: number; root_grant_id: string | null } | undefined;
 
   return row === undefined
     ? undefined
-    : { sessionRef: row.session_ref, forkPending: row.fork_pending === 1 };
+    : {
+        sessionRef: row.session_ref,
+        forkPending: row.fork_pending === 1,
+        moved: row.root_grant_id !== null && row.root_grant_id !== rootGrantId,
+      };
 }
 
 /** The model the thread's latest turn ran on. */
@@ -596,9 +612,37 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       return conflict({ kind: "not_found", entity: "attachment", id: missing ?? "unknown" });
     }
 
+    const events: EventDraft[] = [];
+    const found =
+      selected === undefined || primaryRootGrantId === undefined
+        ? undefined
+        : sessionIn(tx, thread.id, model.providerId, selected.nodeId, primaryRootGrantId);
+
+    // Said in the thread, because the agent will not remember what came before.
+    if (found?.moved === true) {
+      const noteId = insertMessage(
+        tx,
+        kernel,
+        thread.id,
+        "system",
+        "This message runs in a different folder, so the agent starts a fresh session there, without the earlier conversation.",
+        at,
+      );
+      events.push(
+        draft(
+          context,
+          "identity",
+          thread.id,
+          "identity.message_added.v1",
+          { messageId: noteId, role: "system", turnId },
+          at,
+        ),
+      );
+    }
+
     const userMessageId = insertMessage(tx, kernel, thread.id, "user", request.text, at);
 
-    const events: EventDraft[] = [
+    events.push(
       draft(
         context,
         "identity",
@@ -607,11 +651,11 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
         { messageId: userMessageId, role: "user", turnId },
         at,
       ),
-    ];
+    );
     let job: NodeJobRecord | undefined;
 
     if (selected !== undefined && primaryRootGrantId !== undefined) {
-      const session = sessionOn(tx, thread.id, model.providerId, selected.nodeId);
+      const session = found?.moved === false ? found : undefined;
       const scheduledRun =
         context.actorType === "identity" && context.actorId === identityId
           ? (tx
@@ -657,8 +701,8 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     tx.prepare(
       `INSERT INTO identity_turns
          (id, thread_id, user_message_id, node_job_id, node_id, provider_id, model_json,
-          status, items_json, failure_reason, started_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
+          root_grant_id, status, items_json, failure_reason, started_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
     ).run(
       turnId,
       thread.id,
@@ -667,6 +711,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       job === undefined ? null : (selected?.nodeId ?? null),
       model.providerId,
       JSON.stringify(chosenModel),
+      job === undefined ? null : (primaryRootGrantId ?? null),
       job === undefined ? "failed" : "queued",
       failureReason ?? null,
       at,
@@ -811,7 +856,14 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           });
         }
 
-        const session = sessionOn(tx, thread.id, selected.model.providerId, selected.nodeId);
+        const found = sessionIn(
+          tx,
+          thread.id,
+          selected.model.providerId,
+          selected.nodeId,
+          primaryRootGrantId,
+        );
+        const session = found?.moved === false ? found : undefined;
         const payload: RuntimeWarmPayload = {
           threadId: thread.id,
           identityId: thread.identityId,
@@ -946,15 +998,13 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
       });
     }
 
+    // A conversation stays on the model it was last given until the owner
+    // picks another; only its first turn falls to the identity's default.
     const model =
       command.model ??
       (pinned !== undefined
         ? modelFor(tx, thread.id, thread.identityId, pinned)
-        : // A delegated thread belongs to the runtime that was asked, not to
-          // the identity's default, so the owner's follow-up stays on it.
-          thread.parentThreadId === undefined
-          ? undefined
-          : lastModel(tx, thread.id));
+        : lastModel(tx, thread.id));
     const rootGrantId = command.rootGrantId ?? thread.rootGrantId;
 
     return ok({ thread, model, rootGrantId });
@@ -1070,14 +1120,16 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
 
         tx.prepare(
           `INSERT INTO identity_sessions
-             (id, thread_id, provider_id, node_id, session_ref, fork_pending, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+             (id, thread_id, provider_id, node_id, session_ref, root_grant_id, fork_pending,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         ).run(
           kernel.ids.nextId(),
           thread.id,
           command.providerId,
           command.nodeId,
           command.sessionRef,
+          command.rootGrantId,
           now,
           now,
         );
@@ -1559,10 +1611,12 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           // thread resumes it instead of replaying the thread into a fresh process.
           tx.prepare(
             `INSERT INTO identity_sessions
-               (id, thread_id, provider_id, node_id, session_ref, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+               (id, thread_id, provider_id, node_id, session_ref, root_grant_id,
+              created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (thread_id, provider_id, node_id) DO UPDATE SET
                session_ref = excluded.session_ref,
+               root_grant_id = excluded.root_grant_id,
                fork_pending = 0,
                updated_at = excluded.updated_at`,
           ).run(
@@ -1571,6 +1625,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
             turn.model.providerId,
             turn.nodeId,
             final.sessionRef,
+            turn.rootGrantId ?? null,
             at,
             at,
           );

@@ -44,10 +44,18 @@ export interface PromptFormProps {
   roots?: readonly RuntimeRootOption[];
   /**
    * Where a pinned thread always runs ("Claude · hyperframes on home"). Set,
-   * the agent and folder pickers give way to saying so: the thread holds one
-   * agent's session in one folder, and choosing another would start afresh.
+   * the folder picker gives way to saying so, and the model picker offers
+   * only `pinnedProvider`'s models: the thread holds one agent's session in
+   * one folder, and another agent or folder would start afresh.
    */
   lockedTo?: string;
+  pinnedProvider?: string;
+  /** The open thread. Another one brings its own model and folder with it. */
+  threadId?: string;
+  /** What the thread's latest turn ran on, shown until the owner picks otherwise. */
+  current?: { model?: ModelRef; rootGrantId?: string };
+  /** Under the identity switch: the clock, and the usage of the agent the picker is set to. */
+  status?: (providerId: string | undefined) => ReactNode;
   onSend: (text: string, options: SendOptions) => void;
   /**
    * Offered, the Vesper/Jester switch shows above the box, and typing exactly
@@ -227,6 +235,79 @@ export function modelKey(model: ModelRef): string {
   return `${model.providerId}:${model.model}`;
 }
 
+/**
+ * The models the picker offers and the one it shows: the owner's pick, else
+ * what the thread last ran on, else the Settings default. What it shows is what
+ * is sent, so the core never has to guess. A pinned thread with nothing to go
+ * on shows the first of its agent's models, as the core would choose.
+ */
+export function modelChoice({
+  identityId,
+  models,
+  defaultModel,
+  current,
+  pinnedProvider,
+  chosenKey,
+}: {
+  identityId: ConversationalIdentityId;
+  models: readonly ModelRef[];
+  defaultModel: ModelRef | undefined;
+  current?: ModelRef | undefined;
+  pinnedProvider?: string | undefined;
+  chosenKey?: string | undefined;
+}): { options: readonly ModelRef[]; selected: ModelRef | undefined } {
+  const fits = (model: ModelRef | undefined): model is ModelRef =>
+    model !== undefined &&
+    offeredModels(identityId, [model]).length === 1 &&
+    (pinnedProvider === undefined || model.providerId === pinnedProvider);
+  const offered = offeredModels(identityId, models).filter((model) => fits(model));
+  // The default and the thread's own model belong in the list even when no
+  // node offers them right now, so the picker never shows an empty choice.
+  const options = [current, defaultModel]
+    .filter(fits)
+    .reduce<ModelRef[]>(
+      (list, extra) =>
+        list.some((model) => modelKey(model) === modelKey(extra)) ? list : [extra, ...list],
+      [...offered],
+    );
+  const byKey = (key: string | undefined) => options.find((model) => modelKey(model) === key);
+  const fallback = pinnedProvider === undefined ? undefined : offered[0];
+
+  return {
+    options,
+    selected:
+      byKey(chosenKey) ??
+      (fits(current) ? current : undefined) ??
+      (fits(defaultModel) ? defaultModel : undefined) ??
+      fallback,
+  };
+}
+
+/** What a thread's latest turn ran on: the `current` a composer shows. */
+export function lastRun(
+  turns: ReadonlyArray<{ model: ModelRef; rootGrantId?: string | undefined }>,
+): { model: ModelRef; rootGrantId?: string } | undefined {
+  const turn = turns.at(-1);
+
+  return turn === undefined
+    ? undefined
+    : {
+        model: turn.model,
+        ...(turn.rootGrantId === undefined ? {} : { rootGrantId: turn.rootGrantId }),
+      };
+}
+
+/**
+ * The folder the picker shows. A thread that has run somewhere stays there,
+ * so "wherever Noctis chooses" is only offered before its first turn.
+ */
+export function rootChoice({ current, chosen }: { current?: string; chosen?: string }): {
+  selected: string;
+  offerAnywhere: boolean;
+} {
+  return { selected: chosen ?? current ?? "", offerAnywhere: current === undefined };
+}
+
 export function modelLabel(model: ModelRef): string {
   return `${model.label ?? model.model} (${model.providerId})`;
 }
@@ -244,6 +325,10 @@ export function PromptForm({
   canAttach = false,
   roots = [],
   lockedTo,
+  pinnedProvider,
+  threadId,
+  current,
+  status,
   onSend,
   onSwitchIdentity,
   aside,
@@ -266,26 +351,39 @@ export function PromptForm({
   const previewLayer = useBackLayer("attachment", preview !== undefined, () => {
     setPreview(undefined);
   });
-  const [rootGrantId, setRootGrantId] = useState("");
+  const [chosenRoot, setChosenRoot] = useState<string>();
   // Screenshots pasted so far, so two in the same second never share a name.
   const pasted = useRef(0);
 
+  // Opening another thread shows that thread's own model and folder. A new
+  // thread getting its id from its first send keeps what was picked for it.
+  const [shownThread, setShownThread] = useState(threadId);
+  const sentUnstarted = useRef(false);
+  if (threadId !== shownThread) {
+    setShownThread(threadId);
+    if (shownThread !== undefined || !sentUnstarted.current) {
+      setChosen(undefined);
+      setChosenRoot(undefined);
+    }
+    sentUnstarted.current = false;
+  }
+
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
-  const offered = offeredModels(identityId, models);
-  // A default Jester cannot run on (one set before ADR-0030 held) is no default.
-  const usableDefault =
-    defaultModel !== undefined && offeredModels(identityId, [defaultModel]).length === 1
-      ? defaultModel
-      : undefined;
-  const defaultKey = usableDefault === undefined ? undefined : modelKey(usableDefault);
-  // The default belongs in the list even when no node currently offers it, so
-  // the selector never shows an empty choice for a configured identity.
-  const options =
-    usableDefault !== undefined && !offered.some((model) => modelKey(model) === defaultKey)
-      ? [usableDefault, ...offered]
-      : offered;
-  const selectedKey = chosen ?? defaultKey ?? "";
+  const { options, selected } = modelChoice({
+    identityId,
+    models,
+    defaultModel,
+    current: current?.model,
+    pinnedProvider,
+    chosenKey: chosen,
+  });
+  const selectedKey = selected === undefined ? "" : modelKey(selected);
+  const root = rootChoice({
+    ...(current?.rootGrantId === undefined ? {} : { current: current.rootGrantId }),
+    ...(chosenRoot === undefined ? {} : { chosen: chosenRoot }),
+  });
+  const rootGrantId = root.selected;
 
   const attach = (incoming: readonly File[]): void => {
     setFiles((current) => [...current, ...incoming].slice(0, MAX_FILES));
@@ -307,16 +405,11 @@ export function PromptForm({
       return;
     }
 
-    const override = options.find((model) => modelKey(model) === selectedKey);
-
-    // A pinned thread chooses its own model; the core refuses another agent's.
-    const model =
-      lockedTo === undefined && override !== undefined && selectedKey !== defaultKey
-        ? override
-        : undefined;
-
+    sentUnstarted.current = threadId === undefined;
+    // What the picker shows is what is sent, the default included, so the
+    // thread keeps it for the next message.
     onSend(text, {
-      ...(model === undefined ? {} : { model }),
+      ...(selected === undefined ? {} : { model: selected }),
       ...(files.length === 0 ? {} : { files }),
       ...(rootGrantId === "" || lockedTo !== undefined ? {} : { rootGrantId }),
     });
@@ -349,7 +442,9 @@ export function PromptForm({
       }}
       style={{ display: "grid", gap: spacing.sm, width: "100%" }}
     >
-      {((onSwitchIdentity !== undefined && lockedTo === undefined) || aside !== undefined) && (
+      {((onSwitchIdentity !== undefined && lockedTo === undefined) ||
+        aside !== undefined ||
+        status !== undefined) && (
         <div
           style={{
             display: "flex",
@@ -358,45 +453,46 @@ export function PromptForm({
             gap: spacing.sm,
           }}
         >
-          {onSwitchIdentity !== undefined && lockedTo === undefined ? (
-            <div
-              role="group"
-              aria-label="Who to talk to"
-              style={{ display: "flex", gap: spacing.xs }}
-            >
-              {IDENTITY_PROFILES.map((profile) => {
-                const active = profile.id === identityId;
-                const accent = identityAccent[profile.id].primary;
+          <div style={{ display: "grid", gap: spacing.sm, minWidth: 0, flex: "0 1 auto" }}>
+            {onSwitchIdentity !== undefined && lockedTo === undefined && (
+              <div
+                role="group"
+                aria-label="Who to talk to"
+                style={{ display: "flex", gap: spacing.xs }}
+              >
+                {IDENTITY_PROFILES.map((profile) => {
+                  const active = profile.id === identityId;
+                  const accent = identityAccent[profile.id].primary;
 
-                return (
-                  <button
-                    key={profile.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => {
-                      if (!active) {
-                        setChosen(undefined);
-                        onSwitchIdentity(profile.id);
-                      }
-                    }}
-                    style={{
-                      ...switchStyle,
-                      ...(active ? { borderColor: accent, color: accent } : {}),
-                    }}
-                  >
-                    {profile.id === "jester" ? (
-                      <JesterGlyph size={14} />
-                    ) : (
-                      <span aria-hidden="true">✦</span>
-                    )}
-                    {profile.displayName}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <span />
-          )}
+                  return (
+                    <button
+                      key={profile.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => {
+                        if (!active) {
+                          setChosen(undefined);
+                          onSwitchIdentity(profile.id);
+                        }
+                      }}
+                      style={{
+                        ...switchStyle,
+                        ...(active ? { borderColor: accent, color: accent } : {}),
+                      }}
+                    >
+                      {profile.id === "jester" ? (
+                        <JesterGlyph size={14} />
+                      ) : (
+                        <span aria-hidden="true">✦</span>
+                      )}
+                      {profile.displayName}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {status?.(selected?.providerId)}
+          </div>
           {aside}
         </div>
       )}
@@ -545,41 +641,32 @@ export function PromptForm({
           gap: spacing.sm,
         }}
       >
+        <div style={pickerStyle}>
+          <span aria-hidden="true">Agent</span>
+          <Picker
+            label="Agent"
+            value={selectedKey}
+            disabled={disabled || options.length === 0}
+            onChange={setChosen}
+            options={
+              options.length === 0
+                ? [
+                    {
+                      value: "",
+                      label:
+                        identityId === "jester"
+                          ? "Jester needs Hermes and LM Studio on a connected PC"
+                          : "No agent offered by any PC",
+                    },
+                  ]
+                : options.map((model) => ({ value: modelKey(model), label: modelLabel(model) }))
+            }
+          />
+        </div>
         {lockedTo !== undefined ? (
-          <p
-            style={{
-              ...pickerStyle,
-              gridColumn: canAttach ? "1 / 3" : "1 / -1",
-              margin: 0,
-              alignSelf: "center",
-            }}
-          >
-            Continuing in {lockedTo}
-          </p>
+          <p style={{ ...pickerStyle, margin: 0, alignSelf: "center" }}>Continuing in {lockedTo}</p>
         ) : (
           <>
-            <div style={pickerStyle}>
-              <span aria-hidden="true">Agent</span>
-              <Picker
-                label="Agent"
-                value={selectedKey}
-                disabled={disabled || options.length === 0}
-                onChange={setChosen}
-                options={
-                  options.length === 0
-                    ? [
-                        {
-                          value: "",
-                          label:
-                            identityId === "jester"
-                              ? "Jester needs Hermes and LM Studio on a connected PC"
-                              : "No agent offered by any PC",
-                        },
-                      ]
-                    : options.map((model) => ({ value: modelKey(model), label: modelLabel(model) }))
-                }
-              />
-            </div>
             {roots.length > 0 && (
               <div style={pickerStyle}>
                 <span aria-hidden="true">PC and folder</span>
@@ -587,11 +674,14 @@ export function PromptForm({
                   label="PC and folder"
                   value={rootGrantId}
                   disabled={disabled}
-                  onChange={setRootGrantId}
+                  onChange={setChosenRoot}
                   // The core's own rule when nothing is named: the chosen node's
-                  // first writable root. Said out loud rather than left blank.
+                  // first writable root. Said out loud rather than left blank,
+                  // and only before the thread has run somewhere.
                   options={[
-                    { value: "", label: "Wherever Noctis chooses" },
+                    ...(root.offerAnywhere
+                      ? [{ value: "", label: "Wherever Noctis chooses" }]
+                      : []),
                     ...roots.map(rootOption),
                   ]}
                 />

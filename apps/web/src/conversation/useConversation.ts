@@ -49,6 +49,7 @@ export const TurnSchema = z
     jobId: z.string().min(1).optional(),
     nodeId: z.string().min(1).optional(),
     model: ModelRefSchema,
+    rootGrantId: z.string().min(1).optional(),
     status: TurnStatusSchema,
     items: z.array(RuntimeItemSchema),
     replyMessageId: z.string().min(1).optional(),

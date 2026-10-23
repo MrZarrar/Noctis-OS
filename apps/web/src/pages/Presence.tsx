@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Markdown } from "../conversation/Markdown.js";
 import { MarkdownFiles } from "../conversation/MarkdownFiles.js";
-import { PromptForm } from "../conversation/PromptForm.js";
+import { PromptForm, lastRun } from "../conversation/PromptForm.js";
 import { intelligenceState } from "../conversation/intelligence-state.js";
 import { lastExchange } from "../conversation/last-exchange.js";
 import type { ConversationState, SendOptions } from "../conversation/useConversation.js";
@@ -126,6 +126,7 @@ export function Presence({
   const accent = identityAccent[identityId].primary;
   const exchange = sent ? lastExchange(conversation) : undefined;
   const asking = conversation.turns.at(-1);
+  const presenceRun = lastRun(conversation.turns);
 
   return (
     <section
@@ -402,6 +403,8 @@ export function Presence({
             disabled={transport === undefined}
             canAttach={conversation.canAttach}
             roots={conversation.roots}
+            {...(conversation.thread === undefined ? {} : { threadId: conversation.thread.id })}
+            {...(presenceRun === undefined ? {} : { current: presenceRun })}
             onSend={(text, options) => {
               setSent(true);
               onSend(text, options);

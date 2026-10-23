@@ -16,7 +16,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "../conversation/Markdown.js";
 import { MarkdownFiles } from "../conversation/MarkdownFiles.js";
-import { PromptForm, modelLabel } from "../conversation/PromptForm.js";
+import { PromptForm, lastRun, modelLabel } from "../conversation/PromptForm.js";
+import { ThreadStatus } from "./ThreadStatus.js";
 import type {
   ConversationState,
   RuntimeRootOption,
@@ -571,6 +572,7 @@ export function Threads({
   );
 
   const pinned = thread === undefined ? undefined : pinnedTo(thread, conversation.roots);
+  const current = lastRun(turns);
   const subtitle =
     thread === undefined
       ? `${displayName} · nothing said yet`
@@ -930,6 +932,14 @@ export function Threads({
                 canAttach={conversation.canAttach}
                 roots={conversation.roots}
                 {...(pinned === undefined ? {} : { lockedTo: pinned })}
+                {...(thread?.providerId === undefined ? {} : { pinnedProvider: thread.providerId })}
+                {...(thread === undefined ? {} : { threadId: thread.id })}
+                {...(current === undefined ? {} : { current })}
+                // The time, and the allowance of the agent this thread is about
+                // to run on, where the owner decides whether to send.
+                status={(providerId) => (
+                  <ThreadStatus transport={transport} mobile={mobile} providerId={providerId} />
+                )}
                 {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
                 // The core beside the composer, which stays put while the thread
                 // scrolls, so its state is always in view (owner, 2026-10-09).

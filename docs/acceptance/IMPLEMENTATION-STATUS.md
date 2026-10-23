@@ -4099,3 +4099,23 @@ Owner's live test: the clap works, but windows did not open maximised and a seco
 | The placer run once against the owner's open clap windows                      | `placed presence`, `placed vault` in 977 ms |
 
 Not verified by eye: the maximised result on each monitor after a real clap.
+
+## 2026-10-23 The picker sticks, and Threads shows the time and usage
+
+A conversation keeps the model and folder it was last given, and the composer shows them. A continued session gets a model picker for its own agent. A turn in another folder starts a fresh agent session and says so in the thread. Threads shows the time and the chosen agent's usage meters above the composer. Decisions in `docs/architecture/2026-10-23-owner-decisions.md`.
+
+- Core: a message with no model runs on the thread's last model; turns and sessions record their folder (migration `0023_turn_folders.sql`, backfilled from job payloads and pinned threads); `sessionIn` drops a session kept for another folder.
+- Web: `modelChoice`, `rootChoice` and `lastRun` in `PromptForm.tsx`; the composer sends what it shows and resets per thread; `ThreadStatus.tsx`; `UsageLimits` takes a provider filter and a compact size.
+- The phone e2e "picks the PC and folder" now opens a new conversation first, since a conversation that has run no longer offers "Wherever Noctis chooses" and the fixture shares one folder.
+
+| Command/check                                                                                                               | Result                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Core integration: last model, turn folder, fresh session in another folder (the pinned-model case passed before the change) | red then green                                                                            |
+| `PromptForm.test.ts`: `modelChoice`, `rootChoice`, `lastRun`                                                                | red then green                                                                            |
+| `npx vitest run apps/web apps/core packages`                                                                                | 194 files, 2652/2652                                                                      |
+| `npm run typecheck`; ESLint and Prettier on changed files                                                                   | exit 0                                                                                    |
+| e2e chat, presence, jester                                                                                                  | 17/17                                                                                     |
+| e2e phone (TEMP/TMP under `.noctis/tmp`)                                                                                    | 14/18; the 4 failing are the tab bar and rail ones recorded as pre-existing on 2026-10-16 |
+| LARP screenshots of Threads at 1440 px and 390 px                                                                           | checked by eye                                                                            |
+
+Not verified: a live turn on the home PC, and a real folder change resuming nothing in Claude Code. Node is 22.23.1 here, not the pinned 22.23.2.

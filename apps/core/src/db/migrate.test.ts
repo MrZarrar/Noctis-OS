@@ -260,8 +260,8 @@ describe("migrate", () => {
         "archived_at",
       ]),
     );
-    expect(runtimeSessions).toContain("fork_pending");
-    expect(version.v).toBe(22);
+    expect(runtimeSessions).toEqual(expect.arrayContaining(["fork_pending", "root_grant_id"]));
+    expect(version.v).toBe(23);
     expect(tables).toEqual(
       expect.arrayContaining(["health_report", "health_runs", "place_events"]),
     );

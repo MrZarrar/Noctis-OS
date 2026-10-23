@@ -1029,7 +1029,17 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
     async () => {
       await page.setViewportSize(PHONE);
       await page.goto(WEB_URL);
-      await open("Threads");
+      // A new conversation, because one that has already run stays in its
+      // folder and this PC shares only the one.
+      await tabTo(page, "Threads");
+      await page.keyboard.press("Enter");
+      await tabTo(page, "New conversation");
+      await page.keyboard.press("Enter");
+      await waitFor(
+        readPage,
+        (state) => !state.body.includes("Show archived"),
+        "the new conversation never opened",
+      );
       const button = page.getByRole("button", { name: /^PC and folder/ });
       const before = await button.getAttribute("aria-label");
       await button.click();

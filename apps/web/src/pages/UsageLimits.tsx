@@ -7,7 +7,7 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 import type { UsageLimitsView } from "./usage-limits-view.js";
 import { UsageLimitsSchema, resetText, staleText, windowSeverity } from "./usage-limits-view.js";
 
-/** Each read is a job on the PC, so not often; the countdowns tick on Presence's clock. */
+/** Each read is a job on the PC, so not often; the countdowns tick on the page's clock. */
 const REFRESH_MS = 5 * 60_000;
 
 const NAMES: Record<string, string> = { claude: "Claude", codex: "Codex" };
@@ -90,10 +90,16 @@ export function UsageLimits({
   transport,
   now,
   mobile,
+  providers,
+  compact = false,
 }: {
   transport: CoreTransport | undefined;
   now: Date;
   mobile: boolean;
+  /** Only these agents' allowances: Threads shows the one its composer is set to. */
+  providers?: readonly string[];
+  /** Fills the space it is given, beside Threads' composer, rather than Presence's column. */
+  compact?: boolean;
 }): JSX.Element | null {
   const [limits, setLimits] = useState<UsageLimitsView["limits"]>();
 
@@ -127,7 +133,11 @@ export function UsageLimits({
     };
   }, [transport]);
 
-  if (limits === undefined || limits.length === 0) {
+  const shown = limits?.filter(
+    (limit) => providers === undefined || providers.includes(limit.providerId),
+  );
+
+  if (shown === undefined || shown.length === 0) {
     return null;
   }
 
@@ -138,17 +148,21 @@ export function UsageLimits({
       style={{
         display: "grid",
         gap: 10,
-        alignSelf: mobile ? "center" : "flex-start",
-        marginTop: mobile ? 8 : 0,
-        width: mobile ? "100%" : 248,
-        maxWidth: 320,
+        ...(compact
+          ? { width: 248, maxWidth: "100%" }
+          : {
+              alignSelf: mobile ? "center" : "flex-start",
+              marginTop: mobile ? 8 : 0,
+              width: mobile ? "100%" : 248,
+              maxWidth: 320,
+            }),
         fontFamily: typography.monoFamily,
         fontSize: 11,
         color: typography.color.muted,
         fontVariantNumeric: "tabular-nums",
       }}
     >
-      {limits.map((limit) => {
+      {shown.map((limit) => {
         const name = NAMES[limit.providerId] ?? limit.providerId;
         const stale = limit.problem === undefined ? staleText(limit.checkedAt, now) : undefined;
 

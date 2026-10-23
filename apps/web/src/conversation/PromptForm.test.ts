@@ -2,7 +2,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { PromptForm, offeredModels, pastedFiles, rootOption } from "./PromptForm.js";
+import {
+  PromptForm,
+  lastRun,
+  modelChoice,
+  offeredModels,
+  pastedFiles,
+  rootChoice,
+  rootOption,
+} from "./PromptForm.js";
 
 const CLAUDE = { providerId: "claude" as const, model: "opus" };
 const LOCAL = { providerId: "local" as const, model: "qwen/qwen3.5-9b" };
@@ -122,5 +130,75 @@ describe("waking from the composer", () => {
 
   it("offers nothing to wake once it is awake", () => {
     expect(render({ asleep: false, onWake: () => undefined })).not.toContain(">Wake<");
+  });
+});
+
+describe("modelChoice", () => {
+  const SONNET = { providerId: "claude" as const, model: "sonnet" };
+  const HAIKU = { providerId: "claude" as const, model: "claude-haiku-5-5" };
+  const CODEX = { providerId: "codex" as const, model: "gpt-6.1-sol" };
+  const models = [HAIKU, CLAUDE, SONNET, CODEX];
+
+  it("a new conversation starts on the Settings default", () => {
+    expect(modelChoice({ identityId: "vesper", models, defaultModel: SONNET }).selected).toEqual(
+      SONNET,
+    );
+  });
+
+  it("an ongoing conversation shows the model it last ran on, not the default", () => {
+    expect(
+      modelChoice({ identityId: "vesper", models, defaultModel: SONNET, current: CLAUDE }).selected,
+    ).toEqual(CLAUDE);
+  });
+
+  it("the owner's pick wins over both, and picking the default again is a real pick", () => {
+    const base = { identityId: "vesper" as const, models, defaultModel: SONNET, current: CLAUDE };
+
+    expect(modelChoice({ ...base, chosenKey: "codex:gpt-6.1-sol" }).selected).toEqual(CODEX);
+    expect(modelChoice({ ...base, chosenKey: "claude:sonnet" }).selected).toEqual(SONNET);
+  });
+
+  it("a continued session offers its own agent's models only", () => {
+    const pinned = modelChoice({
+      identityId: "vesper",
+      models,
+      defaultModel: CODEX,
+      pinnedProvider: "claude",
+    });
+
+    expect(pinned.options).toEqual([HAIKU, CLAUDE, SONNET]);
+    // The core's own rule when nothing was chosen: the first that agent offers.
+    expect(pinned.selected).toEqual(HAIKU);
+    expect(
+      modelChoice({ identityId: "vesper", models, defaultModel: SONNET, pinnedProvider: "claude" })
+        .selected,
+    ).toEqual(SONNET);
+  });
+});
+
+describe("rootChoice", () => {
+  it("a new conversation leaves the folder to Noctis until one is picked", () => {
+    expect(rootChoice({})).toEqual({ selected: "", offerAnywhere: true });
+    expect(rootChoice({ chosen: "g-2" })).toEqual({ selected: "g-2", offerAnywhere: true });
+  });
+
+  it("an ongoing conversation stays in the folder it last ran in until another is picked", () => {
+    expect(rootChoice({ current: "g-1" })).toEqual({ selected: "g-1", offerAnywhere: false });
+    expect(rootChoice({ current: "g-1", chosen: "g-2" })).toEqual({
+      selected: "g-2",
+      offerAnywhere: false,
+    });
+  });
+});
+
+describe("lastRun", () => {
+  it("is the latest turn's model and folder, and nothing before the first turn", () => {
+    expect(lastRun([])).toBe(undefined);
+    expect(
+      lastRun([
+        { model: LOCAL, rootGrantId: "g-1" },
+        { model: CLAUDE, rootGrantId: "g-2" },
+      ]),
+    ).toEqual({ model: CLAUDE, rootGrantId: "g-2" });
   });
 });
