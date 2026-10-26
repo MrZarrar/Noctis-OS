@@ -86,6 +86,18 @@ export const RuntimeGrantConstraintsSchema = z
   .strict();
 
 /**
+ * What a new grant must also satisfy: every folder an absolute path. Kept off the stored schema so
+ * a grant saved before this check still reads, and its missing folder is skipped as before.
+ */
+export const NewRuntimeGrantConstraintsSchema = RuntimeGrantConstraintsSchema.refine(
+  (constraints) =>
+    constraints.roots.every(
+      (root) => /^[A-Za-z]:[\\/]/.test(root.path) || root.path.startsWith("/"),
+    ),
+  "every shared folder must be an absolute path",
+);
+
+/**
  * Core-derived: the PCs, shared folders and scheduled tasks the owner's words
  * can name, so a model proposing a task never invents an id.
  */

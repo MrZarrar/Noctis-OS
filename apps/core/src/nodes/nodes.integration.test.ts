@@ -639,6 +639,25 @@ describe("the paired node loop", () => {
       }),
     ]);
   });
+  it("refuses a shared folder whose path lost its backslashes", async () => {
+    const core = await startTestCore();
+    const paired = await pairFake(core);
+    const share = (path: string) =>
+      command(core, "node.grant_capability", {
+        idempotencyKey: `share-${path}`,
+        nodeId: paired.nodeId,
+        capability: "runtime.turn",
+        constraints: {
+          providers: ["claude"],
+          roots: [{ grantId: "vault", path, mode: "read", localOnly: false }],
+        },
+      });
+
+    expect((await share("C:Usersmushaf.zarrarOneDriveMindVault")).status).toBe(400);
+    expect((await read(core, `/nodes/${paired.nodeId}`)).body.grants).toEqual([]);
+    expect((await share("C:\\Users\\me\\OneDrive\\MindVault")).status).toBe(200);
+  });
+
   it("reports a connected node and its grants over REST", async () => {
     const core = await startTestCore();
     const paired = await pairFake(core);

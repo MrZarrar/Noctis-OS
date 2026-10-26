@@ -26,7 +26,11 @@ import {
   UtcTimestampSchema,
   UuidSchema,
 } from "./primitives.js";
-import { ModelRefSchema, RuntimeProviderIdSchema } from "./runtime.js";
+import {
+  ModelRefSchema,
+  NewRuntimeGrantConstraintsSchema,
+  RuntimeProviderIdSchema,
+} from "./runtime.js";
 import { SETTING_VALUE_SCHEMAS, SettingKeySchema } from "./settings.js";
 import type { SettingKey } from "./settings.js";
 import { UnavailableSemanticsSchema } from "./source.js";
@@ -652,7 +656,13 @@ export const GrantNodeCapabilityCommandSchema = z
     constraints: z.unknown(),
     expiresAt: UtcTimestampSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (command) =>
+      command.capability !== "runtime.turn" ||
+      NewRuntimeGrantConstraintsSchema.safeParse(command.constraints).success,
+    { message: "a shared folder needs an absolute path", path: ["constraints"] },
+  );
 
 /**
  * Stops sharing one folder. Every live grant naming it is revoked, and a grant

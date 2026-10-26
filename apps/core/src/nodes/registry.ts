@@ -17,6 +17,7 @@ import {
   HEALTH_CAPABILITIES,
   HealthGrantConstraintsSchema,
   NodeDescriptorSchema,
+  NewRuntimeGrantConstraintsSchema,
   RuntimeGrantConstraintsSchema,
   RuntimeProbeSchema,
 } from "@noctis/contracts";
@@ -842,7 +843,7 @@ export function grantCapability(
     command.capability === "file.search"
       ? FileSearchConstraintsSchema.parse(command.constraints)
       : command.capability === "runtime.turn"
-        ? RuntimeGrantConstraintsSchema.parse(command.constraints)
+        ? NewRuntimeGrantConstraintsSchema.parse(command.constraints)
         : (HEALTH_CAPABILITIES as readonly string[]).includes(command.capability)
           ? HealthGrantConstraintsSchema.parse(command.constraints)
           : (command.constraints ?? {});
