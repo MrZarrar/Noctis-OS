@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -311,6 +311,16 @@ describe("isNewVaultInboxFile", () => {
     expect(isNewVaultInboxFile(join(vault, "projects", "suno-music.md"), readable)).toBe(false);
     expect(isNewVaultInboxFile(join(vault, "inbox", "..", "people", "x.md"), readable)).toBe(false);
     expect(isNewVaultInboxFile(join(vault, "inbox"), readable)).toBe(false);
+  });
+
+  it("does not follow a link inside the inbox to somewhere else", () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "noctis-elsewhere-"));
+    symlinkSync(elsewhere, join(vault, "inbox", "out"), "junction");
+
+    expect(isNewVaultInboxFile(join(vault, "inbox", "out", "x.md"), readable)).toBe(false);
+    expect(isNewVaultInboxFile(join(vault, "inbox", "out", "deeper", "x.md"), readable)).toBe(
+      false,
+    );
   });
 
   it("is never true without a MindVault among the readable folders", () => {

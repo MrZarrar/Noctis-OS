@@ -1025,6 +1025,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           // The owner's one exception to a read-only MindVault (2026-10-26): new notes in inbox/.
           const paths = ask.detail?.paths ?? [];
           if (
+            toolName === "Write" &&
             paths.length > 0 &&
             paths.every((path) => isNewVaultInboxFile(path, roots.readable))
           ) {

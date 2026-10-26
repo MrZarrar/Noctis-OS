@@ -739,8 +739,13 @@ describe("the Claude Agent SDK runtime", () => {
       await expect(
         gate("Edit", { file_path: join(vault, "projects", "suno-music.md") }),
       ).resolves.toEqual(allowed);
+      // Only Write creates a file; any other tool on an inbox path still asks.
+      await expect(
+        gate("NotebookEdit", { notebook_path: join(vault, "inbox", "new.ipynb") }),
+      ).resolves.toEqual(allowed);
       expect(r.asks.map((ask) => ask.target.id)).toEqual([
         join(vault, "projects", "suno-music.md"),
+        join(vault, "inbox", "new.ipynb"),
       ]);
     });
 

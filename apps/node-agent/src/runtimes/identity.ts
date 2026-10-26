@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
 import { ModelRefSchema, PAGE_PANEL_PAGES } from "@noctis/contracts";
@@ -106,9 +106,22 @@ export function isNewVaultInboxFile(path: string, readable?: readonly string[]):
   if (vault === undefined) return false;
 
   const target = resolve(path);
-  const inside = relative(resolve(vault, "inbox"), target);
 
-  return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) && !existsSync(target);
+  if (existsSync(target)) return false;
+
+  // Compared on real paths, so a link inside the inbox cannot carry a write somewhere else.
+  const inbox = resolve(vault, "inbox");
+  let parent = dirname(target);
+  while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent);
+
+  try {
+    const real = join(realpathSync(parent), relative(parent, target));
+    const inside = relative(existsSync(inbox) ? realpathSync(inbox) : inbox, real);
+
+    return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside);
+  } catch {
+    return false;
+  }
 }
 
 /** Claude and Codex may add new inbox notes themselves; a local model still asks for every write. */
