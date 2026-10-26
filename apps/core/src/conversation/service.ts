@@ -184,12 +184,13 @@ export function getTurnByJobId(db: NoctisDatabase, jobId: string): Turn | undefi
   return row === undefined ? undefined : toTurn(row);
 }
 
+/** A thread longer than `limit` drops its oldest turns: the newest are what the chat needs. */
 export function listTurns(db: NoctisDatabase, threadId: string, limit: number): Turn[] {
   const rows = db
-    .prepare(`${TURN_SELECT} WHERE t.thread_id = ? ORDER BY t.started_at, t.id LIMIT ?`)
+    .prepare(`${TURN_SELECT} WHERE t.thread_id = ? ORDER BY t.started_at DESC, t.id DESC LIMIT ?`)
     .all(threadId, limit) as TurnRow[];
 
-  return rows.map(toTurn);
+  return rows.reverse().map(toTurn);
 }
 
 /**
@@ -207,7 +208,10 @@ export function listRecentTurns(db: NoctisDatabase, limit: number): Turn[] {
   return rows.map(toTurn);
 }
 
-/** Bodies join from `identity_message_content`; a pre-0006 row with no body reads as empty. */
+/**
+ * Bodies join from `identity_message_content`; a pre-0006 row with no body reads as empty.
+ * Like `listTurns`, a long thread keeps its newest messages, still oldest first.
+ */
 export function listMessages(db: NoctisDatabase, threadId: string, limit: number): Message[] {
   const rows = db
     .prepare(
@@ -215,12 +219,12 @@ export function listMessages(db: NoctisDatabase, threadId: string, limit: number
          FROM identity_messages m
          LEFT JOIN identity_message_content c ON c.message_id = m.id
         WHERE m.thread_id = ?
-        ORDER BY m.created_at, m.id
+        ORDER BY m.created_at DESC, m.id DESC
         LIMIT ?`,
     )
     .all(threadId, limit) as MessageRow[];
 
-  return rows.map((row) => ({
+  return rows.reverse().map((row) => ({
     id: row.id,
     threadId: row.thread_id,
     role: row.role as Message["role"],
