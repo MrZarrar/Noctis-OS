@@ -323,6 +323,24 @@ describe("isNewVaultInboxFile", () => {
     );
   });
 
+  it("does not follow a link whose target does not exist yet", () => {
+    const missing = join(tmpdir(), `noctis-missing-${String(Date.now())}`);
+    symlinkSync(missing, join(vault, "inbox", "gone"), "junction");
+
+    expect(isNewVaultInboxFile(join(vault, "inbox", "gone", "x.md"), readable)).toBe(false);
+
+    let fileLink = true;
+    try {
+      symlinkSync(join(missing, "x.md"), join(vault, "inbox", "dangling.md"), "file");
+    } catch {
+      // Windows without Developer Mode cannot make file links; the folder case above still runs.
+      fileLink = false;
+    }
+    if (fileLink) {
+      expect(isNewVaultInboxFile(join(vault, "inbox", "dangling.md"), readable)).toBe(false);
+    }
+  });
+
   it("is never true without a MindVault among the readable folders", () => {
     expect(isNewVaultInboxFile(join(vault, "inbox", "draft.md"), [])).toBe(false);
   });

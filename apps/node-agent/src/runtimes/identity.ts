@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
@@ -91,11 +91,16 @@ export function mindVaultIn(readable: readonly string[] = []): string | undefine
   return readable.find((root) => existsSync(join(root, "agent", "brain.md")));
 }
 
-/**
- * What an agent is told about the MindVault. Shared with it, the Vault is the
- * agent's to search on its own: the owner set it up so every agent knows what
- * they know without being asked.
- */
+/** Whether anything, a link included, sits at this path. `existsSync` follows a dangling link to nothing. */
+function present(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A file Vesper may add to the MindVault without asking: a new note in its inbox/. The owner's
  * own notes stay behind the Vault tools, where a fact can be undone and a rewrite waits for them.
@@ -107,12 +112,13 @@ export function isNewVaultInboxFile(path: string, readable?: readonly string[]):
 
   const target = resolve(path);
 
-  if (existsSync(target)) return false;
+  if (present(target)) return false;
 
   // Compared on real paths, so a link inside the inbox cannot carry a write somewhere else.
+  // A link whose target is missing stops the walk here and fails realpath below.
   const inbox = resolve(vault, "inbox");
   let parent = dirname(target);
-  while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent);
+  while (!present(parent) && dirname(parent) !== parent) parent = dirname(parent);
 
   try {
     const real = join(realpathSync(parent), relative(parent, target));
@@ -136,6 +142,11 @@ owner's: add a fact to it with noctis_propose_vault_fact, or propose changing th
 noctis_propose_vault_revision, which waits for them. Editing a Vault file directly asks the owner every time.`;
 }
 
+/**
+ * What an agent is told about the MindVault. Shared with it, the Vault is the
+ * agent's to search on its own: the owner set it up so every agent knows what
+ * they know without being asked.
+ */
 export function mindVaultNote(readable?: readonly string[]): string {
   const vault = mindVaultIn(readable);
 
