@@ -45,3 +45,19 @@ describe("a message body", () => {
     expect(markup).toContain("bad");
   });
 });
+
+describe("a box of text in a reply", () => {
+  it("gets its own Copy button, so a lyric sheet's two boxes copy separately", () => {
+    const markup = render(
+      "**Lyrics**\n\n```\n[Verse 1]\nI dreamed\n```\n\n**Style prompt**\n\n```text\ndream pop, 92 bpm\n```",
+    );
+
+    expect(markup.match(/<button[^>]*>Copy<\/button>/g)).toHaveLength(2);
+    expect(markup).toContain("[Verse 1]\nI dreamed");
+    expect(markup).toContain("dream pop, 92 bpm");
+  });
+
+  it("leaves inline code alone", () => {
+    expect(render("run `npm test` now")).not.toContain("<button");
+  });
+});

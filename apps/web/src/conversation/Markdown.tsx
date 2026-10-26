@@ -1,7 +1,7 @@
 import { Markdown as Compile, RuleType } from "markdown-to-jsx";
 import { typography } from "@noctis/ui";
-import type { ComponentProps } from "react";
-import { createContext, useContext } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { MarkdownFiles } from "./MarkdownFiles.js";
 import { MermaidDiagram } from "./MermaidDiagram.js";
@@ -20,6 +20,45 @@ function Image({ src, alt }: ComponentProps<"img">): JSX.Element {
     <span style={{ color: typography.color.muted }}>{alt}</span>
   ) : (
     <img src={url} alt={alt} loading="lazy" style={{ maxWidth: "100%" }} />
+  );
+}
+
+/** A fenced block with its own Copy button, as VS Code has, so one box copies without selecting it. */
+function CopyableBlock({ text, children }: { text: string; children: ReactNode }): JSX.Element {
+  const [copied, setCopied] = useState<"Copied" | "Copy failed">();
+
+  useEffect(() => {
+    if (copied === undefined) return undefined;
+
+    const timer = setTimeout(() => {
+      setCopied(undefined);
+    }, 1500);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [copied]);
+
+  return (
+    <div className="noctis-md-block">
+      {children}
+      <button
+        type="button"
+        className="noctis-md-copy"
+        onClick={() => {
+          navigator.clipboard.writeText(text).then(
+            () => {
+              setCopied("Copied");
+            },
+            () => {
+              setCopied("Copy failed");
+            },
+          );
+        }}
+      >
+        {copied ?? "Copy"}
+      </button>
+    </div>
   );
 }
 
@@ -101,10 +140,14 @@ export function Markdown({
           wrapper: "div",
           wrapperProps: { className: "noctis-md" } as object,
           renderRule: (next, node, _renderChildren, state) =>
-            node.type === RuleType.codeBlock && node.lang === "mermaid" ? (
+            node.type !== RuleType.codeBlock ? (
+              next()
+            ) : node.lang === "mermaid" ? (
               <MermaidDiagram key={state.key} source={node.text} />
             ) : (
-              next()
+              <CopyableBlock key={state.key} text={node.text}>
+                {next()}
+              </CopyableBlock>
             ),
           overrides: { a: Link, img: Image, ...(readOnlyTasks ? { input: ReadOnlyCheckbox } : {}) },
         }}

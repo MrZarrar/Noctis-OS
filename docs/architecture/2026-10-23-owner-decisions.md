@@ -196,3 +196,11 @@ read-only (drafts would live outside the Vault).
 - The overflow list names panels by their titles.
 
 **Open:** the owner restarts the work PC core and node to pick this up, and the home PC from its own steps.
+
+## 12. Copy buttons on boxes of text (26 October)
+
+**Asked (owner):** a lyric sheet has its lyrics and its style prompt in separate boxes, and copying either one meant
+selecting it by hand. They wanted a copy button like VS Code's.
+
+**Built:** every fenced block in a reply, document panel, file panel or Vault note has a Copy button in its top
+corner that copies that block's text and says "Copied" for a moment. Inline code and diagrams have none.
