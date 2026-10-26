@@ -321,6 +321,37 @@ describe("Threads timeline", () => {
   });
 });
 
+describe("a message sent with files", () => {
+  it("shows a sent screenshot under the owner's message", () => {
+    const conversation = conversationWith([
+      {
+        ...turn,
+        userMessageId: "message-you",
+        attachments: [
+          { attachmentId: "shot-1", filename: "screenshot.png", mediaType: "image/png" },
+        ],
+      },
+    ]);
+    conversation.messages = [
+      {
+        id: "message-you",
+        threadId: "thread-1",
+        role: "user",
+        body: "What is wrong here?",
+        createdAt: "2026-10-07T10:00:00Z",
+      },
+    ];
+    const markup = renderToStaticMarkup(
+      createElement(Threads, { identityId: "vesper", conversation, connected: true }),
+    );
+    const mine = markup.match(/<li[^>]*data-role="user"[\s\S]*?<\/li>/)?.[0];
+
+    expect(mine).toContain("What is wrong here?");
+    expect(mine).toContain('src="/outputs/shot-1"');
+    expect(mine).toContain('alt="screenshot.png"');
+  });
+});
+
 describe("a command row", () => {
   it("reads as what the agent said it does, with the command and its output folded away", () => {
     const markup = renderToStaticMarkup(

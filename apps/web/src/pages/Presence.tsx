@@ -331,6 +331,11 @@ export function Presence({
                   </span>
                   <span>{exchange.you}</span>
                 </p>
+                <ExchangeOutputs
+                  outputs={exchange.sent}
+                  outputUrl={conversation.outputUrl}
+                  mobile={mobile}
+                />
                 {exchange.reply !== "" && (
                   <div style={{ display: "flex", gap: 12 }}>
                     <span aria-hidden="true" style={{ color: accent }}>

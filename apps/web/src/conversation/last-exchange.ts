@@ -1,4 +1,4 @@
-import type { ConversationSnapshot } from "./useConversation.js";
+import type { ConversationSnapshot, Turn } from "./useConversation.js";
 
 export interface ExchangeOutput {
   attachmentId: string;
@@ -14,7 +14,7 @@ export interface ExchangeOutput {
 export function lastExchange(
   snapshot: Pick<ConversationSnapshot, "messages" | "turns" | "streaming"> &
     Partial<Pick<ConversationSnapshot, "partialReplies">>,
-): { you: string; reply: string; outputs: ExchangeOutput[] } | undefined {
+): { you: string; sent: ExchangeOutput[]; reply: string; outputs: ExchangeOutput[] } | undefined {
   const turn = snapshot.turns.at(-1);
 
   if (turn === undefined) {
@@ -52,5 +52,14 @@ export function lastExchange(
       : [],
   );
 
-  return { you: body(turn.userMessageId) ?? "", reply, outputs };
+  return { you: body(turn.userMessageId) ?? "", sent: sentFiles(turn), reply, outputs };
+}
+
+/** The files the owner attached to a turn's message, shaped like the files a turn made. */
+export function sentFiles(turn: Pick<Turn, "attachments">): ExchangeOutput[] {
+  return (turn.attachments ?? []).map((file) => ({
+    attachmentId: file.attachmentId,
+    mediaType: file.mediaType,
+    path: file.filename,
+  }));
 }

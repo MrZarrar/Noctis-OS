@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -621,13 +621,17 @@ describe("the Claude Agent SDK runtime", () => {
 
   describe("permissions: the agent decides the everyday, Noctis confirms the consequential", () => {
     /** A turn held open, so its tool calls have someone to ask. */
-    async function held(decision: RuntimeAnswer["decision"] = "allow", reason?: string) {
+    async function held(
+      decision: RuntimeAnswer["decision"] = "allow",
+      reason?: string,
+      roots: RuntimeTurnInput["roots"] = ROOTS,
+    ) {
       const { query, calls } = scripted(async function* () {
         yield init();
         await new Promise(() => undefined);
       });
       const r = recorder(decision, reason);
-      const turn = createClaudeRuntime({ query }).turn(input(), r.sink);
+      const turn = createClaudeRuntime({ query }).turn({ ...input(), roots }, r.sink);
 
       turn.catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -721,6 +725,23 @@ describe("the Claude Agent SDK runtime", () => {
       expect(
         r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id, ask.askedBy]),
       ).toEqual([["file_change", "external_write", "C:\\ref\\b.ts", "noctis"]]);
+    });
+
+    it("lets a new note into the MindVault inbox, and still asks before changing an existing one", async () => {
+      const vault = mkdtempSync(join(tmpdir(), "noctis-vault-"));
+      mkdirSync(join(vault, "agent"));
+      writeFileSync(join(vault, "agent", "brain.md"), "# Brain");
+      const { r, gate } = await held("allow", undefined, { ...ROOTS, readable: [vault] });
+
+      await expect(
+        gate("Write", { file_path: join(vault, "inbox", "2026-10-26-the-dreamer-draft.md") }),
+      ).resolves.toEqual({});
+      await expect(
+        gate("Edit", { file_path: join(vault, "projects", "suno-music.md") }),
+      ).resolves.toEqual(allowed);
+      expect(r.asks.map((ask) => ask.target.id)).toEqual([
+        join(vault, "projects", "suno-music.md"),
+      ]);
     });
 
     it("turns the core's deny into a deny, in the core's words or a fixed one", async () => {

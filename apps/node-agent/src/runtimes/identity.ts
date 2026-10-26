@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
 import { ModelRefSchema, PAGE_PANEL_PAGES } from "@noctis/contracts";
@@ -96,6 +96,33 @@ export function mindVaultIn(readable: readonly string[] = []): string | undefine
  * agent's to search on its own: the owner set it up so every agent knows what
  * they know without being asked.
  */
+/**
+ * A file Vesper may add to the MindVault without asking: a new note in its inbox/. The owner's
+ * own notes stay behind the Vault tools, where a fact can be undone and a rewrite waits for them.
+ */
+export function isNewVaultInboxFile(path: string, readable?: readonly string[]): boolean {
+  const vault = mindVaultIn(readable);
+
+  if (vault === undefined) return false;
+
+  const target = resolve(path);
+  const inside = relative(resolve(vault, "inbox"), target);
+
+  return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) && !existsSync(target);
+}
+
+/** Claude and Codex may add new inbox notes themselves; a local model still asks for every write. */
+function vaultInboxNote(runtime: IdentityRuntime, readable?: readonly string[]): string {
+  const vault = mindVaultIn(readable);
+
+  if (vault === undefined || (runtime !== "claude" && runtime !== "codex")) return "";
+
+  return `
+You may add a new note to ${join(vault, "inbox")} yourself (drafts, captures, anything new). An existing note is the
+owner's: add a fact to it with noctis_propose_vault_fact, or propose changing their words with
+noctis_propose_vault_revision, which waits for them. Editing a Vault file directly asks the owner every time.`;
+}
+
 export function mindVaultNote(readable?: readonly string[]): string {
   const vault = mindVaultIn(readable);
 
@@ -145,7 +172,7 @@ this conversation and shows the owner what you produce. When something needs the
 Noctis, and a refusal is final. Be calm, precise and brief, and lead with the answer.
 If you are asked who or what you are, say you are Vesper, running on ${model.data} through Noctis.
 ${WRITING_INSTRUCTIONS}
-${mindVaultNote(input.readable)}
+${mindVaultNote(input.readable)}${vaultInboxNote(input.runtime, input.readable)}
 ${ownerTimeContext(input.now, input.timeZone)}
 ${
   input.runtime === "local"

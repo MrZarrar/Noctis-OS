@@ -3,7 +3,7 @@ import type * as ReactModule from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CompositionState } from "./useComposition.js";
-import { Workbench } from "./Workbench.js";
+import { Workbench, panelTitle } from "./Workbench.js";
 import { floatingPanels } from "./floating.js";
 
 const effects = vi.hoisted(() => ({
@@ -108,4 +108,22 @@ it("does not save stale geometry after the layout effect acknowledges an owner m
   expect(floatingPanels.snapshot()[0]?.geometry).toEqual(moved);
   effects.passive.forEach((effect) => effect());
   expect(JSON.parse(storage.getItem("geometry-effect") ?? "null")).toEqual({ panel: moved });
+});
+
+it("names a panel by its own title, and by its kind only when it cannot render", () => {
+  expect(
+    panelTitle({
+      kind: "document",
+      payloadVersion: 1,
+      minSize: "compact",
+      payload: {
+        title: "The Dreamer - draft A",
+        format: "markdown",
+        content: { from: "inline", text: "Verse one" },
+      },
+    }),
+  ).toBe("The Dreamer - draft A");
+  expect(
+    panelTitle({ kind: "no_such_kind", payloadVersion: 1, minSize: "compact", payload: {} }),
+  ).toBe("no_such_kind");
 });

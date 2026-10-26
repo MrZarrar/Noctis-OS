@@ -512,6 +512,12 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
           ) && state.turns.every((status) => status === "completed"),
         "the turn with the pasted screenshot never completed",
       );
+
+      // With a bearer token an <img> cannot authenticate, so the file is named instead.
+      const mine = page
+        .locator('[data-entry="message"][data-role="user"]')
+        .filter({ hasText: "PASTE: look at this" });
+      assert.match(await mine.innerText(), /screenshot-\d{8}-\d{6}\.png/);
     },
   );
 

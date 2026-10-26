@@ -169,3 +169,30 @@ MCP prompts, which is where the browser and desktop checks live, so Noctis leave
   app-server starts, and stays off when that cannot be read.
 - Hermes (Jester and local models): unchanged.
 - Vesper's card no longer says every action that leaves the PC needs an approval.
+
+## 11. Still too many asks, sent screenshots, and panel names (26 October)
+
+**Asked (owner):** Noctis still asked too often. A screenshot sent with a prompt could not be seen in the chat. The
+panel overflow list called every panel "document" instead of its title.
+
+**Found:**
+
+- The work PC's core and node had run since 23 October 13:53, before ADR-0037 was built, so the old checks were live.
+- Every ask that day was Vesper writing song drafts and edits straight into the MindVault, which is lent read-only.
+  That check stays after ADR-0037, so a restart alone would not have stopped them.
+- Sent attachments reached the core and the agent, but the thread never showed them.
+- The overflow list printed the panel's kind. The panel header and the tray already resolved its title.
+
+**Decided (owner):** option B of three: new notes in the MindVault `inbox/` go in without asking; existing notes only
+through the Vault tools. Rejected: writes anywhere in the MindVault (no undo through Noctis), and keeping it fully
+read-only (drafts would live outside the Vault).
+
+**Built:**
+
+- Claude and Codex add a new file under the MindVault `inbox/` without asking. Vesper's card says so and points to
+  `noctis_propose_vault_fact` and `noctis_propose_vault_revision` for existing notes. Local models still ask.
+- A turn carries the files sent with it. Threads shows them under the owner's message, and Presence under the latest
+  line: images as thumbnails, other files as a link.
+- The overflow list names panels by their titles.
+
+**Open:** the owner restarts the work PC core and node to pick this up, and the home PC from its own steps.

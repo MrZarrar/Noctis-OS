@@ -482,7 +482,7 @@ describe("Threads desktop panels", () => {
         await overflow.locator("summary").click();
         await overflow
           .locator("li")
-          .filter({ hasText: "list" })
+          .filter({ hasText: "Choices" })
           .getByRole("button", { name: "Show", exact: true })
           .click();
         await choices.waitFor();

@@ -33,7 +33,12 @@ import { installCodexRules } from "./codex-rules.js";
 import { childEnvironment } from "./env.js";
 import { trackChild } from "./orphans.js";
 import { killProcessTree, type KillableChild } from "./kill-tree.js";
-import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
+import {
+  identityCard,
+  isNewVaultInboxFile,
+  ownerClockBlock,
+  isOwnerClockBlock,
+} from "./identity.js";
 import { DELEGATE_TOOL_DESCRIPTION } from "../proposal-tools.js";
 import type { StdioServer } from "./mcp-config.js";
 import {
@@ -861,9 +866,18 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             }
             case "item/fileChange/requestApproval": {
               const p = ItemIdSchema.parse(params);
-              const paths = (started.get(p.itemId)?.changes ?? [])
-                .slice(0, 200)
-                .map((c) => clip(c.path, 1024));
+              const changes = started.get(p.itemId)?.changes ?? [];
+              const paths = changes.slice(0, 200).map((c) => clip(c.path, 1024));
+
+              // The owner's one exception to a read-only MindVault (2026-10-26): new notes in inbox/.
+              if (
+                changes.length > 0 &&
+                changes.every(
+                  (c) => c.kind.type === "add" && isNewVaultInboxFile(c.path, roots.readable),
+                )
+              ) {
+                return approval(true);
+              }
               const cls = classifyAsk({
                 kind: "file_change",
                 paths,

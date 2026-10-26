@@ -33,6 +33,7 @@ import { CompanionColumn } from "./CompanionColumn.js";
 import type { SurfaceContext } from "../surfaces/renderers.js";
 import { Page, buttonStyle, glass } from "../layout/Page.js";
 import { usePendingAction } from "../layout/ActionButton.js";
+import { sentFiles } from "../conversation/last-exchange.js";
 import { useBackLayer } from "../navigation/back.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { ProductivityReceipt, type OpenProductivity } from "./ProductivityReceipt.js";
@@ -43,6 +44,7 @@ import { conversationLabel, pinnedTo } from "./conversations-view.js";
 import type { FileTarget } from "./files-view.js";
 import { locateInRoots } from "./files-view.js";
 import { AgentMap } from "./AgentMap.js";
+import { ExchangeOutputs } from "./ExchangeOutputs.js";
 import { isTurnRunning, messageTime, turnActivity, turnTiming } from "./turn-activity.js";
 
 /** How near the end still counts as being at it: a thumb rarely lands on the last pixel. */
@@ -812,6 +814,17 @@ export function Threads({
                           </time>
                         </span>
                         <Markdown text={entry.message.body} />
+                        {entry.message.role === "user" && (
+                          <div style={{ display: "grid", gap: spacing.xs }}>
+                            <ExchangeOutputs
+                              outputs={sentFiles(
+                                turns.find((t) => t.userMessageId === entry.message.id) ?? {},
+                              )}
+                              outputUrl={outputUrl}
+                              mobile={false}
+                            />
+                          </div>
+                        )}
                       </motion.li>
                     );
                   }

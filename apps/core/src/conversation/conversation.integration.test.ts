@@ -1218,6 +1218,29 @@ describe("conversation service", () => {
     expect(node.answers()).toHaveLength(0);
   });
 
+  it("a turn carries the files sent with it, so the thread can show them under the message", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    await connectFake(core, directory);
+    await setDefault(core);
+
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const uploaded = await fetch(`${core.base}/attachments`, {
+      method: "POST",
+      headers: { ...authorized(), "content-type": "image/png", "x-noctis-filename": "shot.png" },
+      body: png,
+    });
+    expect(uploaded.status).toBe(200);
+    const attachment = (await uploaded.json()) as Body;
+
+    const sent = await send(core, "with-a-screenshot", { attachmentIds: [attachment.id] });
+    const turn = (await read(core, `/turns/${sent.body.id as string}`)).body;
+
+    expect(turn.attachments).toEqual([
+      { attachmentId: attachment.id, filename: "shot.png", mediaType: "image/png" },
+    ]);
+  });
+
   it("an approval keeps the exact command beside the outline it asks in", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));

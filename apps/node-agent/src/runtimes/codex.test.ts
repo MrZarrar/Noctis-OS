@@ -1,5 +1,12 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -913,6 +920,46 @@ describe("the Codex App Server runtime", () => {
         },
       }),
     ]);
+  });
+
+  it("adds a new note to the MindVault inbox without asking, and asks before changing one", async () => {
+    const vault = mkdtempSync(join(tmpdir(), "noctis-vault-"));
+    mkdirSync(join(vault, "agent"));
+    writeFileSync(join(vault, "agent", "brain.md"), "# Brain");
+    const draft = join(vault, "inbox", "2026-10-26-draft.md");
+    const note = join(vault, "projects", "suno-music.md");
+    const decisions: string[] = [];
+    const { runtime: codex } = runtime({
+      async turn(server, spawned) {
+        for (const [id, path, type] of [
+          ["f1", draft, "add"],
+          ["f2", note, "update"],
+        ] as const) {
+          server.notify(
+            "item/started",
+            itemNotification(spawned, {
+              type: "fileChange",
+              id,
+              changes: [{ path, kind: { type }, diff: "+1" }],
+              status: "inProgress",
+            }),
+          );
+          const answer = (await server.request("item/fileChange/requestApproval", {
+            threadId: spawned.threadId,
+            turnId: TURN_ID,
+            itemId: id,
+          })) as { decision: string };
+          decisions.push(answer.decision);
+        }
+        server.notify("turn/completed", turnCompleted(spawned, "completed"));
+      },
+    });
+    const r = recorder("allow");
+
+    await codex.turn({ ...input(), roots: { ...ROOTS, readable: [vault] } }, r.sink);
+
+    expect(decisions).toEqual(["accept", "accept"]);
+    expect(r.asks.map((ask) => ask.target.id)).toEqual([note]);
   });
 
   it("keeps the network the owner's own Codex config gives it", async () => {

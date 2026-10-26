@@ -430,3 +430,7 @@ shell still asks, because those tools are pre-allowed and the agent never review
 folder lent only for reading still asks, because the SDK lends every extra folder as writable. Codex
 runs with the owner's own network setting from `config/read`, off when it cannot be read. Hermes,
 and so Jester, has no auto mode and keeps Noctis's classifier for everything.
+
+**Amended (owner, 2026-10-26).** The MindVault stays read-only except for new notes in its
+`inbox/`, which Vesper on Claude or Codex adds without asking. An existing note changes only through
+the Vault tools (a fact the owner can undo, or a revision they approve); a direct edit still asks.

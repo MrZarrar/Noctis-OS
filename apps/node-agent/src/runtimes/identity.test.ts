@@ -10,6 +10,7 @@ import {
   WORKING_INSTRUCTIONS,
   WRITING_INSTRUCTIONS,
   identityCard,
+  isNewVaultInboxFile,
   isOwnerClockBlock,
   mindVaultIn,
   ownerClockBlock,
@@ -221,7 +222,22 @@ describe("the MindVault among a turn's folders", () => {
 
     expect(card).toContain(`shared with you, read only, at ${vault}`);
     expect(card).toContain("without waiting to be asked");
+    expect(card).toContain(`add a new note to ${join(vault, "inbox")}`);
+    expect(card).toContain("noctis_propose_vault_revision");
     expect(mindVaultIn([vault])).toBe(vault);
+  });
+
+  it("leaves the inbox out for a local model, where Noctis still asks before every Vault write", () => {
+    const vault = sharedVault();
+    const card = identityCard({
+      identityId: "vesper",
+      runtime: "local",
+      model: "qwen/qwen3.5-9b",
+      env: {},
+      readable: [vault],
+    });
+
+    expect(card).not.toContain("add a new note to");
   });
 
   it("says nothing about a path when no shared folder is the MindVault", () => {
@@ -272,5 +288,32 @@ describe("the targets beside the clock", () => {
 `);
     expect(block).toContain('"My PC"');
     expect(block).toContain("noctis_delegate");
+  });
+});
+
+describe("isNewVaultInboxFile", () => {
+  const vault = mkdtempSync(join(tmpdir(), "noctis-vault-"));
+  mkdirSync(join(vault, "agent"));
+  writeFileSync(join(vault, "agent", "brain.md"), "# Brain");
+  mkdirSync(join(vault, "inbox"));
+  writeFileSync(join(vault, "inbox", "kept.md"), "already here");
+  const readable = [vault];
+
+  it("lets a new note into the inbox, in any letter case", () => {
+    expect(isNewVaultInboxFile(join(vault, "inbox", "2026-10-26-draft.md"), readable)).toBe(true);
+    expect(isNewVaultInboxFile(join(vault, "INBOX", "draft.md"), readable)).toBe(
+      process.platform === "win32",
+    );
+  });
+
+  it("keeps an existing note, a note outside the inbox, and a way out of it", () => {
+    expect(isNewVaultInboxFile(join(vault, "inbox", "kept.md"), readable)).toBe(false);
+    expect(isNewVaultInboxFile(join(vault, "projects", "suno-music.md"), readable)).toBe(false);
+    expect(isNewVaultInboxFile(join(vault, "inbox", "..", "people", "x.md"), readable)).toBe(false);
+    expect(isNewVaultInboxFile(join(vault, "inbox"), readable)).toBe(false);
+  });
+
+  it("is never true without a MindVault among the readable folders", () => {
+    expect(isNewVaultInboxFile(join(vault, "inbox", "draft.md"), [])).toBe(false);
   });
 });

@@ -51,7 +51,12 @@ import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
 import { BILLING_KEYS } from "./env.js";
 import { trackChild } from "./orphans.js";
 import { killProcessTree, type KillableChild } from "./kill-tree.js";
-import { identityCard, ownerClockBlock, isOwnerClockBlock } from "./identity.js";
+import {
+  identityCard,
+  isNewVaultInboxFile,
+  ownerClockBlock,
+  isOwnerClockBlock,
+} from "./identity.js";
 import {
   DELEGATE_TOOL_DESCRIPTION,
   PRODUCTIVITY_TOOLS,
@@ -1014,6 +1019,15 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
           // that buys or sends, and `additionalDirectories` lends the read-only
           // folders as writable.
           if (!(SCREEN_TOOL.test(toolName) || ask.kind === "file_change")) {
+            return {};
+          }
+
+          // The owner's one exception to a read-only MindVault (2026-10-26): new notes in inbox/.
+          const paths = ask.detail?.paths ?? [];
+          if (
+            paths.length > 0 &&
+            paths.every((path) => isNewVaultInboxFile(path, roots.readable))
+          ) {
             return {};
           }
 

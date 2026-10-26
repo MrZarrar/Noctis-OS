@@ -662,6 +662,7 @@ export function Workbench({
         }}
         intents={byId}
         composition={composition}
+        capabilities={capabilities}
         onClose={close}
       />
       {ownPopouts.map((entry) => {
@@ -674,14 +675,37 @@ export function Workbench({
   );
 }
 
+/** What a panel is called: its own title when it renders, its kind only when it cannot. */
+export function panelTitle(
+  intent: Pick<SurfaceIntent, "kind" | "payloadVersion" | "payload" | "minSize">,
+  capabilities: readonly string[] = [],
+): string {
+  const resolved = resolveSurface(
+    intent.kind,
+    intent.payloadVersion,
+    intent.payload,
+    intent.minSize,
+    capabilities,
+  );
+
+  return resolved.status === "ok" ? resolved.title : intent.kind;
+}
+
 interface OverflowProps {
   onClose: (id: string) => Promise<void>;
   plan: CompositionPlan;
   intents: Map<string, SurfaceIntent>;
   composition: CompositionState;
+  capabilities: readonly string[];
 }
 
-function Overflow({ plan, intents, composition, onClose }: OverflowProps): JSX.Element | null {
+function Overflow({
+  plan,
+  intents,
+  composition,
+  onClose,
+  capabilities,
+}: OverflowProps): JSX.Element | null {
   if (plan.overflowSurfaceIds.length === 0) {
     return null;
   }
@@ -708,7 +732,9 @@ function Overflow({ plan, intents, composition, onClose }: OverflowProps): JSX.E
                 padding: spacing.xs,
               }}
             >
-              <span style={{ flex: 1 }}>{intent?.kind ?? "unknown"}</span>
+              <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+                {intent === undefined ? "unknown" : panelTitle(intent, capabilities)}
+              </span>
               <button
                 type="button"
                 onClick={() => {

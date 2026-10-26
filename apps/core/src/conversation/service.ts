@@ -81,6 +81,14 @@ export interface Turn {
   failureReason?: string;
   startedAt: string;
   completedAt?: string;
+  /** What the owner sent with the message, in the order they attached it. */
+  attachments?: SentAttachment[];
+}
+
+export interface SentAttachment {
+  attachmentId: string;
+  filename: string;
+  mediaType: string;
 }
 
 export interface Message {
@@ -108,6 +116,7 @@ type TurnRow = {
   failure_reason: string | null;
   started_at: string;
   completed_at: string | null;
+  attachments_json: string;
 };
 
 type MessageRow = {
@@ -121,7 +130,15 @@ type MessageRow = {
 
 const TURN_SELECT = `SELECT t.id, t.thread_id, th.identity_id, th.objective_id, t.user_message_id,
                             t.node_job_id, t.node_id, t.model_json, t.root_grant_id, t.status, t.items_json,
-                            t.reply_message_id, t.failure_reason, t.started_at, t.completed_at
+                            t.reply_message_id, t.failure_reason, t.started_at, t.completed_at,
+                            (SELECT json_group_array(json_object('attachmentId', a.id,
+                                                                 'filename', a.filename,
+                                                                 'mediaType', a.media_type))
+                               FROM (SELECT a.id, a.filename, a.media_type
+                                       FROM turn_attachments ta
+                                       JOIN attachments a ON a.id = ta.attachment_id
+                                      WHERE ta.turn_id = t.id
+                                      ORDER BY ta.position) a) AS attachments_json
                        FROM identity_turns t
                        JOIN identity_threads th ON th.id = t.thread_id`;
 
@@ -144,7 +161,14 @@ function toTurn(row: TurnRow): Turn {
     ...(row.failure_reason === null ? {} : { failureReason: row.failure_reason }),
     startedAt: row.started_at,
     ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+    ...attachmentsOf(row.attachments_json),
   };
+}
+
+function attachmentsOf(json: string): { attachments?: SentAttachment[] } {
+  const attachments = JSON.parse(json) as SentAttachment[];
+
+  return attachments.length === 0 ? {} : { attachments };
 }
 
 export function getTurn(db: NoctisDatabase, id: string): Turn | undefined {

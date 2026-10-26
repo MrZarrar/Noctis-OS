@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { Buffer } from "node:buffer";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -330,12 +331,29 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
 
       assert.ok(history.messages[0].includes(SEEDED), history.messages[0]);
 
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const uploaded = await fetch(`${CORE_URL}/attachments`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "image/png",
+          "x-noctis-filename": "sent-shot.png",
+        },
+        body: png,
+      });
+      assert.equal(uploaded.status, 200);
+      const sentShot = await uploaded.json();
+
       const live = await seed("conversation.send", {
         idempotencyKey: "e2e-tokenless-live",
         identityId: "vesper",
         threadId: seededThreadId,
         text: LIVE,
         model: MODEL,
+        attachmentIds: [sentShot.id],
       });
 
       assert.equal(live.status, 200, JSON.stringify(live.body));
@@ -350,6 +368,16 @@ describe("the tokenless front door: a page the core serves, a cookie it cannot r
       );
 
       assert.equal(streamed.messages.length, 2);
+
+      // The screenshot sent with it shows under the message, loaded through the cookie.
+      await page.waitForFunction(
+        () =>
+          document.querySelector(
+            '[data-entry="message"][data-role="user"] img[alt="sent-shot.png"]',
+          )?.naturalWidth > 0,
+        undefined,
+        { timeout: 10_000 },
+      );
 
       // 6. And a mutation in the other direction: a command the page sends,
       //    authenticated by the cookie and the CSRF header, from a real

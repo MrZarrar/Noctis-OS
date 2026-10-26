@@ -56,6 +56,13 @@ export const TurnSchema = z
     failureReason: z.string().min(1).optional(),
     startedAt: z.string().min(1),
     completedAt: z.string().min(1).optional(),
+    attachments: z
+      .array(
+        z
+          .object({ attachmentId: z.string().min(1), filename: z.string(), mediaType: z.string() })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 

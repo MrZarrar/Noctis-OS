@@ -63,6 +63,7 @@ describe("lastExchange", () => {
 
     expect(exchange).toEqual({
       you: "Give me one reason it fails.",
+      sent: [],
       reply: "Because panic",
       outputs: [],
     });
@@ -75,14 +76,14 @@ describe("lastExchange", () => {
         turns: [turn({ status: "completed", replyMessageId: "m-reply" })],
         streaming: new Map(),
       }),
-    ).toEqual({ you: "Hi", reply: "Fine.", outputs: [] });
+    ).toEqual({ you: "Hi", sent: [], reply: "Fine.", outputs: [] });
     expect(
       lastExchange({
         messages: [message("m-you", "user", "Hi")],
         turns: [turn({ status: "failed", failureReason: "LM Studio is not running" })],
         streaming: new Map(),
       }),
-    ).toEqual({ you: "Hi", reply: "Failed: LM Studio is not running", outputs: [] });
+    ).toEqual({ you: "Hi", sent: [], reply: "Failed: LM Studio is not running", outputs: [] });
   });
 
   it("follows the newest turn, not the first", () => {
@@ -95,7 +96,7 @@ describe("lastExchange", () => {
       streaming: new Map(),
     });
 
-    expect(exchange).toEqual({ you: "New", reply: "", outputs: [] });
+    expect(exchange).toEqual({ you: "New", sent: [], reply: "", outputs: [] });
   });
 
   it("carries the files the newest turn made, in order, and skips any it cannot fetch", () => {
@@ -124,6 +125,24 @@ describe("lastExchange", () => {
 
     expect(exchange?.outputs).toEqual([
       { attachmentId: outputId, mediaType: "image/png", path: "jester.png" },
+    ]);
+  });
+
+  it("carries the files the owner sent with the newest message", () => {
+    const exchange = lastExchange({
+      messages: [message("m-you", "user", "What is wrong here?")],
+      turns: [
+        turn({
+          attachments: [
+            { attachmentId: "a-1", filename: "screenshot.png", mediaType: "image/png" },
+          ],
+        }),
+      ],
+      streaming: new Map(),
+    });
+
+    expect(exchange?.sent).toEqual([
+      { attachmentId: "a-1", mediaType: "image/png", path: "screenshot.png" },
     ]);
   });
 });
