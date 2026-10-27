@@ -249,6 +249,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
   // (or NOCTIS_DIGEST_AT at start-up). It goes only to the owner's own phones.
   const digestTimer = createDailyTimer({
     clock,
+    logger: logger.child({ job: "digest" }),
     at: () => readSetting(db, env, "digestAt"),
     run: () => {
       const to = clock.now();
@@ -271,6 +272,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
   // One run a day; its key is the date, so a restart the same day cannot run it twice.
   const promoterTimer = createDailyTimer({
     clock,
+    logger: logger.child({ job: "vault promoter" }),
     at: () => readSetting(db, env, "promoterAt"),
     run: () => {
       const outcome = promoteNow(

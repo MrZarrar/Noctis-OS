@@ -16,6 +16,8 @@ import { hashOf } from "./writes.js";
  * proposals, and `promote.ts` decides what is written.
  */
 export const BATCH = 8;
+// Recall adds its own quotes and paths after this prompt is built.
+const PROMPT_BUDGET = 12_000;
 
 export interface InboxNote {
   path: string;
@@ -49,8 +51,10 @@ export function nextInboxBatch(db: NoctisDatabase, root: VaultRoot, max = BATCH)
     const text = raw.toString("utf8");
     const hash = hashOf(raw);
     if (isSensitiveNote(parseNote(text))) continue;
-    if (settled.get(path, hash) === undefined)
-      notes.push({ path, hash, text: text.slice(0, 6000) });
+    if (settled.get(path, hash) !== undefined) continue;
+    const note = { path, hash, text: text.slice(0, 6000) };
+    if (promoterPrompt([...notes, note]).length > PROMPT_BUDGET) break;
+    notes.push(note);
   }
   return notes;
 }

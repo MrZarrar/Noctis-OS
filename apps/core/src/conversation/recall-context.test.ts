@@ -16,6 +16,27 @@ function evidence(overrides: Partial<VaultRecallEvidence> = {}): VaultRecallEvid
 }
 
 describe("promptWithRecall", () => {
+  it("fits complete recall lines around the prompt within the runtime limit", () => {
+    const prompt = "x".repeat(12_000);
+    const recalled = Array.from({ length: 6 }, (_, i) =>
+      evidence({
+        path: `projects/${"nested/".repeat(85)}note-${i}.md`,
+        quote: "y".repeat(800),
+      }),
+    );
+    const composed = promptWithRecall(prompt, recalled);
+
+    expect(composed.length).toBeLessThanOrEqual(20_000);
+    expect(composed.endsWith(`\n\n${prompt}`)).toBe(true);
+    expect(composed).toContain(`${recalled[0]?.path} (current): ${"y".repeat(800)}`);
+    expect(composed).not.toContain(recalled[5]?.path);
+  });
+
+  it("leaves a full prompt intact when no recall line fits", () => {
+    const prompt = "x".repeat(20_000);
+    expect(promptWithRecall(prompt, [evidence()])).toBe(prompt);
+  });
+
   it("leaves a prompt alone when the Vault had nothing to say", () => {
     expect(promptWithRecall("what is the plan", [])).toBe("what is the plan");
   });

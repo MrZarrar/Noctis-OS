@@ -77,11 +77,14 @@ export function promptWithRecall(prompt: string, evidence: readonly VaultRecallE
     return prompt;
   }
 
-  const lines = evidence
-    .map((item) => `- ${item.path} (${item.freshness}): ${clip(item.quote, MAX_QUOTE)}`)
-    .join("\n");
+  let context = PREAMBLE;
+  for (const item of evidence) {
+    const candidate = `${context}\n- ${item.path} (${item.freshness}): ${clip(item.quote, MAX_QUOTE)}`;
+    if (candidate.length + prompt.length + 2 <= 20_000) context = candidate;
+  }
+  if (context === PREAMBLE) return prompt;
 
   // Before the prompt, not after: what the owner typed is the last thing the
   // model reads, so context never displaces the instruction.
-  return `${PREAMBLE}\n${lines}\n\n${prompt}`;
+  return `${context}\n\n${prompt}`;
 }

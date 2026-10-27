@@ -1,3 +1,4 @@
+import type { Logger } from "../logging.js";
 import { msUntilNext } from "./digest.js";
 
 /**
@@ -17,6 +18,7 @@ export function createDailyTimer(options: {
   /** `HH:MM`, or empty for off. */
   at: () => string;
   run: () => void;
+  logger?: Logger;
 }): DailyTimer {
   let pending: ReturnType<typeof setTimeout> | undefined;
 
@@ -37,8 +39,15 @@ export function createDailyTimer(options: {
 
     pending = setTimeout(() => {
       pending = undefined;
-      options.run();
-      schedule();
+      try {
+        options.run();
+      } catch (error) {
+        options.logger?.log("warn", "daily job failed", {
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      } finally {
+        schedule();
+      }
     }, wait);
     pending.unref?.();
   };

@@ -13,6 +13,7 @@ import { createIdFactory } from "@noctis/domain";
 import { createTestVault } from "@noctis/test-kit";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { promptWithRecall } from "../conversation/recall-context.js";
 import { openDatabase } from "../db/connection.js";
 import type { NoctisDatabase } from "../db/connection.js";
 import { migrate } from "../db/migrate.js";
@@ -252,6 +253,53 @@ describe("a revision", () => {
 });
 
 describe("the promoter's batch", () => {
+  it("leaves room for recall and offers the remaining notes on a later run", () => {
+    const { deps, root } = setup();
+    const db = deps.kernel.db;
+    const paths = Array.from({ length: 8 }, (_, i) => `inbox/2026-09-0${i + 1}.md`);
+    for (const path of paths) writeFileSync(join(root.path, path), "x".repeat(6000));
+
+    const batch = nextInboxBatch(db, root);
+    const prompt = promptWithRecall(
+      promoterPrompt(batch),
+      Array.from({ length: 6 }, () => ({
+        itemId: "0199a000-0000-7000-8000-00000000000a",
+        entityId: "0199a000-0000-7000-8000-00000000000b",
+        path: `projects/${"a".repeat(240)}.md`,
+        span: { start: 0, end: 800 },
+        quote: "y".repeat(800),
+        freshness: "current" as const,
+      })),
+    );
+
+    expect(prompt.length).toBeLessThan(19_000);
+    expect(batch.length).toBeGreaterThan(0);
+    expect(batch.length).toBeLessThan(8);
+    expect(batch[0]?.text).toBe("x".repeat(6000));
+    expect(batch.every((note) => note.text === "x".repeat(6000))).toBe(true);
+    offer(db, batch, "turn-budget", "2026-09-06T12:00:00Z");
+    const next = nextInboxBatch(db, root);
+    expect(next[0]?.path).toBe(paths[batch.length]);
+    expect(next.some((note) => batch.some((offered) => offered.path === note.path))).toBe(false);
+  });
+
+  it("trims a huge note without changing its content hash and caps the note count", () => {
+    const { deps, root } = setup();
+    const text = "x".repeat(50_000);
+    writeFileSync(join(root.path, "inbox/000-huge.md"), text);
+
+    const batch = nextInboxBatch(deps.kernel.db, root);
+    expect(batch[0]?.text).toBe(text.slice(0, 6000));
+    offer(deps.kernel.db, batch, "turn-huge", "2026-09-06T12:00:00Z");
+    expect(nextInboxBatch(deps.kernel.db, root)).toEqual([]);
+    expect(readNote(root, "inbox/000-huge.md")).toBe(text);
+
+    for (let i = 0; i < 10; i++) {
+      writeFileSync(join(root.path, `inbox/small-${i}.md`), "A fact.");
+    }
+    expect(nextInboxBatch(deps.kernel.db, root)).toHaveLength(8);
+  });
+
   it("offers a note once, again after a failed run or an edit", () => {
     const { deps, root } = setup();
     const db = deps.kernel.db;

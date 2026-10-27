@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createLogger } from "../logging.js";
 import { createDailyTimer } from "./daily.js";
 
 beforeEach(() => {
@@ -12,6 +13,47 @@ afterEach(() => {
 });
 
 describe("a daily timer", () => {
+  it("logs a failed run and schedules the next day", () => {
+    const lines: string[] = [];
+    const failure = new Error("daily job failed");
+    const run = vi.fn().mockImplementationOnce(() => {
+      throw failure;
+    });
+    const timer = createDailyTimer({
+      clock: { now: () => Date.now() },
+      at: () => "10:00",
+      run,
+      logger: createLogger({ sink: (line) => lines.push(line) }),
+    });
+
+    timer.start();
+    expect(() => vi.advanceTimersByTime(60 * 60_000)).not.toThrow();
+    expect(JSON.parse(lines[0] ?? "null") as unknown).toMatchObject({
+      level: "warn",
+      reason: failure.message,
+    });
+    vi.advanceTimersByTime(24 * 60 * 60_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    timer.stop();
+  });
+
+  it("keeps scheduling after a failed run without a logger", () => {
+    const run = vi.fn().mockImplementationOnce(() => {
+      throw new Error("failed");
+    });
+    const timer = createDailyTimer({
+      clock: { now: () => Date.now() },
+      at: () => "10:00",
+      run,
+    });
+
+    timer.start();
+    expect(() => vi.advanceTimersByTime(60 * 60_000)).not.toThrow();
+    vi.advanceTimersByTime(24 * 60 * 60_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    timer.stop();
+  });
+
   it("runs once a day at the time it is given", () => {
     const runs: number[] = [];
     const timer = createDailyTimer({
