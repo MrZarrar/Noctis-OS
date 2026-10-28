@@ -62,8 +62,7 @@ import { createProcessPool, processKey } from "./sessions.js";
  * the owner's own ~/.codex (plugins, skills, MCP servers) with three things
  * pinned: the model Noctis chose, `workspace-write` on the granted roots with
  * the network off, and approval `on-request`. Codex's own permission system
- * does the everyday work; anything it asks becomes a `sink.ask` the owner
- * answers, classified by `classifyAsk` so the card says what it is.
+ * does the everyday work; Noctis classifies its asks and confirms consequential actions.
  */
 
 /** What `spawn` returns, narrowed to what a turn touches so tests can hand in a fake. */
@@ -149,6 +148,7 @@ const ThreadItemSchema = z
     kind: z.string().optional(),
     server: z.string().optional(),
     agentPath: z.string().optional(),
+    agentThreadId: z.string().optional(),
     savedPath: z.string().nullable().optional(),
   })
   .loose();
@@ -297,6 +297,7 @@ const STATUS: Readonly<Record<string, RuntimeItemStatus>> = {
   inProgress: "in_progress",
   completed: "completed",
   failed: "failed",
+  interrupted: "failed",
   declined: "declined",
 };
 
@@ -446,14 +447,31 @@ function toRuntimeItem(item: ThreadItem, phase: "started" | "completed"): Runtim
     case "collabAgentToolCall":
       return {
         ...base,
-        kind: "sub_agent",
-        label: clip(typeof item.tool === "string" ? item.tool : "collab", 200),
+        kind: "tool_call",
+        tool: clip(`collaboration.${typeof item.tool === "string" ? item.tool : "call"}`, 128),
       };
     case "subAgentActivity":
+      if (item.kind === "interacted") {
+        return {
+          ...base,
+          kind: "tool_call",
+          tool: "collaboration.interact",
+          input: { agentPath: item.agentPath },
+        };
+      }
       return {
         ...base,
+        itemId: clip(`agent:${item.agentThreadId ?? item.agentPath ?? item.id}`, 128),
+        status:
+          item.kind === "completed"
+            ? "completed"
+            : item.kind === "interrupted"
+              ? "failed"
+              : item.kind === "started"
+                ? "in_progress"
+                : base.status,
         kind: "sub_agent",
-        label: clip(`${item.kind ?? ""} ${item.agentPath ?? ""}`.trim() || "sub-agent", 200),
+        label: clip(item.agentPath ?? "sub-agent", 200),
       };
     default:
       // reasoning, plan, webSearch, userMessage, …: Codex's bookkeeping, not evidence.
@@ -851,6 +869,10 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
                 readableRoots: roots.readable,
               });
 
+              if (!isConfirmLevel(cls.operationClass)) {
+                return approval(true);
+              }
+
               return approval(
                 await decide({
                   itemId: clip(p.itemId, 128),
@@ -867,23 +889,36 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
             case "item/fileChange/requestApproval": {
               const p = ItemIdSchema.parse(params);
               const changes = started.get(p.itemId)?.changes ?? [];
-              const paths = changes.slice(0, 200).map((c) => clip(c.path, 1024));
+              const changedPaths = changes.flatMap((change) => {
+                const destination = change.kind.move_path;
+                return destination === undefined || destination === null
+                  ? [change.path]
+                  : [change.path, typeof destination === "string" ? destination : ""];
+              });
+              const paths = changedPaths.slice(0, 200).map((path) => clip(path, 1024));
 
               // The owner's one exception to a read-only MindVault (2026-10-26): new notes in inbox/.
               if (
                 changes.length > 0 &&
                 changes.every(
-                  (c) => c.kind.type === "add" && isNewVaultInboxFile(c.path, roots.readable),
+                  (c) =>
+                    c.kind.type === "add" &&
+                    c.kind.move_path == null &&
+                    isNewVaultInboxFile(c.path, roots.readable),
                 )
               ) {
                 return approval(true);
               }
               const cls = classifyAsk({
                 kind: "file_change",
-                paths,
+                paths: changedPaths,
                 writableRoots: roots.writable,
                 readableRoots: roots.readable,
               });
+
+              if (!isConfirmLevel(cls.operationClass)) {
+                return approval(true);
+              }
 
               return approval(
                 await decide({

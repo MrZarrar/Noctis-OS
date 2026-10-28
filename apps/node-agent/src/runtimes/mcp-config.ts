@@ -24,15 +24,15 @@ import { dirname, join } from "node:path";
 export const BROWSER_SERVER = "browser";
 export const DESKTOP_SERVER = "desktop";
 
-/** Code run straight in the page or the server, which no ask could describe. */
-const RAW_CODE_TOOLS = new Set(["browser_evaluate", "browser_run_code_unsafe", "evaluate_script"]);
-const BROWSER_PREFIX = `mcp__${BROWSER_SERVER}__`;
+/** Unrestricted script runners stay unavailable; page evaluations pass through classification. */
+const RAW_CODE_TOOLS = new Set(["browser_run_code_unsafe", "evaluate_script"]);
+const BROWSER_PREFIX = /^mcp__(?:browser|playwright)__/;
 
 /** A tool this node does not lend: refused outright, never asked about. */
 export function refusedTool(toolName: string): boolean {
-  return (
-    toolName.startsWith(BROWSER_PREFIX) && RAW_CODE_TOOLS.has(toolName.slice(BROWSER_PREFIX.length))
-  );
+  const prefix = BROWSER_PREFIX.exec(toolName)?.[0];
+
+  return prefix !== undefined && RAW_CODE_TOOLS.has(toolName.slice(prefix.length));
 }
 
 /** The node's own home. The same fallback the proposals directory takes. */

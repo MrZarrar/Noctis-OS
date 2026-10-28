@@ -8,5 +8,5 @@ export const transitionSurfaceLifecycle = defineTransition<SurfaceLifecycle>("su
   active: ["background", "exiting"],
   background: ["active", "exiting"],
   exiting: ["dismissed"],
-  dismissed: [],
+  dismissed: ["proposed"],
 });

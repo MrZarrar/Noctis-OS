@@ -12,9 +12,15 @@ const props = {
   onPin() {},
   onSize() {},
   onClose() {},
+  async onHide() {},
 };
 
 describe("panel controls", () => {
+  it("offers separate hide and close actions", () => {
+    const markup = renderToStaticMarkup(createElement(PanelControls, props));
+    expect(markup).toContain('aria-label="Hide Approvals"');
+    expect(markup).toContain('aria-label="Close Approvals"');
+  });
   it("offers pop-out only when the host supplies the action", () => {
     expect(
       renderToStaticMarkup(createElement(PanelControls, { ...props, onPopout() {} })),

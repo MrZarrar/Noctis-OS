@@ -161,6 +161,36 @@ describe("turn activity", () => {
 });
 
 describe("agent map data", () => {
+  it("excludes saved Codex collaboration calls while preserving other providers' agent names", () => {
+    const items: RuntimeItem[] = [
+      { itemId: "spawn", kind: "sub_agent", label: "spawnAgent", status: "in_progress" },
+      { itemId: "wait", kind: "sub_agent", label: "wait", status: "completed" },
+    ];
+    expect(agentsOf([{ ...turn, items }])).toEqual([]);
+    expect(turnActivity(items, "codex")).toBeUndefined();
+    expect(
+      agentsOf([{ ...turn, model: { providerId: "claude", model: "test" }, items }]),
+    ).toHaveLength(2);
+  });
+  it("repairs saved Codex activity labels without changing stored rows", () => {
+    const items: RuntimeItem[] = [
+      { itemId: "start", kind: "sub_agent", label: "started /root/review", status: "completed" },
+      { itemId: "done", kind: "sub_agent", label: "completed /root/review", status: "in_progress" },
+      { itemId: "interaction", kind: "sub_agent", label: "interacted /root", status: "completed" },
+      {
+        itemId: "interrupted",
+        kind: "sub_agent",
+        label: "interrupted /root/build",
+        status: "in_progress",
+      },
+    ];
+    expect(agentsOf([{ ...turn, items }]).map((agent) => [agent.label, agent.status])).toEqual([
+      ["/root/build", "failed"],
+      ["/root/review", "completed"],
+    ]);
+    expect(turnActivity(items)).toBeUndefined();
+    expect(items[1]?.status).toBe("in_progress");
+  });
   const older: Turn = {
     ...turn,
     items: [
@@ -189,9 +219,25 @@ describe("agent map data", () => {
     expect(newestTurn([newer, older])).toBe(newer);
     expect(newestTurn([])).toBeUndefined();
     expect(agentsOf([newer, older]).map((agent) => [agent.label, agent.status])).toEqual([
-      ["Review", "completed"],
       ["Build", "failed"],
+      ["Review", "completed"],
     ]);
+  });
+
+  it("puts working agents first and newer agents first within each group", () => {
+    const items: Turn["items"] = [
+      { itemId: "old-done", kind: "sub_agent", status: "completed", label: "Old done" },
+      { itemId: "old-working", kind: "sub_agent", status: "in_progress", label: "Old working" },
+      { itemId: "new-done", kind: "sub_agent", status: "completed", label: "New done" },
+      { itemId: "new-working", kind: "sub_agent", status: "in_progress", label: "New working" },
+    ];
+    expect(agentsOf([{ ...turn, items }]).map((agent) => agent.itemId)).toEqual([
+      "new-working",
+      "old-working",
+      "new-done",
+      "old-done",
+    ]);
+    expect(items[0]?.itemId).toBe("old-done");
   });
 
   it("collects only the selected agent's steps with the latest status", () => {

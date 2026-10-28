@@ -102,18 +102,26 @@ export function AgentMap({
   const running = active !== undefined || agents.some((agent) => agent.status === "in_progress");
   const name =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
-  const activity = main === undefined ? undefined : turnActivity(main.items);
+  const activity = main === undefined ? undefined : turnActivity(main.items, main.model.providerId);
 
   return (
     <>
       <button
         type="button"
+        aria-label={`Agents · ${String(1 + agents.length + children.length)}`}
         aria-haspopup="dialog"
-        style={{ ...buttonStyle, display: "flex", alignItems: "center", gap: spacing.sm }}
+        style={{
+          ...buttonStyle,
+          display: "flex",
+          alignItems: "center",
+          gap: spacing.sm,
+          whiteSpace: "nowrap",
+          ...(mobile ? { paddingInline: spacing.sm } : {}),
+        }}
         onClick={() => dialog.current?.showModal()}
       >
         {running && <StatusDot status="running" pulse />}
-        {`Agents · ${String(1 + agents.length + children.length)}`}
+        {`Agents${mobile ? "" : " ·"} ${String(1 + agents.length + children.length)}`}
       </button>
       <dialog
         ref={dialog}
@@ -255,23 +263,25 @@ export function AgentMap({
                 </details>
               );
             })}
-            {children.map((child, index) => (
-              <article key={child.id} data-thread={child.id} style={card}>
-                <strong>{child.title ?? `Delegated thread ${String(index + 1)}`}</strong>
-                <p style={{ color: typography.color.muted }}>Delegated thread</p>
-                <button
-                  type="button"
-                  disabled={onOpenThread === undefined}
-                  style={buttonStyle}
-                  onClick={() => {
-                    dialog.current?.close();
-                    onOpenThread?.(child.id);
-                  }}
-                >
-                  Open thread
-                </button>
-              </article>
-            ))}
+            {[...children]
+              .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+              .map((child, index) => (
+                <article key={child.id} data-thread={child.id} style={card}>
+                  <strong>{child.title ?? `Delegated thread ${String(index + 1)}`}</strong>
+                  <p style={{ color: typography.color.muted }}>Delegated thread</p>
+                  <button
+                    type="button"
+                    disabled={onOpenThread === undefined}
+                    style={buttonStyle}
+                    onClick={() => {
+                      dialog.current?.close();
+                      onOpenThread?.(child.id);
+                    }}
+                  >
+                    Open thread
+                  </button>
+                </article>
+              ))}
           </div>
         )}
       </dialog>

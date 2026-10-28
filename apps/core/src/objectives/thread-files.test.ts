@@ -118,7 +118,7 @@ describe("files and recall proposed on threads", () => {
       { kernel },
       event(THREAD, "node-a", [
         "C:/shared/note.md",
-        "C:/shared/code.html",
+        "C:/shared/summary.txt",
         "C:/shared/pic.png",
         "C:/shared/clip.mp4",
         "C:/shared/fifth.txt",
@@ -133,9 +133,58 @@ describe("files and recall proposed on threads", () => {
       content: { from: "file", nodeId: "node-a", grantId: "same", relativePath: "note.md" },
     });
     expect(
-      panels.find((p) => (p.payload as { title: string }).title === "code.html")?.payload,
+      panels.find((p) => (p.payload as { title: string }).title === "summary.txt")?.payload,
     ).toMatchObject({ format: "text" });
     expect(panels.filter((p) => p.kind === "media")).toHaveLength(2);
+  });
+  it.each([
+    "app.ts",
+    "view.TSX",
+    "app.js",
+    "build.mjs",
+    "view.jsx",
+    "style.css",
+    "page.html",
+    "page.htm",
+    "icon.svg",
+    "schema.xml",
+    "tool.py",
+    "run.sh",
+    "run.ps1",
+    "run.bat",
+    "package.json",
+    "events.jsonl",
+    "config.yaml",
+    "config.yml",
+    "config.toml",
+    "config.ini",
+    "debug.log",
+  ])("keeps source and working files off the canvas: %s", (name) => {
+    fixture();
+    proposeFor({ kernel }, event(THREAD, "node-a", [`C:/shared/${name}`]));
+    expect(listSurfaceIntents(kernel.db, { threadId: THREAD })).toHaveLength(0);
+  });
+  it("shows documents, tables and media after skipped source files, up to four panels", () => {
+    fixture();
+    proposeFor(
+      { kernel },
+      event(THREAD, "node-a", [
+        "C:/shared/app.ts",
+        "C:/shared/style.css",
+        "C:/shared/package.json",
+        "C:/shared/build.mjs",
+        "C:/shared/report.MD",
+        "C:/shared/results.csv",
+        "C:/shared/results.tsv",
+        "C:/shared/chart.png",
+        "C:/shared/fifth.txt",
+      ]),
+    );
+    expect(
+      listSurfaceIntents(kernel.db, { threadId: THREAD })
+        .map((panel) => (panel.payload as { title: string }).title)
+        .sort(),
+    ).toEqual(["chart.png", "report.MD", "results.csv", "results.tsv"]);
   });
   it("isolates equal paths and grant IDs by node and thread; repeat writes keep their panel and dismissed state", () => {
     fixture();

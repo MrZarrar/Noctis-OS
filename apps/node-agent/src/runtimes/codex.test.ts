@@ -364,6 +364,57 @@ const HAPPY: Scenario = {
 };
 
 describe("the Codex App Server runtime", () => {
+  it("uses agent activity kinds for lifecycle and keeps collaboration tool status separate", async () => {
+    const r = recorder();
+    await runtime({
+      turn(server, spawned) {
+        for (const [id, kind, phase] of [
+          ["start-event", "started", "completed"],
+          ["interaction-event", "interacted", "completed"],
+          ["done-event", "completed", "started"],
+          ["interrupted-event", "interrupted", "started"],
+        ]) {
+          server.notify(
+            `item/${phase}`,
+            itemNotification(spawned, {
+              type: "subAgentActivity",
+              id,
+              kind,
+              agentThreadId: "agent-thread",
+              agentPath: "/root/review",
+            }),
+          );
+        }
+        for (const status of ["completed", "failed", "interrupted"]) {
+          server.notify(
+            "item/completed",
+            itemNotification(spawned, {
+              type: "collabAgentToolCall",
+              id: `tool-${status}`,
+              tool: "spawnAgent",
+              status,
+            }),
+          );
+        }
+        server.notify("turn/completed", turnCompleted(spawned, "completed"));
+        return Promise.resolve();
+      },
+    }).runtime.turn(input(), r.sink);
+    expect(r.items.map((item) => [item.itemId, item.kind, item.status])).toEqual([
+      ["agent:agent-thread", "sub_agent", "in_progress"],
+      ["interaction-event", "tool_call", "completed"],
+      ["agent:agent-thread", "sub_agent", "completed"],
+      ["agent:agent-thread", "sub_agent", "failed"],
+      ["tool-completed", "tool_call", "completed"],
+      ["tool-failed", "tool_call", "failed"],
+      ["tool-interrupted", "tool_call", "failed"],
+    ]);
+    expect(
+      r.items
+        .filter((item) => item.kind === "sub_agent")
+        .every((item) => item.label === "/root/review"),
+    ).toBe(true);
+  });
   describe("noctis_delegate", () => {
     const args = {
       runtime: "claude" as const,
@@ -846,30 +897,7 @@ describe("the Codex App Server runtime", () => {
       },
     ]);
 
-    expect(r.asks).toEqual([
-      {
-        itemId: "c1",
-        kind: "command",
-        summary: "Runs echo",
-        operationClass: "read_inspect",
-        reversibility: "reversible",
-        capability: "runtime.command",
-        target: { type: "command", id: "echo hi" },
-        detail: { command: "echo hi", cwd: "C:\\work" },
-        askedBy: "runtime",
-      },
-      {
-        itemId: "f1",
-        kind: "file_change",
-        summary: "edit 1 file: C:\\work\\a.ts",
-        operationClass: "local_reversible_edit",
-        reversibility: "reversible",
-        capability: "runtime.file_change",
-        target: { type: "file_change", id: "C:\\work\\a.ts" },
-        detail: { paths: ["C:\\work\\a.ts"] },
-        askedBy: "runtime",
-      },
-    ]);
+    expect(r.asks).toEqual([]);
 
     expect(evidence).toEqual({
       model: { providerId: "codex", model: "gpt-5.5" },
@@ -883,7 +911,7 @@ describe("the Codex App Server runtime", () => {
     expect(s?.child.killed).toBe(false);
   });
 
-  it("turns the core's deny into a decline, and the item arrives declined", async () => {
+  it("runs routine commands and workspace edits without asking the core", async () => {
     const { runtime: codex, spawned } = runtime(HAPPY);
     const r = recorder("deny");
 
@@ -892,13 +920,124 @@ describe("the Codex App Server runtime", () => {
     expect(r.items.find((item) => item.itemId === "c1" && item.status !== "in_progress")).toEqual({
       itemId: "c1",
       kind: "command",
-      status: "declined",
+      status: "completed",
       command: "echo hi",
       cwd: "C:\\work",
+      output: "hi\n",
+      exitCode: 0,
     });
-    // A decline does not end the turn: Codex carries on and the next ask still arrives.
-    expect(r.asks.map((ask) => ask.kind)).toEqual(["command", "file_change"]);
+    expect(r.asks).toEqual([]);
     expect(spawned[0]?.child.killed).toBe(false);
+  });
+
+  it.each(["allow", "deny"] as const)(
+    "keeps consequential commands and out-of-root edits subject to %s",
+    async (decision) => {
+      const outcomes: unknown[] = [];
+      const r = recorder(decision);
+      await runtime({
+        async turn(server, spawned) {
+          for (const [index, [command, cwd]] of [
+            ["npm test", "C:\\work"],
+            ["git push", "C:\\work"],
+            ["git reset --hard", "C:\\work"],
+            ["npm test", "C:\\elsewhere"],
+          ].entries()) {
+            outcomes.push(
+              await server.request("item/commandExecution/requestApproval", {
+                itemId: `c${String(index)}`,
+                command,
+                cwd,
+              }),
+            );
+          }
+          for (const [index, paths] of [
+            ["C:\\work\\a.ts"],
+            ["C:\\ref\\a.ts"],
+            [],
+            [
+              ...Array.from({ length: 200 }, (_, i) => `C:\\work\\${String(i)}.ts`),
+              "C:\\ref\\a.ts",
+            ],
+          ].entries()) {
+            const itemId = `f${String(index)}`;
+            server.notify(
+              "item/started",
+              itemNotification(spawned, {
+                type: "fileChange",
+                id: itemId,
+                status: "inProgress",
+                changes: paths.map((path) => ({ path, kind: { type: "update" }, diff: "+x" })),
+              }),
+            );
+            outcomes.push(await server.request("item/fileChange/requestApproval", { itemId }));
+          }
+          server.notify("turn/completed", turnCompleted(spawned, "completed"));
+        },
+      }).runtime.turn(input(), r.sink);
+      const gated = { decision: decision === "allow" ? "accept" : "decline" };
+      expect(outcomes).toEqual([
+        { decision: "accept" },
+        gated,
+        gated,
+        gated,
+        { decision: "accept" },
+        gated,
+        gated,
+        gated,
+      ]);
+      expect(r.asks.map((ask) => ask.operationClass)).toEqual([
+        "external_write",
+        "destructive",
+        "external_write",
+        "external_write",
+        "external_write",
+        "external_write",
+      ]);
+      expect(r.asks.every((ask) => ask.askedBy === "runtime")).toBe(true);
+    },
+  );
+
+  it("checks rename destinations before accepting a file edit", async () => {
+    const outcomes: unknown[] = [];
+    const r = recorder("deny");
+    await runtime({
+      async turn(server, spawned) {
+        for (const [index, destination] of [
+          "C:\\work\\renamed.ts",
+          "C:\\ref\\renamed.ts",
+          "C:\\work\\..\\ref\\renamed.ts",
+          42,
+        ].entries()) {
+          const itemId = `rename-${String(index)}`;
+          server.notify(
+            "item/started",
+            itemNotification(spawned, {
+              type: "fileChange",
+              id: itemId,
+              status: "inProgress",
+              changes: [
+                {
+                  path: "C:\\work\\a.ts",
+                  kind: { type: "update", move_path: destination },
+                  diff: "+x",
+                },
+              ],
+            }),
+          );
+          outcomes.push(await server.request("item/fileChange/requestApproval", { itemId }));
+        }
+        server.notify("turn/completed", turnCompleted(spawned, "completed"));
+      },
+    }).runtime.turn(input(), r.sink);
+    expect(outcomes).toEqual([
+      { decision: "accept" },
+      { decision: "decline" },
+      { decision: "decline" },
+      { decision: "decline" },
+    ]);
+    expect(r.asks).toHaveLength(3);
+    expect(r.asks[0]?.detail?.paths).toContain("C:\\ref\\renamed.ts");
   });
 
   it("runs workspace-write with approval on-request, and the network off when the config is unread", async () => {
@@ -1264,13 +1403,21 @@ describe("the Codex App Server runtime", () => {
   });
 
   it("fails the turn with the timeout's own words when nobody answers Codex's ask", async () => {
-    const { runtime: codex, spawned } = runtime(HAPPY);
+    const { runtime: codex, spawned } = runtime({
+      async turn(server) {
+        await server.request("item/commandExecution/requestApproval", {
+          itemId: "c1",
+          command: "git push",
+          cwd: "C:\\work",
+        });
+      },
+    });
     const r = recorder();
 
-    r.sink.ask = () => Promise.reject(new ApprovalTimedOut("echo hi", 600_000));
+    r.sink.ask = () => Promise.reject(new ApprovalTimedOut("git push", 600_000));
 
     await expect(codex.turn(input(), r.sink)).rejects.toThrow(
-      'approval timed out: "echo hi" was not answered within 10 minutes',
+      'approval timed out: "git push" was not answered within 10 minutes',
     );
     // A process left mid-ask is not one the next turn should inherit.
     expect(spawned[0]?.child.killed).toBe(true);
@@ -1511,15 +1658,54 @@ describe("the Codex App Server runtime", () => {
       expect(r.asks).toEqual([]);
     });
 
-    it("refuses raw code in the page without asking", async () => {
+    it("runs routine browser evaluations and resizes through either server name", async () => {
       const outcomes: unknown[] = [];
       const r = recorder("allow");
 
       await runtime(
-        asking([["browser", "browser_evaluate", { function: "() => 1" }]], outcomes),
+        asking(
+          [
+            ["browser", "browser_evaluate", { function: "() => document.title" }],
+            ["playwright", "browser_evaluate", { function: "() => document.title" }],
+            ["playwright", "browser_resize", { width: 1280, height: 720 }],
+          ],
+          outcomes,
+        ),
       ).runtime.turn(input(), r.sink);
 
-      expect(outcomes).toEqual([decline]);
+      expect(outcomes).toEqual([accept, accept, accept]);
+      expect(r.asks).toEqual([]);
+    });
+
+    it("keeps visible scripted sends subject to the owner's decision", async () => {
+      const outcomes: unknown[] = [];
+      const r = recorder("deny");
+      await runtime(
+        asking(
+          [
+            ["browser", "browser_evaluate", { function: "() => fetch('/send', {method: 'POST'})" }],
+            ["playwright", "browser_evaluate", { function: "() => document.forms[0].submit()" }],
+          ],
+          outcomes,
+        ),
+      ).runtime.turn(input(), r.sink);
+      expect(outcomes).toEqual([decline, decline]);
+      expect(r.asks.map((ask) => ask.operationClass)).toEqual(["external_write", "external_write"]);
+    });
+
+    it("refuses unrestricted script runners through either browser server name", async () => {
+      const outcomes: unknown[] = [];
+      const r = recorder("allow");
+      await runtime(
+        asking(
+          [
+            ["browser", "browser_run_code_unsafe", { code: "send()" }],
+            ["playwright", "browser_run_code_unsafe", { code: "send()" }],
+          ],
+          outcomes,
+        ),
+      ).runtime.turn(input(), r.sink);
+      expect(outcomes).toEqual([decline, decline]);
       expect(r.asks).toEqual([]);
     });
 

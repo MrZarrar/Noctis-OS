@@ -65,13 +65,16 @@ describe("the browser a runtime is lent", () => {
     expect(value(server?.args, "--output-dir")).toBe(join(profile, "output"));
   });
 
-  it("refuses only the tools that run raw code, on the browser server alone", () => {
-    for (const tool of ["browser_evaluate", "browser_run_code_unsafe", "evaluate_script"]) {
-      expect(refusedTool(`mcp__${BROWSER_SERVER}__${tool}`)).toBe(true);
+  it("refuses unrestricted script runners on both browser server names", () => {
+    for (const server of [BROWSER_SERVER, "playwright"]) {
+      for (const tool of ["browser_run_code_unsafe", "evaluate_script"]) {
+        expect(refusedTool(`mcp__${server}__${tool}`)).toBe(true);
+      }
     }
 
     for (const tool of [
       "browser_click",
+      "browser_evaluate",
       "browser_tabs",
       "browser_select_option",
       "browser_press_key",

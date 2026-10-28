@@ -16,6 +16,14 @@ it("describes the options panel, its pictures by path and its links", () => {
   expect(PANEL_TOOL_DESCRIPTION).toContain("url");
 });
 
+it("keeps source files off panels unless the owner asks to see them", () => {
+  expect(PANEL_TOOL_DESCRIPTION).toContain(
+    "Source code and configuration edits stay off the canvas",
+  );
+  expect(PANEL_TOOL_DESCRIPTION).toContain("only when the owner asks to see them");
+  expect(PANEL_TOOL_DESCRIPTION).toContain(".md, .txt, .csv and .tsv");
+});
+
 describe("checking a panel before it is recorded", () => {
   const base = { role: "primary", persistence: "restorable", priority: 50, payloadVersion: 1 };
 
@@ -71,6 +79,13 @@ describe("checking a panel before it is recorded", () => {
         ...base,
         surfaceKind: "document",
         payload: { title: "README", path: "C:\\r.md" },
+      }),
+    ).toBeUndefined();
+    expect(
+      surfaceProblem({
+        ...base,
+        surfaceKind: "document",
+        payload: { title: "Source", path: "C:\\app.ts" },
       }),
     ).toBeUndefined();
   });

@@ -16,6 +16,7 @@ export function Page({
   label,
   maxWidth = 1200,
   still = false,
+  compactHeader = false,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -27,8 +28,10 @@ export function Page({
   maxWidth?: number;
   /** Arrives without the fade, for a page whose content must not sit under one. */
   still?: boolean;
+  compactHeader?: boolean;
 }): JSX.Element {
   const mobile = useIsMobile();
+  const compact = mobile && compactHeader;
 
   return (
     <section
@@ -74,17 +77,17 @@ export function Page({
         <header
           style={{
             display: "flex",
-            flexWrap: "wrap",
+            flexWrap: compact ? "nowrap" : "wrap",
             alignItems: "center",
             gap: spacing.sm,
             rowGap: spacing.xs,
             // Stays put while the page scrolls, so Back and Conversations are
             // never a long scroll away.
             position: "sticky",
-            top: -spacing.lg,
+            top: compact ? -spacing.xs : -spacing.lg,
             zIndex: elevation.surface,
             marginInline: -spacing.sm,
-            padding: `${String(spacing.lg)}px ${String(spacing.sm)}px ${String(spacing.sm)}px`,
+            padding: `${String(compact ? spacing.xs : spacing.lg)}px ${String(spacing.sm)}px ${String(compact ? spacing.xs : spacing.sm)}px`,
             marginTop: -spacing.lg,
             background: "rgba(5, 4, 9, 0.5)",
             backdropFilter: `blur(${String(material.blurPx)}px)`,
@@ -95,7 +98,7 @@ export function Page({
             <h1
               style={{
                 margin: 0,
-                font: `600 ${String(typography.scale.xl)}px/1.15 ${typography.family}`,
+                font: `600 ${String(compact ? 18 : typography.scale.xl)}px/1.15 ${typography.family}`,
                 letterSpacing: typography.tracking.tight,
               }}
             >
@@ -103,14 +106,32 @@ export function Page({
             </h1>
             {subtitle !== undefined && (
               <p
-                style={{ margin: 0, color: typography.color.muted, fontSize: typography.scale.sm }}
+                style={{
+                  margin: 0,
+                  color: typography.color.muted,
+                  fontSize: compact ? 12 : typography.scale.sm,
+                  ...(compact
+                    ? { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+                    : {}),
+                }}
               >
                 {subtitle}
               </p>
             )}
           </div>
           {actions !== undefined && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: spacing.sm }}>{actions}</div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: compact ? "nowrap" : "wrap",
+                gap: spacing.sm,
+                ...(compact
+                  ? { flexShrink: 0, maxWidth: "calc(100% - 76px)", overflowX: "auto" }
+                  : {}),
+              }}
+            >
+              {actions}
+            </div>
           )}
         </header>
         {children}

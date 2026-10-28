@@ -38,7 +38,11 @@ export function usePresencePanels(
     ],
     hasPanels:
       thread.hasPanels ||
-      (composition.plan?.slots.length ?? 0) + (composition.plan?.overflowSurfaceIds.length ?? 0) >
+      (composition.plan?.slots.length ?? 0) +
+        (composition.plan?.overflowSurfaceIds.length ?? 0) +
+        composition.intents.filter(
+          (intent) => intent.lifecycle === "dismissed" || intent.lifecycle === "exiting",
+        ).length >
         0,
   };
 }

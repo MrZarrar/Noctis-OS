@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MediaPayloadSchema } from "@noctis/contracts";
 import { spacing } from "@noctis/ui";
 import { buttonStyle, glass } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";
 import { useBackLayer } from "../navigation/back.js";
 import { resolveSurface } from "../surfaces/registry.js";
 import { Workbench } from "../workbench/Workbench.js";
@@ -100,6 +101,13 @@ function entries(panels: ThreadPanelsState) {
       ...(plan?.slots.filter((slot) => slot.region !== "overlay").map((slot) => slot.surfaceId) ??
         []),
       ...(plan?.overflowSurfaceIds ?? []),
+      ...source.composition.intents
+        .filter(
+          (intent) =>
+            intent.kind !== "conversation" &&
+            (intent.lifecycle === "dismissed" || intent.lifecycle === "exiting"),
+        )
+        .map((intent) => intent.id),
     ].flatMap((id) => {
       const intent = source.composition.intents.find((intent) => intent.id === id);
       if (!intent) return [];
@@ -122,7 +130,10 @@ function entries(panels: ThreadPanelsState) {
           source,
           id,
           title: resolved.status === "ok" ? resolved.title : intent.kind,
-          overflow: plan?.overflowSurfaceIds.includes(id) ?? false,
+          overflow:
+            intent.lifecycle === "dismissed" ||
+            intent.lifecycle === "exiting" ||
+            (plan?.overflowSurfaceIds.includes(id) ?? false),
         },
       ];
     });
@@ -195,7 +206,7 @@ export function PanelTray({
           style={{ ...buttonStyle, flexShrink: 0 }}
           onClick={(event) => sheet.showOverflow(event.currentTarget)}
         >
-          +{overflow.length}
+          Panels ({overflow.length})
         </button>
       )}
     </nav>
@@ -242,15 +253,21 @@ export function PanelSheet({
               .filter((entry) => entry.overflow)
               .map((entry) => (
                 <li key={`${entry.source.owner}:${entry.id}`}>
-                  <button
+                  <ActionButton
                     type="button"
                     data-panel-owner={entry.source.owner}
                     data-panel-id={entry.id}
                     style={buttonStyle}
-                    onClick={(event) => sheet.show(entry.source, entry.id, event.currentTarget)}
+                    onAction={async () => {
+                      const trigger = document.activeElement as HTMLElement;
+                      if (!(await entry.source.composition.restore(entry.id)))
+                        throw new Error("Could not show this panel. Try again.");
+                      sheet.show(entry.source, entry.id, trigger);
+                    }}
+                    pendingLabel="Showing..."
                   >
                     Open panel {entry.title}
-                  </button>
+                  </ActionButton>
                 </li>
               ))}
           </ul>
@@ -277,6 +294,10 @@ export function PanelSheet({
               dismiss: async (id) => {
                 sheet.prepareClose();
                 await composition.dismiss(id);
+              },
+              move: async (id, region, size) => {
+                if (region === "overflow") sheet.prepareClose();
+                return composition.move(id, region, size);
               },
             }}
             updates={composition.updates ?? {}}

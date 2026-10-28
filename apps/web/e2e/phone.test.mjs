@@ -217,6 +217,56 @@ function readPicker(list) {
 }
 
 describe("the phone shell: the rail becomes a tab bar where a rail does not fit", () => {
+  it("uses the native status bar without the deprecated translucent viewport mode", async () => {
+    await page.setViewportSize(PHONE);
+    await page.goto(WEB_URL);
+    assert.equal(
+      await page.locator('meta[name="apple-mobile-web-app-status-bar-style"]').count(),
+      0,
+    );
+    assert.match(
+      (await page.locator('meta[name="viewport"]').getAttribute("content")) ?? "",
+      /viewport-fit=cover/,
+    );
+  });
+
+  it("anchors phone navigation at the viewport bottom while preserving home-indicator clearance", async () => {
+    await page.setViewportSize(PHONE);
+    const session = await page.context().newCDPSession(page);
+    try {
+      for (const bottom of [0, 34]) {
+        await session.send("Emulation.setSafeAreaInsetsOverride", {
+          insets: { top: 0, right: 0, bottom, left: 0 },
+        });
+        await page.goto(WEB_URL);
+        await page.locator('nav[aria-label="Primary"]').waitFor();
+        const geometry = await page.locator('nav[aria-label="Primary"]').evaluate((nav) => {
+          const rect = nav.getBoundingClientRect();
+          const last = nav.querySelector("button").getBoundingClientRect();
+          const shell = nav.parentElement;
+          return {
+            viewportBottom: globalThis.innerHeight,
+            navBottom: rect.bottom,
+            navHeight: rect.height,
+            padding: parseFloat(getComputedStyle(nav).paddingBottom),
+            buttonBottomGap: rect.bottom - last.bottom,
+            shellPadding: parseFloat(getComputedStyle(shell).paddingBottom),
+          };
+        });
+        assert.equal(geometry.navBottom, geometry.viewportBottom);
+        assert.equal(geometry.padding, bottom + 4);
+        assert.equal(geometry.buttonBottomGap, bottom + 4);
+        assert.equal(geometry.navHeight, TAB_BAR_HEIGHT + bottom);
+        assert.equal(geometry.shellPadding, geometry.navHeight);
+      }
+    } finally {
+      await session.send("Emulation.setSafeAreaInsetsOverride", {
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      });
+      await session.detach();
+    }
+  });
+
   before(async () => {
     for (const built of ["packages/ui/dist/index.js", "apps/core/dist/main.js", AGENT_MAIN]) {
       assert.ok(
@@ -1040,6 +1090,7 @@ describe("the phone shell: the rail becomes a tab bar where a rail does not fit"
         (state) => !state.body.includes("Show archived"),
         "the new conversation never opened",
       );
+      await page.getByRole("button", { name: "Show composer details", exact: true }).click();
       const button = page.getByRole("button", { name: /^PC and folder/ });
       const before = await button.getAttribute("aria-label");
       await button.click();

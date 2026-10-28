@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import { buttonStyle } from "../layout/Page.js";
 import type { PickerOption } from "../layout/Picker.js";
 import { Picker } from "../layout/Picker.js";
+import { useIsMobile } from "../layout/useIsMobile.js";
 import { useBackLayer } from "../navigation/back.js";
 import { AttachmentPreview } from "./AttachmentPreview.js";
 import { carriesFiles } from "./file-drops.js";
@@ -343,6 +344,8 @@ export function PromptForm({
   onWake,
   wakeWhileTyping = true,
 }: PromptFormProps): JSX.Element {
+  const mobile = useIsMobile();
+  const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
   const wakeGuard = useRef(createWakeGuard());
 
@@ -447,9 +450,10 @@ export function PromptForm({
           Array.from(event.dataTransfer.files).filter((file) => ALLOWED_TYPES.includes(file.type)),
         );
       }}
-      style={{ display: "grid", gap: spacing.sm, width: "100%" }}
+      style={{ display: "grid", gap: spacing.sm, width: "100%", minWidth: 0 }}
     >
-      {((onSwitchIdentity !== undefined && lockedTo === undefined) ||
+      {(mobile ||
+        (onSwitchIdentity !== undefined && lockedTo === undefined) ||
         aside !== undefined ||
         status !== undefined) && (
         <div
@@ -460,45 +464,84 @@ export function PromptForm({
             gap: spacing.sm,
           }}
         >
-          <div style={{ display: "grid", gap: spacing.sm, minWidth: 0, flex: "0 1 auto" }}>
-            {onSwitchIdentity !== undefined && lockedTo === undefined && (
-              <div
-                role="group"
-                aria-label="Who to talk to"
-                style={{ display: "flex", gap: spacing.xs }}
+          <div
+            style={{
+              display: "grid",
+              gap: spacing.sm,
+              minWidth: 0,
+              flex: mobile ? "1 1 auto" : "0 1 auto",
+            }}
+          >
+            {mobile && (
+              <button
+                type="button"
+                aria-label={expanded ? "Hide composer details" : "Show composer details"}
+                aria-expanded={expanded}
+                onClick={() => setExpanded(!expanded)}
+                style={{
+                  ...buttonStyle,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing.sm,
+                  minWidth: 0,
+                  paddingInline: spacing.sm,
+                }}
               >
-                {IDENTITY_PROFILES.map((profile) => {
-                  const active = profile.id === identityId;
-                  const accent = identityAccent[profile.id].primary;
-
-                  return (
-                    <button
-                      key={profile.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => {
-                        if (!active) {
-                          setChosen(undefined);
-                          onSwitchIdentity(profile.id);
-                        }
-                      }}
-                      style={{
-                        ...switchStyle,
-                        ...(active ? { borderColor: accent, color: accent } : {}),
-                      }}
-                    >
-                      {profile.id === "jester" ? (
-                        <JesterGlyph size={14} />
-                      ) : (
-                        <span aria-hidden="true">✦</span>
-                      )}
-                      {profile.displayName}
-                    </button>
-                  );
-                })}
-              </div>
+                <span
+                  style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  {displayName} · {selected?.label ?? selected?.model ?? "Choose agent"}
+                </span>
+                <span>{expanded ? "Hide" : "Details"}</span>
+              </button>
             )}
-            {status?.(selected?.providerId)}
+            <div
+              style={{
+                display: mobile && !expanded ? "none" : "grid",
+                gap: spacing.sm,
+                minWidth: 0,
+              }}
+            >
+              {onSwitchIdentity !== undefined && lockedTo === undefined && (
+                <div
+                  role="group"
+                  aria-label="Who to talk to"
+                  style={{ display: "flex", gap: spacing.xs }}
+                >
+                  {IDENTITY_PROFILES.map((profile) => {
+                    const active = profile.id === identityId;
+                    const accent = identityAccent[profile.id].primary;
+
+                    return (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => {
+                          if (!active) {
+                            setChosen(undefined);
+                            onSwitchIdentity(profile.id);
+                          }
+                        }}
+                        style={{
+                          ...switchStyle,
+                          ...(active ? { borderColor: accent, color: accent } : {}),
+                        }}
+                      >
+                        {profile.id === "jester" ? (
+                          <JesterGlyph size={14} />
+                        ) : (
+                          <span aria-hidden="true">✦</span>
+                        )}
+                        {profile.displayName}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {status?.(selected?.providerId)}
+            </div>
           </div>
           {aside}
         </div>
@@ -511,7 +554,7 @@ export function PromptForm({
           }
           value={text}
           disabled={disabled}
-          rows={2}
+          rows={mobile && !expanded ? 1 : 2}
           onChange={(event) => {
             setText(event.target.value);
 
@@ -547,7 +590,8 @@ export function PromptForm({
           }}
           style={{
             width: "100%",
-            minHeight: 52,
+            minWidth: 0,
+            minHeight: mobile ? 44 : 52,
             boxSizing: "border-box",
             padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
             background: material.fill,
@@ -653,7 +697,7 @@ export function PromptForm({
           started with. */}
       <div
         style={{
-          display: "grid",
+          display: mobile && !expanded ? "none" : "grid",
           gridTemplateColumns: canAttach
             ? "minmax(0, 1fr) minmax(0, 1fr) auto"
             : "minmax(0, 1fr) minmax(0, 1fr)",

@@ -13,6 +13,7 @@ src-tauri/target/
 .noctis/
 test-results/
 playwright-report/
+.playwright-mcp/
 apps/desktop/src-tauri/gen/
 
 # Fixture Vault written by scripts/fixtures/create-test-vault.mjs.

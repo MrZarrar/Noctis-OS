@@ -203,6 +203,65 @@ function surfacesPath(objectiveId: string): string {
 }
 
 describe("the Objective and Surface vertical slice", () => {
+  it("keeps updated panels hidden and restores the same closed intent", async () => {
+    const core = await freshCore();
+    const objectiveId = await draftObjective(core);
+    const first = await upsert(core, objectiveId, {
+      kind: "detail",
+      role: "supporting",
+      sourceIds: ["0199a000-0000-7000-8000-0000000000d1"],
+    });
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          idempotencyKey: key("hide"),
+          objectiveId,
+          clientId: CLIENT,
+          display: { fingerprint: FINGERPRINT, widthPx: 3440 },
+          attentionState: "active_canvas",
+          placements: [{ surfaceId: first.id, region: "overflow", size: "compact" }],
+        })
+      ).status,
+    ).toBe(200);
+    const updated = await upsert(core, objectiveId, {
+      kind: "detail",
+      role: "supporting",
+      sourceIds: first.sourceIds,
+      payload: { title: "Updated" },
+    });
+    expect(updated.id).toBe(first.id);
+    expect((await composed(core, objectiveId)).plan.overflowSurfaceIds).toContain(first.id);
+    for (const lifecycle of ["dismissed", "proposed"]) {
+      expect(
+        (
+          await command(core, "surface.change_lifecycle", {
+            idempotencyKey: key(lifecycle),
+            surfaceId: first.id,
+            lifecycle,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await command(core, "surface.arrange", {
+          idempotencyKey: key("show"),
+          objectiveId,
+          clientId: CLIENT,
+          display: { fingerprint: FINGERPRINT, widthPx: 3440 },
+          attentionState: "active_canvas",
+          placements: [{ surfaceId: first.id, region: "centre", size: "compact" }],
+        })
+      ).status,
+    ).toBe(200);
+    const response = await read(core, surfacesPath(objectiveId));
+    const intents = response.body.intents as SurfaceIntent[];
+    expect(intents).toHaveLength(1);
+    expect(intents[0]).toMatchObject({ id: first.id, payload: { title: "Updated" } });
+    expect((await composed(core, objectiveId)).plan.slots.map((slot) => slot.surfaceId)).toContain(
+      first.id,
+    );
+  });
   it("arranges panels atomically, swaps same-region order and isolates owners", async () => {
     const core = await freshCore();
     const objectiveId = await draftObjective(core);

@@ -287,6 +287,120 @@ describe("Threads desktop panels", () => {
       .waitFor();
     return created.body.id;
   }
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    it(
+      `hides, updates and restores the same closed panel at ${viewport.width}px`,
+      { timeout: 120000 },
+      async () => {
+        const title = `Recover panel ${viewport.width}`;
+        const threadId = await namedThread(title);
+        await page.setViewportSize(viewport);
+        const phone = viewport.width < 600;
+        const update = async (value) => {
+          const result = await coreCommand(CORE_URL, "surface.upsert_intent", {
+            idempotencyKey: `recover-${viewport.width}-${value}`,
+            threadId,
+            kind: "detail",
+            role: "supporting",
+            persistence: "ephemeral",
+            priority: 90,
+            minSize: "compact",
+            payloadVersion: 1,
+            sourceIds: ["0199a000-0000-7000-8000-0000000000d1"],
+            payload: { fields: [{ label: "Saved content", value }] },
+          });
+          assert.equal(result.status, 200);
+          return result.body.id;
+        };
+        const id = await update("Before hiding");
+        const frame = page.locator(`[data-surface-id="${id}"]`);
+        if (phone)
+          await page.getByRole("button", { name: "Open panel Detail", exact: true }).click();
+        let hideRequests = 0;
+        let releaseHide;
+        const heldHide = new Promise((resolve) => {
+          releaseHide = resolve;
+        });
+        const refuseHide = async (route) => {
+          hideRequests += 1;
+          await heldHide;
+          await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        };
+        await page.route("**/commands/surface.arrange", refuseHide);
+        const hide = frame.getByRole("button", { name: "Hide Detail", exact: true });
+        await hide.click();
+        await waitFor(() => hide.isDisabled(), Boolean, "Hide did not report its pending state");
+        await hide.dispatchEvent("click");
+        assert.equal(hideRequests, 1);
+        releaseHide();
+        await page.getByText("Could not hide this panel. Try again.", { exact: true }).waitFor();
+        assert.equal(await frame.isVisible(), true);
+        await page.unroute("**/commands/surface.arrange", refuseHide);
+        await frame.getByRole("button", { name: "Hide Detail", exact: true }).click();
+        await frame.waitFor({ state: "hidden" });
+        await waitFor(
+          () =>
+            page.evaluate(
+              () =>
+                document.activeElement?.tagName !== "BODY" && document.activeElement?.isConnected,
+            ),
+          Boolean,
+          "Hide lost keyboard focus",
+        );
+        assert.equal(await update("After hiding"), id);
+        await page.reload();
+        await openThreads();
+        await page.getByRole("button", { name: "Conversations", exact: true }).click();
+        await page.getByRole("button", { name: title, exact: true }).click();
+        await frame.waitFor({ state: "hidden" });
+        const show = async () => {
+          if (phone) {
+            await page.getByRole("button", { name: "Show 1 more panels", exact: true }).click();
+            await page
+              .getByRole("list", { name: "More panels" })
+              .getByRole("button", { name: "Open panel Detail", exact: true })
+              .click();
+          } else {
+            await page.locator("[data-tucked-panels] summary").click();
+            await page.getByRole("button", { name: "Show Detail", exact: true }).click();
+          }
+          await frame.getByText("After hiding", { exact: true }).waitFor();
+          await waitFor(
+            () =>
+              page.evaluate(
+                ({ id, phone }) =>
+                  phone
+                    ? document.activeElement?.closest('[aria-label="Panel sheet"]') !== null
+                    : document.activeElement
+                        ?.closest("[data-surface-id]")
+                        ?.getAttribute("data-surface-id") === id,
+                { id, phone },
+              ),
+            Boolean,
+            "Restore did not return focus to the panel",
+          );
+        };
+        await show();
+        await frame.getByRole("button", { name: "Close Detail", exact: true }).click();
+        await frame.waitFor({ state: "hidden" });
+        await show();
+        const saved = await coreRead(
+          CORE_URL,
+          `/threads/${threadId}/surfaces?clientId=recovery&fingerprint=recovery&widthPx=1440&attentionState=active_canvas`,
+        );
+        assert.deepEqual(
+          saved.body.intents
+            .filter((intent) => intent.kind === "detail")
+            .map((intent) => intent.id),
+          [id],
+        );
+        await frame.getByRole("button", { name: "Close Detail", exact: true }).click();
+      },
+    );
+  }
   for (const mode of ["fallback", "pip"]) {
     it(
       `THE GATE (pop-out ${mode}): live owner actions, one window, restoration and page cleanup`,

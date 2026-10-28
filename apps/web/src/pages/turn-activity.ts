@@ -86,9 +86,38 @@ export function turnTiming(turn: Turn, now: number): string {
   return `${turn.status === "completed" ? "" : `${status} · `}Worked ${duration}`;
 }
 
-function latestItems(items: readonly RuntimeItem[]): RuntimeItem[] {
+function latestItems(items: readonly RuntimeItem[], providerId?: string): RuntimeItem[] {
   const latest = new Map<string, RuntimeItem>();
-  for (const item of items) {
+  for (const raw of items) {
+    let item = raw;
+    if (raw.kind === "sub_agent") {
+      if (
+        providerId === "codex" &&
+        /^(spawnAgent|sendInput|resumeAgent|wait|closeAgent|sendMessage|followupTask|interruptAgent|listAgents|collab)$/.test(
+          raw.label,
+        )
+      )
+        continue;
+      const legacy = /^(started|completed|interrupted|interacted) (\/root(?:\/\S+)?)$/.exec(
+        raw.label,
+      );
+      if (legacy?.[1] === "interacted") continue;
+      if (legacy !== null) {
+        item = {
+          ...raw,
+          itemId: `legacy-agent:${legacy[2]}`,
+          label: legacy[2]!,
+          status:
+            raw.status === "failed" || raw.status === "declined"
+              ? raw.status
+              : legacy[1] === "completed"
+                ? "completed"
+                : legacy[1] === "interrupted"
+                  ? "failed"
+                  : "in_progress",
+        };
+      }
+    }
     latest.delete(item.itemId);
     latest.set(item.itemId, item);
   }
@@ -114,8 +143,11 @@ export function itemActivity(item: RuntimeItem): string | undefined {
   }
 }
 
-export function turnActivity(items: readonly RuntimeItem[]): string | undefined {
-  const newest = latestItems(items).reverse();
+export function turnActivity(
+  items: readonly RuntimeItem[],
+  providerId?: string,
+): string | undefined {
+  const newest = latestItems(items, providerId).reverse();
   const own = newest.filter((item) => item.parentItemId === undefined && item.kind !== "sub_agent");
   const active = own.find(
     (item) => item.status === "in_progress" && itemActivity(item) !== undefined,
@@ -151,9 +183,14 @@ export function newestTurn(turns: readonly Turn[]): Turn | undefined {
 export function agentsOf(
   turns: readonly Turn[],
 ): Array<Extract<RuntimeItem, { kind: "sub_agent" }>> {
-  return latestItems(orderedTurns(turns).flatMap((turn) => turn.items)).filter(
-    (item): item is Extract<RuntimeItem, { kind: "sub_agent" }> => item.kind === "sub_agent",
-  );
+  return latestItems(
+    orderedTurns(turns).flatMap((turn) => latestItems(turn.items, turn.model.providerId)),
+  )
+    .filter(
+      (item): item is Extract<RuntimeItem, { kind: "sub_agent" }> => item.kind === "sub_agent",
+    )
+    .reverse()
+    .sort((a, b) => Number(b.status === "in_progress") - Number(a.status === "in_progress"));
 }
 
 export function agentStepsOf(turns: readonly Turn[], agentId: string): RuntimeItem[] {

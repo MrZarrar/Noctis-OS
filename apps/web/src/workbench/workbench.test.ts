@@ -101,6 +101,7 @@ it("does not save stale geometry after the layout effect acknowledges an owner m
     move: () => Promise.resolve(true),
     release: async () => {},
     dismiss: async () => {},
+    restore: () => Promise.resolve(true),
     refresh() {},
   };
   renderToStaticMarkup(createElement(Workbench, { composition }));

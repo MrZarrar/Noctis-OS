@@ -31,6 +31,33 @@ const visible = (store: FloatingPanels) =>
     .map(({ id }) => id);
 
 describe("browser floating panels", () => {
+  it("keeps explicitly hidden panels hidden through updates and restores the same owner entry", async () => {
+    const shown: string[] = [];
+    const store = new FloatingPanels();
+    const hidden = { ...panel("1"), hidden: true, pinned: true };
+    store.sync("owner", {
+      ...group([hidden]),
+      onShow: (id) => {
+        shown.push(id);
+        return Promise.resolve(true);
+      },
+    });
+    expect(visible(store)).toEqual([]);
+    store.sync("owner", {
+      ...group([{ ...hidden, revision: "new" }]),
+      onShow: (id) => {
+        shown.push(id);
+        return Promise.resolve(true);
+      },
+    });
+    expect(visible(store)).toEqual([]);
+    expect(store.snapshot()[0]).toMatchObject({ tucked: true, updated: true });
+    expect(await store.show("another-thread", "1")).toBe(false);
+    expect(await store.show("thread", "1")).toBe(true);
+    expect(shown).toEqual(["1"]);
+    store.sync("owner", group([panel("1")]));
+    expect(visible(store)).toEqual(["1"]);
+  });
   it("keeps a previously opened panel reachable when the core moves it to overflow", () => {
     const slot = {
       surfaceId: "2",

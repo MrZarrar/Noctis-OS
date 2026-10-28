@@ -2,6 +2,7 @@ import type { SurfaceSize } from "@noctis/contracts";
 import { PanelIcon, spacing } from "@noctis/ui";
 import { buttonStyle } from "../layout/Page.js";
 import { Picker } from "../layout/Picker.js";
+import { ActionButton } from "../layout/ActionButton.js";
 
 export interface PanelControlsProps {
   title: string;
@@ -11,7 +12,8 @@ export interface PanelControlsProps {
   onFocus: () => void;
   onPin: () => void;
   onSize: (size: SurfaceSize) => void;
-  onClose: () => void;
+  onClose: () => void | Promise<void>;
+  onHide: () => Promise<void>;
   onPopout?: (() => void) | undefined;
   popped?: boolean;
 }
@@ -25,6 +27,7 @@ export function PanelControls({
   onPin,
   onSize,
   onClose,
+  onHide,
   onPopout,
   popped = false,
 }: PanelControlsProps): JSX.Element {
@@ -67,9 +70,17 @@ export function PanelControls({
         onChange={onSize}
         style={{ width: "auto", minWidth: 88, flex: "0 1 auto" }}
       />
-      <button type="button" aria-label={`Close ${title}`} onClick={onClose} style={iconStyle}>
+      <ActionButton aria-label={`Hide ${title}`} onAction={onHide} pendingLabel="Hiding...">
+        Hide
+      </ActionButton>
+      <ActionButton
+        aria-label={`Close ${title}`}
+        onAction={onClose}
+        style={iconStyle}
+        pendingLabel="..."
+      >
         <PanelIcon glyph="close" />
-      </button>
+      </ActionButton>
       {onPopout !== undefined && (
         <button
           type="button"

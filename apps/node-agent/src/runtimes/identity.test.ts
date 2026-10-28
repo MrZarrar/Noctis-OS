@@ -170,6 +170,14 @@ describe("identityCard", () => {
     expect(WORKING_INSTRUCTIONS).toContain("wait for their pick");
   });
 
+  it("keeps source files off panels unless the owner asks to see them", () => {
+    expect(WORKING_INSTRUCTIONS).toContain(
+      "Source code and configuration edits stay off the canvas",
+    );
+    expect(WORKING_INSTRUCTIONS).toContain("only when the owner asks to see them");
+    expect(WORKING_INSTRUCTIONS).toContain(".md, .txt, .csv and .tsv");
+  });
+
   it("tells Vesper to write without the usual AI tells, on every runtime", () => {
     for (const runtime of ["claude", "codex", "hermes", "local"] as const) {
       expect(identityCard({ identityId: "vesper", runtime, model: "m", env: {} })).toContain(

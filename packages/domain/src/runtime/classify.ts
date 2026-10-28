@@ -130,19 +130,43 @@ export function unwrap(command: string): string {
  * sourced, an encoded or nested shell, an escape that splits a word the tables would know.
  * Whatever they hide, the owner sees it before it runs. Checked after the destructive and
  * external tables, which already catch what they can see.
+ *
+ * `python -c` and `node -e` are absent on purpose. The script is right there in the command,
+ * no more hidden than `python script.py`, and asking for every one that printed some JSON was
+ * most of what the owner was being asked to approve. A PowerShell started with `-File` runs a
+ * script the same way, so it is let through too.
  */
 const EVASION: readonly Rule[] = [
   ["Invoke-Expression", /\b(?:iex|invoke-expression)\b/],
-  ["a nested PowerShell", /(?:^|[\s;&|("'\\/])(?:powershell|pwsh)(?:\.exe)?["']?\s+-/],
+  [
+    "a nested PowerShell",
+    /(?:^|[\s;&|("'\\/])(?:powershell|pwsh)(?:\.exe)?["']?\s+(?!(?:-(?:noprofile|nologo|noninteractive|executionpolicy\s+\S+)\s+)*-file\b)-/,
+  ],
   ["a nested cmd /c", /(?:^|[\s;&|("'\\/])cmd(?:\.exe)?["']?\s+\/[ck]\b/],
   ["the call operator", new RegExp(String.raw`(?:^|[;|({]\s*)&\s*["'($]`)],
   ["dot-sourcing", new RegExp(String.raw`(?:^|[;&|({]\s*)\.\s+\S`)],
-  ["a backtick", /`/],
   ["eval", /\beval\b/],
   ["a nested shell -c", /(?:^|[\s;&|("'\\/])(?:bash|sh|zsh|dash)(?:\.exe)?\s+(?:-\S+\s+)*-\w*c\b/],
-  ["node -e", /\bnode(?:\.exe)?\s+(?:-\S+\s+)*?(?:-e|--eval|-p|--print)\b/],
-  ["python -c", /\b(?:python3?|py)(?:\.exe)?\s+(?:-\S+\s+)*?-c\b/],
 ];
+
+/**
+ * A heredoc whose delimiter is quoted (`<<'EOF'`, `<<"EOF"`) is passed through as written, so
+ * a backtick in its body is a Markdown code span or a Python string, never a substitution.
+ * Only the backtick check skips these bodies; the other tables still read every line.
+ */
+const QUOTED_HEREDOC = /<<-?\s*(['"])(\w+)\1[^\n]*\n[\s\S]*?^\s*\2\s*$/gm;
+
+function hasLiveBacktick(command: string): boolean {
+  return command.replace(QUOTED_HEREDOC, "").includes("`");
+}
+
+function literalExecutables(command: string): string {
+  return command.replace(
+    /(^\s*|[;|({]\s*)&\s*(?:'([^'\r\n`$]+\.exe)'|"([^"\r\n`$]+\.exe)")(?=\s|$)/g,
+    (_call, head: string, single: string | undefined, double: string | undefined) =>
+      head + (single ?? double ?? "").split(/[\\/]/).at(-1)!.slice(0, -4),
+  );
+}
 
 function lower(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -151,6 +175,7 @@ function lower(path: string): string {
 /** Case-insensitive, separator-agnostic containment with a trailing-slash boundary. */
 function insideAny(path: string, roots: readonly string[]): boolean {
   const p = lower(path);
+  if (p.split("/").some((part) => part.trimEnd() === "..")) return false;
 
   return roots.some((root) => {
     const r = lower(root);
@@ -187,19 +212,32 @@ const READ_CLASS = { operationClass: "read_inspect", reversibility: "reversible"
 
 function classifyCommand(input: AskInput): AskClass {
   const capability = "runtime.command";
-  const command = unwrap((input.command ?? "").toLowerCase());
+  const supplied = literalExecutables(unwrap((input.command ?? "").toLowerCase())).replace(
+    /\b(git|gh|npm|curl|wget|ssh|scp|az|aws|gcloud|diskpart|format)(?:\.exe|\.cmd|\.bat)\b/g,
+    "$1",
+  );
+  const command = supplied.replace(
+    /\bgit\s+(?:(?:-c\s*|--(?:git-dir|work-tree|namespace|config-env)(?:\s+|=))(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s;&|]+)\s+|--(?:no-pager|paginate|bare|no-optional-locks)\s+)+/g,
+    "git ",
+  );
+  const inspected = `${supplied}\n${command}`;
 
-  const destructive = match(DESTRUCTIVE, command);
+  if (command.trim() === "") {
+    return { ...EXTERNAL_CLASS, capability, reason: "command was not provided" };
+  }
+
+  const destructive = match(DESTRUCTIVE, inspected);
   if (destructive !== undefined) {
     return { ...DESTRUCTIVE_CLASS, capability, reason: `destructive pattern: ${destructive}` };
   }
 
-  const external = match(EXTERNAL, command);
+  const external = match(EXTERNAL, inspected);
   if (external !== undefined) {
     return { ...EXTERNAL_CLASS, capability, reason: `external-write pattern: ${external}` };
   }
 
-  const evasion = match(EVASION, command);
+  const evasion =
+    match(EVASION, inspected) ?? (hasLiveBacktick(supplied) ? "a backtick" : undefined);
   if (evasion !== undefined) {
     return { ...EXTERNAL_CLASS, capability, reason: `hides what it runs: ${evasion}` };
   }
@@ -224,7 +262,11 @@ const MCP_READ_VERB =
  * The servers Noctis lends for the owner's own screen: their browser and their desktop. A step
  * there is the owner's PC doing what they asked, so it runs, unless what it presses commits them.
  */
-const SCREEN_SERVER = /^mcp__(?:browser|desktop)__/;
+const SCREEN_SERVER = /^mcp__(?:browser|playwright|desktop)__/;
+
+// shortcut: visible effect names only; computed calls still need the agent's judgement.
+const EVALUATION_EFFECT =
+  /\b(?:fetch|XMLHttpRequest|sendBeacon|eval|Function|import)\s*\(|\.\s*(?:click|submit|requestSubmit|dispatchEvent)\s*\(|\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|removeItem|clear)\s*\(|\bdocument\s*\.\s*cookie\s*=/;
 
 /**
  * Words on a button or field that mean money, a message or a post leaves the PC. A backstop
@@ -295,6 +337,19 @@ function classifyToolCall(tool: string, args: unknown): AskClass {
   }
 
   if (SCREEN_SERVER.test(tool)) {
+    if (tool.endsWith("__browser_evaluate")) {
+      const code =
+        typeof args === "object" && args !== null
+          ? (args as { function?: unknown }).function
+          : undefined;
+      if (typeof code !== "string" || EVALUATION_EFFECT.test(code)) {
+        return {
+          ...EXTERNAL_CLASS,
+          capability,
+          reason: "browser evaluation with visible effects or missing code",
+        };
+      }
+    }
     const commits = namedTargets(args).find((name) => COMMITS.test(name));
 
     return commits === undefined

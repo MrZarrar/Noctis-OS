@@ -6,7 +6,7 @@ export interface TuckedPanel {
 }
 export interface MorePanelsProps {
   panels: readonly TuckedPanel[];
-  onShow: (panel: TuckedPanel) => void;
+  onShow: (panel: TuckedPanel) => void | Promise<void>;
 }
 export function MorePanels({ panels, onShow }: MorePanelsProps): JSX.Element | null {
   if (panels.length === 0) return null;
@@ -36,7 +36,7 @@ export function MorePanels({ panels, onShow }: MorePanelsProps): JSX.Element | n
           background: depth.layers[1],
         }}
       >
-        +{panels.length} more
+        Panels ({panels.length} hidden or closed)
       </summary>
       <ul style={{ listStyle: "none", margin: 0, padding: spacing.sm }}>
         {panels.map((panel) => (
@@ -46,14 +46,15 @@ export function MorePanels({ panels, onShow }: MorePanelsProps): JSX.Element | n
           >
             <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{panel.title}</span>
             {panel.updated && <small style={{ color: typography.color.muted }}>Updated</small>}
-            <button
+            <ActionButton
               type="button"
               aria-label={`Show ${panel.title}`}
               style={buttonStyle}
-              onClick={() => onShow(panel)}
+              onAction={() => onShow(panel)}
+              pendingLabel="Showing..."
             >
               Show
-            </button>
+            </ActionButton>
           </li>
         ))}
       </ul>
@@ -62,3 +63,4 @@ export function MorePanels({ panels, onShow }: MorePanelsProps): JSX.Element | n
 }
 import { corner, depth, elevation, material, spacing, typography } from "@noctis/ui";
 import { buttonStyle } from "../layout/Page.js";
+import { ActionButton } from "../layout/ActionButton.js";

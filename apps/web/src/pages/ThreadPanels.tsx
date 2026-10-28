@@ -121,7 +121,10 @@ export function useThreadPanels(
     hasPanels: sources.some(
       (source) =>
         (source.composition.plan?.slots.length ?? 0) +
-          (source.composition.plan?.overflowSurfaceIds.length ?? 0) >
+          (source.composition.plan?.overflowSurfaceIds.length ?? 0) +
+          source.composition.intents.filter(
+            (intent) => intent.lifecycle === "dismissed" || intent.lifecycle === "exiting",
+          ).length >
         0,
     ),
     handoffs: {

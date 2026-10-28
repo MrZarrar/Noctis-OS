@@ -760,7 +760,7 @@ describe("the Claude Agent SDK runtime", () => {
       ).resolves.toEqual(denied("declined by Noctis authority"));
     });
 
-    it("lets a step on the owner's screen run, asks before one that commits, and refuses raw code", async () => {
+    it("lets a step on the owner's screen run and asks before one that commits", async () => {
       const { r, gate } = await held("allow");
 
       await expect(
@@ -774,9 +774,8 @@ describe("the Claude Agent SDK runtime", () => {
       ).resolves.toEqual(allowed);
       await expect(
         gate("mcp__browser__browser_evaluate", { function: "() => 1" }),
-      ).resolves.toEqual(denied("mcp__browser__browser_evaluate is not a tool Noctis lends"));
+      ).resolves.toEqual({});
 
-      // One ask, for the order. The refusal is never a decision the owner is handed.
       expect(r.asks.map((ask) => [ask.kind, ask.operationClass, ask.target.id])).toEqual([
         ["tool_call", "external_write", "mcp__browser__browser_click"],
       ]);

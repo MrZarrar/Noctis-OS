@@ -179,10 +179,20 @@ export function Workbench({
       mobile
         ? []
         : composition.intents
-            .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+            .filter(
+              (intent) =>
+                intent.lifecycle !== "dismissed" &&
+                intent.lifecycle !== "exiting" &&
+                !composition.overrides.some(
+                  (entry) =>
+                    entry.surfaceId === intent.id &&
+                    entry.releasedAt === undefined &&
+                    entry.region === "overflow",
+                ),
+            )
             .map((intent) => intent.id),
     );
-  }, [coordinator, owner, composition.intents, mobile]);
+  }, [coordinator, owner, composition.intents, composition.overrides, mobile]);
   const scope = composition.geometryScope;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
@@ -199,6 +209,12 @@ export function Workbench({
   const shelfScope = scope ?? owner;
   const ownShelf = shelf.filter((entry) => entry.scope === shelfScope);
   const floatingShelf = shelf.filter((entry) => entry.floating);
+  const hiddenIds = new Set(
+    composition.overrides
+      .filter((entry) => entry.releasedAt === undefined && entry.region === "overflow")
+      .map((entry) => entry.surfaceId),
+  );
+  const restoreAfterShow = useRef<string>();
   const pinnedIds = new Set(
     composition.overrides
       .filter((entry) => entry.releasedAt === undefined)
@@ -212,7 +228,7 @@ export function Workbench({
         ? floatingSlots(
             composition.plan,
             composition.intents,
-            ownShelf.map((entry) => entry.id),
+            ownShelf.filter((entry) => !hiddenIds.has(entry.id)).map((entry) => entry.id),
           )
         : composition.plan.slots;
   useLayoutEffect(() => {
@@ -223,9 +239,13 @@ export function Workbench({
     floatingPanels.sync(owner, {
       scope: shelfScope,
       panels: composition.intents
-        .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
+        .filter((intent) => intent.kind !== "conversation")
         .map((intent) => {
           const slot = displayedSlots.find((value) => value.surfaceId === intent.id);
+          const hidden =
+            hiddenIds.has(intent.id) ||
+            intent.lifecycle === "dismissed" ||
+            intent.lifecycle === "exiting";
           const resolved = resolveSurface(
             intent.kind,
             intent.payloadVersion,
@@ -240,13 +260,19 @@ export function Workbench({
             requestedAt: Date.parse(intent.requestedAt),
             pinned: pinnedIds.has(intent.id),
             pendingPrimary: updates[intent.id]?.pendingPrimary === true,
-            size: poppedIds.has(intent.id) ? undefined : slot?.size,
+            hidden,
+            size: poppedIds.has(intent.id)
+              ? undefined
+              : (slot?.size ?? (hidden ? intent.minSize : undefined)),
             minWidth: PANEL_MIN_WIDTH[intent.kind] ?? 240,
           };
         }),
-      liveIds: composition.intents
-        .filter((intent) => intent.lifecycle !== "dismissed" && intent.lifecycle !== "exiting")
-        .map((intent) => intent.id),
+      liveIds: composition.intents.map((intent) => intent.id),
+      onShow: async (id) => {
+        const saved = await composition.restore(id);
+        if (saved) restoreAfterShow.current = id;
+        return saved;
+      },
       windows,
       viewport,
       floating: floatingNow,
@@ -347,6 +373,15 @@ export function Workbench({
   const restoreAfterClose = useRef<HTMLElement>();
   const { plan, intents, overrides, focusedSurfaceId } = composition;
   useEffect(() => {
+    const id = restoreAfterShow.current;
+    if (id === undefined) return;
+    const title = boxOf(id)?.querySelector<HTMLElement>("h2");
+    if (title?.checkVisibility()) {
+      title.focus({ preventScroll: true });
+      restoreAfterShow.current = undefined;
+    }
+  }, [plan, shelf]);
+  useEffect(() => {
     const previous = restoreAfterClose.current;
     if (previous !== undefined && !previous.isConnected) {
       const target =
@@ -360,7 +395,7 @@ export function Workbench({
       restoreAfterClose.current = undefined;
     }
   }, [plan, popouts]);
-  const close = async (id: string): Promise<void> => {
+  const close = async (id: string, hide = false): Promise<void> => {
     const ownerDocument =
       ownPopouts.find((entry) => entry.surfaceId === id)?.container.ownerDocument ?? document;
     const active = ownerDocument.activeElement;
@@ -368,7 +403,11 @@ export function Workbench({
       restoreAfterClose.current = active as HTMLElement;
     }
     try {
-      await composition.dismiss(id);
+      if (hide) {
+        const intent = composition.intents.find((value) => value.id === id);
+        if (intent !== undefined && !(await composition.move(id, "overflow", intent.minSize)))
+          throw new Error("Could not hide this panel. Try again.");
+      } else await composition.dismiss(id);
     } catch (error) {
       restoreAfterClose.current = undefined;
       throw error;
@@ -443,6 +482,7 @@ export function Workbench({
 
     if (
       intent === undefined ||
+      hiddenIds.has(slot.surfaceId) ||
       intent.lifecycle === "dismissed" ||
       intent.lifecycle === "exiting"
     ) {
@@ -530,9 +570,8 @@ export function Workbench({
                   saveWindow(slot.surfaceId, next);
               });
             }}
-            onClose={() => {
-              void close(slot.surfaceId);
-            }}
+            onHide={() => close(slot.surfaceId, true)}
+            onClose={() => close(slot.surfaceId)}
           />
         }
       >
@@ -638,10 +677,9 @@ export function Workbench({
       {floating && floatingShelf[0]?.scope === shelfScope && (
         <MorePanels
           panels={floatingShelf.filter((entry) => entry.tucked)}
-          onShow={(entry) => {
-            if (!floatingPanels.reopen(entry.scope, entry.id)) {
-              setArrangeError("That panel is no longer available.");
-              return;
+          onShow={async (entry) => {
+            if (!(await floatingPanels.show(entry.scope, entry.id))) {
+              throw new Error("Could not show this panel. Try again.");
             }
             setArrangeError(undefined);
             requestAnimationFrame(() => {

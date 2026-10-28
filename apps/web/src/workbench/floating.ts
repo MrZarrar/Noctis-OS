@@ -18,6 +18,7 @@ export interface FloatingPanel {
   pendingPrimary?: boolean;
   size: SurfaceSize | undefined;
   minWidth: number;
+  hidden?: boolean;
 }
 export interface FloatingGroup {
   scope: string;
@@ -26,6 +27,7 @@ export interface FloatingGroup {
   windows: PanelWindows;
   viewport: Viewport;
   floating: boolean;
+  onShow?: (id: string) => Promise<boolean>;
 }
 const SavedEntrySchema = z.object({
   id: z.string(),
@@ -44,6 +46,7 @@ export interface FloatingEntry extends SavedEntry {
   floating: boolean;
   rect: WindowRect | undefined;
   geometry: WindowRect | undefined;
+  hidden?: boolean;
 }
 type BrowserStorage = Pick<Storage, "getItem" | "setItem">;
 const keyOf = (scope: string, id: string): string => JSON.stringify([scope, id]);
@@ -140,6 +143,16 @@ export class FloatingPanels {
     return true;
   }
 
+  async show(scope: string, id: string): Promise<boolean> {
+    const group = [...this.groups.values()].find(
+      (value) => value.scope === scope && value.floating,
+    );
+    const panel = group?.panels.find((value) => value.id === id);
+    if (panel === undefined) return false;
+    if (panel.hidden) return (await group?.onShow?.(id)) === true;
+    return this.reopen(scope, id);
+  }
+
   private rebuild(): void {
     const next: FloatingEntry[] = [];
     const available = new Map<string, { group: FloatingGroup; panel: FloatingPanel }>();
@@ -164,7 +177,16 @@ export class FloatingPanels {
         entry.updated ||=
           entry.tucked && (entry.revision !== panel.revision || panel.pendingPrimary === true);
         entry.revision = panel.revision;
-        if (panel.pinned) entry.tucked = false;
+        if (panel.hidden) entry.tucked = true;
+        else if (
+          this.entries.some(
+            (value) => value.scope === group.scope && value.id === panel.id && value.hidden,
+          )
+        ) {
+          entry.tucked = false;
+          entry.shown = true;
+          entry.updated = false;
+        } else if (panel.pinned) entry.tucked = false;
         const value: FloatingEntry = {
           ...SavedEntrySchema.parse(entry),
           scope: group.scope,
@@ -173,9 +195,10 @@ export class FloatingPanels {
           floating: group.floating,
           geometry: undefined,
           rect: undefined,
+          hidden: panel.hidden === true,
         };
         next.push(value);
-        if (group.floating && panel.size !== undefined)
+        if (group.floating && panel.size !== undefined && !panel.hidden)
           available.set(keyOf(group.scope, panel.id), { group, panel });
       }
       this.saved.set(group.scope, saved);

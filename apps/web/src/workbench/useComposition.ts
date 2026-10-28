@@ -67,6 +67,7 @@ export interface CompositionState {
   move: (surfaceId: string, region: SurfacePlacementRegion, size: SurfaceSize) => Promise<boolean>;
   release: (surfaceId: string) => Promise<void>;
   dismiss: (surfaceId: string) => Promise<void>;
+  restore: (surfaceId: string) => Promise<boolean>;
   /**
    * Re-reads the composition.
    *
@@ -414,6 +415,30 @@ export function useComposition(
         }
       },
       [send, intents],
+    ),
+    restore: useCallback(
+      async (surfaceId) => {
+        const intent = intents.find((candidate) => candidate.id === surfaceId);
+        if (intent === undefined || stableOwner === undefined) return false;
+        if (
+          intent.lifecycle === "exiting" &&
+          !(await send("surface.change_lifecycle", { surfaceId, lifecycle: "dismissed" }))
+        )
+          return false;
+        if (
+          (intent.lifecycle === "dismissed" || intent.lifecycle === "exiting") &&
+          !(await send("surface.change_lifecycle", { surfaceId, lifecycle: "proposed" }))
+        )
+          return false;
+        return send("surface.arrange", {
+          ...stableOwner,
+          clientId: client.current,
+          display,
+          attentionState: "active_canvas",
+          placements: [{ surfaceId, region: "centre", size: intent.minSize }],
+        });
+      },
+      [send, intents, stableOwner, display],
     ),
   };
 }

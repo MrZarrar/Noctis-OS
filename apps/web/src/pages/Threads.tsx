@@ -2,6 +2,7 @@ import type { ConversationalIdentityId, RuntimeItem } from "@noctis/contracts";
 import {
   ApprovalSurface,
   IDENTITY_PROFILES,
+  NavIcon,
   corner,
   depth,
   identityAccent,
@@ -283,7 +284,7 @@ function TurnRow({
   const agents = turn.items.filter(
     (item): item is Extract<RuntimeItem, { kind: "sub_agent" }> => item.kind === "sub_agent",
   );
-  const activity = running ? turnActivity(turn.items) : undefined;
+  const activity = running ? turnActivity(turn.items, turn.model.providerId) : undefined;
 
   return (
     <motion.li
@@ -624,6 +625,7 @@ export function Threads({
   const content = (
     <Page
       title="Threads"
+      compactHeader
       // Panels float over the page; only a focused one takes a column beside the thread.
       maxWidth={focused ? 1680 : 880}
       subtitle={subtitle}
@@ -642,13 +644,26 @@ export function Threads({
           {transport !== undefined && onOpenThread !== undefined && !listing && (
             <button
               type="button"
+              aria-label="Conversations"
+              title="Conversations"
               onClick={() => {
                 setListing(true);
                 list.pushed();
               }}
-              style={buttonStyle}
+              style={
+                mobile
+                  ? {
+                      ...buttonStyle,
+                      width: 44,
+                      padding: 0,
+                      display: "grid",
+                      placeItems: "center",
+                      flexShrink: 0,
+                    }
+                  : buttonStyle
+              }
             >
-              Conversations
+              {mobile ? <NavIcon item="Threads" size={20} /> : "Conversations"}
             </button>
           )}
           <AgentMap
@@ -1017,7 +1032,12 @@ export function Threads({
                   !focused && (
                     <div
                       data-core-slot="composer"
-                      style={{ width: 76, height: 76, flexShrink: 0, marginBottom: -6 }}
+                      style={{
+                        width: mobile ? 44 : 76,
+                        height: mobile ? 44 : 76,
+                        flexShrink: 0,
+                        marginBottom: mobile ? 0 : -6,
+                      }}
                     />
                   )
                 }
@@ -1042,7 +1062,8 @@ export function Threads({
 function bubbleStyle(own: boolean): MotionStyle {
   return {
     justifySelf: own ? "end" : "start",
-    maxWidth: `min(${String(typography.measurePx)}px, 88%)`,
+    minWidth: 0,
+    maxWidth: `min(${String(typography.measurePx)}px, ${own ? "88%" : "100%"})`,
     boxSizing: "border-box",
     padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
     borderRadius: own ? "16px 16px 4px 16px" : "16px 16px 16px 4px",

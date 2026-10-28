@@ -15,7 +15,7 @@ describe("tucked panels control", () => {
         onShow: () => undefined,
       }),
     );
-    expect(markup).toContain("+2 more");
+    expect(markup).toContain("Panels (2 hidden or closed)");
     expect(markup).toContain("Build script");
     expect(markup).toContain("Trainers");
     expect(markup).toContain("Updated");

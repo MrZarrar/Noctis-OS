@@ -87,9 +87,13 @@ describe("agent map", () => {
     expect(agentDetails).toContain("Find the cause");
     expect(agentDetails).toContain("npm test");
     expect(agentDetails).toContain("Step output");
-    expect(agentDetails).toContain("<strong>Found</strong>");
+    expect(markup).toContain("<strong>Found</strong>");
     expect(agentDetails).not.toContain("unrelated main step");
     expect(markup).toContain('data-agent-status="failed"');
+    expect(markup.indexOf('data-agent="live"')).toBeLessThan(markup.indexOf('data-agent="failed"'));
+    expect(markup.indexOf('data-agent="failed"')).toBeLessThan(
+      markup.indexOf('data-agent="agent"'),
+    );
   });
 
   it("includes delegated threads as keyboard reachable open buttons", () => {
@@ -107,14 +111,25 @@ describe("agent map", () => {
       createElement(AgentMap, {
         identityId: "vesper",
         turns: [],
-        children: [child],
+        children: [
+          child,
+          {
+            ...child,
+            id: "new-child",
+            title: "Newest delegation",
+            createdAt: "2026-10-17T14:00:00Z",
+          },
+        ],
         now: 0,
         onOpenThread: () => undefined,
       }),
     );
-    expect(markup).toContain("Agents · 2");
+    expect(markup).toContain("Agents · 3");
     expect(markup).toContain("Investigate logs");
     expect(markup).toContain('data-thread="child"');
     expect(markup).toContain("Open thread");
+    expect(markup.indexOf('data-thread="new-child"')).toBeLessThan(
+      markup.indexOf('data-thread="child"'),
+    );
   });
 });

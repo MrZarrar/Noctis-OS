@@ -528,6 +528,7 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       await openChat();
       await page.setViewportSize({ width: 400, height: 850 });
       try {
+        await page.getByRole("button", { name: "Show composer details", exact: true }).click();
         await page.evaluate(() => {
           const revoke = globalThis.URL.revokeObjectURL.bind(globalThis.URL);
           globalThis.revokedPreviewUrls = [];

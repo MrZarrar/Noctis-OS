@@ -294,7 +294,9 @@ function placeWrittenFiles(
   const turn = getTurn(deps.kernel.db, turnId);
   if (turn?.nodeId === undefined || turn.threadId !== event.streamId) return;
   const roots = listRuntimeRoots(deps.kernel.db, () => true, deps.kernel.clock.now());
-  for (const path of paths.slice(0, 4)) {
+  let placed = 0;
+  for (const path of paths) {
+    if (placed === 4) break;
     const located = locateInRoots(path, turn.nodeId, roots);
     if (located === undefined || located.relativePath.split(/[\\/]/).includes("..")) continue;
     // The node shows these itself, as the panel each file's kind needs.
@@ -302,7 +304,7 @@ function placeWrittenFiles(
     const title = located.relativePath.split("/").at(-1)?.trim().slice(0, 200);
     if (!title) continue;
     const kind = viewerKind(title, 0);
-    if (kind === "download") continue;
+    if (kind === "download" || (kind === "text" && !/\.(?:md|txt|csv|tsv)$/i.test(title))) continue;
     const source = {
       from: "file",
       nodeId: turn.nodeId,
@@ -338,6 +340,7 @@ function placeWrittenFiles(
     });
     if (!upserted.ok && upserted.conflict.kind !== "idempotent_replay")
       skip(deps.kernel, upserted.conflict.kind, { threadId: turn.threadId, kind });
+    else placed += 1;
   }
 }
 

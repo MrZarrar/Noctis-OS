@@ -470,7 +470,7 @@ describe("the Hermes runtime (ACP)", () => {
     expect(code).toContain('"action": "approve"');
   });
 
-  it("lets a step on the owner's screen run, refuses raw code, and asks the owner before one that commits them", async () => {
+  it("lets routine screen steps run and asks the owner before one that commits them", async () => {
     const answers: unknown[] = [];
     const stepping: Script = async (server, sessionId) => {
       const step = (id: number, tool: string, reason: string) =>
@@ -500,7 +500,7 @@ describe("the Hermes runtime (ACP)", () => {
 
     const declined = recorder("deny");
     await runtime(stepping).runtime.turn(input(), declined.sink);
-    expect(answers).toEqual([allow, deny, deny, deny]);
+    expect(answers).toEqual([allow, allow, deny, deny]);
     expect(declined.asks).toEqual([
       {
         itemId: "perm-check-3",
@@ -522,7 +522,7 @@ describe("the Hermes runtime (ACP)", () => {
 
     const allowed = recorder("allow");
     await runtime(stepping).runtime.turn(input(), allowed.sink);
-    expect(answers).toEqual([allow, deny, allow, allow]);
+    expect(answers).toEqual([allow, allow, allow, allow]);
   });
 
   it("resumes a session in a new process without replaying its history as this turn, then reuses the process", async () => {

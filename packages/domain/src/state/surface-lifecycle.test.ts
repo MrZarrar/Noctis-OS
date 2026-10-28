@@ -23,9 +23,8 @@ const ALLOWED = new Set([
   "background->active",
   "background->exiting",
   "exiting->dismissed",
+  "dismissed->proposed",
 ]);
-
-const TERMINAL = ["dismissed"] as const;
 
 describe("transitionSurfaceLifecycle", () => {
   const pairs = STATES.flatMap((from) => STATES.map((to) => [from, to] as const));
@@ -43,11 +42,11 @@ describe("transitionSurfaceLifecycle", () => {
     }
   });
 
-  it("treats every terminal state as terminal", () => {
-    for (const terminal of TERMINAL) {
-      for (const to of STATES) {
-        expect(transitionSurfaceLifecycle(terminal, to).ok).toBe(false);
-      }
-    }
+  it("reopens a dismissed panel through the normal entry lifecycle", () => {
+    expect(transitionSurfaceLifecycle("dismissed", "proposed")).toEqual({
+      ok: true,
+      value: "proposed",
+    });
+    expect(transitionSurfaceLifecycle("dismissed", "active").ok).toBe(false);
   });
 });

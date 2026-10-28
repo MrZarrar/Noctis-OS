@@ -34,6 +34,86 @@ const TOOL = "runtime.tool_call";
 
 // Rows mirror the plan's Step 1 table; the extra rows are the edges each rule has.
 const ROWS: Row[] = [
+  [
+    "Chrome phone tests with a literal PowerShell executable",
+    command(
+      String.raw`$env:NOCTIS_E2E_BROWSER_CHANNEL = 'chrome'; & 'C:\Users\mushaf.zarrar\AppData\Local\Noctis\runtime\node-v22.23.2-win-x64\node.exe' --test --test-name-pattern='native status bar|anchors phone navigation' apps/web/e2e/phone.test.mjs`,
+    ),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
+  [
+    "a Git alias with a visible push still asks",
+    command('git -c "alias.ship=!git push origin main" ship'),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "a Git alias with a visible reset still asks",
+    command('git -c "alias.wipe=!git reset --hard HEAD" wipe'),
+    "destructive",
+    "irreversible",
+    CMD,
+  ],
+  [
+    "push with a Git working-folder option",
+    command('git -C "C:\\work\\repo" push origin main'),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "reset with a Git configuration option",
+    command("git -c core.autocrlf=false reset --hard HEAD"),
+    "destructive",
+    "irreversible",
+    CMD,
+  ],
+  [
+    "read with Git global options",
+    command("git --no-pager -C C:\\work\\repo status"),
+    "read_inspect",
+    "reversible",
+    CMD,
+  ],
+  [
+    "Windows push executable",
+    command("git.exe push origin main"),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "Windows destructive executable",
+    command("git.exe reset --hard HEAD"),
+    "destructive",
+    "irreversible",
+    CMD,
+  ],
+  [
+    "Windows publish executable",
+    command("npm.cmd publish"),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "parent directory file escape",
+    files("C:\\work\\repo\\..\\outside.txt"),
+    "external_write",
+    "partially_reversible",
+    FILE,
+  ],
+  [
+    "parent directory command escape",
+    command("npm test", "C:\\work\\repo\\..\\other"),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  ["an empty command still asks", command(""), "external_write", "partially_reversible", CMD],
   ["rm -rf", command("rm -rf ./dist"), "destructive", "irreversible", CMD],
   ["rm -r", command("rm -r build"), "destructive", "irreversible", CMD],
   [
@@ -170,6 +250,43 @@ const ROWS: Row[] = [
     CMD,
   ],
   [
+    "a literal Node executable starts a local preview",
+    command(
+      String.raw`& 'C:\Program Files\nodejs\node.exe' node_modules/vite/bin/vite.js --host 127.0.0.1`,
+    ),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
+  [
+    "a literal executable outside the writable roots still asks",
+    command(String.raw`& 'C:\tools\node.exe' preview.js`, OUTSIDE),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "a literal executable still exposes a push",
+    command(String.raw`& 'C:\tools\git.exe' push origin main`),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
+    "a literal executable still exposes a destructive command",
+    command(String.raw`& 'C:\tools\git.exe' reset --hard HEAD`),
+    "destructive",
+    "irreversible",
+    CMD,
+  ],
+  [
+    "an interpolated executable still asks",
+    command('& "$tool.exe" preview.js'),
+    "external_write",
+    "partially_reversible",
+    CMD,
+  ],
+  [
     "dot-sourcing a script",
     command(". ./setup.ps1"),
     "external_write",
@@ -218,7 +335,13 @@ const ROWS: Row[] = [
     "partially_reversible",
     CMD,
   ],
-  ["node -e inside a root", command(`node -e "console.log(1)"`), "local_reversible_edit", "reversible", CMD],
+  [
+    "node -e inside a root",
+    command(`node -e "console.log(1)"`),
+    "local_reversible_edit",
+    "reversible",
+    CMD,
+  ],
   [
     "node -e still shows a push it names",
     command(`node -e "require('child_process').execSync('git push')"`),
@@ -256,7 +379,7 @@ const ROWS: Row[] = [
   ],
   [
     "powershell -File runs a script like any other",
-    command("powershell -ExecutionPolicy Bypass -File scripts\deploy\work-pc.ps1"),
+    command("powershell -ExecutionPolicy Bypass -File scripts\\deploy\\work-pc.ps1"),
     "local_reversible_edit",
     "reversible",
     CMD,
@@ -444,10 +567,10 @@ const ROWS: Row[] = [
     TOOL,
   ],
   [
-    "a browser action behind an MCP server is not a read",
+    "a Playwright browser action is a local step",
     tool("mcp__playwright__browser_navigate"),
-    "external_write",
-    "partially_reversible",
+    "local_reversible_edit",
+    "reversible",
     TOOL,
   ],
   ["tool_call other", tool("web_fetch"), "external_write", "partially_reversible", TOOL],
@@ -544,6 +667,54 @@ const ROWS: Row[] = [
 ];
 
 describe("classifyAsk", () => {
+  it.each(["browser", "playwright"])(
+    "handles routine %s tools and keeps consequential steps gated",
+    (server) => {
+      for (const [name, args] of [
+        ["browser_resize", { width: 1280, height: 720 }],
+        [
+          "browser_evaluate",
+          { function: "() => document.querySelector('main').getBoundingClientRect().width" },
+        ],
+        ["browser_evaluate", { function: "function () { return document.title; }" }],
+      ] as const) {
+        expect(classifyAsk(tool(`mcp__${server}__${name}`, args)).operationClass).toBe(
+          "local_reversible_edit",
+        );
+      }
+      expect(
+        classifyAsk(tool(`mcp__${server}__browser_click`, { element: "Send message" }))
+          .operationClass,
+      ).toBe("external_write");
+      expect(
+        classifyAsk(
+          tool(`mcp__${server}__browser_fill_form`, { fields: [{ name: "Card number" }] }),
+        ).operationClass,
+      ).toBe("external_write");
+    },
+  );
+
+  it.each([
+    "() => document.querySelector('button').click()",
+    "() => document.forms[0].requestSubmit()",
+    "() => document.forms[0].submit()",
+    "() => document.body.dispatchEvent(new Event('submit'))",
+    "() => fetch('/send', { method: 'POST' })",
+    "() => new XMLHttpRequest()",
+    "() => navigator.sendBeacon('/send', 'message')",
+    "() => eval(code)",
+    "() => new Function(code)()",
+    "() => import('/action.js')",
+    "() => localStorage.setItem('token', 'x')",
+    "() => { document.cookie = 'token=x'; }",
+  ])("asks before browser evaluation with visible effects: %s", (code) => {
+    for (const server of ["browser", "playwright"]) {
+      expect(
+        classifyAsk(tool(`mcp__${server}__browser_evaluate`, { function: code })).operationClass,
+      ).toBe("external_write");
+    }
+  });
+
   it.each(ROWS)("%s", (_label, input, operationClass, reversibility, capability) => {
     const result = classifyAsk(input);
 
