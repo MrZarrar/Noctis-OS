@@ -65,6 +65,12 @@ describe("resolveCodexCommand", () => {
     );
   });
 
+  it("honors a mixed-case executable override in a copied Windows environment", () => {
+    expect(resolveCodexCommand(isolated({ Noctis_Codex_Path: " C:\\chosen\\codex.exe " }))).toBe(
+      "C:\\chosen\\codex.exe",
+    );
+  });
+
   it("finds a binary on PATH", () => {
     const options = isolated();
     const found = binary(join(scratch(), "bin"));

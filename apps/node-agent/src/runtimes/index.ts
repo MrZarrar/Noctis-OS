@@ -81,7 +81,7 @@ export function selectRuntimes(
       ? {}
       : {
           codex: createCodexRuntime({
-            command,
+            // Resolve each new process: Codex updates can remove the startup binary.
             env,
             proposalsDir: join(nodeHome, "proposals"),
           }),

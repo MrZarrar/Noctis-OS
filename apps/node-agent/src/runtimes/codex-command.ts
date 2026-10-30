@@ -134,7 +134,7 @@ function extensionCandidates(home: string): string[] {
  */
 export function resolveCodexCommand(options: CodexCommandOptions = {}): string | undefined {
   const env = options.env ?? process.env;
-  const override = env.NOCTIS_CODEX_PATH?.trim();
+  const override = envValue(env, "NOCTIS_CODEX_PATH")?.trim();
 
   if (override !== undefined && override !== "") {
     return override;
