@@ -67,6 +67,8 @@ export const API_SEGMENTS = [
   "tasks",
   "turns",
   "vault",
+  /** The video editor's own server origin, for the VideoEditor page's iframe. */
+  "video-editor",
   /** Agent-built pages, served to run sandboxed inside a visual panel. */
   "visuals",
   "ws",

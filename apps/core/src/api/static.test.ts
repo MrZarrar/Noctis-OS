@@ -339,4 +339,28 @@ describe("pageSecurityPolicy (Task 3.9)", () => {
 
     expect(read().headers["content-security-policy"]).toContain("wss://gw.example");
   });
+
+  it("is unchanged when no video editor origin is configured either", () => {
+    expect(pageSecurityPolicy([], undefined)).toBe(strict);
+  });
+
+  it("opens frame-src to the configured video editor origin, keeping 'self'", () => {
+    const policy = pageSecurityPolicy([], "http://100.70.27.11:7700");
+
+    expect(policy.startsWith(base)).toBe(true);
+    // 'frame-src' replaces the 'default-src' fallback entirely once present, so
+    // dropping 'self' here would break every same-origin iframe this app already
+    // ships (the visual-panel renderer's /visuals/content iframe).
+    expect(policy).toContain("frame-src 'self' http://100.70.27.11:7700");
+    // Nothing else widens: this origin can be framed, nothing is granted script,
+    // style or network reach beyond what the strict policy already allows.
+    expect(policy).toBe(`${strict}; frame-src 'self' http://100.70.27.11:7700`);
+  });
+
+  it("combines with the remote desktop widening when both are configured", () => {
+    const policy = pageSecurityPolicy(["wss://gw.example"], "http://100.70.27.11:7700");
+
+    expect(policy).toContain("connect-src 'self' data: wss://gw.example");
+    expect(policy).toContain("frame-src 'self' http://100.70.27.11:7700");
+  });
 });

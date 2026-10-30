@@ -1047,6 +1047,10 @@ function handleRead(
     return { status: 200, body: { hosts: listRemoteHosts(remoteFor(deps)) } };
   }
 
+  if (segments.length === 1 && segments[0] === "video-editor") {
+    return { status: 200, body: { origin: deps.config.videoEditorOrigin ?? null } };
+  }
+
   if (segments.length === 1 && segments[0] === "objectives") {
     return { status: 200, body: { objectives: listObjectives(deps.kernel.db, limit) } };
   }
@@ -2440,6 +2444,7 @@ export async function handleRequest(
         res,
         pageSecurityPolicy(
           (remoteFor(deps)?.targets ?? []).map((target) => new URL(target.gatewayUrl).origin),
+          deps.config.videoEditorOrigin,
         ),
       );
       return;

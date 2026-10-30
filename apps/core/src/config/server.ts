@@ -48,6 +48,12 @@ export interface CoreConfig {
    * `/remote/hosts` lists nothing and `remote.open_session` answers 404.
    */
   remoteDesktop?: RemoteDesktopConfig;
+  /**
+   * The video editor's own server origin (a bare `host:port`, no path), or
+   * absent — the default. Absent, the VideoEditor page has nothing to open and
+   * `pageSecurityPolicy` grants no `frame-src` beyond `'self'`.
+   */
+  videoEditorOrigin?: string;
 }
 
 export interface RemoteDesktopTargetConfig {
@@ -397,6 +403,47 @@ function parseRemoteDesktop(
 }
 
 /**
+ * A bare origin, nothing past it: `frame-src` grants the whole page at that
+ * origin, so a path or query here would be misleading rather than narrowing
+ * anything. `URL.origin` drops them silently, which is why they are rejected
+ * before that rather than quietly ignored.
+ */
+function parseVideoEditorOrigin(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+
+  if (trimmed === undefined || trimmed === "") {
+    return undefined;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new ConfigurationError(
+      `NOCTIS_VIDEO_EDITOR_ORIGIN is not a URL: ${trimmed}, for example http://100.70.27.11:7700`,
+    );
+  }
+
+  if ((url.pathname !== "/" && url.pathname !== "") || url.search !== "" || url.hash !== "") {
+    throw new ConfigurationError(
+      `NOCTIS_VIDEO_EDITOR_ORIGIN must be a bare origin with no path, query or fragment: ${trimmed}`,
+    );
+  }
+
+  // `URL.origin` is the literal string "null" for javascript:/data:/file: and
+  // every other opaque-origin scheme, none of which has a path to reject
+  // above — restricting to http(s) is what stops one of those from reaching
+  // the CSP header as a bare, meaningless `frame-src null`.
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ConfigurationError(
+      `NOCTIS_VIDEO_EDITOR_ORIGIN must be http:// or https://: ${trimmed}`,
+    );
+  }
+
+  return url.origin;
+}
+
+/**
  * Reads configuration and refuses to produce a usable value for anything
  * unsafe. There is no permissive fallback: an unset token, an unexplained
  * non-loopback bind, or an unparseable value stops the process here rather
@@ -424,6 +471,7 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
   const webRoot = parseWebRoot(env.NOCTIS_WEB_ROOT, parseOrigins(env.NOCTIS_ALLOWED_ORIGINS));
   const vapid = parseVapid(env);
   const remoteDesktop = parseRemoteDesktop(env);
+  const videoEditorOrigin = parseVideoEditorOrigin(env.NOCTIS_VIDEO_EDITOR_ORIGIN);
   const logLevel = env.NOCTIS_LOG_LEVEL?.trim() ?? "info";
 
   if (!LOG_LEVELS.has(logLevel)) {
@@ -446,5 +494,6 @@ export function loadCoreConfig(env: Readonly<Record<string, string | undefined>>
     ...(webRoot === undefined ? {} : { webRoot }),
     ...(vapid === undefined ? {} : { vapid }),
     ...(remoteDesktop === undefined ? {} : { remoteDesktop }),
+    ...(videoEditorOrigin === undefined ? {} : { videoEditorOrigin }),
   };
 }

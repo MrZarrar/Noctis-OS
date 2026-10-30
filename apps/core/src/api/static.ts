@@ -185,13 +185,26 @@ const CONTENT_SECURITY_POLICY = `${BASE_POLICY}; img-src 'self' blob:; media-src
  * own `<style>` and `style` attributes, its cursors are `data:` images, and
  * its one socket is the Gateway's `wss:`. No `'unsafe-eval'`, and no inline
  * script. The same four widenings as the desktop shell's `tauri.conf.json`.
+ *
+ * `videoEditorOrigin` widens separately, the same way and for the same reason:
+ * `default-src 'self'` is what `frame-src` falls back to with no directive of
+ * its own, so an `<iframe>` pointing at the video editor's own `host:port` is
+ * blocked until that one origin is named. Once the directive is present it
+ * replaces that fallback entirely rather than adding to it, so `'self'` is
+ * named explicitly alongside it — otherwise this would also block the
+ * same-origin `<iframe>` the visual-panel surface already ships
+ * (`/visuals/content`). Nothing wider than `'self'` plus that one origin, and
+ * nothing else about the policy changes for it.
  */
-export function pageSecurityPolicy(gatewayOrigins: readonly string[]): string {
-  if (gatewayOrigins.length === 0) {
-    return CONTENT_SECURITY_POLICY;
-  }
+export function pageSecurityPolicy(
+  gatewayOrigins: readonly string[],
+  videoEditorOrigin?: string,
+): string {
+  const base = gatewayOrigins.length === 0
+    ? CONTENT_SECURITY_POLICY
+    : `${BASE_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
 
-  return `${BASE_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
+  return videoEditorOrigin === undefined ? base : `${base}; frame-src 'self' ${videoEditorOrigin}`;
 }
 
 function respond(
