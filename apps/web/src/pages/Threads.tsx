@@ -16,6 +16,7 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "../conversation/Markdown.js";
+import { editorRootLabel, visibleEditorMessage } from "../editor/editor-session.js";
 import { MarkdownFiles } from "../conversation/MarkdownFiles.js";
 import { PromptForm, lastRun, modelLabel } from "../conversation/PromptForm.js";
 import { ThreadStatus } from "./ThreadStatus.js";
@@ -609,7 +610,9 @@ export function Threads({
     STREAM_HANDOFF,
   );
 
-  const pinned = thread === undefined ? undefined : pinnedTo(thread, conversation.roots);
+  const pinned =
+    editorRootLabel(conversation.roots) ??
+    (thread === undefined ? undefined : pinnedTo(thread, conversation.roots));
   const current = lastRun(turns);
   const subtitle =
     thread === undefined
@@ -828,7 +831,13 @@ export function Threads({
                             {time.label}
                           </time>
                         </span>
-                        <Markdown text={entry.message.body} />
+                        <Markdown
+                          text={
+                            entry.message.role === "user"
+                              ? visibleEditorMessage(entry.message.body)
+                              : entry.message.body
+                          }
+                        />
                         {entry.message.role === "user" && (
                           <div style={{ display: "grid", gap: spacing.xs }}>
                             <ExchangeOutputs

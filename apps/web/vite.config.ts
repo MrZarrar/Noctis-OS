@@ -69,7 +69,10 @@ export default defineConfig(({ command, mode }) => {
     preview: { proxy },
     build: {
       // Tauri's `frontendDist` reads this directory (apps/desktop/src-tauri/tauri.conf.json).
-      outDir: "dist",
+      outDir: mode === "editor" ? "dist-editor" : "dist",
+      ...(mode === "editor"
+        ? { rollupOptions: { input: fileURLToPath(new URL("editor.html", import.meta.url)) } }
+        : {}),
     },
   };
 });

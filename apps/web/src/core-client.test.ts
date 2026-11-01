@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   coreBaseUrl,
   installLarpTransport,
+  installEditorTransport,
   needsLogin,
   resolveCoreTransport,
 } from "./core-client.js";
@@ -18,6 +19,7 @@ function servedFrom(origin: string): void {
 
 afterEach(() => {
   installLarpTransport(undefined);
+  installEditorTransport(undefined);
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -53,6 +55,13 @@ describe("needsLogin", () => {
 });
 
 describe("resolveCoreTransport", () => {
+  it("uses the Editor's authenticated local relay without placing a core token in the page", () => {
+    servedFrom("http://127.0.0.1:19888");
+    const relay = new SessionTransport({ baseUrl: "http://127.0.0.1:19888", csrf: "launch-csrf" });
+    installEditorTransport(relay);
+    expect(needsLogin()).toBe(false);
+    expect(resolveCoreTransport()).toBe(relay);
+  });
   it("keeps the polling transport for a dev build that holds a token", () => {
     servedFrom("http://localhost:5173");
     vi.stubEnv("VITE_CORE_URL", "http://localhost:5173");

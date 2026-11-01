@@ -21,6 +21,12 @@ export function coreBaseUrl(): string {
  * `larp/install.ts`). While it is set, nothing below talks to the core.
  */
 let larp: CoreTransport | undefined;
+let editor: CoreTransport | undefined;
+
+/** The standalone Editor hosts this same frontend behind its authenticated local relay. */
+export function installEditorTransport(transport: CoreTransport | undefined): void {
+  editor = transport;
+}
 
 export function installLarpTransport(transport: CoreTransport | undefined): void {
   larp = transport;
@@ -32,6 +38,7 @@ export function needsLogin(): boolean {
 
   return (
     larp === undefined &&
+    editor === undefined &&
     tauriTransportFromGlobal() === undefined &&
     (token === undefined || token === "")
   );
@@ -52,6 +59,7 @@ export function needsLogin(): boolean {
  * tokenless page says before it has logged in. Every caller already handles it.
  */
 export function resolveCoreTransport(csrf?: string): CoreTransport | undefined {
+  if (editor !== undefined) return editor;
   if (larp !== undefined) {
     return larp;
   }
