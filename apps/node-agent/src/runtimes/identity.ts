@@ -9,6 +9,9 @@ export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 export const PRODUCTIVITY_INSTRUCTIONS =
   "Use noctis_propose_reminder to capture reminders or to-dos, noctis_propose_task for scheduled agent work, and noctis_propose_note for Noctis notes. When you learn something durable about the owner's world, save it with noctis_propose_inbox_note, one fact per note with [[wikilinks]] for every person, project and topic; Noctis files it into the MindVault. Use noctis_propose_task_action to run an existing owner-enabled task now or pause it. Proposed tasks stay paused until the owner turns them on in Noctis; never activate one yourself.";
 
+export const EFFICIENCY_INSTRUCTIONS =
+  "The owner prefers lower subscription and token usage over speed unless they explicitly ask for speed. Work in the current thread by default, including routine investigation, testing and review. This supersedes older guidance to use subagents as much as possible. Delegate when the owner asks, another PC or runtime is required, or a bounded isolated task is likely to reduce total usage. When an independent check is necessary, use one concise review with only the relevant context and reuse that thread for follow-up. Keep tool output and handoffs short, and run focused checks appropriate to the change.";
+
 /**
  * Left to itself the agent summarised its work in chat at the end, skipped what
  * it could not find, and went quiet while sub-agents worked. Told to show
@@ -203,6 +206,7 @@ ${
     ? ""
     : `${ACTING_INSTRUCTIONS}
 ${PRODUCTIVITY_INSTRUCTIONS}
+${EFFICIENCY_INSTRUCTIONS}
 ${WORKING_INSTRUCTIONS}`
 }`;
 }

@@ -488,10 +488,143 @@ describe("createConversation", () => {
     store.close();
   });
 
+  it.each([
+    ["confirm", "confirmedAt"],
+    ["decline", "declinedAt"],
+  ] as const)(
+    "removes an approval after %s succeeds without a live event",
+    async (action, timestamp) => {
+      const scripted = core({
+        "GET /approvals": { status: 200, body: { approvals: [approval] } },
+        [`POST /commands/authority.${action}`]: {
+          status: 200,
+          body: { ...approval, [timestamp]: AT },
+        },
+      });
+      const store = createConversation(scripted.transport, "vesper", undefined);
+      store.start();
+      await vi.waitFor(() => expect(store.getState().pendingApprovals).toHaveLength(1));
+
+      await store[action](APPROVAL_ID);
+
+      expect(store.getState().pendingApprovals).toHaveLength(0);
+      expect(store.getState().error).toBeUndefined();
+      store.close();
+    },
+  );
+
+  it.each(["confirm", "decline"] as const)(
+    "keeps the approval when %s is refused",
+    async (action) => {
+      const scripted = core({
+        "GET /approvals": { status: 200, body: { approvals: [approval] } },
+        [`POST /commands/authority.${action}`]: {
+          status: 409,
+          body: { error: { message: "Confirmation refused" } },
+        },
+      });
+      const store = createConversation(scripted.transport, "vesper", undefined);
+      store.start();
+      await vi.waitFor(() => expect(store.getState().pendingApprovals).toHaveLength(1));
+
+      await store[action](APPROVAL_ID);
+
+      expect(store.getState().pendingApprovals).toHaveLength(1);
+      expect(store.getState().error).toContain("refused");
+      store.close();
+    },
+  );
+
+  it.each(["confirm", "decline"] as const)(
+    "keeps the approval when %s returns an unresolved record",
+    async (action) => {
+      const scripted = core({
+        "GET /approvals": { status: 200, body: { approvals: [approval] } },
+        [`POST /commands/authority.${action}`]: { status: 200, body: approval },
+      });
+      const store = createConversation(scripted.transport, "vesper", undefined);
+      store.start();
+      await vi.waitFor(() => expect(store.getState().pendingApprovals).toHaveLength(1));
+      await store[action](APPROVAL_ID);
+      expect(store.getState().pendingApprovals).toHaveLength(1);
+      expect(store.getState().error).toContain("does not match its contract");
+      store.close();
+    },
+  );
+
+  it("does not restore a confirmed card from an approval read already in flight", async () => {
+    const scripted = core({
+      "GET /approvals": { status: 200, body: { approvals: [approval] } },
+      [`GET /approvals/${APPROVAL_ID}`]: { status: 200, body: approval },
+      "POST /commands/authority.confirm": {
+        status: 200,
+        body: { ...approval, confirmedAt: AT },
+      },
+    });
+    const store = createConversation(scripted.transport, "vesper", undefined);
+    store.start();
+    await vi.waitFor(() => expect(store.getState().pendingApprovals).toHaveLength(1));
+
+    const request = scripted.transport.request;
+    let finishRead!: (response: CoreResponse) => void;
+    const delayed = new Promise<CoreResponse>((resolve) => {
+      finishRead = resolve;
+    });
+    scripted.transport.request = (method, path, body) =>
+      path === `/approvals/${APPROVAL_ID}` ? delayed : request(method, path, body);
+    scripted.live().onEvent(
+      event("authority.decision_recorded.v1", "authority", APPROVAL_ID, {
+        requestId: APPROVAL_ID,
+        outcome: "require_confirmation",
+        nodeJobId: JOB_ID,
+      }),
+    );
+    await store.confirm(APPROVAL_ID);
+    finishRead({ status: 200, body: approval });
+    await delayed;
+    // Drain the read's parsing and pending-card update.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.getState().pendingApprovals).toHaveLength(0);
+    store.close();
+  });
+
+  it.each(["authority.confirmed.v1", "authority.declined.v1"] as const)(
+    "ignores an in-flight pending read when %s arrives before the card",
+    async (eventType) => {
+      const scripted = core();
+      const request = scripted.transport.request;
+      let finishRead!: (response: CoreResponse) => void;
+      const delayed = new Promise<CoreResponse>((resolve) => {
+        finishRead = resolve;
+      });
+      scripted.transport.request = (method, path, body) =>
+        path === `/approvals/${APPROVAL_ID}` ? delayed : request(method, path, body);
+      const store = createConversation(scripted.transport, "vesper", undefined);
+      store.start();
+      await vi.waitFor(() => expect(store.getState().turns).toHaveLength(1));
+      scripted.live().onEvent(
+        event("authority.decision_recorded.v1", "authority", APPROVAL_ID, {
+          requestId: APPROVAL_ID,
+          outcome: "require_confirmation",
+          nodeJobId: JOB_ID,
+        }),
+      );
+      scripted
+        .live()
+        .onEvent(event(eventType, "authority", APPROVAL_ID, { requestId: APPROVAL_ID }));
+      finishRead({ status: 200, body: approval });
+      await delayed;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(store.getState().pendingApprovals).toHaveLength(0);
+      store.close();
+    },
+  );
+
   it("turns a runtime ask into a pending approval, and a decline removes it", async () => {
     const scripted = core({
       [`GET /approvals/${APPROVAL_ID}`]: { status: 200, body: approval },
-      "POST /commands/authority.decline": { status: 200, body: approval },
+      "POST /commands/authority.decline": { status: 200, body: { ...approval, declinedAt: AT } },
     });
     const store = createConversation(scripted.transport, "vesper", undefined);
 

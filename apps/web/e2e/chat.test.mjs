@@ -286,6 +286,16 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
         "the pending approval did not survive a reload",
       );
 
+      // The command response must close the card even if its live event is lost.
+      const eventsUrl = /\/events\?/;
+      const suppressConfirmation = async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        body.events = body.events.filter((event) => event.type !== "authority.confirmed.v1");
+        await route.fulfill({ response, json: body });
+      };
+      await page.route(eventsUrl, suppressConfirmation);
+
       await tabTo(page, "Confirm");
       await page.keyboard.press("Enter");
 
@@ -299,6 +309,7 @@ describe("Chat: a prompt becomes a turn, and the turn's ask is answered from the
       );
 
       const command = done.items.find((item) => item.kind === "command");
+      await page.unroute(eventsUrl, suppressConfirmation);
 
       assert.ok(command.text.includes(ASK_COMMAND), command.text);
       assert.ok(

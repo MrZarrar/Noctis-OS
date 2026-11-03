@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   ACTING_INSTRUCTIONS,
+  EFFICIENCY_INSTRUCTIONS,
   WORKING_INSTRUCTIONS,
   WRITING_INSTRUCTIONS,
   identityCard,
@@ -176,6 +177,14 @@ describe("identityCard", () => {
     );
     expect(WORKING_INSTRUCTIONS).toContain("only when the owner asks to see them");
     expect(WORKING_INSTRUCTIONS).toContain(".md, .txt, .csv and .tsv");
+  });
+
+  it("carries the owner's usage preference into every tool-using runtime", () => {
+    for (const runtime of ["claude", "codex", "hermes"] as const) {
+      expect(identityCard({ identityId: "vesper", runtime, model: "m", env: {} })).toContain(
+        EFFICIENCY_INSTRUCTIONS,
+      );
+    }
   });
 
   it("tells Vesper to write without the usual AI tells, on every runtime", () => {

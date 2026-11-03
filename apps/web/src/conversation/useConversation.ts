@@ -252,6 +252,7 @@ export function createConversation(
   };
   let generation = 0;
   const streamingJobs = new Map<string, string>();
+  const resolvedApprovals = new Set<string>();
   // A child's effect runs before its parent's, so Presence can ask before App starts the store.
   let markLoaded = (): void => undefined;
   const firstLoad = new Promise<void>((resolve) => {
@@ -271,6 +272,14 @@ export function createConversation(
 
   function fail(message: string): void {
     set({ error: message });
+  }
+
+  function resolveApproval(requestId: string): void {
+    // A read started before the decision may still return the old pending record.
+    resolvedApprovals.add(requestId);
+    set({
+      pendingApprovals: state.pendingApprovals.filter((approval) => approval.id !== requestId),
+    });
   }
 
   function jobIds(): ReadonlySet<string> {
@@ -364,7 +373,11 @@ export function createConversation(
     if (page !== undefined) {
       const known = jobIds();
 
-      set({ pendingApprovals: page.approvals.filter((approval) => isPendingFor(approval, known)) });
+      set({
+        pendingApprovals: page.approvals.filter(
+          (approval) => !resolvedApprovals.has(approval.id) && isPendingFor(approval, known),
+        ),
+      });
     }
   }
 
@@ -495,6 +508,7 @@ export function createConversation(
 
     if (
       approval !== undefined &&
+      !resolvedApprovals.has(approval.id) &&
       isPendingFor(approval, jobIds()) &&
       !state.pendingApprovals.some((existing) => existing.id === approval.id)
     ) {
@@ -551,13 +565,7 @@ export function createConversation(
         return;
       case "authority.confirmed.v1":
       case "authority.declined.v1":
-        if (state.pendingApprovals.some((approval) => approval.id === event.streamId)) {
-          set({
-            pendingApprovals: state.pendingApprovals.filter(
-              (approval) => approval.id !== event.streamId,
-            ),
-          });
-        }
+        resolveApproval(event.streamId);
 
         return;
       case "surface.intent_upserted.v1":
@@ -852,16 +860,38 @@ export function createConversation(
       await loadThread();
     },
     confirm: async (requestId, typedConfirmation) => {
-      await command("authority.confirm", {
+      const response = await command("authority.confirm", {
         requestId,
         ...(typedConfirmation === undefined ? {} : { typedConfirmation }),
       });
+      if (response === undefined) return;
+      const approval = ApprovalRecordSchema.safeParse(response);
+      if (
+        !approval.success ||
+        approval.data.id !== requestId ||
+        approval.data.confirmedAt === undefined
+      ) {
+        fail("The core returned a confirmation that does not match its contract");
+        return;
+      }
+      resolveApproval(requestId);
     },
     decline: async (requestId, reason) => {
-      await command("authority.decline", {
+      const response = await command("authority.decline", {
         requestId,
         ...(reason === undefined ? {} : { reason }),
       });
+      if (response === undefined) return;
+      const approval = ApprovalRecordSchema.safeParse(response);
+      if (
+        !approval.success ||
+        approval.data.id !== requestId ||
+        approval.data.declinedAt === undefined
+      ) {
+        fail("The core returned a decline that does not match its contract");
+        return;
+      }
+      resolveApproval(requestId);
     },
   };
 
