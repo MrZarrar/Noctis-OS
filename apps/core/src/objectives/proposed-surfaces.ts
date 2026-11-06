@@ -15,7 +15,6 @@ import { getApproval } from "../authority/service.js";
 import type { CommandContext, Kernel } from "../kernel.js";
 import { recallFor } from "../vault/recall.js";
 import type { VaultRoot } from "../vault/root.js";
-import { placeLiveBrief } from "./live-briefs.js";
 import { getObjective } from "./service.js";
 import { stableSourceId } from "./source-ids.js";
 import { upsertSurfaceIntent } from "./surface-intents.js";
@@ -460,12 +459,6 @@ export function proposeFor(deps: ProposedSurfaceDeps, event: OrchestrationEvent)
     case "authority.executed.v1":
     case "authority.declined.v1":
       placeApproval(deps, event.streamId);
-      return;
-
-    case "node.job_leased.v1":
-    case "node.job_status_changed.v1":
-    case "node.job_result.v1":
-      placeLiveBrief(deps, event.streamId);
       return;
 
     default:

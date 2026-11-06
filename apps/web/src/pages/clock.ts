@@ -11,7 +11,8 @@ export function clockText(date: Date): { time: string; day: string } {
 
 export function greetingFor(date: Date): string {
   const hour = date.getHours();
-  return hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening.";
+  const time = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  return `${time}, Mr Zarrar.`;
 }
 
 export function msToNextMinute(date: Date): number {

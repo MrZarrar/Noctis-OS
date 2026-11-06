@@ -12,10 +12,10 @@ describe("the Presence clock", () => {
     });
   });
 
-  it("greets by the hour it is now, not the hour the page opened", () => {
-    expect(greetingFor(new Date(2026, 9, 9, 11, 59))).toBe("Good morning.");
-    expect(greetingFor(new Date(2026, 9, 9, 12, 0))).toBe("Good afternoon.");
-    expect(greetingFor(new Date(2026, 9, 9, 18, 0))).toBe("Good evening.");
+  it("greets by the hour it is now, not the hour the page opened, and names the owner", () => {
+    expect(greetingFor(new Date(2026, 9, 9, 11, 59))).toBe("Good morning, Mr Zarrar.");
+    expect(greetingFor(new Date(2026, 9, 9, 12, 0))).toBe("Good afternoon, Mr Zarrar.");
+    expect(greetingFor(new Date(2026, 9, 9, 18, 0))).toBe("Good evening, Mr Zarrar.");
   });
 
   it("ticks on the minute, not a second late", () => {

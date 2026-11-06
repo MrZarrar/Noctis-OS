@@ -32,7 +32,6 @@ import { createScreenGateway } from "./screen/gateway.js";
 import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { createRuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { attachNodeSocket } from "./nodes/ws.js";
-import { reconcileLiveBriefs } from "./objectives/live-briefs.js";
 import { proposeSurfacesFromEvents } from "./objectives/proposed-surfaces.js";
 import type { Kernel } from "./kernel.js";
 import type { Logger } from "./logging.js";
@@ -226,14 +225,6 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
   // ones a pending decision needs, rather than whichever page happened to be
   // open when it was activated.
   proposeSurfacesFromEvents({ kernel, ...(vaultRoot === undefined ? {} : { vaultRoot }) });
-  try {
-    reconcileLiveBriefs({ kernel });
-  } catch (error) {
-    // A stale brief on Presence is not worth refusing to start over.
-    logger.log("warn", "live briefs not reconciled", {
-      reason: error instanceof Error ? error.message : "unknown",
-    });
-  }
 
   // After the commit, never inside it: `kernel.broker` publishes only committed
   // events, so a push can never describe state a rollback erased.
