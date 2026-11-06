@@ -148,8 +148,10 @@ export function UsageLimits({
       style={{
         display: "grid",
         gap: 10,
+        // Side by side rather than stacked: the composer status column has
+        // the horizontal room, and a thread rarely runs only one provider.
         ...(compact
-          ? { width: 248, maxWidth: "100%" }
+          ? { display: "flex", flexWrap: "wrap", gap: 16, width: "auto", maxWidth: "100%" }
           : {
               alignSelf: mobile ? "center" : "flex-start",
               marginTop: mobile ? 8 : 0,
@@ -167,7 +169,10 @@ export function UsageLimits({
         const stale = limit.problem === undefined ? staleText(limit.checkedAt, now) : undefined;
 
         return (
-          <div key={limit.providerId} style={{ display: "grid", gap: 4 }}>
+          <div
+            key={limit.providerId}
+            style={{ display: "grid", gap: 4, ...(compact ? { flex: "1 1 170px" } : {}) }}
+          >
             <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
               <span style={{ fontSize: 11, color: typography.color.primary, opacity: 0.85 }}>
                 {name}
