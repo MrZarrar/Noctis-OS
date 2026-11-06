@@ -1,4 +1,20 @@
 import type { HealthService } from "../health/service.js";
+import {
+  ArchivePalaceCommandSchema,
+  PalaceListQuerySchema,
+  SavePalaceCommandSchema,
+} from "@noctis/contracts";
+import { PalaceFormatError } from "@noctis/domain";
+import {
+  archivePalaceEntry,
+  listPalaceEntries,
+  PalaceUnavailable,
+  readPalaceEntry,
+  restorePalaceEntry,
+  savePalaceEntry,
+} from "../palace/service.js";
+import type { PalaceDeps } from "../palace/service.js";
+import { VaultConflict } from "../vault/writes.js";
 import type { DexcomService } from "../health/dexcom-service.js";
 import {
   AllowHealthCommandSchema,
@@ -601,6 +617,55 @@ function vaultNotConfigured(): Result<never> {
   };
 }
 
+function palaceDeps(deps: ApiDeps, principal: string): PalaceDeps {
+  return { kernel: deps.kernel, root: deps.vaultRoot, env: deps.vaultEnv ?? {}, principal };
+}
+
+function palaceResponse(action: () => { status: number; body: unknown }): {
+  status: number;
+  body: unknown;
+} {
+  try {
+    return action();
+  } catch (error) {
+    if (error instanceof VaultConflict)
+      return {
+        status: 409,
+        body: errorBody("conflict", "The entry changed since it was read", {
+          expected: error.expected,
+          actual: error.actual,
+        }),
+      };
+    if (error instanceof VaultWriteRefused)
+      return {
+        status: 403,
+        body: errorBody("authority_refused", "Palace writes are disabled or the path was refused"),
+      };
+    if (error instanceof PalaceFormatError || error instanceof z.ZodError)
+      return {
+        status: 400,
+        body: errorBody("invalid_request", "The palace entry or filters need repair"),
+      };
+    if (error instanceof PalaceUnavailable)
+      return { status: 503, body: errorBody("unavailable", error.message) };
+    return { status: 503, body: errorBody("unavailable", "Palace storage is unavailable") };
+  }
+}
+
+function palaceCommand<S extends z.ZodType>(
+  schema: S,
+  run: (deps: PalaceDeps, context: CommandContext, command: z.infer<S>) => Result<unknown>,
+): CommandRoute {
+  const route = defineDepsCommand(
+    schema,
+    (deps, context, command) => run(palaceDeps(deps, context.principal ?? ""), context, command),
+    () => undefined,
+  );
+  return {
+    handle: (deps, context, body) => palaceResponse(() => route.handle(deps, context, body)),
+  };
+}
+
 function replayDeletion(db: NoctisDatabase, id: string, type: string): unknown {
   const row = db
     .prepare(
@@ -611,6 +676,9 @@ function replayDeletion(db: NoctisDatabase, id: string, type: string): unknown {
 }
 
 const COMMANDS: Readonly<Record<string, CommandRoute>> = {
+  "palace.save": palaceCommand(SavePalaceCommandSchema, savePalaceEntry),
+  "palace.archive": palaceCommand(ArchivePalaceCommandSchema, archivePalaceEntry),
+  "palace.restore": palaceCommand(ArchivePalaceCommandSchema, restorePalaceEntry),
   "reminder.create": defineCommand(CreateReminderCommandSchema, createReminder, getReminder),
   "reminder.update": defineCommand(UpdateReminderCommandSchema, updateReminder, getReminder),
   "reminder.complete": defineCommand(CompleteReminderCommandSchema, completeReminder, getReminder),
@@ -1107,6 +1175,24 @@ function handleRead(
 
   // Sensitive notes are read only by a credential that holds a passcode unlock.
   const unlocked = (): boolean => isUnlocked(deps.kernel.db, deps.kernel.clock.now(), principal);
+
+  if (segments[0] === "palace" && segments[1] === "entries") {
+    return palaceResponse(() => {
+      const palace = palaceDeps(deps, principal);
+      if (segments.length === 2) {
+        const filters = PalaceListQuerySchema.parse(Object.fromEntries(url.searchParams));
+        return { status: 200, body: listPalaceEntries(palace, filters) };
+      }
+      if (segments.length === 3) {
+        const parsed = UuidSchema.safeParse(segments[2]);
+        const entry = parsed.success ? readPalaceEntry(palace, parsed.data) : undefined;
+        return entry === undefined
+          ? { status: 404, body: errorBody("not_found", "Entry not found") }
+          : { status: 200, body: entry };
+      }
+      return { status: 404, body: errorBody("not_found", "No such resource") };
+    });
+  }
 
   if (segments.length === 2 && segments[0] === "vault" && segments[1] === "edits") {
     // A refusal on a sensitive note can quote it, so those wait for the passcode too.
@@ -3078,7 +3164,12 @@ export async function handleRequest(
       return;
     }
 
-    const context: CommandContext = { correlationId, actorType: "user", actorId: "local" };
+    const context: CommandContext = {
+      correlationId,
+      actorType: "user",
+      actorId: "local",
+      principal,
+    };
     const result = route.handle(deps, context, body);
 
     if (result.status === 200) {

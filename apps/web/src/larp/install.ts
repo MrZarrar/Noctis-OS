@@ -4,6 +4,7 @@ import { ok, type LarpArea } from "./area.js";
 import { files } from "./files.js";
 import { healthArea } from "./health.js";
 import { productivity } from "./productivity.js";
+import { palaceArea } from "./palace.js";
 import { vaultArea } from "./vault.js";
 import { worldArea } from "./world.js";
 
@@ -25,7 +26,15 @@ export async function installLarp(): Promise<void> {
 
   installLarpTransport(
     new DemoTransport({
-      areas: [await existingPushKey(), vaultArea, healthArea, productivity, files, worldArea],
+      areas: [
+        await existingPushKey(),
+        palaceArea,
+        vaultArea,
+        healthArea,
+        productivity,
+        files,
+        worldArea,
+      ],
       notify: (title, body, target, tag) => {
         void notify(title, body, target, tag);
       },

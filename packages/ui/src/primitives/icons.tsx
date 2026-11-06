@@ -51,6 +51,7 @@ const PATHS: Readonly<Record<RailItem | "More", readonly string[]>> = {
   Reminders: ["M12 3a6 6 0 0 0-6 6v5l-2 3h16l-2-3V9a6 6 0 0 0-6-6", "M10 21h4"],
   "To-dos": ["M9 6h12M9 12h12M9 18h12", "m2 5 2 2 3-3m-5 7 2 2 3-3m-5 7 2 2 3-3"],
   Notes: ["M5 3h14v18H5Z", "M8 8h8M8 12h8M8 16h5"],
+  "Thought Palace": ["M3 21h18M5 21V9h14v12M3 9l9-6 9 6M9 12v6M15 12v6"],
   More: ["M6 12h.01M12 12h.01M18 12h.01"],
 };
 

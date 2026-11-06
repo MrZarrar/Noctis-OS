@@ -52,6 +52,7 @@ export const API_SEGMENTS = [
   "nodes",
   "notes",
   "objectives",
+  "palace",
   "permissions",
   /** Arrivals at the owner's named places. Not `presence`: that is the owner at a PC. */
   "places",
@@ -83,4 +84,6 @@ export const API_SEGMENTS = [
  * misses `/objectives?limit=25` — and a missed core path is answered with the
  * SPA's index.html and a 200, which is far harder to spot than a 404.
  */
-export const CORE_PATH_PATTERN = new RegExp(`^/(${API_SEGMENTS.join("|")})(/|\\?|$)`);
+export const CORE_PATH_PATTERN = new RegExp(
+  `^/(${API_SEGMENTS.map((segment) => (segment === "palace" ? "palace/entries" : segment)).join("|")})(/|\\?|$)`,
+);

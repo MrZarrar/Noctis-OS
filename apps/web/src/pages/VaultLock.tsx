@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { buttonStyle, fieldStyle } from "../layout/Page.js";
 import { usePendingAction } from "../layout/ActionButton.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { createPalaceApi, palaceDraftScope } from "../palace/api.js";
+import { clearSensitiveDrafts, protectSensitiveDrafts } from "../palace/drafts.js";
 
 import type { PasscodeStatus } from "./vault-lock.js";
 import { PasscodeStatusSchema, passcodeRefusal } from "./vault-lock.js";
@@ -45,6 +47,12 @@ export function VaultLock({
         return;
       }
 
+      if (
+        action === "lock" &&
+        !(await protectSensitiveDrafts(palaceDraftScope(), createPalaceApi(transport).save))
+      )
+        return;
+
       await run(async () => {
         const response = await transport.request(
           "POST",
@@ -54,6 +62,7 @@ export function VaultLock({
         const parsed = PasscodeStatusSchema.safeParse(response.body);
 
         if (response.status === 200 && parsed.success) {
+          if (action === "lock") clearSensitiveDrafts(palaceDraftScope());
           setStatus(parsed.data);
           setPasscode("");
           onChange();

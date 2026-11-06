@@ -18,6 +18,7 @@ export const EVENT_NAMES = [
   "note.created.v1",
   "note.updated.v1",
   "note.deleted.v1",
+  "palace.saved.v1",
   "task.created.v1",
   "task.change_proposed.v1",
   "task.updated.v1",

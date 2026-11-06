@@ -133,7 +133,7 @@ export function parseWikilinks(text: string, offset = 0): Wikilink[] {
   return links;
 }
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+const FRONTMATTER = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const INLINE_LIST = /^\[(.*)\]$/;
 
 /**
@@ -239,6 +239,7 @@ export function titleFor(path: string, note: ParsedNote): string {
 /** Every key a note answers to as a link target: its title, filename, and aliases. */
 export function keysFor(path: string, note: ParsedNote): string[] {
   const filename = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+  if (/^palace\/entries\/[0-9a-f-]{36}\.md$/i.test(path)) return [normalizeKey(filename)];
   const keys = new Set<string>([normalizeKey(titleFor(path, note)), normalizeKey(filename)]);
 
   for (const alias of note.frontmatter?.aliases ?? []) {

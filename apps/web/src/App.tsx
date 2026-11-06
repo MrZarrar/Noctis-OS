@@ -44,6 +44,8 @@ import { Presence } from "./pages/Presence.js";
 import { Settings } from "./pages/Settings.js";
 import { Threads } from "./pages/Threads.js";
 import { Vault } from "./pages/Vault.js";
+import { ThoughtPalace } from "./pages/ThoughtPalace.js";
+import { usePalaceSession } from "./palace/session.js";
 import { resumeSession } from "./session/login.js";
 import { useShowAllPages } from "./pages/CoreSettings.js";
 import type { CoreTransport } from "./transport/CoreTransport.js";
@@ -154,6 +156,7 @@ function Workbench({
   onSignedOut?: () => void;
 }): JSX.Element {
   const [productivityFocus, setProductivityFocus] = useState<{ id: string; task: boolean }>();
+  usePalaceSession(transport);
   const initialPage = useRef<RailItem>(linkedScreen(window.location.href) ?? "Presence");
   const [active, setActive] = useState<RailItem>(initialPage.current);
   const initialThreadLink = useRef(linkedThread(window.location.href));
@@ -318,6 +321,13 @@ function Workbench({
         );
       case "Health":
         return <Health transport={transport} />;
+      case "Thought Palace":
+        return (
+          <ThoughtPalace
+            transport={transport}
+            {...(payload.focusId === undefined ? {} : { focusId: payload.focusId })}
+          />
+        );
       case "Reminders":
       case "To-dos":
       case "Notes":
@@ -525,6 +535,8 @@ function Workbench({
         {active === "Approvals" && <Approvals transport={transport} />}
 
         {active === "Health" && <Health transport={transport} />}
+
+        {active === "Thought Palace" && <ThoughtPalace transport={transport} />}
 
         {active === "Vault" && (
           <Vault

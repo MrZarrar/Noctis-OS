@@ -2,7 +2,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { API_SEGMENTS } from "@noctis/contracts";
+import { CORE_PATH_PATTERN } from "@noctis/contracts";
 
 /**
  * Serving the built page from the core, for the one deployment where it has to
@@ -29,10 +29,8 @@ import { API_SEGMENTS } from "@noctis/contracts";
  * remaining ceilings are recorded there; the client-route collision asserted as
  * current behaviour is in `apps/web/e2e/tokenless.test.mjs`.
  */
-const SEGMENTS: ReadonlySet<string> = new Set<string>(API_SEGMENTS);
-
 export function isApiPath(pathname: string): boolean {
-  return SEGMENTS.has(pathname.split("/")[1] ?? "");
+  return CORE_PATH_PATTERN.test(pathname);
 }
 
 /**
@@ -200,9 +198,10 @@ export function pageSecurityPolicy(
   gatewayOrigins: readonly string[],
   videoEditorOrigin?: string,
 ): string {
-  const base = gatewayOrigins.length === 0
-    ? CONTENT_SECURITY_POLICY
-    : `${BASE_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
+  const base =
+    gatewayOrigins.length === 0
+      ? CONTENT_SECURITY_POLICY
+      : `${BASE_POLICY}; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' data: ${gatewayOrigins.join(" ")}`;
 
   return videoEditorOrigin === undefined ? base : `${base}; frame-src 'self' ${videoEditorOrigin}`;
 }

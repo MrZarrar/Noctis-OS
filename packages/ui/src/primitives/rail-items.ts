@@ -14,6 +14,7 @@ export const NAV_ITEMS = [
   /** glycolens's weekly report from the home PC. */
   "Health",
   "Vault",
+  "Thought Palace",
   "Reminders",
   "To-dos",
   "Notes",

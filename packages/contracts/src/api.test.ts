@@ -10,9 +10,11 @@ describe("the core's own paths", () => {
     "/live-sessions",
     "/live-sessions/x/entries",
     "/limits",
+    "/palace/entries?room=library",
     "/visuals/content?node=n&root=r&path=a.html",
   ])("claims %s for the core, not the page", (path) => {
     expect(CORE_PATH_PATTERN.test(path)).toBe(true);
     expect(API_SEGMENTS).toContain(path.split(/[/?]/)[1]);
+    expect(CORE_PATH_PATTERN.test("/palace/scene.webp")).toBe(false);
   });
 });

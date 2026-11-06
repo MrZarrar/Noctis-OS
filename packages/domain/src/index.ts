@@ -13,6 +13,8 @@ export * from "./state/transition.js";
 export * from "./compositor/compose.js";
 export * from "./compositor/layouts.js";
 export * from "./vault/markdown.js";
+export * from "./palace/entry.js";
+export * from "./palace/list.js";
 export * from "./vault/layout.js";
 export * from "./vault/view.js";
 export * from "./tools/route.js";

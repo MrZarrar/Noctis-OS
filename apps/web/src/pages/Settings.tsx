@@ -15,6 +15,8 @@ import { CoreSettings } from "./CoreSettings.js";
 import type { PushState } from "../notify/subscribe.js";
 import { enablePush, initialPushState } from "../notify/subscribe.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { createPalaceApi, palaceDraftScope } from "../palace/api.js";
+import { clearOwnerDrafts, protectSensitiveDrafts } from "../palace/drafts.js";
 
 /**
  * Settings: the standing permissions screen (Section 9.1).
@@ -288,6 +290,10 @@ export function Settings({ transport, onSignedOut }: SettingsProps): JSX.Element
     if (onSignedOut === undefined) {
       return;
     }
+
+    const scope = palaceDraftScope();
+    if (!(await protectSensitiveDrafts(scope, createPalaceApi(transport).save))) return;
+    await clearOwnerDrafts(scope);
 
     try {
       await transport?.request("POST", "/session/logout", {});

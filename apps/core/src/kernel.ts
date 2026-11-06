@@ -19,6 +19,7 @@ export interface Kernel {
 
 /** Who is acting and under which correlation. Carried onto every event a command emits. */
 export interface CommandContext {
+  principal?: string;
   correlationId: string;
   actorType: ActorType;
   actorId: string;

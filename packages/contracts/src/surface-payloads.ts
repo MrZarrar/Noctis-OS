@@ -86,6 +86,7 @@ export const PAGE_PANEL_PAGES = [
   "Health",
   "Files",
   "Vault",
+  "Thought Palace",
   "Approvals",
   "Nodes",
   "Missions",
@@ -110,7 +111,9 @@ export const PagePanelPayloadSchema = z
   .refine(
     (payload) =>
       (payload.folder === undefined || payload.page === "Files") &&
-      (payload.focusId === undefined || payload.page === "Vault"),
+      (payload.focusId === undefined ||
+        payload.page === "Vault" ||
+        (payload.page === "Thought Palace" && UuidSchema.safeParse(payload.focusId).success)),
   );
 export type PagePanelPayload = z.infer<typeof PagePanelPayloadSchema>;
 

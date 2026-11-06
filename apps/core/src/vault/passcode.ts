@@ -66,14 +66,19 @@ export function passcodeStatus(db: NoctisDatabase, now: number, principal: strin
 
   return {
     configured: config !== undefined,
-    unlocked: isUnlocked(db, now, principal),
+    unlocked: isUnlocked(db, now, principal, false),
     timeoutMinutes: config?.timeout_minutes ?? 5,
     lockoutSeconds: remainingSeconds(config?.locked_until ?? null, now),
   };
 }
 
-/** True while this credential's unlock is live; each true answer extends it. */
-export function isUnlocked(db: NoctisDatabase, now: number, principal: string): boolean {
+/** Active reads extend this credential's unlock; status checks leave its expiry alone. */
+export function isUnlocked(
+  db: NoctisDatabase,
+  now: number,
+  principal: string,
+  renew = true,
+): boolean {
   const config = row(db);
 
   if (config === undefined) {
@@ -88,7 +93,7 @@ export function isUnlocked(db: NoctisDatabase, now: number, principal: string): 
     return false;
   }
 
-  grant(db, now, principal, config.timeout_minutes);
+  if (renew) grant(db, now, principal, config.timeout_minutes);
   return true;
 }
 

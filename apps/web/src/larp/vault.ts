@@ -26,6 +26,7 @@ for (const edit of edits) {
 }
 const replays = new Map<string, { body: string; response: CoreResponse }>();
 let unlocked = true;
+export const vaultIsUnlocked = (): boolean => unlocked;
 let promoted = false;
 let recallSequence = 0;
 
