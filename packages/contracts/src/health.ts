@@ -231,3 +231,33 @@ export type AllowHealthCommand = z.infer<typeof AllowHealthCommandSchema>;
 export type DisallowHealthCommand = z.infer<typeof DisallowHealthCommandSchema>;
 export type HealthCommand = z.infer<typeof HealthCommandSchema>;
 export type HealthDecideCommand = z.infer<typeof HealthDecideCommandSchema>;
+
+/* ---- live Dexcom CGM reading ---- */
+
+export const GlucoseTrendSchema = z.enum([
+  "doubleUp",
+  "singleUp",
+  "fortyFiveUp",
+  "flat",
+  "fortyFiveDown",
+  "singleDown",
+  "doubleDown",
+  "unknown",
+]);
+export type GlucoseTrend = z.infer<typeof GlucoseTrendSchema>;
+
+export const GlucoseLiveSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("not_configured") }).strict(),
+  z.object({ state: z.literal("stale"), mmol: z.number(), trend: GlucoseTrendSchema, at: UtcTimestampSchema }).strict(),
+  z.object({ state: z.literal("ok"), mmol: z.number(), trend: GlucoseTrendSchema, at: UtcTimestampSchema }).strict(),
+  z.object({ state: z.literal("error"), reason: z.string().max(300) }).strict(),
+]);
+export type GlucoseLive = z.infer<typeof GlucoseLiveSchema>;
+
+export const SetDexcomCredentialsSchema = z
+  .object({ username: z.string().trim().min(1).max(200), password: z.string().min(1).max(200) })
+  .strict();
+export type SetDexcomCredentials = z.infer<typeof SetDexcomCredentialsSchema>;
+
+export const DexcomIntegrationStatusSchema = z.object({ configured: z.boolean() }).strict();
+export type DexcomIntegrationStatus = z.infer<typeof DexcomIntegrationStatusSchema>;

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { GlucoseBadge } from "../health/GlucoseBadge.js";
 import { HealthReportView } from "../health/HealthReportView.js";
 import { useHealth } from "../health/useHealth.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
@@ -23,6 +24,7 @@ export function Health({ transport }: { transport: CoreTransport | undefined }):
       error={health.error}
       onRunNow={() => void health.runNow()}
       onDecide={(id, action) => void health.decide(id, action)}
+      liveGlucose={<GlucoseBadge transport={transport} />}
     />
   );
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { SectionHeading, buttonStyle, fieldStyle, glass } from "../layout/Page.js";
 import { ActionButton } from "../layout/ActionButton.js";
+import { DexcomSettings } from "../health/DexcomSettings.js";
 import { AutomationSettings } from "./AutomationSettings.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
@@ -460,6 +461,7 @@ export function CoreSettings({ transport }: { transport: CoreTransport | undefin
 
   return (
     <>
+      <DexcomSettings transport={transport} />
       <AutomationSettings
         transport={transport}
         settings={configuration.settings}

@@ -14,6 +14,7 @@ import { buttonStyle } from "../layout/Page.js";
 import { usePendingAction } from "../layout/ActionButton.js";
 import { isTurnRunning } from "./turn-activity.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
+import { GlucoseBadge } from "../health/GlucoseBadge.js";
 import { ProductivityPresence } from "./ProductivityPresence.js";
 import { UsageLimits } from "./UsageLimits.js";
 import { useWakeWhileTyping } from "./CoreSettings.js";
@@ -202,7 +203,12 @@ export function Presence({
               JESTER · ACTIVE
             </p>
           )}
-          {!mobile && <UsageLimits transport={transport} now={now} mobile={false} />}
+          {!mobile && (
+            <span style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+              <GlucoseBadge transport={transport} compact />
+              <UsageLimits transport={transport} now={now} mobile={false} />
+            </span>
+          )}
           <time
             dateTime={now.toISOString()}
             aria-label={`${clock.time}, ${clock.day}`}
@@ -246,7 +252,12 @@ export function Presence({
             )}
           </time>
           {/* Under the clock on a phone, so the time stays the first thing seen. */}
-          {mobile && <UsageLimits transport={transport} now={now} mobile />}
+          {mobile && (
+            <span style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <GlucoseBadge transport={transport} compact />
+              <UsageLimits transport={transport} now={now} mobile />
+            </span>
+          )}
         </div>
         <ProductivityPresence
           transport={transport}

@@ -1,4 +1,6 @@
 import { createHealthService, type HealthService } from "./health/service.js";
+import { createDexcomService } from "./health/dexcom-service.js";
+import { fetchLatestReading } from "./health/dexcom.js";
 import {
   createServer,
   STATUS_CODES,
@@ -297,10 +299,17 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     weeklyAt: () => readSetting(db, env, "healthRunAt"),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
+  const dexcom = createDexcomService({
+    db,
+    databasePath: config.databasePath,
+    clock,
+    fetchLatestReading: (credentials) => fetchLatestReading(fetch, credentials),
+  });
   const sweepProductivity = (): void => {
     try {
       productivity.pass();
       health.pass();
+      dexcom.pass();
     } catch (error) {
       logger.log("error", "productivity sweep failed", {
         reason: error instanceof Error ? error.message : "unknown",
@@ -324,6 +333,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     notifier,
     taskExecution,
     health,
+    dexcom,
     ...(vaultRoot === undefined ? {} : { vaultRoot }),
     // Read on every use, so turning Vault writes off on the Settings page
     // refuses the very next write.

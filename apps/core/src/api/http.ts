@@ -1,10 +1,12 @@
 import type { HealthService } from "../health/service.js";
+import type { DexcomService } from "../health/dexcom-service.js";
 import {
   AllowHealthCommandSchema,
   DisallowHealthCommandSchema,
   HealthCommandSchema,
   HealthDecideCommandSchema,
   PlaceEventBodySchema,
+  SetDexcomCredentialsSchema,
 } from "@noctis/contracts";
 import type { SetSettingCommand, SurfaceOwner } from "@noctis/contracts";
 import {
@@ -325,6 +327,7 @@ const UnsubscribeBodySchema = z.object({ endpoint: z.url() }).strict();
 
 export interface ApiDeps {
   health: HealthService;
+  dexcom: DexcomService;
   taskExecution?: TaskExecutionDeps;
   kernel: Kernel;
   config: CoreConfig;
@@ -1198,6 +1201,12 @@ function handleRead(
 
   if (segments.length === 1 && segments[0] === "glucose")
     return { status: 200, body: deps.health.status() };
+
+  if (segments.length === 2 && segments[0] === "glucose" && segments[1] === "live")
+    return { status: 200, body: deps.dexcom.live() };
+
+  if (segments.length === 2 && segments[0] === "integrations" && segments[1] === "dexcom")
+    return { status: 200, body: { configured: deps.dexcom.live().state !== "not_configured" } };
 
   if (segments.length === 1 && segments[0] === "places") {
     const minutes = readSetting(deps.kernel.db, deps.env ?? {}, "placeVisitMinutes");
@@ -2392,6 +2401,41 @@ function handlePush(
   return { status: 200, body: { status: "subscribed" } };
 }
 
+async function handleDexcom(
+  deps: ApiDeps,
+  action: "connect" | "disconnect",
+  body: unknown,
+): Promise<{ status: number; body: unknown }> {
+  if (action === "disconnect") {
+    deps.dexcom.clearCredentials();
+    return { status: 200, body: { configured: false } };
+  }
+
+  const parsed = SetDexcomCredentialsSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return {
+      status: 400,
+      body: errorBody("invalid_request", "Body must be {username, password}"),
+    };
+  }
+
+  try {
+    await deps.dexcom.setCredentials(parsed.data);
+    return { status: 200, body: { configured: true } };
+  } catch (error) {
+    // Dexcom Share's own message ("Password not valid.", account locked, ...):
+    // the owner typed this moments ago and needs to know what was wrong with it.
+    return {
+      status: 422,
+      body: errorBody(
+        "dexcom_login_failed",
+        error instanceof Error ? error.message : "Dexcom Share rejected the login",
+      ),
+    };
+  }
+}
+
 /**
  * Single entry point for the REST realm. Order matters: origin, then credential,
  * then routing. A caller that fails either check learns nothing about which
@@ -2883,6 +2927,26 @@ export async function handleRequest(
         : req.method === "POST" && url.pathname === PUSH_UNSUBSCRIBE_PATH
           ? "unsubscribe"
           : undefined;
+    const dexcomAction =
+      req.method === "POST" && url.pathname === "/integrations/dexcom"
+        ? "connect"
+        : req.method === "POST" && url.pathname === "/integrations/dexcom/disconnect"
+          ? "disconnect"
+          : undefined;
+
+    if (dexcomAction !== undefined) {
+      const raw = await readBody(req, MAX_BODY_BYTES);
+      const body = raw === "too_large" ? undefined : jsonOf(raw);
+      const result = await handleDexcom(deps, dexcomAction, body);
+
+      // Never the login, only whether it worked.
+      logger.log(result.status === 200 ? "info" : "warn", "dexcom integration request handled", {
+        action: dexcomAction,
+        status: result.status,
+      });
+      send(res, result.status, result.body, correlationId);
+      return;
+    }
 
     if (passcodeAction !== undefined) {
       const raw = await readBody(req, MAX_BODY_BYTES);

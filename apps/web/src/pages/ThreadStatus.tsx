@@ -1,6 +1,7 @@
 import { typography } from "@noctis/ui";
 import { useEffect, useState } from "react";
 
+import { GlucoseBadge } from "../health/GlucoseBadge.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 import { UsageLimits } from "./UsageLimits.js";
 import { clockText, msToNextMinute } from "./clock.js";
@@ -57,6 +58,7 @@ export function ThreadStatus({
         >
           {clock.day}
         </span>
+        <GlucoseBadge transport={transport} compact />
       </time>
       <UsageLimits
         transport={transport}

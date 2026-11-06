@@ -49,6 +49,8 @@ export interface HealthReportViewProps {
   error?: string | undefined;
   onRunNow: () => void;
   onDecide: (id: string, action: HealthDecision) => void;
+  /** The live Dexcom reading, pre-rendered: this view stays data-in, markup-out. */
+  liveGlucose?: ReactNode;
 }
 
 const SETTING: Record<HealthSuggestion["setting"], { name: string; unit: string }> = {
@@ -111,6 +113,7 @@ export function HealthReportView({
   error,
   onRunNow,
   onDecide,
+  liveGlucose,
 }: HealthReportViewProps): JSX.Element {
   const state: HealthViewState | undefined =
     status === undefined ? undefined : viewState(status, now);
@@ -125,23 +128,26 @@ export function HealthReportView({
       title="Health"
       subtitle={subtitle(state, status)}
       actions={
-        <button
-          type="button"
-          style={{
-            ...buttonStyle,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            opacity: canAct ? 1 : 0.55,
-          }}
-          disabled={!canAct}
-          onClick={onRunNow}
-        >
-          <Spin active={running}>
-            <RefreshCw size={16} aria-hidden />
-          </Spin>
-          Run now
-        </button>
+        <span style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {liveGlucose}
+          <button
+            type="button"
+            style={{
+              ...buttonStyle,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              opacity: canAct ? 1 : 0.55,
+            }}
+            disabled={!canAct}
+            onClick={onRunNow}
+          >
+            <Spin active={running}>
+              <RefreshCw size={16} aria-hidden />
+            </Spin>
+            Run now
+          </button>
+        </span>
       }
     >
       {(running || offline || message !== null || error !== undefined) && (
