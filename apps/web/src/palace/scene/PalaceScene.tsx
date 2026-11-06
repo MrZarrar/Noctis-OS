@@ -128,9 +128,7 @@ export function PalaceScene({
               // The scene fades up once it has something to show. Writing is
               // already available underneath either way.
               opacity: loaded[room] === true ? 1 : 0,
-              transition: `opacity ${String(seconds(600))}s ${
-                "cubic-bezier(0, 0, 0.2, 1)"
-              }`,
+              transition: `opacity ${String(seconds(600))}s ${"cubic-bezier(0, 0, 0.2, 1)"}`,
             }}
           />
 
@@ -203,7 +201,9 @@ function DoorButton({ hotspot, onEnter }: { hotspot: Hotspot; onEnter: () => voi
         background: lit
           ? "linear-gradient(180deg, rgba(255,232,186,0.26), rgba(255,210,140,0.05))"
           : "transparent",
-        boxShadow: lit ? "0 0 0 1px rgba(255,226,170,0.45), 0 0 60px rgba(255,205,130,0.3)" : "none",
+        boxShadow: lit
+          ? "0 0 0 1px rgba(255,226,170,0.45), 0 0 60px rgba(255,205,130,0.3)"
+          : "none",
         transition: "background 220ms cubic-bezier(0.2,0,0,1), box-shadow 220ms",
       }}
     >

@@ -536,7 +536,14 @@ function Workbench({
 
         {active === "Health" && <Health transport={transport} />}
 
-        {active === "Thought Palace" && <ThoughtPalace transport={transport} />}
+        {active === "Thought Palace" && (
+          <ThoughtPalace
+            transport={transport}
+            onLeave={() => {
+              show("Presence");
+            }}
+          />
+        )}
 
         {active === "Vault" && (
           <Vault

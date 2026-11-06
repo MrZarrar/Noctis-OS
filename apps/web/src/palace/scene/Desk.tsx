@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from "motion/react";
-import type { ChangeEvent, KeyboardEvent } from "react";
+import type { ChangeEvent, KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 
 export type SaveState =
@@ -40,6 +40,11 @@ export interface DeskProps {
   /** Dimmed and lifted away while the owner is looking around the room. */
   dimmed: boolean;
   placeholder?: string;
+  /** Kind, book, tags and the rest, folded away until they are wanted. */
+  details?: ReactNode;
+  /** Shown beside Save: archive, start a new entry, resolve a conflict. */
+  actions?: ReactNode;
+  disabled?: boolean;
 }
 
 const PAPER = "#f6efdf";
@@ -57,6 +62,9 @@ export function Desk({
   state,
   dimmed,
   placeholder = "What is on your mind?",
+  details,
+  actions,
+  disabled = false,
 }: DeskProps): JSX.Element {
   const reduced = useReducedMotion() ?? false;
   const field = useRef<HTMLTextAreaElement>(null);
@@ -124,6 +132,7 @@ export function Desk({
             onChange(event.target.value);
           }}
           onKeyDown={submit}
+          disabled={disabled}
           rows={4}
           spellCheck
           style={{
@@ -143,7 +152,7 @@ export function Desk({
           <button
             type="button"
             onClick={onSave}
-            disabled={value.trim() === "" || state.kind === "saving"}
+            disabled={disabled || value.trim() === "" || state.kind === "saving"}
             style={{
               font: "500 15px/1 Georgia, 'Times New Roman', serif",
               letterSpacing: "0.02em",
@@ -159,6 +168,8 @@ export function Desk({
             Save thought
           </button>
 
+          {actions}
+
           <span
             aria-live="polite"
             style={{
@@ -169,6 +180,33 @@ export function Desk({
             {status}
           </span>
         </div>
+
+        {details !== undefined && (
+          <details>
+            <summary
+              style={{
+                font: "400 13px/1 Georgia, 'Times New Roman', serif",
+                color: "#7b6d57",
+                cursor: "pointer",
+                listStyle: "revert",
+              }}
+            >
+              Details
+            </summary>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "12px 20px",
+                paddingTop: 14,
+                font: "400 13px/1.5 Georgia, 'Times New Roman', serif",
+                color: INK,
+              }}
+            >
+              {details}
+            </div>
+          </details>
+        )}
       </div>
     </motion.div>
   );

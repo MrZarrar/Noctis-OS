@@ -11,7 +11,8 @@ export interface ChromeProps {
   onScope: (scope: SearchScope) => void;
   exploring: boolean;
   onExplore: (exploring: boolean) => void;
-  onLeave: () => void;
+  /** Absent in a panel, which already has the shell's own way out. */
+  onLeave?: () => void;
   /** Absent in the atrium, which is where the doors already are. */
   onReturnToAtrium?: () => void;
 }
@@ -59,25 +60,27 @@ export function Chrome({
         </button>
       )}
 
-      <button
-        type="button"
-        onClick={onLeave}
-        style={{
-          position: "absolute",
-          top: 22,
-          right: 26,
-          font: "400 14px/1 Georgia, 'Times New Roman', serif",
-          color: "#4a3a26",
-          background: "rgba(255,250,240,0.6)",
-          border: 0,
-          borderRadius: 999,
-          padding: "9px 16px",
-          cursor: "pointer",
-          backdropFilter: "blur(6px)",
-        }}
-      >
-        Back to Noctis
-      </button>
+      {onLeave !== undefined && (
+        <button
+          type="button"
+          onClick={onLeave}
+          style={{
+            position: "absolute",
+            top: 22,
+            right: 26,
+            font: "400 14px/1 Georgia, 'Times New Roman', serif",
+            color: "#4a3a26",
+            background: "rgba(255,250,240,0.6)",
+            border: 0,
+            borderRadius: 999,
+            padding: "9px 16px",
+            cursor: "pointer",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          Back to Noctis
+        </button>
+      )}
 
       <motion.div
         animate={{ y: exploring ? -14 : 0, opacity: 1 }}
