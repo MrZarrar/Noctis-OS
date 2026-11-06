@@ -25,11 +25,16 @@ describe("trendArrow", () => {
   });
 });
 
+const ACCOUNT_ID = "11111111-2222-3333-4444-555555555555";
+
 describe("fetchLatestReading", () => {
-  it("logs in then reads the latest glucose value", async () => {
+  it("authenticates, logs in by account id, then reads the latest glucose value", async () => {
     const calls: { url: string; body: unknown }[] = [];
     const fetchStub = (url: string, init?: RequestInit) => {
       calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : undefined });
+      if (url.includes("AuthenticatePublisherAccount")) {
+        return Promise.resolve(new Response(JSON.stringify(ACCOUNT_ID), { status: 200 }));
+      }
       if (url.includes("LoginPublisherAccountById")) {
         return Promise.resolve(new Response(JSON.stringify("session-123"), { status: 200 }));
       }
@@ -48,16 +53,34 @@ describe("fetchLatestReading", () => {
 
     expect(reading).toEqual({ mmol: 7, trend: "flat", at: new Date(1760000000000).toISOString() });
     expect(calls[0]!.url).toContain("shareous1.dexcom.com");
+    expect(calls[0]!.url).toContain("AuthenticatePublisherAccount");
     expect(calls[0]!.body).toMatchObject({ accountName: "u", password: "p" });
-    expect(calls[1]!.url).toContain("sessionID=session-123");
+    expect(calls[1]!.url).toContain("LoginPublisherAccountById");
+    expect(calls[1]!.body).toMatchObject({ accountId: ACCOUNT_ID, password: "p" });
+    expect(calls[2]!.url).toContain("sessionID=session-123");
+  });
+
+  it("throws when the account id comes back empty", async () => {
+    const fetchStub = (url: string) =>
+      Promise.resolve(
+        url.includes("AuthenticatePublisherAccount")
+          ? new Response(JSON.stringify("00000000-0000-0000-0000-000000000000"), { status: 200 })
+          : new Response(JSON.stringify("session-123"), { status: 200 }),
+      );
+
+    await expect(fetchLatestReading(fetchStub, { username: "u", password: "p" })).rejects.toThrow(
+      "did not recognise",
+    );
   });
 
   it("throws when Dexcom returns no reading", async () => {
     const fetchStub = (url: string) =>
       Promise.resolve(
-        url.includes("LoginPublisherAccountById")
-          ? new Response(JSON.stringify("session-123"), { status: 200 })
-          : new Response(JSON.stringify([]), { status: 200 }),
+        url.includes("AuthenticatePublisherAccount")
+          ? new Response(JSON.stringify(ACCOUNT_ID), { status: 200 })
+          : url.includes("LoginPublisherAccountById")
+            ? new Response(JSON.stringify("session-123"), { status: 200 })
+            : new Response(JSON.stringify([]), { status: 200 }),
       );
 
     await expect(fetchLatestReading(fetchStub, { username: "u", password: "p" })).rejects.toThrow(
@@ -67,7 +90,7 @@ describe("fetchLatestReading", () => {
 
   it("throws with Dexcom's own message on a login failure", async () => {
     const fetchStub = (url: string) => {
-      if (url.includes("LoginPublisherAccountById")) {
+      if (url.includes("AuthenticatePublisherAccount")) {
         return Promise.resolve(
           new Response(JSON.stringify({ Message: "Password not valid." }), { status: 500 }),
         );

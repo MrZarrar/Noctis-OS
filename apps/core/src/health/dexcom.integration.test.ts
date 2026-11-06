@@ -56,6 +56,10 @@ describe("Dexcom integration routes", () => {
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         if (!url.includes("dexcom.com")) return realFetch(url, init);
+        if (url.includes("AuthenticatePublisherAccount"))
+          return new Response(JSON.stringify("11111111-2222-3333-4444-555555555555"), {
+            status: 200,
+          });
         if (url.includes("LoginPublisherAccountById"))
           return new Response(JSON.stringify("session-abc"), { status: 200 });
         if (url.includes("ReadPublisherLatestGlucoseValues"))

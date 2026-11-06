@@ -49,19 +49,43 @@ async function dexcomMessage(response: Response): Promise<string> {
   }
 }
 
-async function login(fetchImpl: FetchLike, credentials: DexcomLogin): Promise<string> {
-  const response = await fetchImpl(`${BASE}/General/LoginPublisherAccountById`, {
+const EMPTY_GUID = "00000000-0000-0000-0000-000000000000";
+
+async function post(
+  fetchImpl: FetchLike,
+  path: string,
+  body: Record<string, unknown>,
+): Promise<string> {
+  const response = await fetchImpl(`${BASE}/${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      accountName: credentials.username,
-      password: credentials.password,
-      applicationId: APPLICATION_ID,
-    }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await dexcomMessage(response));
-  const sessionId = (await response.json()) as string;
-  if (sessionId === "" || sessionId === "00000000-0000-0000-0000-000000000000")
+  return (await response.json()) as string;
+}
+
+/**
+ * Two calls, not one: a bare username in LoginPublisherAccountById comes back
+ * as the empty GUID instantly, without ever checking the password. Every
+ * current Share client authenticates first to get the account's own id, then
+ * logs in with that id.
+ */
+async function login(fetchImpl: FetchLike, credentials: DexcomLogin): Promise<string> {
+  const accountId = await post(fetchImpl, "General/AuthenticatePublisherAccount", {
+    accountName: credentials.username,
+    password: credentials.password,
+    applicationId: APPLICATION_ID,
+  });
+  if (accountId === "" || accountId === EMPTY_GUID)
+    throw new Error("Dexcom Share did not recognise that username and password");
+
+  const sessionId = await post(fetchImpl, "General/LoginPublisherAccountById", {
+    accountId,
+    password: credentials.password,
+    applicationId: APPLICATION_ID,
+  });
+  if (sessionId === "" || sessionId === EMPTY_GUID)
     throw new Error("Dexcom Share did not return a session");
   return sessionId;
 }
