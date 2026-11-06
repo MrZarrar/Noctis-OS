@@ -53,6 +53,7 @@ export const API_SEGMENTS = [
   "notes",
   "objectives",
   "palace",
+  "passcode",
   "permissions",
   /** Arrivals at the owner's named places. Not `presence`: that is the owner at a PC. */
   "places",

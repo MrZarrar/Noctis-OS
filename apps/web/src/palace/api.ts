@@ -9,8 +9,7 @@ import {
 import type { ArchivePalaceCommand, SavePalaceCommand } from "@noctis/contracts";
 import { z } from "zod";
 import { coreBaseUrl } from "../core-client.js";
-import { palaceArea } from "../larp/palace.js";
-import { vaultArea } from "../larp/vault.js";
+import { larpEnabled } from "../larp/mode.js";
 import type { CoreTransport } from "../transport/CoreTransport.js";
 
 export class PalaceRequestError extends Error {
@@ -24,20 +23,18 @@ export class PalaceRequestError extends Error {
 export const palaceDraftScope = () => ({
   ownerId: "local",
   coreOrigin: coreBaseUrl(),
-  fixture: import.meta.env.VITE_NOCTIS_PALACE_LIVE !== "1",
+  fixture: larpEnabled(),
 });
 
 export function createPalaceApi(transport: CoreTransport | undefined) {
-  const fixture = import.meta.env.VITE_NOCTIS_PALACE_LIVE !== "1";
+  const fixture = larpEnabled();
   async function request<S extends z.ZodType>(
     schema: S,
     method: "GET" | "POST",
     path: string,
     body?: unknown,
   ): Promise<z.infer<S>> {
-    const response = fixture
-      ? (palaceArea.request?.(method, path, body) ?? vaultArea.request?.(method, path, body))
-      : await transport?.request(method, path, body);
+    const response = await transport?.request(method, path, body);
     if (response === undefined)
       throw new PalaceRequestError(
         503,

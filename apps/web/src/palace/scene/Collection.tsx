@@ -48,15 +48,11 @@ export function Collection({
 
   return (
     <motion.section
+      className="palace-collection"
       aria-label={title}
       animate={{ opacity: dimmed ? 0 : 1, x: dimmed ? 40 : 0 }}
       transition={{ duration: reduced ? 0 : 0.45, ease: [0.2, 0, 0, 1] }}
       style={{
-        position: "absolute",
-        top: "clamp(150px, 22vh, 260px)",
-        right: "clamp(18px, 3vw, 54px)",
-        bottom: "clamp(18px, 4vh, 48px)",
-        width: "min(26rem, 40%)",
         display: "flex",
         flexDirection: "column",
         gap: 12,

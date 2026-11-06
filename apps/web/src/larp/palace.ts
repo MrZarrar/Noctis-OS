@@ -9,144 +9,9 @@ import type { CoreResponse } from "../transport/CoreTransport.js";
 import type { LarpArea } from "./area.js";
 import { ok, parsePath } from "./area.js";
 import { vaultIsUnlocked } from "./vault.js";
+import { makePalaceEntries } from "./palace-data.js";
 
-const id = (number: number) => `01a05c32-8000-7000-8000-${String(number).padStart(12, "0")}`;
-const at = new Date().toISOString();
-const base = {
-  createdAt: at,
-  updatedAt: at,
-  tags: [],
-  sensitive: false,
-  archived: false,
-  connections: [],
-  contentHash: "0".repeat(64),
-};
-const thoughts = [
-  ["A useful pause", "A pause gives an unfinished idea somewhere to settle.", "attention"],
-  [
-    "The second sketch",
-    "The second sketch remembers what the first one was trying to ask.",
-    "making",
-  ],
-  [
-    "Edges of a map",
-    "A map becomes interesting at the places where its lines stop.",
-    "perspective",
-  ],
-  ["Small revisions", "Moving one sentence can change the rhythm of the whole page.", "writing"],
-  ["Room for questions", "An unanswered question can still be a useful companion.", "curiosity"],
-  [
-    "Windows at dusk",
-    "A window carries two pictures at dusk: the view and a faint reflection.",
-    "light",
-  ],
-  [
-    "A slower route",
-    "Taking a slower route makes small landmarks easier to remember.",
-    "attention",
-  ],
-  ["Margins", "The margin is part of the page. Empty space gives the words their pace.", "writing"],
-  [
-    "A shelf of beginnings",
-    "Keep a shelf for beginnings that have not found their ending yet.",
-    "making",
-  ],
-  [
-    "Patterns in rain",
-    "The pattern in rain is easiest to see when the surface underneath stays still.",
-    "patterns",
-  ],
-  [
-    "Changing the frame",
-    "The same drawing feels different when the frame leaves more sky around it.",
-    "perspective",
-  ],
-  [
-    "Returning to a page",
-    "A familiar page can hold a new question each time it is opened.",
-    "reading",
-  ],
-];
-const books = [
-  ["The Mapmaker's Window", "Rowan Vale", "reading"],
-  ["Notes on Small Gardens", "Ellis Brook", "planned"],
-  ["The Shape of a Sentence", "Avery Reed", "paused"],
-  ["A Cabinet of Light", "Morgan Field", "finished"],
-  ["Walking the Long Way", "Robin Marsh", "planned"],
-];
-const entries: PalaceEntry[] = [
-  ...thoughts.map(([title, body, tag], index) =>
-    PalaceEntrySchema.parse({
-      ...base,
-      id: id(index + 1),
-      kind: "thought",
-      title,
-      body,
-      tags: [tag],
-      ...(index === 11 ? { bookId: id(101) } : {}),
-      connections:
-        index === 1
-          ? [
-              {
-                relationship: "related",
-                targetId: id(9),
-                reason: "Two ways of keeping unfinished work",
-              },
-            ]
-          : [],
-    }),
-  ),
-  ...books.map(([title, author, readingStatus], index) =>
-    PalaceEntrySchema.parse({
-      ...base,
-      id: id(index + 101),
-      kind: "book",
-      title,
-      author,
-      readingStatus,
-      readingLane: index > 2 ? "Alongside" : "Main",
-      edition: "Demo edition",
-      body: "An invented book for exploring the library.",
-    }),
-  ),
-  ...[
-    ["Every map begins with a choice about what to leave visible.", 101, "Chapter 2"],
-    ["A garden keeps time in leaves.", 102, "Page 14"],
-    ["The blank space gives a sentence its next breath.", 103, "Page 38"],
-  ].map(([body, book, location], index) =>
-    PalaceEntrySchema.parse({
-      ...base,
-      id: id(index + 201),
-      kind: "quote",
-      body,
-      bookId: id(Number(book)),
-      location,
-    }),
-  ),
-  ...[
-    ["Paper observatory", "A folded paper room with a skylight that changes the drawing inside."],
-    [
-      "Tide marks",
-      "Layer translucent sheets so their overlapping edges resemble a changing shoreline.",
-    ],
-    ["Moving shadows", "A mobile whose shadows make a second composition on the wall."],
-  ].map(([title, body], index) =>
-    PalaceEntrySchema.parse({
-      ...base,
-      id: id(index + 301),
-      kind: "art",
-      title,
-      body,
-      connections: [
-        {
-          relationship: "inspired_by",
-          targetId: id(index + 3),
-          reason: "A visual response to the thought",
-        },
-      ],
-    }),
-  ),
-];
+const entries: PalaceEntry[] = makePalaceEntries();
 let version = 1;
 for (const entry of entries) entry.contentHash = (version++).toString(16).padStart(64, "0");
 const replays = new Map<string, { request: string; response: CoreResponse }>();
@@ -228,8 +93,9 @@ export const palaceArea: LarpArea = {
       return refused(404, "not_found", "Entry not found");
     const updatedAt = new Date().toISOString();
     const entry = PalaceEntrySchema.parse({
-      ...(current ?? base),
-      ...("contents" in command ? command.contents : { archived: name === "palace.archive" }),
+      ...("contents" in command
+        ? command.contents
+        : { ...current, archived: name === "palace.archive" }),
       id: command.entryId,
       createdAt: current?.createdAt ?? updatedAt,
       updatedAt,

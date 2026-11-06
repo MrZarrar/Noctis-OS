@@ -1,3 +1,4 @@
+import { OVERSCAN } from "./camera.js";
 import type { CameraStop } from "./camera.js";
 
 export type RoomId = "atrium" | "library" | "gallery";
@@ -38,21 +39,21 @@ export const ROOMS: Readonly<Record<RoomId, Room>> = {
     id: "atrium",
     plate: "/palace/atrium.png",
     name: "The atrium",
-    desk: { focus: { x: 0.5, y: 0.62 }, zoom: 1.45 },
-    wide: { focus: { x: 0.5, y: 0.36 }, zoom: 1.1 },
+    desk: { focus: { x: 0.5, y: 0.5 }, zoom: 1 / OVERSCAN },
+    wide: { focus: { x: 0.5, y: 0.34 }, zoom: 1.32 },
     hotspots: [
       {
         id: "door-library",
         label: "Library",
         to: "library",
-        rect: { x: 0.04, width: 0.16, ...ATRIUM_DOORWAY },
+        rect: { x: 0.055, width: 0.18, ...ATRIUM_DOORWAY },
         enter: { focus: { x: 0.12, y: 0.27 }, zoom: 3.3 },
       },
       {
         id: "door-gallery",
         label: "Gallery",
         to: "gallery",
-        rect: { x: 0.8, width: 0.16, ...ATRIUM_DOORWAY },
+        rect: { x: 0.79, width: 0.18, ...ATRIUM_DOORWAY },
         enter: { focus: { x: 0.88, y: 0.27 }, zoom: 3.3 },
       },
     ],
@@ -61,8 +62,8 @@ export const ROOMS: Readonly<Record<RoomId, Room>> = {
     id: "library",
     plate: "/palace/library.png",
     name: "The library",
-    desk: { focus: { x: 0.5, y: 0.62 }, zoom: 1.4 },
-    wide: { focus: { x: 0.5, y: 0.42 }, zoom: 1.08 },
+    desk: { focus: { x: 0.5, y: 0.5 }, zoom: 1 / OVERSCAN },
+    wide: { focus: { x: 0.5, y: 0.34 }, zoom: 1.28 },
     // Neither side room has a doorway back in its artwork, so the way out is a
     // plain control rather than a bookcase pretending to be a door.
     hotspots: [],
@@ -71,8 +72,8 @@ export const ROOMS: Readonly<Record<RoomId, Room>> = {
     id: "gallery",
     plate: "/palace/gallery.png",
     name: "The gallery",
-    desk: { focus: { x: 0.42, y: 0.56 }, zoom: 1.4 },
-    wide: { focus: { x: 0.5, y: 0.44 }, zoom: 1.08 },
+    desk: { focus: { x: 0.5, y: 0.5 }, zoom: 1 / OVERSCAN },
+    wide: { focus: { x: 0.5, y: 0.36 }, zoom: 1.26 },
     hotspots: [],
   },
 };

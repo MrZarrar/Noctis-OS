@@ -11,6 +11,8 @@ describe("the core's own paths", () => {
     "/live-sessions/x/entries",
     "/limits",
     "/palace/entries?room=library",
+    "/passcode",
+    "/passcode/unlock",
     "/visuals/content?node=n&root=r&path=a.html",
   ])("claims %s for the core, not the page", (path) => {
     expect(CORE_PATH_PATTERN.test(path)).toBe(true);

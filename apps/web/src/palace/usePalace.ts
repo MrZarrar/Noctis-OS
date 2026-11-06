@@ -226,7 +226,7 @@ export function usePalace(transport: CoreTransport | undefined, focusId?: string
       });
       setStatus(
         api.fixture
-          ? "Fixture entry updated. Changes last for this tab."
+          ? "Demo saved for this tab. Refreshing resets it."
           : receipt.indexStatus === "pending"
             ? "Saved. Vault indexing is pending."
             : "Saved",

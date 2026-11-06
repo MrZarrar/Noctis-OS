@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cameraTransform, coversViewport, minimumZoom } from "./camera.js";
+import { cameraTransform, coversViewport, minimumZoom, OVERSCAN } from "./camera.js";
 import { ROOMS } from "./rooms.js";
 
 describe("camera", () => {
@@ -22,5 +22,10 @@ describe("camera", () => {
     for (const stop of [room.desk, room.wide, ...room.hotspots.map((spot) => spot.enter)]) {
       expect(coversViewport(stop)).toBe(true);
     }
+  });
+
+  it.each(Object.values(ROOMS))("preserves the full foreground at the $id desk", (room) => {
+    expect(room.desk.focus).toEqual({ x: 0.5, y: 0.5 });
+    expect(room.desk.zoom * OVERSCAN).toBeCloseTo(1);
   });
 });

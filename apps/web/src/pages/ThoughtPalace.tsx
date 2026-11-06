@@ -15,17 +15,17 @@ import type { CoreTransport } from "../transport/CoreTransport.js";
 
 type Palace = ReturnType<typeof usePalace>;
 
-/**
- * The desk says one of five things and they are not interchangeable: a local
- * recovery copy is not a saved file, and a refused write is not a lost one.
- */
 function saveState(palace: Palace): SaveState {
   if (palace.pending) return { kind: "saving" };
   if (palace.conflict !== undefined) return { kind: "conflict" };
   if (palace.error !== undefined) return { kind: "failed", reason: `${palace.error}. Draft kept.` };
-  if (palace.status === "") return { kind: "idle" };
+  if (palace.status === "")
+    return palace.api.fixture
+      ? { kind: "message", text: "LARP sample collection. Changes reset on refresh." }
+      : { kind: "idle" };
   if (palace.status.startsWith("Draft saved")) return { kind: "draft" };
-  return { kind: "saved" };
+  if (palace.status.startsWith("Saved")) return { kind: "saved" };
+  return { kind: "message", text: palace.status };
 }
 
 export function ThoughtPalace({
@@ -45,17 +45,14 @@ export function ThoughtPalace({
   const [scope, setScope] = useState<SearchScope>("palace");
   const contents = palace.draft.command.contents;
 
-  // The atrium is the writing desk rather than a collection, so a room-scoped
-  // search there would have nothing to scope to.
-  const scoped = scope === "room" && room !== "atrium";
+  const searching = palace.query.trim() !== "";
+  const scoped = room !== "atrium" && (!searching || scope === "room");
   const { setRoom: setDataRoom, setThisRoom } = palace;
   useEffect(() => {
     if (room !== "atrium") setDataRoom(room);
     setThisRoom(scoped);
   }, [room, scoped, setDataRoom, setThisRoom]);
 
-  // Searching is itself a reason to show results, wherever the owner is standing.
-  const searching = palace.query.trim() !== "";
   const showCollection = room !== "atrium" || searching;
   const openId =
     palace.draft.command.expectedHash === undefined ? undefined : palace.draft.command.entryId;
@@ -116,6 +113,7 @@ export function ThoughtPalace({
           state={saveState(palace)}
           dimmed={exploring}
           disabled={palace.loadingEntry}
+          allowEmptyBody={contents.kind === "book" && Boolean(contents.title?.trim())}
           placeholder={
             openId === undefined ? "What is on your mind?" : (contents.title ?? "Your writing")
           }
@@ -201,7 +199,10 @@ const FIELD = { font: "inherit", padding: "5px 7px", maxWidth: "15rem" } as cons
 function DeskDetails({ palace }: { palace: Palace }): JSX.Element {
   const contents = palace.draft.command.contents;
 
-  const optional = (key: "title" | "author" | "bookId" | "location", value: string): void => {
+  const optional = (
+    key: "title" | "author" | "bookId" | "location" | "readingLane",
+    value: string,
+  ): void => {
     const next = { ...contents };
     if (value === "") delete next[key];
     else next[key] = value;
@@ -290,17 +291,33 @@ function DeskDetails({ palace }: { palace: Palace }): JSX.Element {
             Reading{" "}
             <select
               style={FIELD}
-              value={contents.readingStatus ?? "planned"}
+              value={contents.readingStatus ?? ""}
               onChange={(event) => {
-                palace.update({
-                  readingStatus: event.target.value as NonNullable<PalaceContents["readingStatus"]>,
-                });
+                const next = { ...contents };
+                if (event.target.value === "") delete next.readingStatus;
+                else
+                  next.readingStatus = event.target.value as NonNullable<
+                    PalaceContents["readingStatus"]
+                  >;
+                palace.update(next, true);
               }}
             >
+              <option value="">Unspecified</option>
               {["planned", "reading", "paused", "finished"].map((value) => (
                 <option key={value}>{value}</option>
               ))}
             </select>
+          </label>
+          <label>
+            Reading group{" "}
+            <input
+              style={FIELD}
+              maxLength={100}
+              value={contents.readingLane ?? ""}
+              onChange={(event) => {
+                optional("readingLane", event.target.value);
+              }}
+            />
           </label>
         </>
       ) : (
