@@ -577,6 +577,7 @@ export function Threads({
    */
   const follow = useRef(true);
   const heightBefore = useRef<number>();
+  const [atBottom, setAtBottom] = useState(true);
 
   useEffect(() => {
     follow.current = true;
@@ -598,6 +599,25 @@ export function Threads({
     follow.current = false;
     heightBefore.current = box.scrollHeight;
   }, [messages.length, turns.length, pendingApprovals.length, streamedLength]);
+
+  // Opening a thread sometimes lands scrolled to the top (the history loads
+  // after the scroller's own first layout), so a button to reach the bottom
+  // matters beside the auto-follow above, not instead of it.
+  useEffect(() => {
+    const box = scrollerOf(end.current);
+
+    if (box === undefined) {
+      return;
+    }
+
+    const check = (): void => {
+      setAtBottom(box.scrollHeight - box.scrollTop - box.clientHeight < FOLLOW_SLACK_PX);
+    };
+
+    check();
+    box.addEventListener("scroll", check, { passive: true });
+    return () => box.removeEventListener("scroll", check);
+  }, [thread?.id, messages.length, turns.length, streamedLength]);
   const displayName =
     IDENTITY_PROFILES.find((profile) => profile.id === identityId)?.displayName ?? identityId;
   const roleLabel = (role: string): string =>
@@ -999,6 +1019,35 @@ export function Threads({
                 border: `1px solid ${material.border}`,
               }}
             >
+              {!atBottom && (
+                <button
+                  type="button"
+                  aria-label="Jump to the latest message"
+                  onClick={() => {
+                    follow.current = true;
+                    end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+                  }}
+                  style={{
+                    ...buttonStyle,
+                    position: "absolute",
+                    top: -56,
+                    right: spacing.md,
+                    width: 40,
+                    height: 40,
+                    minHeight: 40,
+                    padding: 0,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 18,
+                    lineHeight: 1,
+                    background: material.fillElevated,
+                  }}
+                >
+                  ↓
+                </button>
+              )}
               {mobile && <PanelTray panels={panels} sheet={panelSheet} />}
               {stop.error !== undefined && (
                 <p role="alert" style={{ color: semantic.error, margin: 0 }}>
