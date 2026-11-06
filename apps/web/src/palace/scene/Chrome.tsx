@@ -12,6 +12,8 @@ export interface ChromeProps {
   exploring: boolean;
   onExplore: (exploring: boolean) => void;
   onLeave: () => void;
+  /** Absent in the atrium, which is where the doors already are. */
+  onReturnToAtrium?: () => void;
 }
 
 const GOLD = "#e8d3a4";
@@ -29,11 +31,34 @@ export function Chrome({
   exploring,
   onExplore,
   onLeave,
+  onReturnToAtrium,
 }: ChromeProps): JSX.Element {
   const reduced = useReducedMotion() ?? false;
 
   return (
     <>
+      {onReturnToAtrium !== undefined && (
+        <button
+          type="button"
+          onClick={onReturnToAtrium}
+          style={{
+            position: "absolute",
+            top: 22,
+            left: 26,
+            font: "400 14px/1 Georgia, 'Times New Roman', serif",
+            color: "#4a3a26",
+            background: "rgba(255,250,240,0.6)",
+            border: 0,
+            borderRadius: 999,
+            padding: "9px 16px",
+            cursor: "pointer",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          Back to the atrium
+        </button>
+      )}
+
       <button
         type="button"
         onClick={onLeave}

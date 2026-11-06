@@ -61,33 +61,19 @@ export const ROOMS: Readonly<Record<RoomId, Room>> = {
     id: "library",
     plate: "/palace/library.png",
     name: "The library",
-    desk: { focus: { x: 0.5, y: 0.58 }, zoom: 1.35 },
-    wide: { focus: { x: 0.5, y: 0.44 }, zoom: 1.08 },
-    hotspots: [
-      {
-        id: "door-atrium",
-        label: "Back to the atrium",
-        to: "atrium",
-        rect: { x: 0.42, y: 0.1, width: 0.16, height: 0.4 },
-        enter: { focus: { x: 0.5, y: 0.3 }, zoom: 2.4 },
-      },
-    ],
+    desk: { focus: { x: 0.5, y: 0.62 }, zoom: 1.4 },
+    wide: { focus: { x: 0.5, y: 0.42 }, zoom: 1.08 },
+    // Neither side room has a doorway back in its artwork, so the way out is a
+    // plain control rather than a bookcase pretending to be a door.
+    hotspots: [],
   },
   gallery: {
     id: "gallery",
     plate: "/palace/gallery.png",
     name: "The gallery",
-    desk: { focus: { x: 0.5, y: 0.58 }, zoom: 1.35 },
+    desk: { focus: { x: 0.42, y: 0.56 }, zoom: 1.4 },
     wide: { focus: { x: 0.5, y: 0.44 }, zoom: 1.08 },
-    hotspots: [
-      {
-        id: "door-atrium",
-        label: "Back to the atrium",
-        to: "atrium",
-        rect: { x: 0.42, y: 0.1, width: 0.16, height: 0.4 },
-        enter: { focus: { x: 0.5, y: 0.3 }, zoom: 2.4 },
-      },
-    ],
+    hotspots: [],
   },
 };
 

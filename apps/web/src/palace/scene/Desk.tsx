@@ -80,22 +80,27 @@ export function Desk({
       transition={{ duration: reduced ? 0 : 0.5, ease: [0.2, 0, 0, 1] }}
       style={{
         position: "absolute",
-        left: "50%",
+        left: 0,
+        right: 0,
         bottom: 0,
-        width: "min(60rem, 76%)",
-        transform: "translateX(-50%)",
         pointerEvents: dimmed ? "none" : "auto",
       }}
     >
       <div
         style={{
           background: PAPER,
+          // Full bleed on purpose. The painted paper on the plate is wider than
+          // the frame at the desk stop, so a narrower panel would leave its
+          // edges showing either side and read as two sheets.
+          margin: "0 auto",
           // Paper, not a card: a hairline of its own thickness along the top,
           // and the desk's shadow pooling underneath it.
           borderRadius: "3px 3px 0 0",
           boxShadow:
             "0 -1px 0 rgba(255,255,255,0.65) inset, 0 -28px 70px rgba(28,16,4,0.42), 0 -2px 14px rgba(28,16,4,0.3)",
-          padding: "clamp(22px, 3vw, 44px) clamp(24px, 3.6vw, 56px) clamp(20px, 2.4vw, 32px)",
+          // The side padding grows to whatever keeps the line length readable,
+          // so the sheet can span the frame without the writing spanning it too.
+          padding: `clamp(22px, 3vw, 44px) max(clamp(24px, 3.6vw, 56px), calc((100% - 60rem) / 2)) clamp(20px, 2.4vw, 32px)`,
           display: "flex",
           flexDirection: "column",
           gap: 18,

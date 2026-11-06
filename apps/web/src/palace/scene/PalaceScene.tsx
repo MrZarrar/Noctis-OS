@@ -89,7 +89,13 @@ export function PalaceScene({
           transformTemplate={transformTemplate}
           initial={{ opacity: 0, ...target(arrival(resting)) }}
           animate={{ opacity: 1, ...target(resting) }}
-          exit={{ opacity: 0, ...target(leaving.current) }}
+          // Leaving accelerates and arriving decelerates, so a door reads as
+          // walking through it rather than as a crossfade between two pictures.
+          exit={{
+            opacity: 0,
+            ...target(leaving.current),
+            transition: { duration: seconds(620), ease: EASE_IN },
+          }}
           transition={{
             opacity: { duration: seconds(420), ease: EASE_STANDARD },
             default: {
