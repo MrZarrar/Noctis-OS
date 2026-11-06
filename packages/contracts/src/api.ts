@@ -41,6 +41,7 @@ export const API_SEGMENTS = [
   "glucose",
   "health",
   "identities",
+  "integrations",
   "jobs",
   /** The owner's Claude and Codex allowances, as each provider reports them. */
   "limits",

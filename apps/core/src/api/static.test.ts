@@ -95,6 +95,8 @@ describe("isApiPath", () => {
       "/objectives",
       "/objectives/01941f29-7c00-7000-8000-000000000011",
       "/identities",
+      "/integrations/dexcom",
+      "/glucose/live",
       "/vault/graph",
       "/approvals",
       "/permissions",
