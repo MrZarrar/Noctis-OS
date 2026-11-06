@@ -6,17 +6,15 @@ import { UsageLimits } from "./UsageLimits.js";
 import { clockText, msToNextMinute } from "./clock.js";
 
 /**
- * Beside Threads' composer: the time, and how much of the chosen agent's
- * allowance is left. Claude and Codex report limits; a local agent has none.
+ * Beside Threads' composer: the time, and both Claude's and Codex's
+ * allowance, regardless of which one the composer is set to.
  */
 export function ThreadStatus({
   transport,
   mobile,
-  providerId,
 }: {
   transport: CoreTransport | undefined;
   mobile: boolean;
-  providerId: string | undefined;
 }): JSX.Element {
   const [now, setNow] = useState(() => new Date());
 
@@ -30,7 +28,6 @@ export function ThreadStatus({
   }, []);
 
   const clock = clockText(now);
-  const limited = providerId === "claude" || providerId === "codex";
 
   return (
     <div data-thread-status style={{ display: "grid", gap: 8, minWidth: 0 }}>
@@ -61,15 +58,13 @@ export function ThreadStatus({
           {clock.day}
         </span>
       </time>
-      {limited && (
-        <UsageLimits
-          transport={transport}
-          now={now}
-          mobile={mobile}
-          providers={[providerId]}
-          compact
-        />
-      )}
+      <UsageLimits
+        transport={transport}
+        now={now}
+        mobile={mobile}
+        providers={["claude", "codex"]}
+        compact
+      />
     </div>
   );
 }

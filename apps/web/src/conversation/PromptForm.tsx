@@ -348,6 +348,16 @@ export function PromptForm({
   const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
   const wakeGuard = useRef(createWakeGuard());
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grows with the text so a long prompt stays visible while typing, like
+  // ChatGPT's and Claude's composers; a manual drag down still wins until the
+  // box is emptied, which resets it to its resting size.
+  useEffect(() => {
+    if (text === "" && textareaRef.current !== null) {
+      textareaRef.current.style.height = "";
+    }
+  }, [text]);
 
   // Re-armed whenever the agent is awake, so the next sleep wakes on typing again.
   useEffect(() => {
@@ -548,6 +558,7 @@ export function PromptForm({
       )}
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "stretch" }}>
         <textarea
+          ref={textareaRef}
           aria-label={`Message ${displayName}`}
           placeholder={
             steering ? `Add to what ${displayName} is doing...` : promptPlaceholder(identityId)
@@ -557,6 +568,12 @@ export function PromptForm({
           rows={mobile && !expanded ? 1 : 2}
           onChange={(event) => {
             setText(event.target.value);
+
+            const el = event.currentTarget;
+            const max = mobile ? 240 : 400;
+            if (el.scrollHeight > el.clientHeight) {
+              el.style.height = `${String(Math.min(el.scrollHeight, max))}px`;
+            }
 
             if (
               onWake !== undefined &&
@@ -592,6 +609,7 @@ export function PromptForm({
             width: "100%",
             minWidth: 0,
             minHeight: mobile ? 44 : 52,
+            maxHeight: mobile ? 240 : 400,
             boxSizing: "border-box",
             padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
             background: material.fill,
@@ -602,7 +620,8 @@ export function PromptForm({
             // 16px or more, or iOS zooms the page in when the box takes focus.
             fontSize: 16,
             lineHeight: 1.45,
-            resize: "none",
+            resize: "vertical",
+            overflowY: "auto",
           }}
         />
         {asleep && onWake !== undefined && (

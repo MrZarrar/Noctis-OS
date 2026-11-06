@@ -1029,11 +1029,9 @@ export function Threads({
                         if (jobId !== undefined) void stop.run(() => conversation.cancel(jobId));
                       },
                     })}
-                // The time, and the allowance of the agent this thread is about
-                // to run on, where the owner decides whether to send.
-                status={(providerId) => (
-                  <ThreadStatus transport={transport} mobile={mobile} providerId={providerId} />
-                )}
+                // The time, and both agents' allowance, where the owner decides
+                // whether to send.
+                status={() => <ThreadStatus transport={transport} mobile={mobile} />}
                 {...(onSwitchIdentity === undefined ? {} : { onSwitchIdentity })}
                 // The core beside the composer, which stays put while the thread
                 // scrolls, so its state is always in view (owner, 2026-10-09).
