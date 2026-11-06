@@ -349,10 +349,13 @@ export function PromptForm({
   const [text, setText] = useState("");
   const wakeGuard = useRef(createWakeGuard());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const resizeDrag = useRef<{ startY: number; startHeight: number } | null>(null);
+  const minTextareaHeight = mobile ? 44 : 52;
+  const maxTextareaHeight = mobile ? 240 : 400;
 
   // Grows with the text so a long prompt stays visible while typing, like
-  // ChatGPT's and Claude's composers; a manual drag down still wins until the
-  // box is emptied, which resets it to its resting size.
+  // ChatGPT's and Claude's composers; a manual drag still wins until the box
+  // is emptied, which resets it to its resting size.
   useEffect(() => {
     if (text === "" && textareaRef.current !== null) {
       textareaRef.current.style.height = "";
@@ -557,73 +560,125 @@ export function PromptForm({
         </div>
       )}
       <div style={{ display: "flex", gap: spacing.sm, alignItems: "stretch" }}>
-        <textarea
-          ref={textareaRef}
-          aria-label={`Message ${displayName}`}
-          placeholder={
-            steering ? `Add to what ${displayName} is doing...` : promptPlaceholder(identityId)
-          }
-          value={text}
-          disabled={disabled}
-          rows={mobile && !expanded ? 1 : 2}
-          onChange={(event) => {
-            setText(event.target.value);
-
-            const el = event.currentTarget;
-            const max = mobile ? 240 : 400;
-            if (el.scrollHeight > el.clientHeight) {
-              el.style.height = `${String(Math.min(el.scrollHeight, max))}px`;
+        <div style={{ position: "relative", flex: "1 1 auto", minWidth: 0 }}>
+          <textarea
+            ref={textareaRef}
+            aria-label={`Message ${displayName}`}
+            placeholder={
+              steering ? `Add to what ${displayName} is doing...` : promptPlaceholder(identityId)
             }
+            value={text}
+            disabled={disabled}
+            rows={mobile && !expanded ? 1 : 2}
+            onChange={(event) => {
+              setText(event.target.value);
 
-            if (
-              onWake !== undefined &&
-              wakeGuard.current.typed({ asleep, enabled: wakeWhileTyping })
-            ) {
-              onWake();
-            }
-          }}
-          onPaste={(event) => {
-            const images = canAttach
-              ? pastedFiles(Array.from(event.clipboardData.items), new Date(), pasted.current + 1)
-              : [];
+              const el = event.currentTarget;
+              if (el.scrollHeight > el.clientHeight) {
+                el.style.height = `${String(Math.min(el.scrollHeight, maxTextareaHeight))}px`;
+              }
 
-            if (images.length === 0) {
-              return;
-            }
+              if (
+                onWake !== undefined &&
+                wakeGuard.current.typed({ asleep, enabled: wakeWhileTyping })
+              ) {
+                onWake();
+              }
+            }}
+            onPaste={(event) => {
+              const images = canAttach
+                ? pastedFiles(Array.from(event.clipboardData.items), new Date(), pasted.current + 1)
+                : [];
 
-            pasted.current += images.length;
-            attach(images);
+              if (images.length === 0) {
+                return;
+              }
 
-            // Text copied along with the image still pastes as text.
-            if (event.clipboardData.getData("text/plain") === "") {
-              event.preventDefault();
-            }
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-          style={{
-            width: "100%",
-            minWidth: 0,
-            minHeight: mobile ? 44 : 52,
-            maxHeight: mobile ? 240 : 400,
-            boxSizing: "border-box",
-            padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
-            background: material.fill,
-            border: `1px solid ${material.border}`,
-            borderRadius: corner.lg,
-            color: "inherit",
-            fontFamily: typography.family,
-            // 16px or more, or iOS zooms the page in when the box takes focus.
-            fontSize: 16,
-            lineHeight: 1.45,
-            resize: "vertical",
-            overflowY: "auto",
-          }}
-        />
+              pasted.current += images.length;
+              attach(images);
+
+              // Text copied along with the image still pastes as text.
+              if (event.clipboardData.getData("text/plain") === "") {
+                event.preventDefault();
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+            style={{
+              width: "100%",
+              minWidth: 0,
+              minHeight: minTextareaHeight,
+              maxHeight: maxTextareaHeight,
+              boxSizing: "border-box",
+              padding: `${String(spacing.sm)}px ${String(spacing.md)}px`,
+              paddingRight: 28,
+              background: material.fill,
+              border: `1px solid ${material.border}`,
+              borderRadius: corner.lg,
+              color: "inherit",
+              fontFamily: typography.family,
+              // 16px or more, or iOS zooms the page in when the box takes focus.
+              fontSize: 16,
+              lineHeight: 1.45,
+              resize: "none",
+              overflowY: "auto",
+            }}
+          />
+          {/* Bottom-right is where a native resize handle would sit, but the
+            composer hugs the bottom of the screen, so dragging up (growing
+            the box upward, anchored at the bottom) is what actually works. */}
+          <div
+            role="presentation"
+            title="Drag to resize"
+            onPointerDown={(event) => {
+              const el = textareaRef.current;
+              if (el === null) {
+                return;
+              }
+              resizeDrag.current = {
+                startY: event.clientY,
+                startHeight: el.getBoundingClientRect().height,
+              };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const drag = resizeDrag.current;
+              const el = textareaRef.current;
+              if (drag === null || el === null) {
+                return;
+              }
+              const next = drag.startHeight + (drag.startY - event.clientY);
+              el.style.height = `${String(
+                Math.min(Math.max(next, minTextareaHeight), maxTextareaHeight),
+              )}px`;
+            }}
+            onPointerUp={(event) => {
+              resizeDrag.current = null;
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            style={{
+              position: "absolute",
+              top: 4,
+              right: 4,
+              width: 22,
+              height: 12,
+              cursor: "ns-resize",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              touchAction: "none",
+            }}
+          >
+            <div
+              aria-hidden="true"
+              style={{ width: 16, height: 3, borderRadius: 2, background: material.border }}
+            />
+          </div>
+        </div>
         {asleep && onWake !== undefined && (
           <button type="button" onClick={onWake} style={buttonStyle}>
             Wake
