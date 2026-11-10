@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +20,7 @@ export interface ProbeDeps {
     args: readonly string[],
   ): Promise<{ stdout: string; stderr: string; code: number }>;
   readFile(path: string): Promise<string>;
+  readDirectory(path: string): Promise<string[]>;
   env: NodeJS.ProcessEnv;
   home: string;
 }
@@ -39,6 +40,33 @@ const ModelsCacheSchema = z
         })
         .loose(),
     ),
+  })
+  .loose();
+
+/**
+ * What the Claude CLI caches in `~/.claude/cache/model-catalog`: the model list
+ * it draws its own picker from, refreshed against the server. Theirs, so loose.
+ */
+const ModelCatalogSchema = z
+  .object({
+    fetchedAt: z.number().optional(),
+    catalog: z
+      .object({
+        surface: z.string().optional(),
+        config: z
+          .object({
+            models: z.array(
+              z
+                .object({
+                  id: z.string().trim().min(1).max(128),
+                  name: z.string().trim().min(1).max(100).optional(),
+                })
+                .loose(),
+            ),
+          })
+          .loose(),
+      })
+      .loose(),
   })
   .loose();
 
@@ -123,6 +151,64 @@ async function probeCodex(deps: ProbeDeps): Promise<RuntimeProbe> {
   return { ...base, available: false, authMode: "unknown", reason: "codex_not_logged_in" };
 }
 
+/**
+ * Until the CLI has written its catalog there is still a subscription to use,
+ * and an empty list routes nothing. These are the models of the day; the
+ * catalog replaces them the moment it exists.
+ */
+const CLAUDE_FALLBACK_MODELS: RuntimeProbe["models"] = [
+  { providerId: "claude", model: "claude-opus-5-5", label: "Claude Opus 5.5" },
+  { providerId: "claude", model: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+  { providerId: "claude", model: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+];
+
+/**
+ * The models this machine's Claude can actually run, read from the CLI's own
+ * catalog rather than a list in here: a new model arrives in Noctis the same
+ * day it arrives in the CLI, and a retired one stops being offered. Each entry
+ * carries its full id and version ("Claude Opus 5.5"), so a turn's record says
+ * which model ran rather than which alias was asked for.
+ *
+ * Every model the catalog lists is offered. `min_claude_code_version` is there
+ * too and is deliberately ignored: this machine's 2.1.223 runs Opus 5.5, whose
+ * floor reads 2.1.280, so filtering on it hides models that work.
+ */
+async function claudeModels(deps: ProbeDeps): Promise<RuntimeProbe["models"]> {
+  const directory = join(deps.home, ".claude", "cache", "model-catalog");
+  let newest: z.infer<typeof ModelCatalogSchema> | undefined;
+
+  try {
+    for (const entry of await deps.readDirectory(directory)) {
+      if (!entry.endsWith(".json")) {
+        continue;
+      }
+
+      try {
+        const held = ModelCatalogSchema.parse(
+          JSON.parse(await deps.readFile(join(directory, entry))),
+        );
+
+        // One file per account and surface; `cc` is the one the Agent SDK drives.
+        if (held.catalog.surface === "cc" && (held.fetchedAt ?? 0) > (newest?.fetchedAt ?? -1)) {
+          newest = held;
+        }
+      } catch {
+        // A half-written file is not the answer for the ones beside it.
+      }
+    }
+  } catch {
+    // No cache directory until the CLI has run once here.
+  }
+
+  const models = (newest?.catalog.config.models ?? []).slice(0, 64).map((model) => ({
+    providerId: "claude" as const,
+    model: model.id,
+    ...(model.name === undefined ? {} : { label: `Claude ${model.name}` }),
+  }));
+
+  return models.length === 0 ? CLAUDE_FALLBACK_MODELS : models;
+}
+
 async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
   let printed: string;
 
@@ -148,21 +234,28 @@ async function probeClaude(deps: ProbeDeps): Promise<RuntimeProbe> {
     return unavailable("claude", "unknown", "claude_not_logged_in");
   }
 
+  // Carried for the same reason as Codex's: which build answered, on the record.
+  let version: string | undefined;
+
+  try {
+    const reported = await deps.exec("claude", ["--version"]);
+
+    version =
+      `${reported.stdout}
+${reported.stderr}`
+        .trim()
+        .slice(0, 64) || undefined;
+  } catch {
+    // It answered `auth status` a moment ago, so this is a detail, not a verdict.
+  }
+
   // A claude.ai login is a subscription; claude.ts drives it through the Agent SDK.
-  // ponytail: a fixed list; exact ids come from Settings later. Every model is
-  // named in full rather than by the CLI's `opus` / `sonnet` aliases, which move
-  // with each release: a turn's record should say which model actually ran, and
-  // the owner should see the version they are picking. A new release means a new
-  // line here and a carry-over migration like `0025_pinned_claude_models.sql`.
   return {
     providerId: "claude",
     available: true,
     authMode: "claude_ai",
-    models: [
-      { providerId: "claude", model: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
-      { providerId: "claude", model: "claude-opus-5-5", label: "Claude Opus 5.5" },
-      { providerId: "claude", model: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
-    ],
+    models: await claudeModels(deps),
+    ...(version === undefined ? {} : { version }),
   };
 }
 
@@ -218,6 +311,7 @@ function installedDeps(env: NodeJS.ProcessEnv): ProbeDeps {
     env,
     home: homedir(),
     readFile: (path) => readFile(path, "utf8"),
+    readDirectory: (path) => readdir(path),
     exec: (file, args) =>
       new Promise((resolve, reject) => {
         const spawn = spawnable(file, args);

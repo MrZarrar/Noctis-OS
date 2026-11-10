@@ -19,6 +19,32 @@ const MODELS_CACHE = JSON.stringify({
   ],
 });
 
+/** The shape `~/.claude/cache/model-catalog` really holds, trimmed to what is read. */
+function catalogFile(fetchedAt: number, surface = "cc"): string {
+  return JSON.stringify({
+    version: 2,
+    fetchedAt,
+    staleAt: fetchedAt + 3_600_000,
+    catalog: {
+      surface,
+      config: {
+        id: surface,
+        models: [
+          { id: "claude-opus-5-5", name: "Opus 5.5", section: "main", quick_select: true },
+          // A floor the installed CLI does not meet on paper, offered anyway.
+          {
+            id: "claude-fable-5-2",
+            name: "Fable 5.2",
+            section: "main",
+            min_claude_code_version: "2.1.290",
+          },
+          { id: "claude-sonnet-5", name: "Sonnet 5", section: "overflow" },
+        ],
+      },
+    },
+  });
+}
+
 let scratch: string | undefined;
 
 afterEach(() => {
@@ -32,7 +58,10 @@ interface Scripted {
   /** `loginOn` because the real CLI prints its answer on stderr and exits 0. */
   codex?: { login: string; loginOn?: "stdout" | "stderr"; version?: string };
   claude?: string;
+  claudeVersion?: string;
   cache?: string;
+  /** Files in the Claude CLI's model-catalog cache, by name. */
+  catalog?: Record<string, string>;
 }
 
 /** A machine described entirely by the script: a real codex.exe on PATH only if `codex` is set. */
@@ -67,15 +96,26 @@ function deps(script: Scripted): ProbeDeps & { calls: string[] } {
       }
 
       if (file === "claude" && script.claude !== undefined) {
-        return Promise.resolve({ stdout: script.claude, stderr: "", code: 0 });
+        const text = args[0] === "--version" ? (script.claudeVersion ?? "") : script.claude;
+
+        return Promise.resolve({ stdout: text, stderr: "", code: 0 });
       }
 
       return Promise.reject(new Error(`spawn ${file} ENOENT`));
     },
-    readFile: (path) =>
-      script.cache !== undefined && path.endsWith("models_cache.json")
-        ? Promise.resolve(script.cache)
-        : Promise.reject(new Error("ENOENT")),
+    readFile: (path) => {
+      if (script.cache !== undefined && path.endsWith("models_cache.json")) {
+        return Promise.resolve(script.cache);
+      }
+
+      const held = Object.entries(script.catalog ?? {}).find(([name]) => path.endsWith(name));
+
+      return held === undefined ? Promise.reject(new Error("ENOENT")) : Promise.resolve(held[1]);
+    },
+    readDirectory: (path) =>
+      script.catalog === undefined || !path.endsWith("model-catalog")
+        ? Promise.reject(new Error("ENOENT"))
+        : Promise.resolve(Object.keys(script.catalog)),
   };
 }
 
@@ -174,9 +214,34 @@ describe("probeProviders", () => {
       available: true,
       authMode: "claude_ai",
       models: [
-        { providerId: "claude", model: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
         { providerId: "claude", model: "claude-opus-5-5", label: "Claude Opus 5.5" },
+        { providerId: "claude", model: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
         { providerId: "claude", model: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+      ],
+    });
+  });
+
+  it("offers what the Claude CLI's own catalog lists, newest cache file winning", async () => {
+    const [, claude] = await probeProviders(
+      deps({
+        claude: LOGGED_IN_CLAUDE,
+        claudeVersion: "2.1.322 (Claude Code)",
+        catalog: {
+          "old-cc.json": catalogFile(1),
+          "current-cc.json": catalogFile(2),
+          "other-surface.json": catalogFile(3, "api"),
+          "half-written.json": "{nope",
+        },
+      }),
+    );
+
+    expect(claude).toMatchObject({
+      available: true,
+      version: "2.1.322 (Claude Code)",
+      models: [
+        { providerId: "claude", model: "claude-opus-5-5", label: "Claude Opus 5.5" },
+        { providerId: "claude", model: "claude-fable-5-2", label: "Claude Fable 5.2" },
+        { providerId: "claude", model: "claude-sonnet-5", label: "Claude Sonnet 5" },
       ],
     });
   });
