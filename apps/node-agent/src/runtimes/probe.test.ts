@@ -174,8 +174,8 @@ describe("probeProviders", () => {
       available: true,
       authMode: "claude_ai",
       models: [
-        { providerId: "claude", model: "sonnet", label: "Claude Sonnet" },
-        { providerId: "claude", model: "opus", label: "Claude Opus" },
+        { providerId: "claude", model: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+        { providerId: "claude", model: "claude-opus-5-5", label: "Claude Opus 5.5" },
         { providerId: "claude", model: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
       ],
     });
