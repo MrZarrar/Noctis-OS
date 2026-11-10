@@ -42,6 +42,7 @@ export function ThoughtPalace({
   const palace = usePalace(transport, focusId ?? (linked.success ? linked.data : undefined));
   const [room, setRoom] = useState<RoomId>("atrium");
   const [exploring, setExploring] = useState(false);
+  const [openRequest, setOpenRequest] = useState(0);
   const [scope, setScope] = useState<SearchScope>("palace");
   const contents = palace.draft.command.contents;
 
@@ -88,6 +89,7 @@ export function ThoughtPalace({
             {...(openId === undefined ? {} : { openId })}
             onOpen={(id) => {
               void palace.open(id);
+              setOpenRequest((value) => value + 1);
               setExploring(false);
             }}
             {...(palace.nextCursor === undefined
@@ -114,6 +116,8 @@ export function ThoughtPalace({
           dimmed={exploring}
           disabled={palace.loadingEntry}
           allowEmptyBody={contents.kind === "book" && Boolean(contents.title?.trim())}
+          {...(openId === undefined ? {} : { entryId: openId })}
+          openRequest={openRequest}
           placeholder={
             openId === undefined ? "What is on your mind?" : (contents.title ?? "Your writing")
           }

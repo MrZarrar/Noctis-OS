@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { Chrome } from "./Chrome.js";
-import { Desk } from "./Desk.js";
+import { Desk, resizedDeskHeight } from "./Desk.js";
 import { PalaceScene } from "./PalaceScene.js";
 
 describe("Palace room navigation", () => {
@@ -79,6 +79,22 @@ describe("Palace room navigation", () => {
       }),
     );
     expect(markup).toContain("Demo saved for this tab. Refreshing resets it.");
+  });
+
+  it("offers a full writing view and bounds drag resizing to the available space", () => {
+    const markup = renderToStaticMarkup(
+      createElement(Desk, {
+        value: "A long letter",
+        onChange: () => undefined,
+        onSave: () => undefined,
+        state: { kind: "idle" },
+        dimmed: false,
+      }),
+    );
+    expect(markup).toContain('aria-label="Open full writing view"');
+    expect(resizedDeskHeight(300, 200, 100, 700)).toBe(400);
+    expect(resizedDeskHeight(300, 200, 900, 700)).toBe(180);
+    expect(resizedDeskHeight(300, 700, 0, 700)).toBe(700);
   });
 
   it("can save a book record before its notebook has any writing", () => {
