@@ -168,6 +168,29 @@ describe("probeProviders", () => {
     expect(d.calls.some((call) => call.endsWith("login status"))).toBe(true);
   });
 
+  it("advertises the effort levels from each provider's model catalog", async () => {
+    const catalog = JSON.parse(catalogFile(1)) as {
+      catalog: { config: { models: Array<Record<string, unknown>> } };
+    };
+    catalog.catalog.config.models[0]!.runtime = { effort_levels: ["low", "high", "max"] };
+    const d = deps({
+      codex: { login: "Logged in using ChatGPT" },
+      claude: JSON.stringify({ loggedIn: true, authMethod: "claude.ai" }),
+      cache: JSON.stringify({
+        models: [
+          {
+            slug: "gpt-6.1-sol",
+            supported_reasoning_levels: [{ effort: "low" }, { effort: "ultra" }],
+          },
+        ],
+      }),
+      catalog: { "test.json": JSON.stringify(catalog) },
+    });
+    const [codex, claude] = await probeProviders(d);
+    expect(codex?.models[0]?.supportedEfforts).toEqual(["low", "ultra"]);
+    expect(claude?.models[0]?.supportedEfforts).toEqual(["low", "high", "max"]);
+  });
+
   it("THE GATE: reads the login line from stderr, which is where the CLI prints it", async () => {
     // codex-cli 0.154 prints "Logged in using ChatGPT" on stderr and exits 0.
     // A probe reading stdout alone reports a signed-in subscription as logged

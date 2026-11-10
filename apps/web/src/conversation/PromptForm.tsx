@@ -277,14 +277,21 @@ export function modelChoice({
     );
   const byKey = (key: string | undefined) => options.find((model) => modelKey(model) === key);
   const fallback = pinnedProvider === undefined ? undefined : offered[0];
+  const selected =
+    byKey(chosenKey) ??
+    (fits(current) ? current : undefined) ??
+    (fits(defaultModel) ? defaultModel : undefined) ??
+    fallback;
+  const advertised = offered.find(
+    (model) => modelKey(model) === (selected === undefined ? "" : modelKey(selected)),
+  );
 
   return {
     options,
     selected:
-      byKey(chosenKey) ??
-      (fits(current) ? current : undefined) ??
-      (fits(defaultModel) ? defaultModel : undefined) ??
-      fallback,
+      selected === undefined || advertised?.supportedEfforts === undefined
+        ? selected
+        : { ...selected, supportedEfforts: advertised.supportedEfforts },
   };
 }
 
@@ -315,6 +322,17 @@ export function rootChoice({ current, chosen }: { current?: string; chosen?: str
 
 export function modelLabel(model: ModelRef): string {
   return `${model.label ?? model.model} (${model.providerId})`;
+}
+
+export function effortLevels(model: ModelRef | undefined): NonNullable<ModelRef["effort"]>[] {
+  if (model === undefined || !["codex", "claude"].includes(model.providerId)) return [];
+  return model.supportedEfforts ?? ["low", "medium", "high", "xhigh"];
+}
+
+export function withEffort(model: ModelRef, effort: ModelRef["effort"]): ModelRef {
+  const base = { ...model };
+  delete base.effort;
+  return effort === undefined || !effortLevels(model).includes(effort) ? base : { ...base, effort };
 }
 
 /**
@@ -369,6 +387,7 @@ export function PromptForm({
     }
   }, [asleep, wakeWhileTyping]);
   const [chosen, setChosen] = useState<string>();
+  const [chosenEfforts, setChosenEfforts] = useState<Record<string, ModelRef["effort"]>>({});
   const [files, setFiles] = useState<readonly File[]>([]);
   const [preview, setPreview] = useState<File>();
   const previewLayer = useBackLayer("attachment", preview !== undefined, () => {
@@ -386,6 +405,7 @@ export function PromptForm({
     setShownThread(threadId);
     if (shownThread !== undefined || !sentUnstarted.current) {
       setChosen(undefined);
+      setChosenEfforts({});
       setChosenRoot(undefined);
     }
     sentUnstarted.current = false;
@@ -402,6 +422,12 @@ export function PromptForm({
     chosenKey: chosen,
   });
   const selectedKey = selected === undefined ? "" : modelKey(selected);
+  const levels = effortLevels(selected);
+  const effort = Object.hasOwn(chosenEfforts, selectedKey)
+    ? chosenEfforts[selectedKey]
+    : selected?.effort;
+  const effortIndex = effort === undefined ? 0 : Math.max(0, levels.indexOf(effort) + 1);
+  const effortLabel = effortIndex === 0 ? "Default" : levels[effortIndex - 1];
   const root = rootChoice({
     ...(current?.rootGrantId === undefined ? {} : { current: current.rootGrantId }),
     ...(chosenRoot === undefined ? {} : { chosen: chosenRoot }),
@@ -432,7 +458,7 @@ export function PromptForm({
     // What the picker shows is what is sent, the default included, so the
     // thread keeps it for the next message.
     onSend(text, {
-      ...(selected === undefined ? {} : { model: selected }),
+      ...(selected === undefined ? {} : { model: withEffort(selected, effort) }),
       ...(files.length === 0 ? {} : { files }),
       ...(rootGrantId === "" || lockedTo !== undefined ? {} : { rootGrantId }),
     });
@@ -707,6 +733,46 @@ export function PromptForm({
           Send
         </button>
       </div>
+      {levels.length > 0 && (
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: spacing.sm,
+            fontSize: 13,
+            color: typography.color.muted,
+          }}
+        >
+          <span>Effort</span>
+          <input
+            type="range"
+            aria-label="Reasoning effort"
+            aria-valuetext={effortLabel}
+            min={0}
+            max={levels.length}
+            step={1}
+            value={effortIndex}
+            disabled={disabled}
+            onChange={(event) => {
+              const value = Number(event.currentTarget.value);
+              setChosenEfforts((previous) => ({
+                ...previous,
+                [selectedKey]: value === 0 ? undefined : levels[value - 1],
+              }));
+            }}
+            style={{
+              flex: 1,
+              minWidth: 70,
+              maxWidth: 200,
+              minHeight: 32,
+              accentColor: identityAccent[identityId].primary,
+            }}
+          />
+          <span style={{ minWidth: 52, textTransform: "capitalize" }}>
+            {effortLabel === "xhigh" ? "Extra high" : effortLabel}
+          </span>
+        </label>
+      )}
       {files.length > 0 && (
         // Named and removable before the send, because an attachment the owner
         // cannot see is one they cannot take back — and the upload only happens

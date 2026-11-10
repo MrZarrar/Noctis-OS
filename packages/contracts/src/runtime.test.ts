@@ -20,6 +20,13 @@ const UUID = "0199a000-0000-7000-8000-000000000001";
 const MODEL = { providerId: "codex", model: "gpt-5.6-sol" };
 
 describe("runtime contracts", () => {
+  it("carries bounded effort settings and refuses unknown levels", () => {
+    expect(ModelRefSchema.parse({ ...MODEL, effort: "low" }).effort).toBe("low");
+    expect(ModelRefSchema.safeParse({ ...MODEL, effort: "unlimited" }).success).toBe(false);
+    expect(
+      ModelRefSchema.safeParse({ providerId: "claude", model: "sonnet", effort: "ultra" }).success,
+    ).toBe(false);
+  });
   it.each([
     "gpt-5.6-sol",
     "gpt-6-astra",

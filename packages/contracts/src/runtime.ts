@@ -44,6 +44,7 @@ export const ELIGIBLE_AUTH_MODES: ReadonlySet<RuntimeAuthMode> = new Set<Runtime
 ]);
 
 const ShortId = z.string().trim().min(1).max(128);
+export const EffortLevelSchema = z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]);
 
 /** A model is data: which provider, which model name, and what to call it. */
 export const ModelRefSchema = z
@@ -52,8 +53,18 @@ export const ModelRefSchema = z
     // Unlike $, this end check also rejects a final newline.
     model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}(?![\s\S])/),
     label: ShortId.optional(),
+    effort: EffortLevelSchema.optional(),
+    supportedEfforts: z.array(EffortLevelSchema).max(6).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (model) =>
+      model.effort === undefined ||
+      ((model.providerId === "codex" || model.providerId === "claude") &&
+        (model.providerId !== "claude" || model.effort !== "ultra") &&
+        (model.supportedEfforts === undefined || model.supportedEfforts.includes(model.effort))),
+    { message: "Unsupported reasoning effort" },
+  );
 
 /** What a node found out about one provider at start-up. Reported in `hello`. */
 export const RuntimeProbeSchema = z

@@ -1100,7 +1100,9 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           dispatcher.isConnected(live.nodeId) &&
           (command.attachmentIds ?? []).length === 0 &&
           (model === undefined ||
-            (model.providerId === live.model.providerId && model.model === live.model.model)) &&
+            (model.providerId === live.model.providerId &&
+              model.model === live.model.model &&
+              model.effort === live.model.effort)) &&
           (rootGrantId === undefined || rootGrantId === live.rootGrantId)
         ) {
           const messageId = insertMessage(tx, kernel, thread.id, "user", command.text, at);

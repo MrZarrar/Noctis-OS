@@ -1,6 +1,17 @@
 import { expect, it } from "vitest";
 
-import { createProcessPool } from "./sessions.js";
+import { createProcessPool, processKey } from "./sessions.js";
+import type { RuntimeTurnPayload } from "@noctis/contracts";
+
+it("reopens a session when reasoning effort changes", () => {
+  const payload = {
+    model: { providerId: "claude", model: "sonnet", effort: "low" },
+  } as RuntimeTurnPayload;
+  const roots = { cwd: "C:\\work", writable: [], readable: [], localOnly: false };
+  expect(processKey(payload, roots)).not.toBe(
+    processKey({ ...payload, model: { ...payload.model, effort: "high" } }, roots),
+  );
+});
 
 it("does not spawn a pending first process after closeAll", async () => {
   const pool = createProcessPool();

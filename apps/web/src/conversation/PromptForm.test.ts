@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   PromptForm,
+  effortLevels,
+  withEffort,
   lastRun,
   modelChoice,
   offeredModels,
@@ -15,6 +17,31 @@ import {
 const CLAUDE = { providerId: "claude" as const, model: "opus" };
 const LOCAL = { providerId: "local" as const, model: "qwen/qwen3.5-9b" };
 const HERMES = { providerId: "hermes" as const, model: "qwen/qwen3.5-9b" };
+
+it("renders an effort slider for Claude and Codex", () => {
+  for (const model of [CLAUDE, { providerId: "codex" as const, model: "gpt-6.1-sol" }]) {
+    const html = renderToStaticMarkup(
+      createElement(PromptForm, {
+        identityId: "vesper",
+        models: [model],
+        defaultModel: model,
+        disabled: false,
+        onSend: () => undefined,
+      }),
+    );
+    expect(html).toContain('aria-label="Reasoning effort"');
+    expect(html).toContain('type="range"');
+  }
+});
+
+it("sends supported effort choices, clears Default, and omits unsupported choices", () => {
+  const model = { ...CLAUDE, supportedEfforts: ["low" as const, "high" as const] };
+  expect(effortLevels(model)).toEqual(["low", "high"]);
+  expect(withEffort(model, "high").effort).toBe("high");
+  expect(withEffort({ ...model, effort: "high" }, undefined).effort).toBeUndefined();
+  expect(withEffort(model, "ultra").effort).toBeUndefined();
+  expect(effortLevels(HERMES)).toEqual([]);
+});
 
 describe("offeredModels", () => {
   it("offers Jester Hermes alone, since Jester is Hermes (ADR-0030)", () => {
@@ -190,6 +217,15 @@ describe("while a turn is working", () => {
 });
 
 describe("modelChoice", () => {
+  it("refreshes supported levels for an existing thread while keeping its effort", () => {
+    const selected = modelChoice({
+      identityId: "vesper",
+      models: [{ ...CLAUDE, supportedEfforts: ["low", "max"] }],
+      defaultModel: undefined,
+      current: { ...CLAUDE, effort: "low" },
+    }).selected;
+    expect(selected).toEqual({ ...CLAUDE, effort: "low", supportedEfforts: ["low", "max"] });
+  });
   const SONNET = { providerId: "claude" as const, model: "sonnet" };
   const HAIKU = { providerId: "claude" as const, model: "claude-haiku-5-5" };
   const CODEX = { providerId: "codex" as const, model: "gpt-6.1-sol" };

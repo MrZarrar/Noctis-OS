@@ -1112,6 +1112,7 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
         turnId = TurnResponseSchema.parse(
           await rpc.request("turn/start", {
             threadId: proc.threadId,
+            ...(payload.model.effort === undefined ? {} : { effort: payload.model.effort }),
             input: [
               { type: "text", text: payload.prompt, text_elements: [] },
               {

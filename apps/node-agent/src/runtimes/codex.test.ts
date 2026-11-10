@@ -364,6 +364,14 @@ const HAPPY: Scenario = {
 };
 
 describe("the Codex App Server runtime", () => {
+  it("passes the owner's effort choice to turn/start", async () => {
+    const { runtime: codex, spawned } = runtime(HAPPY);
+    await codex.turn(
+      input({ model: { providerId: "codex", model: "gpt-6.1-sol", effort: "low" } }),
+      recorder().sink,
+    );
+    expect(spawned[0]?.requests.get("turn/start")?.[0]).toMatchObject({ effort: "low" });
+  });
   it("uses agent activity kinds for lifecycle and keeps collaboration tool status separate", async () => {
     const r = recorder();
     await runtime({

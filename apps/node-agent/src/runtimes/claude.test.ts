@@ -227,6 +227,14 @@ const HAPPY = list(
 );
 
 describe("the Claude Agent SDK runtime", () => {
+  it("passes the owner's effort choice to the SDK", async () => {
+    const { query, calls } = scripted(list(init(), result()));
+    await createClaudeRuntime({ query }).turn(
+      input({ model: { providerId: "claude", model: "sonnet", effort: "low" } }),
+      recorder().sink,
+    );
+    expect(calls[0]?.options?.effort).toBe("low");
+  });
   it("maps init, deltas, text, tool uses and results onto the same items the Codex route emits", async () => {
     const { query } = scripted(HAPPY);
     const r = recorder();

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import type { RuntimeProbe } from "@noctis/contracts";
 import { z } from "zod";
+import { EffortLevelSchema } from "@noctis/contracts";
 
 import { resolveCodexCommand } from "./codex-command.js";
 import { childEnvironment } from "./env.js";
@@ -37,6 +38,9 @@ const ModelsCacheSchema = z
           slug: z.string().trim().min(1).max(128),
           display_name: z.string().trim().min(1).max(128).optional(),
           visibility: z.string().optional(),
+          supported_reasoning_levels: z
+            .array(z.object({ effort: EffortLevelSchema }).loose())
+            .optional(),
         })
         .loose(),
     ),
@@ -60,6 +64,10 @@ const ModelCatalogSchema = z
                 .object({
                   id: z.string().trim().min(1).max(128),
                   name: z.string().trim().min(1).max(100).optional(),
+                  runtime: z
+                    .object({ effort_levels: z.array(EffortLevelSchema).optional() })
+                    .loose()
+                    .optional(),
                 })
                 .loose(),
             ),
@@ -98,6 +106,9 @@ async function codexModels(deps: ProbeDeps): Promise<RuntimeProbe["models"]> {
         providerId: "codex" as const,
         model: model.slug,
         ...(model.display_name === undefined ? {} : { label: model.display_name }),
+        ...(model.supported_reasoning_levels === undefined
+          ? {}
+          : { supportedEfforts: model.supported_reasoning_levels.map((level) => level.effort) }),
       }));
   } catch {
     // No cache until the CLI has been run once. An empty list routes nothing
@@ -204,6 +215,9 @@ async function claudeModels(deps: ProbeDeps): Promise<RuntimeProbe["models"]> {
     providerId: "claude" as const,
     model: model.id,
     ...(model.name === undefined ? {} : { label: `Claude ${model.name}` }),
+    ...(model.runtime?.effort_levels === undefined
+      ? {}
+      : { supportedEfforts: model.runtime.effort_levels }),
   }));
 
   return models.length === 0 ? CLAUDE_FALLBACK_MODELS : models;

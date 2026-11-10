@@ -785,6 +785,9 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       env: input.env,
       model: payload.model.model,
       permissionMode: "auto",
+      ...(payload.model.effort === undefined
+        ? {}
+        : { effort: payload.model.effort as NonNullable<Options["effort"]> }),
       // Without these the CLI's own permission system asks about every click; the
       // PreToolUse gate still runs first and stops a step that commits the owner.
       allowedTools: screen.map(([name]) => `mcp__${name}`),

@@ -17,7 +17,13 @@ export const RUNTIME_IDLE_MS = 10 * 60_000;
 
 /** Everything a process is opened with that a later turn could ask for differently. */
 export function processKey(payload: RuntimeTurnPayload, roots: ResolvedRoots): string {
-  return JSON.stringify([payload.model.model, roots.cwd, roots.writable, roots.readable]);
+  return JSON.stringify([
+    payload.model.model,
+    payload.model.effort,
+    roots.cwd,
+    roots.writable,
+    roots.readable,
+  ]);
 }
 
 export interface ProcessPool<P extends LiveProcess> {
