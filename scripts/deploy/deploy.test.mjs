@@ -52,7 +52,7 @@ test("refuses a working tree with changes in it, rather than building them", () 
   assert.match(result.stderr + result.stdout, /uncommitted changes/);
 });
 
-test("plans pull, stop, install, build, page, start and health check, in that order", () => {
+test("plans pull, stop, Claude update, install, build, page, start and health check, in order", () => {
   const result = runDeploy("-ExpectedHost", hostname(), "-RepoRoot", gitRepo(), "-DryRun");
 
   assert.equal(result.status, 0, result.stderr);
@@ -60,6 +60,7 @@ test("plans pull, stop, install, build, page, start and health check, in that or
   const steps = [
     "git pull --ff-only",
     "stop the running core and node",
+    "update the Claude CLI to the latest release",
     "npm ci",
     "npm run build",
     "npm run build:web",
@@ -96,7 +97,7 @@ test("at logon it only starts what is already built, even with work in progress"
   ]) {
     assert.ok(result.stdout.includes(step), `missing ${step}:\n${result.stdout}`);
   }
-  for (const step of ["git pull", "npm ci", "npm run build"]) {
+  for (const step of ["git pull", "npm ci", "npm run build", "update the Claude CLI"]) {
     assert.ok(!result.stdout.includes(step), `should not ${step}:\n${result.stdout}`);
   }
 });

@@ -133,6 +133,23 @@ foreach ($process in $running) {
   }
 }
 
+# 3b. The Claude CLI, latest, while both agents are stopped and nothing holds
+# claude.exe open. The node agent spawns `claude` from PATH and reads that
+# install's model catalog, so a CLI months behind offers the models of months
+# ago. A deploy of the core does not stop for a failure here: npm being offline
+# is worth a warning, not a refusal.
+if (-not $StartOnly) {
+  Write-Step 'update the Claude CLI to the latest release'
+
+  if (-not $DryRun) {
+    & npm @('install', '--global', '@anthropic-ai/claude-code@latest')
+
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "npm install -g @anthropic-ai/claude-code@latest exited with $LASTEXITCODE; keeping the installed CLI"
+    }
+  }
+}
+
 # 4. Install and build.
 if (-not $StartOnly) {
   Invoke-Checked 'npm ci' 'npm' @('ci')
