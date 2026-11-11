@@ -1216,10 +1216,12 @@ describe("the Claude Agent SDK runtime", () => {
 
     const called = await client.callTool({
       name: "noctis_delegate",
-      arguments: { runtime: "codex", prompt: "draw frame 1" },
+      arguments: { runtime: "codex", model: "gpt-6.1-terra", prompt: "draw frame 1" },
     });
 
-    expect(r.delegations).toEqual([{ runtime: "codex", prompt: "draw frame 1" }]);
+    expect(r.delegations).toEqual([
+      { runtime: "codex", model: "gpt-6.1-terra", prompt: "draw frame 1" },
+    ]);
     expect(called.isError).not.toBe(true);
 
     const [content] = called.content as Array<{ type: string; text: string }>;

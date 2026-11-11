@@ -426,6 +426,7 @@ describe("the Codex App Server runtime", () => {
   describe("noctis_delegate", () => {
     const args = {
       runtime: "claude" as const,
+      model: "claude-opus-5-5",
       prompt: "Inspect the other PC",
       node: "work-pc",
       threadId: "0199a000-0000-7000-8000-0000000000d1",
@@ -480,6 +481,10 @@ describe("the Codex App Server runtime", () => {
                     enum: ["codex", "claude", "hermes", "local"],
                   }) as unknown,
                   prompt: expect.objectContaining({ minLength: 1, maxLength: 20_000 }) as unknown,
+                  model: expect.objectContaining({
+                    type: "string",
+                    description: expect.stringContaining("task size") as string,
+                  }) as unknown,
                   threadId: expect.any(Object) as unknown,
                   node: expect.any(Object) as unknown,
                 },

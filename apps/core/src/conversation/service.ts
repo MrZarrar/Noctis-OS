@@ -491,7 +491,7 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
   /**
    * The model a thread that belongs to one agent runs on, when nobody chose:
    * its own last model for that agent, else the identity's default if it is
-   * that agent, else the first model any connected node offers for it.
+   * that agent and not legacy Luna, else a preferred model a connected node offers.
    */
   function modelFor(
     tx: NoctisDatabase,
@@ -502,13 +502,22 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
     const previous = lastModel(tx, threadId);
     const fallback = defaultModelFor(tx, identityId);
 
-    return previous?.providerId === providerId
-      ? previous
-      : fallback?.providerId === providerId
-        ? fallback
-        : catalogue(tx, (id) => dispatcher.isConnected(id)).find(
-            (candidate) => candidate.providerId === providerId,
-          );
+    if (previous?.providerId === providerId) return previous;
+    if (fallback?.providerId === providerId && fallback.model !== "gpt-5.6-luna") return fallback;
+
+    const available = catalogue(tx, (id) => dispatcher.isConnected(id)).filter(
+      (candidate) => candidate.providerId === providerId,
+    );
+    if (providerId !== "codex") return available[0];
+
+    for (const model of ["gpt-6.1-sol", "gpt-6.1-terra"]) {
+      const preferred = available.find((candidate) => candidate.model === model);
+      if (preferred !== undefined) return preferred;
+    }
+    return (
+      available.find((candidate) => !candidate.model.includes("luna")) ??
+      available.find((candidate) => candidate.model === "gpt-6-luna")
+    );
   }
 
   function identityContext(turn: Turn): CommandContext {
@@ -1647,13 +1656,22 @@ export function createConversationService(deps: ConversationServiceDeps): Conver
           return conflict({ kind: "not_found", entity: "thread", id: delegation.threadId ?? "" });
         }
 
-        const model = modelFor(tx, thread.id, parentTurn.identityId, delegation.runtime);
+        const available = catalogue(tx, (id) => dispatcher.isConnected(id)).filter(
+          (candidate) => candidate.providerId === delegation.runtime,
+        );
+        const model =
+          delegation.model === undefined
+            ? modelFor(tx, thread.id, parentTurn.identityId, delegation.runtime)
+            : available.find((candidate) => candidate.model === delegation.model);
 
         if (model === undefined) {
           return conflict({
             kind: "unavailable",
             entity: "model",
-            reason: `no connected node offers ${delegation.runtime}`,
+            reason:
+              delegation.model === undefined
+                ? `no connected node offers a default model for ${delegation.runtime}`
+                : `model ${delegation.model} is unavailable for ${delegation.runtime}. Available models: ${available.map((candidate) => candidate.model).join(", ") || "none"}`,
           });
         }
 

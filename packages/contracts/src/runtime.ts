@@ -366,6 +366,9 @@ export const RuntimeDelegationSchema = z
   .object({
     delegationId: UuidSchema,
     runtime: RuntimeProviderIdSchema,
+    model: ShortId.optional().describe(
+      "Pick by task size: gpt-6.1-terra for very simple Codex tasks, gpt-6.1-sol for medium to complex tasks; rarely gpt-6-luna. Use an available model for the runtime.",
+    ),
     prompt: z.string().min(1).max(20_000),
     threadId: UuidSchema.optional(),
     node: ShortId.optional(),

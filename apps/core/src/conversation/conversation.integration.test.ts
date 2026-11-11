@@ -1825,13 +1825,136 @@ async function delegationApprovals(core: TestCore): Promise<Body[]> {
 }
 
 describe("delegation", () => {
+  it.each([
+    { models: ["gpt-5.6-luna", "gpt-6.1-terra", "gpt-6.1-sol"], expected: "gpt-6.1-sol" },
+    { models: ["gpt-5.6-luna", "gpt-6.1-terra"], expected: "gpt-6.1-terra" },
+    { models: ["gpt-6-luna", "gpt-6-sol"], expected: "gpt-6-sol" },
+    { models: ["gpt-5.6-luna", "gpt-6-luna"], expected: "gpt-6-luna" },
+    { models: ["gpt-5.6-luna"], expected: undefined },
+    {
+      models: ["gpt-5.6-luna", "gpt-6.1-sol"],
+      defaultModel: { providerId: "codex", model: "gpt-5.6-luna" },
+      expected: "gpt-6.1-sol",
+    },
+    {
+      models: ["gpt-6.1-terra", "gpt-6.1-sol"],
+      defaultModel: { providerId: "claude", model: "claude-opus-5-5" },
+      expected: "gpt-6.1-sol",
+    },
+    {
+      models: ["gpt-6.1-terra", "gpt-6.1-sol"],
+      defaultModel: { providerId: "codex", model: "gpt-6.1-terra" },
+      expected: "gpt-6.1-terra",
+    },
+    {
+      models: ["gpt-6.1-terra", "gpt-6.1-sol"],
+      model: "gpt-6.1-terra",
+      expected: "gpt-6.1-terra",
+    },
+  ])(
+    "selects delegation model $expected from $models (request $model, default $defaultModel)",
+    async ({ models, defaultModel, model, expected }) => {
+      const core = await startTestCore();
+      const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+      const node = await connectFake(core, directory, {
+        providers: ["codex"],
+        probes: [
+          { ...CODEX_PROBE, models: models.map((model) => ({ providerId: "codex", model })) },
+        ],
+      });
+      const objectiveId = await activeObjective(core, "model");
+      if (defaultModel !== undefined) {
+        expect(
+          (
+            await command(core, "identity.set_default_model", {
+              idempotencyKey: "default",
+              identityId: "vesper",
+              model: defaultModel,
+            })
+          ).status,
+        ).toBe(200);
+      }
+      await send(core, "parent", { objectiveId, model: { providerId: "codex", model: models[0] } });
+      await waitFor(() => node.jobs().length === 1, "the parent turn");
+      node.frame({
+        kind: "delegate",
+        jobId: lastTurnJob(node).assignment.jobId,
+        delegation: {
+          delegationId: DELEGATION_A,
+          runtime: "codex",
+          prompt: "draw",
+          ...(model === undefined ? {} : { model }),
+        },
+      });
+      if (expected === undefined) {
+        await waitFor(() => delegatedResults(node).length === 1, "the refusal");
+        expect(delegatedResults(node)[0]?.result).toMatchObject({ outcome: "refused" });
+        expect(node.jobs()).toHaveLength(1);
+      } else {
+        await waitFor(() => node.jobs().length === 2, "the child turn");
+        expect(lastTurnJob(node).payload.model.model).toBe(expected);
+      }
+      rmSync(directory, { recursive: true, force: true });
+    },
+  );
+
+  it("refuses an unknown delegation model and lists only models for its runtime", async () => {
+    const core = await startTestCore();
+    const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
+    const node = await connectFake(core, directory, {
+      providers: ["codex", "claude"],
+      probes: [
+        { ...CODEX_PROBE, models: [MODEL, { providerId: "codex", model: "gpt-6.1-sol" }] },
+        {
+          providerId: "claude",
+          available: true,
+          authMode: "claude_ai",
+          models: [{ providerId: "claude", model: "claude-opus-5-5" }],
+        },
+      ],
+    });
+    const objectiveId = await activeObjective(core, "unknown-model");
+    await send(core, "parent", { objectiveId, model: MODEL });
+    await waitFor(() => node.jobs().length === 1, "the parent turn");
+    node.frame({
+      kind: "delegate",
+      jobId: lastTurnJob(node).assignment.jobId,
+      delegation: {
+        delegationId: DELEGATION_A,
+        runtime: "codex",
+        model: "claude-opus-5-5",
+        prompt: "draw",
+      },
+    });
+    await waitFor(() => delegatedResults(node).length === 1, "the refusal");
+    expect(delegatedResults(node)[0]?.result).toMatchObject({
+      outcome: "refused",
+      reason:
+        "model claude-opus-5-5 is unavailable for codex. Available models: gpt-5.6-sol, gpt-6.1-sol",
+    });
+    expect(node.jobs()).toHaveLength(1);
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it("THE GATE: a delegated turn runs on a linked child thread, and a second request continues it", async () => {
     const core = await startTestCore();
     const directory = mkdtempSync(join(tmpdir(), "noctis-root-"));
-    const node = await connectFake(core, directory);
+    const sol = { providerId: "codex", model: "gpt-6.1-sol" };
+    const node = await connectFake(core, directory, {
+      providers: ["codex"],
+      probes: [{ ...CODEX_PROBE, models: [MODEL, sol] }],
+    });
     const objectiveId = await activeObjective(core, "delegate");
 
-    await setDefault(core);
+    expect(
+      (
+        await command(core, "identity.set_default_model", {
+          idempotencyKey: "default",
+          identityId: "vesper",
+          model: sol,
+        })
+      ).status,
+    ).toBe(200);
     const parent = await send(core, "parent", { objectiveId });
     await waitFor(() => node.jobs().length === 1, "the parent turn");
     const parentJob = lastTurnJob(node).assignment.jobId;
@@ -1839,7 +1962,12 @@ describe("delegation", () => {
     node.frame({
       kind: "delegate",
       jobId: parentJob,
-      delegation: { delegationId: DELEGATION_A, runtime: "codex", prompt: "draw frame 1" },
+      delegation: {
+        delegationId: DELEGATION_A,
+        runtime: "codex",
+        model: MODEL.model,
+        prompt: "draw frame 1",
+      },
     });
     await waitFor(() => node.jobs().length === 2, "the child turn");
 
@@ -1908,6 +2036,7 @@ describe("delegation", () => {
       threadId: childThreadId,
       sessionRef: "child-session",
       prompt: "make the sky darker",
+      model: MODEL,
     });
 
     rmSync(directory, { recursive: true, force: true });
