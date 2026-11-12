@@ -11,6 +11,24 @@ import type { SurfaceContext } from "../surfaces/renderers.js";
 const PRESENCE = { presence: true } as const;
 
 /**
+ * What a Presence panel may use from the chat's handoffs: the ones that only read
+ * (pictures, files, visuals). Choices and confirmations stay with a conversation,
+ * which no Presence panel has.
+ */
+export function presenceHandoffs(
+  shared: SurfaceContext,
+  renderPage: SurfaceContext["renderPage"] | undefined,
+): SurfaceContext {
+  const { mediaUrl, visualUrl, fileTransport } = shared;
+  return {
+    ...(renderPage === undefined ? {} : { renderPage }),
+    ...(mediaUrl === undefined ? {} : { mediaUrl }),
+    ...(visualUrl === undefined ? {} : { visualUrl }),
+    ...(fileTransport === undefined ? {} : { fileTransport }),
+  };
+}
+
+/**
  * Presence's own panels, and the ones the chat's turns open: those belong to
  * the chat's thread, and the owner is here, not in Threads, when they arrive.
  */
@@ -31,8 +49,8 @@ export function usePresencePanels(
       {
         owner: "presence",
         composition,
-        // No conversation answers a Presence panel's choices.
-        handoffs: renderPage === undefined ? {} : { renderPage },
+        // No conversation answers a Presence panel's choices, but its pictures still load.
+        handoffs: presenceHandoffs(thread.handoffs, renderPage),
       },
       ...thread.sources,
     ],
