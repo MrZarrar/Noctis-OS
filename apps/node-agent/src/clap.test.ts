@@ -5,6 +5,7 @@ import {
   createClapDetector,
   missingWindows,
   parseAudioDevices,
+  placementWindows,
   windowLaunches,
 } from "./clap.js";
 
@@ -191,5 +192,14 @@ describe("the two windows", () => {
 
   it("treats a placer that printed nothing as finding nothing", () => {
     expect(missingWindows(["presence", "vault"], "")).toEqual(["presence", "vault"]);
+  });
+
+  it("uses the Chrome processes started by the first clap before rediscovering profiles", () => {
+    const windows = windowLaunches("https://noctis.example", String.raw`C:\profiles`);
+
+    expect(placementWindows(windows, new Map([["presence", 1234]]))).toEqual([
+      expect.objectContaining({ name: "presence", pids: [1234] }),
+      expect.objectContaining({ name: "vault", pids: [] }),
+    ]);
   });
 });

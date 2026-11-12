@@ -91,7 +91,9 @@ while ($true) {
   $left = @()
   foreach ($target in $pending) {
     $flag = "--user-data-dir=$($target.profile)"
-    $pids = @($processes | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($flag) } | ForEach-Object { [int]$_.ProcessId })
+    $known = @($target.pids | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ })
+    $profile = @($processes | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($flag) } | ForEach-Object { [int]$_.ProcessId })
+    $pids = @($known + $profile | Select-Object -Unique)
     $window = if ($pids.Count -gt 0) { [NoctisClapWindows]::Find($pids) } else { [IntPtr]::Zero }
     if ($window -ne [IntPtr]::Zero) {
       $area = if ($target.monitor -eq 1) { $primary.WorkingArea } else { $other.WorkingArea }
@@ -202,6 +204,11 @@ export interface ClapWindow {
   args: string[];
 }
 
+export interface PlacementWindow extends ClapWindow {
+  /** Chrome process retained from the first clap. Profile discovery remains the fallback after a restart. */
+  pids: number[];
+}
+
 /**
  * Presence on monitor 1 and the Vault on monitor 2. Each has a Chrome profile
  * of its own, which is how the placer tells the two windows apart.
@@ -226,6 +233,17 @@ export function windowLaunches(pageUrl: string, profiles: string): ClapWindow[] 
       ],
     };
   });
+}
+
+/** Prefer the processes Noctis started itself, then let the placer rediscover a profile when needed. */
+export function placementWindows(
+  windows: readonly ClapWindow[],
+  known: ReadonlyMap<string, number>,
+): PlacementWindow[] {
+  return windows.map((window) => ({
+    ...window,
+    pids: known.has(window.name) ? [known.get(window.name) as number] : [],
+  }));
 }
 
 /** The windows the placer did not report placing, so a placer that failed outright launches them all. */
@@ -255,11 +273,21 @@ function firstMic(ffmpeg: string): Promise<string | undefined> {
 }
 
 /** Places whichever of `windows` are open; resolves to the names it could not find. */
-function place(exe: string, windows: readonly ClapWindow[], wait: number): Promise<string[]> {
+function place(
+  exe: string,
+  windows: readonly ClapWindow[],
+  wait: number,
+  known: ReadonlyMap<string, number>,
+): Promise<string[]> {
   const request = {
     exe,
     wait,
-    windows: windows.map(({ name, monitor, profile }) => ({ name, monitor, profile })),
+    windows: placementWindows(windows, known).map(({ name, monitor, profile, pids }) => ({
+      name,
+      monitor,
+      profile,
+      pids,
+    })),
   };
   return new Promise((resolve) => {
     execFile(
@@ -317,6 +345,7 @@ export async function startClapToOpen(
   let retry: NodeJS.Timeout | undefined;
 
   let opening = false;
+  const knownWindows = new Map<string, number>();
 
   /** Brings back the windows already open, and launches only the ones that are not. */
   const open = async (): Promise<void> => {
@@ -325,10 +354,16 @@ export async function startClapToOpen(
     try {
       const windows = windowLaunches(pageUrl, profiles);
       const exe = win32.basename(browser);
-      const missing = await place(exe, windows, 0);
+      const missing = await place(exe, windows, 0, knownWindows);
       const launched = windows.filter((window) => missing.includes(window.name));
       for (const window of launched) {
-        spawn(browser, window.args, { detached: true, stdio: "ignore", windowsHide: false })
+        const launchedWindow = spawn(browser, window.args, {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: false,
+        });
+        if (launchedWindow.pid !== undefined) knownWindows.set(window.name, launchedWindow.pid);
+        launchedWindow
           .on("error", (error) => {
             log("warn", "clap to open could not start the browser", {
               browser,
@@ -337,7 +372,8 @@ export async function startClapToOpen(
           })
           .unref();
       }
-      const unplaced = launched.length === 0 ? [] : await place(exe, launched, LAUNCH_WAIT_SECONDS);
+      const unplaced =
+        launched.length === 0 ? [] : await place(exe, launched, LAUNCH_WAIT_SECONDS, knownWindows);
       log("info", "double clap: opened Noctis", {
         launched: launched.map((window) => window.name),
         unplaced,
