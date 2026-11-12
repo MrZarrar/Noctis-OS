@@ -13,7 +13,7 @@ const url = (index: number, path: string, route = "list") =>
   `/files/${route}?${new URLSearchParams({ ...roots[index]!, path })}`;
 
 describe("fictional Files", () => {
-  it("walks both shared trees, parses lists and previews, and loads every data URL locally", async () => {
+  it("walks both shared trees, parses lists and previews, and loads every blob URL locally", async () => {
     let images = 0;
     let texts = 0;
     let folders = 0;
@@ -35,7 +35,8 @@ describe("fictional Files", () => {
           }
           const contentPath = url(index, child, "content");
           const contentUrl = files.contentUrl?.(contentPath);
-          expect(contentUrl).toMatch(/^data:/);
+          // blob: passes img-src in every page policy; data: does not.
+          expect(contentUrl).toMatch(/^blob:/);
           const loaded = await fetch(contentUrl!);
           expect(loaded.ok).toBe(true);
           const content = await loaded.text();

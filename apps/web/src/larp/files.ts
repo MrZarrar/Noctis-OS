@@ -5,7 +5,9 @@ import fixture from "./fixtures/files.json" with { type: "json" };
 
 const data = rebase(fixture);
 const size = (content: string) => new TextEncoder().encode(content).length;
-const refused = (status: number, message: string) => ({ status, body: { error: { message } } });
+// ponytail: one URL per fixture file for the page's life, a few hundred KB at most.
+const blobUrls = new WeakMap<object, string>();
+const refused =(status: number, message: string) => ({ status, body: { error: { message } } });
 
 function location(path: string) {
   const { segments, query } = parsePath(path);
@@ -72,7 +74,13 @@ export const files: LarpArea = {
       return undefined;
     const file = root?.files.find((file) => file.path === relativePath);
     if (!file) return undefined;
+    // blob: passes the core's img-src in every policy; data: only in the widened one.
     // Existing download links append &download=1. A fragment keeps it out of the file bytes.
-    return `data:${file.contentType};charset=utf-8,${encodeURIComponent(file.content)}#`;
+    let blobUrl = blobUrls.get(file);
+    if (blobUrl === undefined) {
+      blobUrl = URL.createObjectURL(new Blob([file.content], { type: file.contentType }));
+      blobUrls.set(file, blobUrl);
+    }
+    return `${blobUrl}#`;
   },
 };

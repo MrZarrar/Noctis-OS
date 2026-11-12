@@ -46,9 +46,11 @@ export function FileMedia({
   const [, refresh] = useState(0);
   const [failed, setFailed] = useState<string>();
   const saved = cache.get(surfaceId);
-  const current = saved?.key === key ? saved.url : undefined;
+  // A blob: URL already holds bytes in this page, and connect-src 'self' refuses to fetch it.
+  const local = url?.startsWith("blob:") === true;
+  const current = local ? url : saved?.key === key ? saved.url : undefined;
   useEffect(() => {
-    if (url === undefined || current !== undefined) return;
+    if (url === undefined || local || current !== undefined) return;
     const controller = new AbortController();
     setFailed(undefined);
     void fetch(url, { credentials: "include", signal: controller.signal })
@@ -73,7 +75,7 @@ export function FileMedia({
           setFailed(error instanceof Error ? error.message : "Could not open this image");
       });
     return () => controller.abort();
-  }, [cache, surfaceId, ownerId, url, key, current]);
+  }, [cache, surfaceId, ownerId, url, key, current, local]);
   if (renderImage !== undefined) return renderImage(current);
   if (failed !== undefined && current === undefined)
     // Degrades to the live file rather than hiding it; acceptance is then not enforced.

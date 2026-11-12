@@ -62,6 +62,15 @@ describe("options panels", () => {
     expect(html).toContain("60W charging, 1 metre");
   });
 
+  it("shows an in-browser blob screenshot without fetching it, which connect-src would refuse", () => {
+    const html = render({
+      mediaUrl: () => "blob:http://localhost/anker#",
+      fileMedia: { cache: new Map(), surfaceId: "panel" },
+    });
+    expect(html).toContain('src="blob:http://localhost/anker#"');
+    expect(html).not.toContain("Screenshot unavailable");
+  });
+
   it("offers inspectable listing links and a calm fallback without a media URL", () => {
     const html = render();
     expect(html).toContain("amazon.co.uk");
