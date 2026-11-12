@@ -322,11 +322,66 @@ export function createLarpCore(options: LarpCoreOptions = {}): LarpCore {
     } else if (matches(text, vesper.recall.match)) {
       reply(turn, nextLine("vesper.recall", vesper.recall.replies));
       later(script.typing.thinkMs + vesper.recall.delayMs, () => openRecallPanel(text));
+    } else if (matches(text, vesper.launch.match)) {
+      runLaunchTurn(turn);
     } else {
       reply(turn, nextLine("vesper.fallback", vesper.fallback));
     }
 
     return ok(turn);
+  }
+
+  // --- the launch turn ----------------------------------------------------
+
+  function runLaunchTurn(turn: Turn): void {
+    const launch = script.vesper.launch;
+    const { steps, status } = launch.progress;
+    const opening = nextLine("vesper.launch", launch.replies);
+
+    function openPanel(kind: "timeline" | "evidence" | "document", payload: unknown): void {
+      upsertIntent({
+        kind,
+        role: kind === "document" ? "primary" : "supporting",
+        persistence: "restorable",
+        priority: kind === "document" ? 80 : 70,
+        minSize: "standard",
+        payloadVersion: 1,
+        sourceIds: [panelSource(`launch:${kind}`)],
+        payload,
+      });
+    }
+
+    function progress(completed: number): void {
+      openPanel("timeline", {
+        title: launch.progress.title,
+        items: steps.map((step, index) => ({
+          id: step.id,
+          label: step.label,
+          start:
+            index < completed ? status.done : index === completed ? status.working : status.waiting,
+        })),
+      });
+    }
+
+    later(script.typing.thinkMs, () => {
+      if (cancelled.has(turn.id)) return;
+      speak(turn, opening, () => {
+        progress(0);
+        later(launch.referenceAfterMs, () => {
+          if (!cancelled.has(turn.id)) openPanel("evidence", launch.references);
+        });
+        steps.forEach((step, index) => {
+          later(step.doneAfterMs, () => {
+            if (cancelled.has(turn.id)) return;
+            progress(index + 1);
+            if (index === steps.length - 1) {
+              openPanel("document", launch.result);
+              speak(turn, launch.closingLine, (message) => finishTurn(turn, message.id));
+            }
+          });
+        });
+      });
+    });
   }
 
   // --- the demo task ------------------------------------------------------

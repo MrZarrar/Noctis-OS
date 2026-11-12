@@ -2,11 +2,14 @@ import {
   ApprovalRecordSchema,
   CompositionPlanSchema,
   ConversationThreadSchema,
+  DocumentPayloadSchema,
+  EvidencePayloadSchema,
   OptionsPayloadSchema,
   OrchestrationEventSchema,
   ServerFrameSchema,
   SurfaceIntentSchema,
   SurfaceOverrideSchema,
+  TimelinePayloadSchema,
   VaultRecallPayloadSchema,
 } from "@noctis/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -161,6 +164,90 @@ describe("DemoTransport", () => {
       expect(option.image).toBeDefined();
     }
   });
+
+  it.each(["get the Paperbird LAUNCH READY", "GET PAPERBIRD ready for launch"])(
+    "runs one launch timeline, references and document for '%s'",
+    async (text) => {
+      const { transport } = setup();
+      const store = createConversation(transport, "vesper", undefined);
+      store.start();
+      await advance(10);
+      await store.send(text);
+      const read = async () =>
+        SurfaceReadSchema.parse((await transport.request("GET", SURFACES)).body).intents;
+
+      await advance(1_000);
+      expect(await read()).toHaveLength(0);
+      await advance(2_000);
+      const initial = await read();
+      expect(initial.map((intent) => intent.kind)).toEqual(["timeline"]);
+      const timeline = initial[0]!;
+      expect(TimelinePayloadSchema.parse(timeline.payload).items).toHaveLength(5);
+      expect(
+        store.getState().messages.filter((message) => message.role === "identity"),
+      ).toHaveLength(1);
+      expect(store.getState().turns.at(-1)?.status).toBe("running");
+
+      const progress = new Set<number>();
+      let previousDone = 0;
+      let referenceAt: number | undefined;
+      let documentAt: number | undefined;
+      for (let elapsed = 3_000; elapsed <= 30_000; elapsed += 1_000) {
+        const intents = await read();
+        expect(intents.filter((intent) => intent.kind === "timeline")).toHaveLength(1);
+        const current = intents.find((intent) => intent.kind === "timeline")!;
+        expect(current.id).toBe(timeline.id);
+        expect(current.sourceIds).toEqual(timeline.sourceIds);
+        const items = TimelinePayloadSchema.parse(current.payload).items;
+        const done = items.filter((item) => item.start === "Done").length;
+        expect(done).toBeGreaterThanOrEqual(previousDone);
+        expect(done - previousDone).toBeLessThanOrEqual(1);
+        expect(items.slice(0, done).every((item) => item.start === "Done")).toBe(true);
+        progress.add(done);
+        previousDone = done;
+
+        const references = intents.filter((intent) => intent.kind === "evidence");
+        expect(references.length).toBeLessThanOrEqual(1);
+        if (references[0]) {
+          const payload = EvidencePayloadSchema.parse(references[0].payload);
+          expect(payload.items.length).toBeGreaterThanOrEqual(3);
+          expect(payload.items.length).toBeLessThanOrEqual(4);
+          referenceAt ??= elapsed;
+        }
+        const documents = intents.filter((intent) => intent.kind === "document");
+        expect(documents.length).toBeLessThanOrEqual(1);
+        if (documents[0]) {
+          expect(done).toBe(5);
+          const payload = DocumentPayloadSchema.parse(documents[0].payload);
+          expect(payload.format).toBe("markdown");
+          expect(payload.content.from).toBe("inline");
+          if (payload.content.from === "inline") {
+            expect(payload.content.text).toContain("# Paperbird");
+            expect(payload.content.text).toContain("## Release notes");
+            expect(payload.content.text).toContain("## Launch post");
+          }
+          documentAt ??= elapsed;
+        }
+        if (elapsed < 30_000) await advance(1_000);
+      }
+
+      expect([...progress]).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(referenceAt).toBeGreaterThan(3_000);
+      expect(referenceAt).toBeLessThan(documentAt!);
+      expect(documentAt).toBeGreaterThanOrEqual(20_000);
+      expect(documentAt).toBeLessThanOrEqual(30_000);
+      expect((await read()).map((intent) => intent.kind)).toEqual([
+        "timeline",
+        "evidence",
+        "document",
+      ]);
+      expect(
+        store.getState().messages.filter((message) => message.role === "identity"),
+      ).toHaveLength(2);
+      expect(store.getState().turns.at(-1)?.status).toBe("completed");
+      store.close();
+    },
+  );
 
   it("opens a recall panel with real evidence from the fixture Vault", async () => {
     const { transport } = setup();

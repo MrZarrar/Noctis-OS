@@ -1,5 +1,5 @@
 {
-  "_readme": "LARP mode's scripted behaviour. Each 'match' list holds phrases; a message containing any of them (any case) runs that script. Scripts are tried top to bottom: wake, benchmark, panels, demoTask, options, recall, then the identity's fallback lines. Times are milliseconds. A line list cycles, one line per ask. 'options' opens one options panel from its own list; 'recall' opens a vault_recall panel built from the fixture Vault, using the words after the match phrase as the query.",
+  "_readme": "LARP mode's scripted behaviour. Each 'match' list holds phrases; a message containing any of them (any case) runs that script. Scripts are tried top to bottom: wake, benchmark, panels, demoTask, options, recall, launch, then the identity's fallback lines. Times are milliseconds. A line list cycles, one line per ask. 'options' opens one options panel from its own list; 'recall' opens a vault_recall panel built from the fixture Vault, using the words after the match phrase as the query. 'launch' opens one timeline after its opening reply, updates each step in place, shows evidence partway through, then opens an inline launch brief and says the closing line. Launch timings are measured from the end of the opening reply.",
   "typing": {
     "charsPerSecond": 110,
     "thinkMs": 1400,
@@ -163,6 +163,62 @@
         "Pulled from the Vault. The notes it came from are in the panel."
       ],
       "delayMs": 900
+    },
+    "launch": {
+      "match": ["launch ready", "get paperbird"],
+      "replies": [
+        "I'll get Paperbird ready for launch. Follow the steps here.",
+        "I'll check the Paperbird brief and prepare the launch copy."
+      ],
+      "closingLine": "The Paperbird launch brief is ready to review.",
+      "referenceAfterMs": 9000,
+      "progress": {
+        "title": "Paperbird launch preparation",
+        "status": { "waiting": "Waiting", "working": "Working", "done": "Done" },
+        "steps": [
+          { "id": "brief", "label": "Read the brief", "doneAfterMs": 4000 },
+          { "id": "listing", "label": "Check the store listing", "doneAfterMs": 8000 },
+          { "id": "notes", "label": "Draft release notes", "doneAfterMs": 12000 },
+          { "id": "images", "label": "Size the product images", "doneAfterMs": 16000 },
+          { "id": "post", "label": "Write the launch post", "doneAfterMs": 20000 }
+        ]
+      },
+      "references": {
+        "items": [
+          {
+            "id": "brief",
+            "claim": "The first batch pairs a cream cover with recycled packaging.",
+            "source": "Work PC: Planning/paperbird-brief.md",
+            "status": "current"
+          },
+          {
+            "id": "pricing",
+            "claim": "Trial prices are GBP 12 for the planner and GBP 17 with a refill.",
+            "source": "Home PC: Paperbird/pricing.csv",
+            "status": "current"
+          },
+          {
+            "id": "listing",
+            "claim": "The draft listing presents the planner and refill bundle together.",
+            "source": "https://example.com/paperbird/store-draft",
+            "status": "current"
+          },
+          {
+            "id": "cover",
+            "claim": "The cream cover is the lead product image.",
+            "source": "Home PC: Paperbird/cover-study.png",
+            "status": "current"
+          }
+        ]
+      },
+      "result": {
+        "title": "Paperbird launch brief",
+        "format": "markdown",
+        "content": {
+          "from": "inline",
+          "text": "# Paperbird launch brief\n\nA pocket planner for small daily wins. Lead with the cream cover photograph and offer the refill bundle alongside the single planner.\n\n## Release notes\n\n- Cream cover pocket planner with space for daily priorities.\n- Refill bundle for the next set of notes.\n- Recycled packaging for the trial batch.\n- Trial prices: GBP 12 for the planner, GBP 17 for the planner and refill.\n\n## Launch post\n\nMeet Paperbird, a pocket planner for small daily wins. Pick one thing to move forward, write it down and take it with you. Start with the cream cover planner for GBP 12, or add a refill for GBP 17 together.\n\n## Before publishing\n\nConfirm packaging costs and approve the final daylight photographs."
+        }
+      }
     }
   },
   "jester": {
