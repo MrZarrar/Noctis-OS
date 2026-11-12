@@ -10,6 +10,8 @@ export const SAMPLE_RATE = 16_000;
 const FRAME = SAMPLE_RATE / 100;
 /** A clap is quiet again within 150 ms; a door, a voice or a song is not. */
 const MAX_RING = 15;
+/** Reject short clicks even when their peak is loud: require 3 ms above half the threshold. */
+const MIN_ACTIVE_SAMPLES = SAMPLE_RATE * 0.003;
 const MIN_GAP = 15;
 const MAX_GAP = 80;
 /** After opening, three seconds in which nothing opens again. */
@@ -124,10 +126,11 @@ export function createClapDetector(options: {
   let state: "idle" | "clap" | "long" = "idle";
   let onset = 0;
   let onsetPeak = 0;
+  let activeSamples = 0;
   let lastClap = Number.NEGATIVE_INFINITY;
   let quietUntil = 0;
 
-  const step = (peak: number): boolean => {
+  const step = (peak: number, active: number): boolean => {
     let fired = false;
 
     if (state === "idle") {
@@ -135,9 +138,10 @@ export function createClapDetector(options: {
         state = "clap";
         onset = now;
         onsetPeak = peak;
+        activeSamples = active;
       }
     } else if (peak < threshold / 2) {
-      if (state === "clap") {
+      if (state === "clap" && activeSamples >= MIN_ACTIVE_SAMPLES) {
         onClap?.(onsetPeak);
         const gap = onset - lastClap;
         if (gap >= MIN_GAP && gap <= MAX_GAP) {
@@ -151,6 +155,8 @@ export function createClapDetector(options: {
       state = "idle";
     } else if (now - onset > MAX_RING) {
       state = "long";
+    } else if (state === "clap") {
+      activeSamples += active;
     }
 
     background += (peak - background) * BACKGROUND_WEIGHT;
@@ -167,8 +173,13 @@ export function createClapDetector(options: {
         if (filled === FRAME) {
           filled = 0;
           let peak = 0;
-          for (const value of frame) peak = Math.max(peak, Math.abs(value));
-          if (step(peak / 32_768)) fired = true;
+          let active = 0;
+          for (const value of frame) {
+            const magnitude = Math.abs(value);
+            peak = Math.max(peak, magnitude);
+            if (magnitude >= (threshold / 2) * 32_768) active += 1;
+          }
+          if (step(peak / 32_768, active)) fired = true;
         }
       }
       return fired;

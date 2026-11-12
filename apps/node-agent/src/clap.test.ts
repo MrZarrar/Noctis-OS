@@ -51,6 +51,41 @@ function doubles(samples: Int16Array, chunk = samples.length): number {
 }
 
 describe("the clap detector", () => {
+  it.each([0, 0.005, 0.009])("ignores short clicks at frame offset %s", (offset) => {
+    const samples = audio(2, []);
+    for (const at of [0.5 + offset, 0.9 + offset]) {
+      const start = Math.round(at * SAMPLE_RATE);
+      // Even a near-clipping 2 ms click must not count as a clap.
+      samples.fill(30_000, start, start + Math.round(0.002 * SAMPLE_RATE));
+    }
+    const heard: number[] = [];
+    const detector = createClapDetector({ threshold: 0.3, onClap: (peak) => heard.push(peak) });
+    let fired = false;
+    for (let at = 0; at < samples.length; at += 77) {
+      fired = detector.push(samples.subarray(at, at + 77)) || fired;
+    }
+    expect(fired).toBe(false);
+    expect(heard).toEqual([]);
+  });
+
+  it("does not pair a click with a real clap", () => {
+    const samples = audio(2, [{ at: 0.9, peak: 0.9 }]);
+    samples.fill(30_000, SAMPLE_RATE / 2, SAMPLE_RATE / 2 + 16);
+    expect(doubles(samples)).toBe(0);
+  });
+
+  it("still hears moderate claps across frame and chunk boundaries", () => {
+    expect(
+      doubles(
+        audio(2, [
+          { at: 0.509, peak: 0.6 },
+          { at: 0.909, peak: 0.6 },
+        ]),
+        77,
+      ),
+    ).toBe(1);
+  });
+
   it("fires once for two claps close together", () => {
     expect(
       doubles(

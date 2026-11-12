@@ -1,5 +1,15 @@
 # Video editor page wiring (apps/web)
 
+This is a fresh-session handoff: nobody is watching this run. Complete the
+whole task below yourself, including verification and the commit, and do not
+stop to ask — this repo's `AGENTS.md` already gives standing permission to
+commit and push once your own tests pass (see "Commit, verify, report" at the
+bottom). A previous attempt at this same brief stopped short because it hit a
+real contracts gap; that gap is now explicitly unblocked below (see Step 0).
+If you hit a genuinely new blocker not covered here, stop and write it into
+your final report rather than guessing, the same way the previous attempt did
+— that was the right call, this update just closes the one gap it found.
+
 ## Task
 
 Add a new rail page, "VideoEditor", to the Noctis web app. It is an `<iframe>`
@@ -24,6 +34,17 @@ Your job is the frontend half only: the page component, its registration, and
 making the companion column hide beside it.
 
 ## What to build
+
+0. **Unblock contracts (the one exception to "don't touch packages/contracts").**
+   `packages/contracts/src/surface-payloads.ts` has `PAGE_PANEL_PAGES` (around
+   line 82), the allowlist that types `renderPage`'s payload (`PagePanelPayloadSchema`,
+   `z.enum(PAGE_PANEL_PAGES)`). It does not include `"VideoEditor"`, so the
+   `case "VideoEditor":` arm required in Step 2 below will not typecheck until
+   you add it there. Add `"VideoEditor"` to that array (anywhere in the list
+   is fine — it is not alphabetised, just read the existing order first and
+   match it) and nothing else in that file or anywhere else under
+   `packages/contracts/`. Run `npx vitest run packages/contracts` after this
+   one change, before touching anything else, to confirm nothing there broke.
 
 1. **`apps/web/src/pages/VideoEditor.tsx`** — a new page component. Look at
    an existing simple page for the house style (how other pages fetch from
@@ -101,21 +122,32 @@ making the companion column hide beside it.
 
 ## Constraints
 
-- Do not touch `apps/core/**` or `packages/contracts/**` — that's done, on
-  this same branch already. If something there looks wrong or missing for
-  what you need, stop and report it in your final message rather than editing
-  it yourself.
+- Do not touch `apps/core/**`. That side (config, CSP widening, the
+  `GET /video-editor` route) is already done and merged on `main`
+  (commit `e3cdb8b`).
+- The only change allowed under `packages/contracts/**` is the one-line
+  `PAGE_PANEL_PAGES` addition in Step 0. Nothing else there.
 - Do not add new npm dependencies.
 - Follow this repo's existing TypeScript/React conventions exactly as they
   appear in the files you're editing — no new patterns, no refactors of
   surrounding code.
-- Run `npx tsc -b apps/web packages/ui` and `npx vitest run apps/web packages/ui`
-  before reporting done; paste the final pass/fail summary of both in your
-  report.
+- Keep the diff tight. This is wanted quick and cheap: match existing
+  patterns rather than designing anything new, and don't add polish (retry
+  loops, animations, extra states) beyond what Step 1-4 ask for.
 
-## Report back
+## Commit, verify, report
 
-In your final message: list every file changed/created, the full text of the
-new test(s) you wrote, the tsc and vitest summaries, and anything you found
-ambiguous or decided a judgment call on (e.g. which icon you picked and why,
-what the fetch call ended up looking like).
+1. Run `npx tsc -b apps/web packages/ui packages/contracts` and
+   `npx vitest run apps/web packages/ui packages/contracts`. Both must be
+   clean before you commit.
+2. Commit the changes yourself (`git add` the specific files you touched —
+   never `git add -A`, there is an unrelated untracked `debug.log` in this
+   repo root that is not yours to commit) and push to `origin/main`. This
+   repo's `AGENTS.md` gives standing permission for this once your tests
+   pass: do not wait for approval. Do not force-push, do not amend an
+   existing commit, do not touch git history.
+3. Write your final message as a report (nobody is watching the session
+   live): every file changed or created, the full text of the new test(s),
+   the tsc and vitest summaries, the commit hash you pushed, and anything you
+   decided as a judgment call (e.g. which icon you picked and why, what the
+   fetch call ended up looking like).

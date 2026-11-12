@@ -485,8 +485,9 @@ both open at the login screen. Type the core token once in each; the cookie last
 Clap again while they are open, minimised or moved, and the same two windows come back to their monitors, maximised
 and in front. Only a window you closed opens fresh.
 
-**Tuning.** Two claps count when the second lands 150 to 800 ms after the first. Loud steady sound such as music
-blocks it rather than setting it off.
+**Tuning.** Two claps count when the second lands 150 to 800 ms after the first. Each clap needs at least 3 ms of
+samples above half the volume threshold, so very short clicks are rejected even with a loud peak. Loud steady
+sound such as music blocks detection.
 
 | Variable                | Default                 | Meaning                                                                                                           |
 | ----------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
