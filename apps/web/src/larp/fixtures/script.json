@@ -165,58 +165,58 @@
       "delayMs": 900
     },
     "launch": {
-      "match": ["launch ready", "get paperbird"],
+      "match": ["launch ready", "noctis launch"],
       "replies": [
-        "I'll get Paperbird ready for launch. Follow the steps here.",
-        "I'll check the Paperbird brief and prepare the launch copy."
+        "I'll get the Noctis launch ready. The steps are in the panel.",
+        "I'll read the launch plan and draft the release copy."
       ],
-      "closingLine": "The Paperbird launch brief is ready to review.",
+      "closingLine": "The Noctis launch brief is ready to review.",
       "referenceAfterMs": 9000,
       "progress": {
-        "title": "Paperbird launch preparation",
+        "title": "Noctis launch preparation",
         "status": { "waiting": "Waiting", "working": "Working", "done": "Done" },
         "steps": [
-          { "id": "brief", "label": "Read the brief", "doneAfterMs": 4000 },
-          { "id": "listing", "label": "Check the store listing", "doneAfterMs": 8000 },
+          { "id": "plan", "label": "Read the launch plan", "doneAfterMs": 4000 },
+          { "id": "features", "label": "Check the feature list", "doneAfterMs": 8000 },
           { "id": "notes", "label": "Draft release notes", "doneAfterMs": 12000 },
-          { "id": "images", "label": "Size the product images", "doneAfterMs": 16000 },
+          { "id": "shots", "label": "Pick the reveal shots", "doneAfterMs": 16000 },
           { "id": "post", "label": "Write the launch post", "doneAfterMs": 20000 }
         ]
       },
       "references": {
         "items": [
           {
-            "id": "brief",
-            "claim": "The first batch pairs a cream cover with recycled packaging.",
-            "source": "Work PC: Planning/paperbird-brief.md",
+            "id": "plan",
+            "claim": "The reveal opens on a phone approval while the desktop keeps working.",
+            "source": "Home PC: Noctis/launch-plan.md",
             "status": "current"
           },
           {
-            "id": "pricing",
-            "claim": "Trial prices are GBP 12 for the planner and GBP 17 with a refill.",
-            "source": "Home PC: Paperbird/pricing.csv",
+            "id": "features",
+            "claim": "Five features make the cut: agents on any PC, live panels, phone approvals, the Vault and hardware readings.",
+            "source": "Home PC: Noctis/features.md",
             "status": "current"
           },
           {
-            "id": "listing",
-            "claim": "The draft listing presents the planner and refill bundle together.",
-            "source": "https://example.com/paperbird/store-draft",
+            "id": "shots",
+            "claim": "The approval shot runs six seconds and leads the cut.",
+            "source": "Home PC: Noctis/reveal-shots.md",
             "status": "current"
           },
           {
-            "id": "cover",
-            "claim": "The cream cover is the lead product image.",
-            "source": "Home PC: Paperbird/cover-study.png",
+            "id": "page",
+            "claim": "The draft launch page is waiting for its copy.",
+            "source": "https://example.com/noctis/launch-draft",
             "status": "current"
           }
         ]
       },
       "result": {
-        "title": "Paperbird launch brief",
+        "title": "Noctis launch brief",
         "format": "markdown",
         "content": {
           "from": "inline",
-          "text": "# Paperbird launch brief\n\nA pocket planner for small daily wins. Lead with the cream cover photograph and offer the refill bundle alongside the single planner.\n\n## Release notes\n\n- Cream cover pocket planner with space for daily priorities.\n- Refill bundle for the next set of notes.\n- Recycled packaging for the trial batch.\n- Trial prices: GBP 12 for the planner, GBP 17 for the planner and refill.\n\n## Launch post\n\nMeet Paperbird, a pocket planner for small daily wins. Pick one thing to move forward, write it down and take it with you. Start with the cream cover planner for GBP 12, or add a refill for GBP 17 together.\n\n## Before publishing\n\nConfirm packaging costs and approve the final daylight photographs."
+          "text": "# Noctis launch brief\n\nNoctis runs your AI agents across your PCs and your phone from one place. Lead with the moment an approval lands on the phone while the desktop carries on working.\n\n## Release notes\n\n- Vesper takes a request and works on whichever PC it belongs to.\n- Panels open beside the conversation with progress, sources and results, and update as the work moves.\n- Approvals reach your phone, and anything that spends, sends or deletes waits for your yes.\n- The Vault gives every agent the same memory of your notes.\n- Live hardware readings for every connected PC.\n\n## Launch post\n\nMeet Noctis. Ask once, from your desk or your phone, and your agents get on with it on the right machine. You see each step as it happens, and nothing goes out without your approval.\n\n## Before publishing\n\nBlur any real file names in the screen recordings and choose the final take of the approval shot."
         }
       }
     }

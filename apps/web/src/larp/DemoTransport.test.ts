@@ -165,7 +165,7 @@ describe("DemoTransport", () => {
     }
   });
 
-  it.each(["get the Paperbird LAUNCH READY", "GET PAPERBIRD ready for launch"])(
+  it.each(["get the Noctis LAUNCH READY", "draft the NOCTIS LAUNCH brief"])(
     "runs one launch timeline, references and document for '%s'",
     async (text) => {
       const { transport } = setup();
@@ -222,7 +222,7 @@ describe("DemoTransport", () => {
           expect(payload.format).toBe("markdown");
           expect(payload.content.from).toBe("inline");
           if (payload.content.from === "inline") {
-            expect(payload.content.text).toContain("# Paperbird");
+            expect(payload.content.text).toContain("# Noctis launch brief");
             expect(payload.content.text).toContain("## Release notes");
             expect(payload.content.text).toContain("## Launch post");
           }
