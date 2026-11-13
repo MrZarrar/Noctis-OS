@@ -11,6 +11,7 @@ describe("v1 navigation", () => {
       "Nodes",
       "Approvals",
       "Health",
+      "Lights",
       "Vault",
       "Thought Palace",
       "Reminders",

@@ -45,6 +45,11 @@ import { classifyAsk, isConfirmLevel, outlineCommand } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
+import {
+  createLightsTool,
+  LIGHTS_TOOL_DESCRIPTION,
+  LightsToolInputSchema,
+} from "../lights/tool.js";
 import { PANEL_TOOL_DESCRIPTION, surfaceProblem } from "../panel-tool.js";
 import type { ResolvedRoots, Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
 import { AdapterRefused, ApprovalTimedOut } from "./Runtime.js";
@@ -90,7 +95,7 @@ import { createProcessPool, processKey } from "./sessions.js";
  * them (those tools are pre-allowed, so auto mode never reviews them), and a
  * write into a folder lent only for reading.
  *
- * The Noctis proposal tools are hosted in-process with `createSdkMcpServer`:
+ * The Noctis tools are hosted in-process with `createSdkMcpServer`:
  * an `sdk`-type server is relayed over the CLI child's stdio control channel,
  * so no port opens and no proposals file is needed on this route.
  */
@@ -688,6 +693,7 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
       return Promise.resolve({ content: [{ type: "text" as const, text: "recorded" }] });
     }
 
+    const lights = createLightsTool({ env: input.env });
     const noctis = createSdkMcpServer({
       name: "noctis",
       version: AGENT_VERSION,
@@ -761,6 +767,14 @@ export function createClaudeRuntime(options: ClaudeRuntimeOptions = {}): Runtime
         ),
       ],
     });
+    if (lights !== undefined) {
+      // The SDK's shape helper strips unknown input keys before our strict validation.
+      noctis.instance.registerTool(
+        "noctis_lights",
+        { description: LIGHTS_TOOL_DESCRIPTION, inputSchema: LightsToolInputSchema },
+        (args) => lights.call(args),
+      );
+    }
 
     // The owner's browser and desktop, where this PC has them.
     const screen = Object.entries({

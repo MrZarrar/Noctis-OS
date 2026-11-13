@@ -84,6 +84,7 @@ export const PAGE_PANEL_PAGES = [
   "To-dos",
   "Notes",
   "Health",
+  "Lights",
   "Files",
   "Vault",
   "Thought Palace",

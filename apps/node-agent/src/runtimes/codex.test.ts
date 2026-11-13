@@ -364,6 +364,56 @@ const HAPPY: Scenario = {
 };
 
 describe("the Codex App Server runtime", () => {
+  it("shares a lights session across MCP children for this node lifetime and preserves an explicit session", async () => {
+    const first = runtime(HAPPY);
+    const second = runtime(HAPPY);
+    const explicit = runtime(HAPPY);
+    const session = "0199a000-0000-7000-8000-0000000000ff";
+    const turn = input();
+    turn.env = { ...turn.env, NOCTIS_NODE_HOME: scratch };
+    try {
+      await first.runtime.turn(turn, recorder().sink);
+      await second.runtime.turn(turn, recorder().sink);
+      await explicit.runtime.turn(
+        { ...turn, env: { ...turn.env, NOCTIS_LIGHTS_SESSION: session } },
+        recorder().sink,
+      );
+      const sessionArg = (spawned: Spawned[]) =>
+        spawned[0]?.args.find((arg) =>
+          arg.startsWith("mcp_servers.noctis.env.NOCTIS_LIGHTS_SESSION="),
+        );
+      expect(sessionArg(first.spawned)).toEqual(
+        expect.stringMatching(/^mcp_servers\.noctis\.env\.NOCTIS_LIGHTS_SESSION="[a-f0-9-]{36}"$/),
+      );
+      expect(sessionArg(second.spawned)).toBe(sessionArg(first.spawned));
+      expect(sessionArg(explicit.spawned)).toBe(
+        `mcp_servers.noctis.env.NOCTIS_LIGHTS_SESSION=${JSON.stringify(session)}`,
+      );
+    } finally {
+      await first.runtime.close?.();
+      await second.runtime.close?.();
+      await explicit.runtime.close?.();
+    }
+  });
+  it("forwards node home and the secrets base directory to the Noctis MCP child", async () => {
+    const { runtime: codex, spawned } = runtime(HAPPY);
+    const turn = input();
+    turn.env = {
+      PATH: "C:\\bin",
+      NOCTIS_NODE_HOME: scratch,
+      LOCALAPPDATA: "C:\\local-app-data",
+      OPENAI_API_KEY: "must-not-leak",
+    };
+    await codex.turn(turn, recorder().sink);
+    expect(spawned[0]?.args).toEqual(
+      expect.arrayContaining([
+        `mcp_servers.noctis.env.NOCTIS_NODE_HOME=${JSON.stringify(scratch)}`,
+        `mcp_servers.noctis.env.LOCALAPPDATA=${JSON.stringify("C:\\local-app-data")}`,
+      ]),
+    );
+    expect(spawned[0]?.args.join(" ")).not.toContain("must-not-leak");
+    await codex.close?.();
+  });
   it("passes the owner's effort choice to turn/start", async () => {
     const { runtime: codex, spawned } = runtime(HAPPY);
     await codex.turn(

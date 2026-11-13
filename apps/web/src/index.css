@@ -362,3 +362,27 @@ dialog::backdrop {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The Lights page's sliders: the gradient is the track, the thumb a small lit bead. */
+input[type="range"].noctis-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f4f2fb;
+  border: 2px solid rgba(21, 19, 31, 0.6);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+input[type="range"].noctis-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f4f2fb;
+  border: 2px solid rgba(21, 19, 31, 0.6);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+input[type="range"].noctis-range:focus-visible {
+  outline: 2px solid #f4f2fb;
+  outline-offset: 4px;
+}

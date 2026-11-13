@@ -30,6 +30,7 @@ import { createLiveBroker } from "./events/live.js";
 import type { Dispatcher } from "./nodes/dispatch.js";
 import { createDispatcher } from "./nodes/dispatch.js";
 import { createFileGateway } from "./files/gateway.js";
+import { createLightsGateway } from "./lights/gateway.js";
 import { createScreenGateway } from "./screen/gateway.js";
 import type { RuntimeFrameHub } from "./nodes/runtime-frames.js";
 import { createRuntimeFrameHub } from "./nodes/runtime-frames.js";
@@ -208,6 +209,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
 
   const files = createFileGateway({ kernel, dispatcher });
   const screen = createScreenGateway({ kernel, dispatcher });
+  const lights = createLightsGateway({ kernel, dispatcher });
 
   const notifier = createNotifier({
     db,
@@ -328,6 +330,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
     dispatcher,
     conversation,
     files,
+    lights,
     screen,
     live,
     notifier,
@@ -443,6 +446,7 @@ export async function startCore(options: StartCoreOptions): Promise<RunningCore>
       health.close();
       conversation.close();
       files.close();
+      lights.close();
       screen.close();
       dispatcher.stop();
 

@@ -24,6 +24,7 @@ import { classifyAsk, isConfirmLevel, outlineCommand } from "@noctis/domain";
 import { z } from "zod";
 
 import { AGENT_VERSION } from "../agent.js";
+import { lightsProcessSession } from "../lights/index.js";
 import type { ProposalChannel } from "../proposals-file.js";
 import { createProposalChannel } from "../proposals-file.js";
 import type { Runtime, RuntimeSink, RuntimeTurnInput } from "./Runtime.js";
@@ -529,6 +530,12 @@ export function createCodexRuntime(options: CodexRuntimeOptions): Runtime {
       command,
       [
         ...spawnArgs(payload.model.model, mcpEntry, proposals.path),
+        "-c",
+        `mcp_servers.noctis.env.NOCTIS_LIGHTS_SESSION=${toml(lightsProcessSession(input.env))}`,
+        ...["NOCTIS_NODE_HOME", "LOCALAPPDATA"].flatMap((key) => {
+          const value = input.env[key];
+          return value === undefined ? [] : ["-c", `mcp_servers.noctis.env.${key}=${toml(value)}`];
+        }),
         ...lend(BROWSER_SERVER, browserServer(input.env, payload.threadId)),
         ...lend(DESKTOP_SERVER, desktopServer(input.env)),
       ],

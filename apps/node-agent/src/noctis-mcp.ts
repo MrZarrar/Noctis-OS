@@ -6,14 +6,15 @@ import type { RuntimeProposal } from "@noctis/contracts";
 import { RuntimeProposalSchema } from "@noctis/contracts";
 
 import { AGENT_VERSION } from "./agent.js";
+import { createLightsTool, LIGHTS_TOOL_DESCRIPTION, LightsToolInputSchema } from "./lights/tool.js";
 import { PANEL_TOOL_DESCRIPTION, surfaceProblem } from "./panel-tool.js";
 import { PRODUCTIVITY_TOOLS, proposalSchema } from "./proposal-tools.js";
 
 /**
  * The Noctis tools a spawned runtime can call. Codex starts this as a stdio
- * child; every call is validated against the proposal schema and lands as one
- * JSON line in the proposals file the node agent tails (ADR-0024). Nothing
- * here decides anything — a proposal is data until the core makes it a command.
+ * child; proposal calls are validated and land as one JSON line in the file
+ * the node agent tails (ADR-0024). The owner-enabled lights tool calls this
+ * PC's lights service directly.
  */
 
 const flag = process.argv.indexOf("--proposals");
@@ -37,6 +38,15 @@ function record(proposal: RuntimeProposal): { content: Array<{ type: "text"; tex
 }
 
 const server = new McpServer({ name: "noctis", version: AGENT_VERSION });
+const lights = createLightsTool();
+
+if (lights !== undefined) {
+  server.registerTool(
+    "noctis_lights",
+    { description: LIGHTS_TOOL_DESCRIPTION, inputSchema: LightsToolInputSchema },
+    (args) => lights.call(args),
+  );
+}
 
 server.registerTool(
   "noctis_propose_surface",

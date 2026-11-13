@@ -33,6 +33,7 @@ import { entryPage, pushPage, useBackLayer } from "./navigation/back.js";
 import { Productivity } from "./pages/Productivity.js";
 import { Approvals } from "./pages/Approvals.js";
 import { Health } from "./pages/Health.js";
+import { Lights } from "./pages/Lights.js";
 import { useHealth } from "./health/useHealth.js";
 import { Artifacts } from "./pages/Artifacts.js";
 import { Files } from "./pages/Files.js";
@@ -321,6 +322,8 @@ function Workbench({
         );
       case "Health":
         return <Health transport={transport} />;
+      case "Lights":
+        return <Lights transport={transport} />;
       case "Thought Palace":
         return (
           <ThoughtPalace
@@ -535,6 +538,8 @@ function Workbench({
         {active === "Approvals" && <Approvals transport={transport} />}
 
         {active === "Health" && <Health transport={transport} />}
+
+        {active === "Lights" && <Lights transport={transport} />}
 
         {active === "Thought Palace" && (
           <ThoughtPalace

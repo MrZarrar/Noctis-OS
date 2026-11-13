@@ -18,6 +18,8 @@ import { VaultConflict } from "../vault/writes.js";
 import type { DexcomService } from "../health/dexcom-service.js";
 import {
   AllowHealthCommandSchema,
+  AllowLightsCommandSchema,
+  LightsSetCommandSchema,
   DisallowHealthCommandSchema,
   HealthCommandSchema,
   HealthDecideCommandSchema,
@@ -171,6 +173,8 @@ import {
 import type { NoctisDatabase } from "../db/connection.js";
 import { latestSequence, readEventsAfter } from "../db/events.js";
 import type { FileGateway, FileLocation } from "../files/gateway.js";
+import type { LightsGateway } from "../lights/gateway.js";
+import { LightsUnavailable } from "../lights/gateway.js";
 import { FileUnavailable, fileMediaType, parseRange } from "../files/gateway.js";
 import type { LiveBroker } from "../events/live.js";
 import type { ScreenGateway } from "../screen/gateway.js";
@@ -354,6 +358,8 @@ export interface ApiDeps {
   conversation: ConversationService;
   /** Files on a PC, listed and streamed through jobs on its node (v1 S4). */
   files: FileGateway;
+  /** The owner's lights, driven by the PC allowed to (lights.state, lights.set). */
+  lights: LightsGateway;
   /** A PC's desktop, watched through a job on its node. */
   screen: ScreenGateway;
   /** Token deltas for streaming clients. Never persisted. */
@@ -717,6 +723,16 @@ const COMMANDS: Readonly<Record<string, CommandRoute>> = {
     HealthCommandSchema,
     (deps, context, command) => deps.health.runNow(context, command),
     (db, id) => getJob(db, id),
+  ),
+  "lights.allow": defineDepsCommand(
+    AllowLightsCommandSchema,
+    (deps, context, command) => deps.lights.allow(context, command),
+    (_db, id) => ({ id }),
+  ),
+  "lights.disallow": defineDepsCommand(
+    AllowLightsCommandSchema,
+    (deps, context, command) => deps.lights.disallow(context, command),
+    (_db, id) => ({ id }),
   ),
   "health.decide": defineDepsCommand(
     HealthDecideCommandSchema,
@@ -2204,6 +2220,13 @@ async function handleSessions(
   }
 }
 
+/** The owner, at a browser past the gate: the actor the lights permission names. */
+const lightsContext = (correlationId: string) => ({
+  correlationId,
+  actorType: "user" as const,
+  actorId: "local",
+});
+
 async function handleLimits(
   deps: ApiDeps,
   res: ServerResponse,
@@ -2946,6 +2969,39 @@ export async function handleRequest(
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/lights") {
+      send(res, 200, await deps.lights.status(lightsContext(correlationId)), correlationId);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/lights/set") {
+      const raw = await readBody(req, MAX_BODY_BYTES);
+      const command = LightsSetCommandSchema.safeParse(
+        raw === "too_large" ? undefined : jsonOf(raw),
+      );
+      if (!command.success) {
+        send(res, 400, errorBody("invalid_command", "Not a lights change"), correlationId);
+        return;
+      }
+      try {
+        send(
+          res,
+          200,
+          await deps.lights.set(lightsContext(correlationId), command.data),
+          correlationId,
+        );
+      } catch (error) {
+        const status = error instanceof LightsUnavailable ? error.status : 500;
+        send(
+          res,
+          status,
+          errorBody("lights_unavailable", error instanceof Error ? error.message : "unknown"),
+          correlationId,
+        );
+      }
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/limits") {
       await handleLimits(deps, res, correlationId);
       return;
@@ -3192,6 +3248,9 @@ export async function handleRequest(
         if (changed.success) {
           deps.dispatcher.sendGrants(changed.data.nodeId);
         }
+      } else if (name === "lights.allow" || name === "lights.disallow") {
+        const changed = z.object({ nodeId: z.string() }).safeParse(body);
+        if (changed.success) deps.dispatcher.sendGrants(changed.data.nodeId);
       } else if (name.startsWith("health.")) {
         if (name === "health.allow" || name === "health.disallow") {
           const changed = z.object({ nodeId: z.string() }).safeParse(body);

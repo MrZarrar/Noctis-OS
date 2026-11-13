@@ -43,6 +43,8 @@ export const API_SEGMENTS = [
   "identities",
   "integrations",
   "jobs",
+  /** The owner's smart lights, asked of the PC that drives them. */
+  "lights",
   /** The owner's Claude and Codex allowances, as each provider reports them. */
   "limits",
   "live-sessions",

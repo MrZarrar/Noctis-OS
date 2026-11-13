@@ -13,6 +13,8 @@ export const NAV_ITEMS = [
   "Approvals",
   /** glycolens's weekly report from the home PC. */
   "Health",
+  /** The owner's smart lights, from the PC that drives them. */
+  "Lights",
   "Vault",
   "Thought Palace",
   "Reminders",

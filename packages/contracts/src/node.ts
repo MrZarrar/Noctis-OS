@@ -10,6 +10,11 @@ import {
   HealthRunPayloadSchema,
 } from "./health.js";
 import {
+  LightsEvidenceSchema,
+  LightsSetPayloadSchema,
+  LightsStatePayloadSchema,
+} from "./lights.js";
+import {
   IdempotencyKeySchema,
   RevisionSchema,
   SchemaVersionSchema,
@@ -124,6 +129,9 @@ export const NODE_CAPABILITIES = [
   "health.report",
   "health.run",
   "health.decide",
+  /** The owner's smart lights, from the PC that can reach them. */
+  "lights.state",
+  "lights.set",
   /** How much of a Claude or Codex subscription's 5-hour and weekly allowance is spent, as the provider reports it. */
   "usage.limits",
 ] as const;
@@ -161,6 +169,9 @@ export const CAPABILITY_OPERATION_CLASS = {
   "health.run": "local_reversible_edit",
   /** A suggestion's status; `reset` undoes it. */
   "health.decide": "local_reversible_edit",
+  "lights.state": "read_inspect",
+  /** A light switched or dimmed; switching it back undoes it. */
+  "lights.set": "local_reversible_edit",
   "usage.limits": "read_inspect",
 } as const satisfies Record<NodeCapability, z.infer<typeof OperationClassSchema>>;
 
@@ -446,6 +457,8 @@ export const CAPABILITY_CONTRACTS = {
   "health.report": { payload: HealthReportPayloadSchema, evidence: HealthReportEvidenceSchema },
   "health.run": { payload: HealthRunPayloadSchema, evidence: HealthRunEvidenceSchema },
   "health.decide": { payload: HealthDecidePayloadSchema, evidence: HealthDecideEvidenceSchema },
+  "lights.state": { payload: LightsStatePayloadSchema, evidence: LightsEvidenceSchema },
+  "lights.set": { payload: LightsSetPayloadSchema, evidence: LightsEvidenceSchema },
   "usage.limits": { payload: UsageLimitsPayloadSchema, evidence: UsageLimitsEvidenceSchema },
 } as const satisfies Record<NodeCapability, { payload: z.ZodType; evidence: z.ZodType }>;
 

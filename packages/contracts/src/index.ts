@@ -9,6 +9,7 @@ export * from "./command.js";
 export * from "./events.js";
 export * from "./health.js";
 export * from "./health-fixture.js";
+export * from "./lights.js";
 export * from "./identity.js";
 export * from "./mission.js";
 export * from "./node.js";

@@ -41,6 +41,7 @@ import { promptWithAttachments, stageAttachments } from "./runtimes/attachments.
 import { childEnvironment } from "./runtimes/env.js";
 import { resolveRoots } from "./runtimes/roots.js";
 import { createHealthAdapters } from "./health/glycolens.js";
+import { createLightsAdapters } from "./lights/index.js";
 import { createScreenView } from "./screen/view.js";
 import { showItem, watchShowFolder, withdrawItem } from "./show-folder.js";
 
@@ -653,4 +654,5 @@ export const ADAPTERS: Readonly<Record<NodeCapability, Adapter>> = {
   "screen.view": createScreenView(),
   "usage.limits": usageLimits,
   ...createHealthAdapters(),
+  ...createLightsAdapters(),
 };

@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type { ConversationalIdentityId, RuntimeTargets } from "@noctis/contracts";
 import { ModelRefSchema, PAGE_PANEL_PAGES } from "@noctis/contracts";
+import { lightsAgentsEnabled } from "../lights/config.js";
 
 export type IdentityRuntime = "claude" | "codex" | "hermes" | "local";
 
@@ -206,6 +207,7 @@ ${
     ? ""
     : `${ACTING_INSTRUCTIONS}
 ${PRODUCTIVITY_INSTRUCTIONS}
+${(input.runtime === "claude" || input.runtime === "codex") && lightsAgentsEnabled(input.env) ? "Use noctis_lights to read or change this PC's lights. Call it with {} first to get the light names and available scenes." : ""}
 ${EFFICIENCY_INSTRUCTIONS}
 ${WORKING_INSTRUCTIONS}`
 }`;
