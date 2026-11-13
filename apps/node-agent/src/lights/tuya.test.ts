@@ -94,7 +94,7 @@ describe("TuyaClient", () => {
       online: true,
       on: true,
       mode: "colour",
-      brightness: 40,
+      brightness: 41,
       colorTempK: 3500,
       hue: 240,
       saturation: 60,
@@ -207,7 +207,7 @@ describe("TuyaClient", () => {
     await client(cloud).set("one", { light: "desk", brightness: 55 });
     const command = cloud.calls.find((entry) => entry.path.endsWith("/commands"))!;
     expect(body(command.init)).toEqual({
-      commands: [{ code: "colour_data_v2", value: '{"h":240,"s":600,"v":550}' }],
+      commands: [{ code: "colour_data_v2", value: '{"h":240,"s":600,"v":545}' }],
     });
   });
 
@@ -248,7 +248,7 @@ describe("TuyaClient", () => {
       {
         commands: [
           { code: "work_mode", value: "colour" },
-          { code: "colour_data", value: '{"h":180,"s":128,"v":204}' },
+          { code: "colour_data", value: '{"h":180,"s":128,"v":203}' },
         ],
       },
     ]);
@@ -265,7 +265,7 @@ describe("TuyaClient", () => {
     });
     await client(cloud).set("one", { light: "desk", brightness: 75 });
     expect(body(cloud.calls.at(-1)!.init)).toEqual({
-      commands: [{ code: "bright_value_v2", value: 150 }],
+      commands: [{ code: "bright_value_v2", value: 151 }],
     });
   });
 

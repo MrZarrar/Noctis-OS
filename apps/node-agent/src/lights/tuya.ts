@@ -64,12 +64,21 @@ function limits(spec: FunctionSpec, channel?: string): Range {
   );
 }
 
+/**
+ * Smart Life's own scale: the bulb's floor is `minimum`% and its ceiling 100%,
+ * so Main Light's raw 46 of 25..255 reads 10% here as it does in the app.
+ */
 function percent(raw: number, bounds: Range, minimum = 1): number {
-  return Math.max(minimum, Math.min(100, Math.round((raw / bounds.max) * 100)));
+  const share = (raw - bounds.min) / (bounds.max - bounds.min);
+  return Math.max(minimum, Math.min(100, Math.round(minimum + share * (100 - minimum))));
 }
 
-function fromPercent(value: number, bounds: Range): number {
-  return Math.max(bounds.min, Math.min(bounds.max, Math.round((value / 100) * bounds.max)));
+function fromPercent(value: number, bounds: Range, minimum = 1): number {
+  const share = (value - minimum) / (100 - minimum);
+  return Math.max(
+    bounds.min,
+    Math.min(bounds.max, Math.round(bounds.min + share * (bounds.max - bounds.min))),
+  );
 }
 
 class TuyaRefused extends Error {
@@ -180,7 +189,7 @@ export class TuyaClient {
       const s =
         change.saturation === undefined
           ? existing.s
-          : fromPercent(change.saturation, limits(spec, "s"));
+          : fromPercent(change.saturation, limits(spec, "s"), 0);
       const v =
         change.brightness === undefined
           ? existing.v
