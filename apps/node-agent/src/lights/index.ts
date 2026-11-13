@@ -146,23 +146,28 @@ export function createLightsService(options: LightsOptions = {}) {
             }
           }
           const lights: LightState[] = [];
-          for (const light of config.lights) {
-            cancelled(signal);
-            let state: LightState = { name: light.name, kind: light.kind, online: false };
-            if (blocked.has(light.kind)) state.error = await failure(light, undefined);
-            else {
-              try {
-                state = LightStateSchema.parse({
-                  ...state,
-                  ...(await driver(light, config).state()),
-                });
-              } catch (error) {
-                state.error = await failure(light, error);
-              }
-              if (errors.has(light.name)) state.error = errors.get(light.name)!;
-            }
-            lights.push(state);
-          }
+          cancelled(signal);
+          // Every light at once: one slow bulb or cloud round trip no longer holds up the others.
+          lights.push(
+            ...(await Promise.all(
+              config.lights.map(async (light) => {
+                let state: LightState = { name: light.name, kind: light.kind, online: false };
+                if (blocked.has(light.kind)) state.error = await failure(light, undefined);
+                else {
+                  try {
+                    state = LightStateSchema.parse({
+                      ...state,
+                      ...(await driver(light, config).state()),
+                    });
+                  } catch (error) {
+                    state.error = await failure(light, error);
+                  }
+                  if (errors.has(light.name)) state.error = errors.get(light.name)!;
+                }
+                return state;
+              }),
+            )),
+          );
           return LightsEvidenceSchema.parse({ lights, scenes: Object.keys(config.scenes) });
         },
         signal,

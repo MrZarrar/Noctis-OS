@@ -55,8 +55,32 @@ export function Lights({ transport }: { transport: CoreTransport | undefined }):
   const apply = useCallback(
     async (body: { changes: LightChange[] } | { scene: string }) => {
       if (transport === undefined) return;
-      setBusy(true);
       setProblem(undefined);
+      if ("changes" in body) {
+        // Shown at once; the PC's answer below confirms it or puts the truth back.
+        setStatus((current) =>
+          current?.lights === undefined
+            ? current
+            : {
+                ...current,
+                lights: {
+                  ...current.lights,
+                  lights: current.lights.lights.map((light) => {
+                    const change = body.changes.find((c) => c.light === light.name);
+                    if (change === undefined) return light;
+                    const { light: _name, ...fields } = change;
+                    void _name;
+                    return {
+                      ...light,
+                      ...fields,
+                      ...(fields.hue !== undefined ? { mode: "colour" as const } : {}),
+                      ...(fields.colorTempK !== undefined ? { mode: "white" as const } : {}),
+                    };
+                  }),
+                },
+              },
+        );
+      } else setBusy(true);
       const response = await transport
         .request("POST", "/lights/set", { idempotencyKey: crypto.randomUUID(), ...body })
         .catch(() => undefined);
