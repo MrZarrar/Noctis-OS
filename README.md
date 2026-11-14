@@ -4,6 +4,10 @@ Noctis OS is a new local-first orchestration operating environment. It is implem
 independent repository and will replace the running Jarvis OS after acceptance and a controlled
 production cutover.
 
+<video src="docs/media/noctis-demo.mp4" controls muted width="100%"></video>
+
+[Watch the demo](docs/media/noctis-demo.mp4) if the player above does not load.
+
 The Jarvis Sub-Agent Dashboard is a read-only donor. No Noctis command may write inside it.
 
 ## Current implementation state
@@ -24,7 +28,7 @@ architecture reference and holds every deferred item.
 Use the bundled Node 22 runtime until the machine-wide PATH is qualified:
 
 ```powershell
-$env:Path = "C:\Users\mmush\Documents\Jarvis\.tools\node-v22.23.2-win-x64;$env:Path"
+$env:Path = "C:\path\to\node-v22.23.2-win-x64;$env:Path"
 npm.cmd ci
 npm.cmd run test:boundary
 npm.cmd run format:check
