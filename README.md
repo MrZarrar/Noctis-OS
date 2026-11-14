@@ -4,9 +4,9 @@ Noctis OS is a new local-first orchestration operating environment. It is implem
 independent repository and will replace the running Jarvis OS after acceptance and a controlled
 production cutover.
 
-[![Demo preview](docs/media/noctis-demo-preview.gif)](docs/media/noctis-demo.mp4)
+[![Watch the demo on YouTube](https://img.youtube.com/vi/8PYvBZtNgdI/maxresdefault.jpg)](https://youtu.be/8PYvBZtNgdI)
 
-Click the preview to watch the full demo video.
+Click the thumbnail to watch the demo on YouTube.
 
 The Jarvis Sub-Agent Dashboard is a read-only donor. No Noctis command may write inside it.
 
