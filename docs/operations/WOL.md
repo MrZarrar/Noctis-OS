@@ -2,7 +2,7 @@
 
 Task 5.3, pulled forward with 3.8 because remote access to a sleeping machine is remote access to
 nothing. This is the topology inspection the task asked for, not a capability and not an
-implementation. Everything marked **measured** was read off `zarrarpc` on 2026-09-22.
+implementation. Everything marked **measured** was read off `home-pc` on 2026-09-22.
 
 The conclusion first, so nobody reads six sections to find it: **the hardware is ready and the
 software is not.** Waking is blocked on two named things — an always-on device on the home LAN to
@@ -16,8 +16,8 @@ of the first three while being useless in the fourth.
 
 | State                    | Means                                                          | Observable as                                     |
 | ------------------------ | -------------------------------------------------------------- | ------------------------------------------------- |
-| **wake requested**       | a magic packet was sent to `30-C5-99-59-9A-DA` on the home LAN | the sender's own log, nothing more                |
-| **reachable**            | the tailnet address answers                                    | `tailscale ping 100.70.27.11`                     |
+| **wake requested**       | a magic packet was sent to `XX-XX-XX-XX-XX-XX` on the home LAN | the sender's own log, nothing more                |
+| **reachable**            | the tailnet address answers                                    | `tailscale ping 100.x.x.2`                     |
 | **worker authenticated** | the node agent has dialled the core and holds its lease        | the core's node status — the only one Noctis owns |
 | **desktop ready**        | a session is logged in and a desktop surface exists            | GUI tools work; RDP/AnyDesk shows a desktop       |
 
@@ -32,8 +32,8 @@ and report the earlier states as "still waking", not as done.
 | Fact                               | Value                                                                     |
 | ---------------------------------- | ------------------------------------------------------------------------- |
 | NIC                                | Realtek PCIe 2.5GbE Family Controller, driver 1125.27.50.919 (2025-09-19) |
-| MAC                                | `30-C5-99-59-9A-DA`                                                       |
-| LAN                                | `192.168.1.163/24`, broadcast `192.168.1.255`, gateway `192.168.1.1`      |
+| MAC                                | `XX-XX-XX-XX-XX-XX`                                                       |
+| LAN                                | `192.168.x.10/24`, broadcast `192.168.x.255`, gateway `192.168.x.1`      |
 | Link                               | wired, up at 2.5 Gbps; Wi-Fi disconnected                                 |
 | `powercfg /a`                      | **S3 standby** and **Hibernate** available; **no S0 Modern Standby**      |
 | `powercfg /devicequery wake_armed` | includes **Realtek PCIe 2.5GbE Family Controller**                        |
@@ -76,10 +76,10 @@ problem, but it will confuse any wake test that trusts "it is awake" as evidence
 A magic packet is a layer-2 broadcast. It has to originate **on the home LAN**. Tailscale cannot do
 it: a sleeping machine has no tailnet address to route to, and — **measured** — `tailscale --help` on
 1.102.2 has no `wake`/`wol` subcommand at all. There is no subnet router and no exit node advertised
-on this tailnet either, so nothing bridges into `192.168.1.0/24` from outside.
+on this tailnet either, so nothing bridges into `192.168.x.0/24` from outside.
 
-**Measured**, the ARP table of the home LAN: the router at `192.168.1.1` (`74-12-13-49-26-98`), one
-device at `192.168.1.139` with a randomised MAC — a phone — and nothing else. No NAS, no Pi, no
+**Measured**, the ARP table of the home LAN: the router at `192.168.x.1` (`XX-XX-XX-XX-XX-XX`), one
+device at `192.168.x.20` with a randomised MAC — a phone — and nothing else. No NAS, no Pi, no
 always-on server.
 
 This is the blocker the plan predicted, and the plan is explicit about what it is not: _"Missing
@@ -88,7 +88,7 @@ chosen:
 
 1. **The router itself.** Many ISP routers have a scheduled or on-demand WoL page, and some can be
    reached over the tailnet if a device forwards to it. Unknown here — the admin page at
-   `192.168.1.1` redirects to HTTPS with a self-signed certificate and was not opened. Worth one
+   `192.168.x.1` redirects to HTTPS with a self-signed certificate and was not opened. Worth one
    look before anything is bought.
 2. **An existing always-on device.** There is none today.
 3. **A small always-on host** running an existing WoL tool such as UpSnap, joined to the tailnet.
@@ -121,9 +121,9 @@ tools, which is the **desktop ready** state in §1 and a separate thing to repor
 
 Nothing in this document changes any setting. If wake is pursued, in this order:
 
-1. **Free, no hardware:** node-agent autostart registration on `zarrarpc` (needs the named approval
+1. **Free, no hardware:** node-agent autostart registration on `home-pc` (needs the named approval
    above). Fixes blocker two and is useful with or without wake.
-2. **Free, a read:** open `192.168.1.1` and look for a WoL feature; check the UEFI _Power On By
+2. **Free, a read:** open `192.168.x.1` and look for a WoL feature; check the UEFI _Power On By
    PCI-E_ setting on the next restart.
 3. **Only if both of those fail:** an always-on LAN relay. A purchase, and its own decision.
 

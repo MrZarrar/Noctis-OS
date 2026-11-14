@@ -19,7 +19,7 @@ already done and merged on this branch:
 
 - `GET /video-editor` (session-authenticated, same auth gate as every other
   read route) returns `{ "origin": string | null }`: the configured editor
-  server's bare origin (e.g. `"http://100.70.27.11:7700"`), or `null` when
+  server's bare origin (e.g. `"http://100.x.x.2:7700"`), or `null` when
   unconfigured. See `apps/core/src/api/http.ts`, the `handleRead` function,
   the block right after the `"remote" && "hosts"` case.
 - The Content-Security-Policy already opens `frame-src <that origin>` when it

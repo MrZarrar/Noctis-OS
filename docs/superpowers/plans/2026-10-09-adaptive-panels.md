@@ -201,7 +201,7 @@ been revised to implement these newly agreed behaviours, and no implementation i
 
 ```powershell
 $env:NOCTIS_E2E_BROWSER_CHANNEL = "chrome"
-$env:TMP = "C:\Users\mushaf.zarrar\AppData\Local\Temp"; $env:TEMP = $env:TMP
+$env:TMP = "C:\Users\<work-user>\AppData\Local\Temp"; $env:TEMP = $env:TMP
 npm.cmd run build
 node --test apps/web/e2e/panels.test.mjs
 node --test apps/web/e2e/phone.test.mjs

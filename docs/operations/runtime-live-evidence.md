@@ -4,8 +4,8 @@ Fixture proof (fake runtime, real core, real node agent) is in the test suite. L
 signed-in Codex and Claude on a real machine, so it is run by the owner and recorded here. Record
 host, versions, auth modes, models, the prompt, the items that appeared, and what was refused.
 
-Sections 0–4 run on the personal PC (`zarrarpc`, user `mmush`) against its local development core.
-Section 5 moves the authoritative core to the work PC (`mushafzarrar`, user `mushaf.zarrar`) and
+Sections 0–4 run on the personal PC (`home-pc`, user `<home-user>`) against its local development core.
+Section 5 moves the authoritative core to the work PC (`work-pc`, user `<work-user>`) and
 pairs the personal PC as its worker. The two hostnames read backwards from what you would guess;
 check `hostname` before acting on either.
 
@@ -82,7 +82,7 @@ foreach ($v in "NOCTIS_CORE_TOKEN", "NOCTIS_DATABASE_PATH", "NOCTIS_ALLOWED_ORIG
 **Terminal A — the core.** Leave it running.
 
 ```powershell
-cd C:\Users\mmush\Documents\Jarvis\Noctis-OS
+cd C:\Users\<home-user>\Documents\Jarvis\Noctis-OS
 node apps\core\dist\main.js
 ```
 
@@ -91,7 +91,7 @@ Expect `core listening` on port 7717 with `schemaVersion: 6`.
 **Terminal B — pair and grant.** Once per machine.
 
 ```powershell
-cd C:\Users\mmush\Documents\Jarvis\Noctis-OS
+cd C:\Users\<home-user>\Documents\Jarvis\Noctis-OS
 $C = "http://127.0.0.1:7717"
 $H = @{ Authorization = "Bearer $env:NOCTIS_CORE_TOKEN"; "Content-Type" = "application/json" }
 
@@ -113,12 +113,12 @@ $grant = @{
   constraints = @{
     providers = @("codex", "claude")
     roots = @(
-      @{ grantId = "jarvis-noctis"; path = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"; mode = "write" },
-      @{ grantId = "jarvis-donor";  path = "C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard"; mode = "read" },
-      @{ grantId = "downloads";     path = "C:\Users\mmush\Downloads"; mode = "write" },
-      @{ grantId = "documents";     path = "C:\Users\mmush\Documents"; mode = "write" },
-      @{ grantId = "vault";         path = "C:\Users\mmush\OneDrive\MindVault"; mode = "read" },
-      @{ grantId = "inbox";         path = "C:\Users\mmush\OneDrive\MindVault\inbox"; mode = "write" }
+      @{ grantId = "jarvis-noctis"; path = "C:\Users\<home-user>\Documents\Jarvis\Noctis-OS"; mode = "write" },
+      @{ grantId = "jarvis-donor";  path = "C:\Users\<home-user>\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard"; mode = "read" },
+      @{ grantId = "downloads";     path = "C:\Users\<home-user>\Downloads"; mode = "write" },
+      @{ grantId = "documents";     path = "C:\Users\<home-user>\Documents"; mode = "write" },
+      @{ grantId = "vault";         path = "C:\Users\<home-user>\OneDrive\MindVault"; mode = "read" },
+      @{ grantId = "inbox";         path = "C:\Users\<home-user>\OneDrive\MindVault\inbox"; mode = "write" }
     )
   }
 } | ConvertTo-Json -Depth 6
@@ -128,7 +128,7 @@ Invoke-RestMethod -Method Post -Uri "$C/commands/node.grant_capability" -Headers
 **Terminal C — the agent.** Leave it running.
 
 ```powershell
-cd C:\Users\mmush\Documents\Jarvis\Noctis-OS
+cd C:\Users\<home-user>\Documents\Jarvis\Noctis-OS
 node apps\node-agent\dist\main.js
 ```
 
@@ -160,7 +160,7 @@ Invoke-RestMethod "$C/models" -Headers $H | ConvertTo-Json -Depth 5
 `VITE_CORE_URL` is therefore the **web** URL, not the core's.
 
 ```powershell
-cd C:\Users\mmush\Documents\Jarvis\Noctis-OS\apps\web
+cd C:\Users\<home-user>\Documents\Jarvis\Noctis-OS\apps\web
 $env:NOCTIS_CORE_PROXY_TARGET = "http://127.0.0.1:7717"
 $env:VITE_CORE_URL = "http://localhost:5173"
 $env:VITE_CORE_TOKEN = $env:NOCTIS_CORE_TOKEN
@@ -218,12 +218,12 @@ Record: the Claude session id landed as `sessionRef`, the items, and any ask tha
 
 Full runbook in [work-pc-core.md](work-pc-core.md). Short form, once sections 0–4 are green:
 
-1. **Work PC** (`mushafzarrar`, repo at `C:\Users\mushaf.zarrar\Documents\Noctis-OS`): `npm ci`,
+1. **Work PC** (`work-pc`, repo at `C:\Users\<work-user>\Documents\Noctis-OS`): `npm ci`,
    `npm run build`, set the three variables (its **own** token), `node apps\core\dist\main.js`, then
-   `tailscale serve --bg 7717` → `https://mushafzarrar.tail9594ed.ts.net`. Never `tailscale funnel`.
+   `tailscale serve --bg 7717` → `https://work-pc.<tailnet>.ts.net`. Never `tailscale funnel`.
 2. **Work PC:** pair its own node with `--host work` and grant `runtime.turn` with the work roots
    only.
-3. **Personal PC** (`zarrarpc`): stop its local core, then pair against the Serve URL with
+3. **Personal PC** (`home-pc`): stop its local core, then pair against the Serve URL with
    `--host home` and the same six roots as section 2. The agent accepts `https://` and dials `wss://`.
 4. Re-run the section 4 prompt from the work PC's page. The turn must be pinned to the personal
    node, because only that node holds those roots. The work PC never receives a personal-root grant

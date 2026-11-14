@@ -4,7 +4,7 @@ Slice 2 task 2.5 (ADR-0029). The core indexes the owner's real Obsidian Vault, r
 inform a turn, and writes nothing except one appended bullet in the Agent Brain.
 
 This is written for whoever is configuring a Noctis core on a machine that has the real Vault on it —
-today the work PC, `mushafzarrar`.
+today the work PC, `work-pc`.
 
 ## What "live" means and what it does not
 

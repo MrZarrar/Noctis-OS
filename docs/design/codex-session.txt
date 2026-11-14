@@ -1,5 +1,5 @@
-01a116ae-1a1a-7273-950e-99e1ed19e08a  (work PC, mushafzarrar: S5 and S6 assets)
-01a11d61-9ea3-7763-b617-ac4a88dd1726  (home PC, zarrarpc: Jester, 2026-10-08)
+01a116ae-1a1a-7273-950e-99e1ed19e08a  (work PC, work-pc: S5 and S6 assets)
+01a11d61-9ea3-7763-b617-ac4a88dd1726  (home PC, home-pc: Jester, 2026-10-08)
 
 Codex sessions for the Noctis design assets, one per PC (a session lives on the PC that ran it).
 Continue the one on the PC you are on with `codex exec resume <id> -`, the follow-up on stdin,

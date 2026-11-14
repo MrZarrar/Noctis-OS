@@ -4,9 +4,9 @@
 > [`2026-10-07-v1-scope.md`](2026-10-07-v1-scope.md), which replaces Section 14's phase sequence and
 > lists what is deferred.
 >
-> **Target repository:** `C:\Users\mmush\Documents\Jarvis\Noctis-OS`
+> **Target repository:** `C:\Users\<home-user>\Documents\Jarvis\Noctis-OS`
 >
-> **Read-only donor repository:** `C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard`
+> **Read-only donor repository:** `C:\Users\<home-user>\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard`
 >
 > **For coding agents:** Execute one phase and one commit-sized task at a time. Begin each task with a focused failing test, preserve unrelated work, and do not claim completion without fresh verification. Implementation, deployment, data cutover, and production activation are separate approvals.
 

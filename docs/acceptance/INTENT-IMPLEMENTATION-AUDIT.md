@@ -2,7 +2,7 @@
 
 Prepared 2026-09-12 against `HEAD fe1ffc1` (clean tree, one untracked file:
 `docs/architecture/NOCTIS-FABLE-IMPLEMENTATION-BRIEF.md`). Host: the home PC
-(`mushafzarrar` on Tailscale, RTX 5070 12 GB, Node 24.19.0 locally, CI pins
+(`work-pc` on Tailscale, RTX 5070 12 GB, Node 24.19.0 locally, CI pins
 22.23.2). Spec for this audit: the brief above, which outranks the 2026-08-23
 master plan where they differ.
 

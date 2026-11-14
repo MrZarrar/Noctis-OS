@@ -19,13 +19,13 @@ Presence when relevant, like at the appointed time or when the home PC comes onl
 2. **Triggers** (one per reminder):
    - **at a time**: an ISO time the model resolved from "tomorrow at 9" or "in two hours". It is validated as in the
      future, and the owner's time zone comes from the core's clock settings.
-   - **when a PC is next in use**: "when I get home" means `zarrarpc`, and "when I'm at work" means `work`. See D2 for
+   - **when a PC is next in use**: "when I get home" means `home-pc`, and "when I'm at work" means `work`. See D2 for
      what "in use" means.
    - **none**: a plain to-do, kept on the list until it is ticked off.
    - **repeating** (D4): "every Monday at 9", "every weekday evening", "every time I'm home". A repeat is the next
      time worked out again after each firing, never a queue of copies, and ticking one off keeps the series.
 3. **Confirmation in the thread.** Vesper's reply says what was recorded and when it will fire, for example "I'll
-   remind you when zarrarpc is next on: renew the car tax." The thread shows a small card for it with **Undo**, so a
+   remind you when home-pc is next on: renew the car tax." The thread shows a small card for it with **Undo**, so a
    misheard reminder is one tap to remove.
 4. **Firing.** Deterministic core code, never the model:
    - A timer handles time triggers, the same way the daily digest is scheduled (`msUntilNext` in `notify`).
@@ -208,7 +208,7 @@ Objective an agent proposes being only a suggestion.
    - A consequential step (push, send, publish) the task has no standing permission for asks once on the phone.
      **Allow once**, **Always for this task**, or **Decline**.
    - After **Always for this task**, later runs never ask about that step again: the task is now fully automatic for
-     it. Each permission is scoped to that task and that step (for example, "push to origin in `neckermann-mobile`"),
+     it. Each permission is scoped to that task and that step (for example, "push to origin in `work-app-a-mobile`"),
      listed on the task, and revocable.
    - A run whose question goes unanswered stops as "needs you" rather than guessing.
 5. **Results** reach Presence and the phone, and every run is a thread to open or continue.

@@ -1,4 +1,4 @@
-# Home PC setup: steps waiting for the owner at `zarrarpc`
+# Home PC setup: steps waiting for the owner at `home-pc`
 
 Everything here was built on the work PC while the home PC was off. Run the steps in order, at the home PC, as the
 owner. Each step says how to check it worked. Nothing in this file is run automatically.
@@ -84,7 +84,7 @@ Start-ScheduledTask -TaskName "Noctis screen helper"
 console window for it; minimise it. Closing it stops the mirror until the next logon.
 
 **Allow this PC to be watched.** Mirroring is off for every PC until you allow it. In Noctis, open Nodes → Screen →
-Mirror, choose `zarrarpc`, and press **Allow mirroring this PC**. That issues a `screen.view` grant through the core's
+Mirror, choose `home-pc`, and press **Allow mirroring this PC**. That issues a `screen.view` grant through the core's
 `node.grant_capability` command, the same as any other grant, and the node is told at once. Sharing folders with the
 agents does not include it.
 
@@ -107,7 +107,7 @@ agents does not include it.
    Get-Process ffmpeg -ErrorAction SilentlyContinue  # nothing: ffmpeg stops when the request does
    ```
 
-3. From the phone: Nodes → Screen → Mirror → `zarrarpc` → **Watch** shows the desktop. Lock the PC (Win+L) and press
+3. From the phone: Nodes → Screen → Mirror → `home-pc` → **Watch** shows the desktop. Lock the PC (Win+L) and press
    Watch again: the page says "The PC is locked. Sign in at the PC, or use Remote desktop."
 
 4. Restart, sign in, and check `(Get-ScheduledTaskInfo -TaskName "Noctis screen helper").LastRunTime` matches the
@@ -135,7 +135,7 @@ Stop-ScheduledTask -TaskName "Noctis node agent"
 Start-ScheduledTask -TaskName "Noctis node agent"
 ```
 
-**Install the hooks.** As `mmush`, the account the node runs as: the hook reads that account's
+**Install the hooks.** As `<home-user>`, the account the node runs as: the hook reads that account's
 `~\.noctis\node.json`.
 
 ```powershell
@@ -148,7 +148,7 @@ in `*.before-noctis`. Then open Codex (the app or VS Code) and run `/hooks` to t
 nobody has trusted.
 
 **Check it works:** start a new Claude Code session in VS Code, send one prompt, and it shows under Live sessions as
-`zarrarpc` with your prompt and the reply. Do the same in Codex. A session that was already open before the install
+`home-pc` with your prompt and the reply. Do the same in Codex. A session that was already open before the install
 does not report until it is started again.
 
 **The other Windows user** on this PC is not covered: their sessions use their own settings and have no node
@@ -176,7 +176,7 @@ Stop-ScheduledTask -TaskName "Noctis node agent"
 Start-ScheduledTask -TaskName "Noctis node agent"
 ```
 
-Check: `(Get-ScheduledTask -TaskName "Noctis node agent").State` is `Running`, and Nodes in Noctis shows `zarrarpc`
+Check: `(Get-ScheduledTask -TaskName "Noctis node agent").State` is `Running`, and Nodes in Noctis shows `home-pc`
 online.
 
 **Keep `noctis-show/` out of every repo.** Agents save figures and screenshots there for Noctis to show, so it must
@@ -221,7 +221,7 @@ this lists `anatomy` among its skills.
 
 If the other Windows user on this PC should have it too, ask first: it goes in their own profile.
 
-**Check it works end to end:** in Noctis, on a thread running on `zarrarpc`, ask Vesper to "explain how a token
+**Check it works end to end:** in Noctis, on a thread running on `home-pc`, ask Vesper to "explain how a token
 bucket rate limiter works with an interactive figure". A visual panel opens with the figure running in it, and
 `git status` in that folder shows nothing new.
 
@@ -292,7 +292,7 @@ Start-ScheduledTask -TaskName "Noctis node agent"
 ```
 
 Check: `(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -match 'node-agent').SessionId`
-prints `1` (or whichever session `query user` shows for you), not `0`. Nodes in Noctis shows `zarrarpc` online.
+prints `1` (or whichever session `query user` shows for you), not `0`. Nodes in Noctis shows `home-pc` online.
 
 The trade: before anyone signs in, the node is not running. Woken by Wake-on-LAN and left at the lock screen, the PC
 comes online in Noctis only after sign-in. The screen helper from step 2 is no longer needed by this node, but
@@ -369,7 +369,7 @@ only while automating; if a shop starts asking for captchas, that is why.
 
 Restart the node task so it picks up `NOCTIS_FIREFOX_MCP`.
 
-**Check it works:** in Noctis, on a thread running on `zarrarpc`, ask Vesper "open github.com in a new tab in Zen".
+**Check it works:** in Noctis, on a thread running on `home-pc`, ask Vesper "open github.com in a new tab in Zen".
 A tab opens in your Zen. If Vesper says the browser would not connect, Zen was not started with both flags; if the
 error mentions Marionette, Zen does not support what Mozilla's server needs, and the fallback is to set
 `NOCTIS_FIREFOX_MCP` back to nothing and use Chrome or Edge with the Playwright extension, as the work PC does.
@@ -378,7 +378,7 @@ error mentions Marionette, Zen does not support what Mozilla's server needs, and
 
 From the phone, with you away from the home PC but signed in:
 
-1. Vesper on `zarrarpc`: "open my GitHub". It opens in Zen on the PC and Vesper replies with the link.
+1. Vesper on `home-pc`: "open my GitHub". It opens in Zen on the PC and Vesper replies with the link.
 2. Vesper: "open the vault". The Vault page opens as a panel in Noctis.
 3. Jester: "open Notepad and type hello". Notepad opens on the PC with the text, and no approval card appears.
 4. Vesper: "find a USB-C cable under £10 on Amazon and add it to my basket". It searches, adds one, and stops; if it
@@ -454,7 +454,7 @@ prints one line for each file.
 1. Presence shows Claude and Codex, each with a 5H and a WK bar, a percent and a reset time. Claude can say "Claude
    limits how often usage is read; next read in N min" for a few minutes after a restart: Anthropic allows a read
    about every five minutes, and Claude Code reads the same allowance. After that wait the numbers appear.
-2. On a thread on `zarrarpc`, ask Vesper "find me three USB-C cables under £10 and let me pick". One options panel
+2. On a thread on `home-pc`, ask Vesper "find me three USB-C cables under £10 and let me pick". One options panel
    appears with a screenshot of each. If the screenshots are missing, the browser tool could not save into
    `noctis-show/.shots/`: say so in the thread and it will try another way.
 3. Ask Vesper "open the vault". The Vault page opens as a panel in Noctis, not Obsidian.

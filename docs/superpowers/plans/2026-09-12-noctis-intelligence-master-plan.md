@@ -109,7 +109,7 @@ Owner confirmed adaptive UI should develop alongside remote access and business 
 
 Every task's requirements implicitly include this section.
 
-- **Donor:** `C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard` is read-only. Every port gets a `DONOR-PORT-LEDGER.md` row _before_ the copy. `npm run test:boundary` before and after any port. Hermes ports get the same treatment under its MIT licence in `NOTICE.md`.
+- **Donor:** `C:\Users\<home-user>\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard` is read-only. Every port gets a `DONOR-PORT-LEDGER.md` row _before_ the copy. `npm run test:boundary` before and after any port. Hermes ports get the same treatment under its MIT licence in `NOTICE.md`.
 - **Node:** use Node.js 22.23.2 and the exact package lock locally and in CI. Historical mentions of Node 24 are not permission to change the toolchain.
 - **Module system:** ESM, `"module": "NodeNext"`. Relative imports end in `.js`. Types via `import type`.
 - **Strictness:** `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. Spread-omit optional fields.
@@ -389,11 +389,11 @@ describe("runtime contracts", () => {
         roots: [
           {
             grantId: "vault",
-            path: "C:\\Users\\mmush\\OneDrive\\MindVault",
+            path: "C:\\Users\\<home-user>\\OneDrive\\MindVault",
             mode: "read",
             localOnly: true,
           },
-          { grantId: "inbox", path: "C:\\Users\\mmush\\OneDrive\\MindVault\\inbox", mode: "write" },
+          { grantId: "inbox", path: "C:\\Users\\<home-user>\\OneDrive\\MindVault\\inbox", mode: "write" },
         ],
       }).success,
     ).toBe(true);
@@ -580,7 +580,7 @@ As revision 1 plus: the prompt has a model selector (populated from `GET /models
 
 - [ ] **Step 1 (work PC, via AnyDesk):** clone at the same path, `npm ci` with Node 22.23.2, `npm run build`. Set `NOCTIS_CORE_TOKEN` (32+ chars) in a user-scoped environment variable, `NOCTIS_DATABASE_PATH=%LOCALAPPDATA%\Noctis\core.db`, `NOCTIS_VAULT_ROOT` unset (Slice 2 turns it on). Start `node apps/core/dist/main.js` in a terminal (no service registration yet). `tailscale serve --bg 7717` → note the HTTPS URL. Confirm `/ready` from the home PC over the tailnet.
 - [ ] **Step 2 (work PC):** pair a local node (`--host work`), grant `runtime.turn` with `providers: ["codex","claude"]` and the work roots the owner names on that machine; start the agent.
-- [ ] **Step 3 (home PC):** `node apps/node-agent/dist/main.js pair --core https://<serve-url> --code <code> --host home`; grant `runtime.turn` with the 0.18 roots: `{ grantId: "jarvis-noctis", path: "C:\\Users\\mmush\\Documents\\Jarvis\\Noctis-OS", mode: "write" }`, `{ grantId: "jarvis-donor", path: "...\\Jarvis-Sub-Agent-Dashboard", mode: "read" }`, `{ grantId: "downloads", path: "C:\\Users\\mmush\\Downloads", mode: "write" }`, `{ grantId: "documents", path: "C:\\Users\\mmush\\Documents", mode: "write" }`, `{ grantId: "vault", path: "C:\\Users\\mmush\\OneDrive\\MindVault", mode: "read", localOnly: false }`, `{ grantId: "inbox", path: "C:\\Users\\mmush\\OneDrive\\MindVault\\inbox", mode: "write" }`. Start the agent. The node agent must accept an `https://` core URL (check `apps/node-agent/src/main.ts`; `wss://` for the socket).
+- [ ] **Step 3 (home PC):** `node apps/node-agent/dist/main.js pair --core https://<serve-url> --code <code> --host home`; grant `runtime.turn` with the 0.18 roots: `{ grantId: "jarvis-noctis", path: "C:\\Users\\<home-user>\\Documents\\Jarvis\\Noctis-OS", mode: "write" }`, `{ grantId: "jarvis-donor", path: "...\\Jarvis-Sub-Agent-Dashboard", mode: "read" }`, `{ grantId: "downloads", path: "C:\\Users\\<home-user>\\Downloads", mode: "write" }`, `{ grantId: "documents", path: "C:\\Users\\<home-user>\\Documents", mode: "write" }`, `{ grantId: "vault", path: "C:\\Users\\<home-user>\\OneDrive\\MindVault", mode: "read", localOnly: false }`, `{ grantId: "inbox", path: "C:\\Users\\<home-user>\\OneDrive\\MindVault\\inbox", mode: "write" }`. Start the agent. The node agent must accept an `https://` core URL (check `apps/node-agent/src/main.ts`; `wss://` for the socket).
 - [ ] **Step 4:** the desktop shell / web on either PC points at the Serve URL (`NOCTIS_CORE_URL`); note the shell's Rust client has no TLS backend by design (Cargo comment) — for Slice 1 the shell on the work PC uses `http://127.0.0.1:7717`, the home PC uses the browser transport over Serve until Slice 2's session realm lands; record this limit.
 - [ ] **Step 5:** `nodes.md` documents the two-node topology, `work-pc-core.md` documents start/stop, token rotation (re-pair both nodes), and that autostart/service registration is a separate approval. **Commit** — `docs: the core on the work PC, and two workers`
 

@@ -14,8 +14,8 @@ marked **Decided**, **Built**, **Open** or **Deferred**.
 - The Claude route loads user, project and local settings, so the session gets `~/.claude/CLAUDE.md`, the folder's own
   `CLAUDE.md`/`AGENTS.md`, its `.claude/` settings, skills, plugins, hooks and MCP servers, as VS Code would. Codex reads
   the folder's `AGENTS.md` the same way.
-- Neckermann (`Documents\neckermann-mobile`, `Documents\neckermann-customer copy`) has no grant of its own. Picking
-  `work-documents` starts the session in `Documents`, so Neckermann's `CLAUDE.md` and project settings would not load as
+- Work app A (`Documents\work-app-a-mobile`, `Documents\work-app-a-customer copy`) has no grant of its own. Picking
+  `work-documents` starts the session in `Documents`, so Work app A's `CLAUDE.md` and project settings would not load as
   the starting context.
 
 **Built:** Nodes has a **Folders** section. Pick the PC, paste a folder's full path (Explorer's "Copy as path" works),
@@ -118,7 +118,7 @@ costs are elsewhere:
 - **Found on the way:** `/digest` was missing from the core's list of API paths, so the live core answered it with the
   web page and Presence never showed the digest line. Fixed with `/live-sessions`.
 
-**Installed on the work PC** (12 October 2026, for `mushaf.zarrar`). **Open: the home PC**, which needs its own
+**Installed on the work PC** (12 October 2026, for `<work-user>`). **Open: the home PC**, which needs its own
 install: `docs/operations/HOME-SETUP.md`, section 3. Codex on each PC also needs `/hooks` to trust them.
 
 **Next:** phase 2, approvals from the phone through `PermissionRequest`.

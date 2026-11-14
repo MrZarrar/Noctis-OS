@@ -107,7 +107,7 @@ agents are told to stop before any of those. What does not: a click by screen po
 
 **Decided (owner):**
 
-- Share the MindVault with the work PC's agents, read only, and the work repos (Neckermann and Anex Tour).
+- Share the MindVault with the work PC's agents, read only, and the work repos (Work app A and Work app B).
 - Playwriter and dassi are not used. Playwriter's one MCP tool, `execute`, runs whatever JavaScript the agent writes
   with Node's full access, so Noctis cannot see what a step presses and every check is bypassed. dassi is a separate
   paid AI agent in Chrome's side panel with its own models, which Noctis could neither see nor stop. Playwright MCP
@@ -116,8 +116,8 @@ agents are told to stop before any of those. What does not: a click by screen po
 
 **Built:**
 
-- Work node grants: `work-vault` (`OneDrive\MindVault`, read), `neckermann-mobile`, `neckermann-customer`
-  (`neckermann-customer copy`), `anex-tour-api`, `anex-tour-mobile`, `anex-main` (`anex-main-original`), all write.
+- Work node grants: `work-vault` (`OneDrive\MindVault`, read), `work-app-a-mobile`, `work-app-a-customer`
+  (`work-app-a-customer copy`), `work-app-b-api`, `work-app-b-mobile`, `work-app-c` (`work-app-c-original`), all write.
 - The agents' standing instructions name Noctis's pages and say "open the vault", "health as a panel" and the like
   mean that page, opened with `noctis_propose_surface` `page`, never by driving Noctis's window; Obsidian only when
   named.

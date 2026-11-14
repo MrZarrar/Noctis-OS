@@ -2272,13 +2272,13 @@ token streaming in a browser, which waits on Slice 2's SSE.
 
 #### 2026-09-15 Task 1.12 — two machines, and the boundary that is not a promise
 
-The authoritative core now runs on the work PC (`mushafzarrar`) behind
-`tailscale serve` (tailnet only, never funnel). The personal PC (`zarrarpc`)
+The authoritative core now runs on the work PC (`work-pc`) behind
+`tailscale serve` (tailnet only, never funnel). The personal PC (`home-pc`)
 pairs to it as a worker over `wss://`. Both nodes report online.
 
-**The names were backwards in our own runbook.** `zarrarpc` is the _personal_
-machine (user `mmush`, MindVault, the donor repo); `mushafzarrar` is the _work_
-machine (user `mushaf.zarrar`). An earlier revision had them swapped, which would
+**The names were backwards in our own runbook.** `home-pc` is the _personal_
+machine (user `<home-user>`, MindVault, the donor repo); `work-pc` is the _work_
+machine (user `<work-user>`). An earlier revision had them swapped, which would
 have put the authoritative core on the personal machine and granted the work
 machine every personal root — the exact inversion of decision 0.30. Caught by
 running `hostname` before acting rather than by reading. The runbooks now say to
@@ -2291,8 +2291,8 @@ it raised was confirmed on the work PC, and the reply came back:
 
 | Where                          | `COMPUTERNAME` | `whoami`                     |
 | ------------------------------ | -------------- | ---------------------------- |
-| Through Noctis, sent from work | `ZARRARPC`     | `CodexSandboxOffline`        |
-| Natively on the work PC        | `MUSHAFZARRAR` | `mushafzarrar\mushaf.zarrar` |
+| Through Noctis, sent from work | `HOME-PC`     | `CodexSandboxOffline`        |
+| Natively on the work PC        | `WORK-PC` | `work-pc\<work-user>` |
 
 Nothing chose that host. The grant ids are disjoint — the work node holds
 `work-downloads`, the personal node holds `downloads` — so naming a root the work
@@ -2302,7 +2302,7 @@ holds a grant naming personal folders, and only the node standing on those
 folders can ever use it.
 
 **A second thing that output proves.** `whoami` returned `CodexSandboxOffline`,
-not `zarrarpc\mmush`. The owner's `~/.codex/config.toml` sets
+not `home-pc\<home-user>`. The owner's `~/.codex/config.toml` sets
 `sandbox_mode = "danger-full-access"` globally, and the turn plainly did not run
 with it: the per-spawn override held and the command ran sandboxed with
 networking off. The Isolation constraint has been asserted in comments since
@@ -2347,7 +2347,7 @@ is the easy one.
 Two blockers, both named rather than worked around. Nothing on the home LAN can
 send a magic packet: the ARP table holds the router and one phone, there is no
 subnet router on the tailnet, and Tailscale 1.102.2 has no `wake` subcommand.
-And, separately, **there is no Noctis autostart on `zarrarpc` at all** — no
+And, separately, **there is no Noctis autostart on `home-pc` at all** — no
 service, no scheduled task, no startup entry — so a successful wake would reach
 "reachable" and never reach "worker authenticated". The second blocker is free to
 fix and needs only the autostart approval the plan already keeps default-off; the
@@ -2389,7 +2389,7 @@ appearing as `sub_agent` items whose tool calls still ask needs both runtimes
 live. The `sub_agent` item kind exists in the contract and both adapters already
 emit it; nothing has watched one ask.
 
-#### 2026-09-22 ADR-0036 on `zarrarpc` — the worker starts itself, as the owner, with no password kept
+#### 2026-09-22 ADR-0036 on `home-pc` — the worker starts itself, as the owner, with no password kept
 
 Registered per `docs/operations/nodes.md` "Starting without a person" and started once by hand
 before any reboot. Everything below was read off the machine, not inferred from the task's state:
@@ -2397,14 +2397,14 @@ before any reboot. Everything below was read off the machine, not inferred from 
 | Check                 | Result                                                                             |
 | --------------------- | ---------------------------------------------------------------------------------- |
 | `LastTaskResult`      | `267009` — running; the agent never exits, so running is success                   |
-| The process           | PID 21768, **session 0**, created the second the task ran; owner `ZARRARPC\mmush`  |
-| Its connection        | `100.70.27.11:58919` → `100.89.64.5:443` Established, same port four seconds later |
+| The process           | PID 21768, **session 0**, created the second the task ran; owner `HOME-PC\<home-user>`  |
+| Its connection        | `100.x.x.2:58919` → `100.x.x.1:443` Established, same port four seconds later |
 | Where that is         | the work PC's Tailscale Serve, matching the credential's `coreUrl`                 |
 | Listening sockets     | **none** — the no-listeners constraint holds under autostart                       |
 | Codex auth under S4U  | plain `~/.codex/auth.json`; nothing in Credential Manager                          |
 | Claude auth under S4U | plain `~/.claude/.credentials.json`; nothing in Credential Manager                 |
 
-**S4U works for a Microsoft account here.** `mmush` is `PrincipalSource: MicrosoftAccount`, and S4U
+**S4U works for a Microsoft account here.** `<home-user>` is `PrincipalSource: MicrosoftAccount`, and S4U
 with those is the variant most likely to fail with a logon error. It did not, so no copy of the
 owner's password is stored on this worker. The DPAPI caveat the runbook raises does not apply on this
 host either, because neither runtime keeps its token in anything DPAPI protects — both are files in
@@ -2452,7 +2452,7 @@ Restart with `7f8ba24` built and Tailscale in unattended mode (`tailscale set --
 | Boot                    | 21:53:10 | `Kernel-Boot` 27, **boot type 0** — a real cold boot        |
 | Task fired              | 21:53:22 | `LastRunTime`; `LastTaskResult` `267009`, running           |
 | Owner signed in         | 21:53:24 | first `explorer.exe`, 14 s after boot                       |
-| Agent connected to core | 21:53:39 | PID 4208, `:55827` → `100.89.64.5:443`, 17 s after starting |
+| Agent connected to core | 21:53:39 | PID 4208, `:55827` → `100.x.x.1:443`, 17 s after starting |
 | RDP                     | —        | `3389` listening                                            |
 
 The same sequence at 21:32 — task fired, first dial failed because the tailnet was not up — ended
@@ -2511,7 +2511,7 @@ with no turn running is denied by design.
 
 #### Live measurement on a real node
 
-Host `mushafzarrar` (the work PC). A throwaway core from this checkout's `apps/core/dist` on
+Host `work-pc` (the work PC). A throwaway core from this checkout's `apps/core/dist` on
 127.0.0.1:7790 with a temporary database, and a node agent paired to it with its own
 `NOCTIS_NODE_HOME`; the production core on 7717 and its database were not touched, and no node
 agent was running on this machine. Both processes were started with every `NOCTIS_*` and `CLAUDE*`
@@ -2721,7 +2721,7 @@ escalation, so the path where Codex's own ask is forwarded and pushed is proven 
 | `npm run build`                                                       | exit 0                                                                                                                 |
 | `npm run build:web`                                                   | exit 0                                                                                                                 |
 | `npm run test:e2e`                                                    | exit 0; 13 tests, run against Edge (`NOCTIS_E2E_BROWSER_CHANNEL=msedge`, Phase 6 note)                                 |
-| `npm run test:deploy`                                                 | exit 1; 3 pass, 1 fail by design: "refuses to deploy anywhere but the work PC" asserts it is not run on `mushafzarrar` |
+| `npm run test:deploy`                                                 | exit 1; 3 pass, 1 fail by design: "refuses to deploy anywhere but the work PC" asserts it is not run on `work-pc` |
 | `npm run test:desktop`                                                | exit 1; 5 pass, 1 fail: `cargo.exe ENOENT`, no Rust toolchain on this machine                                          |
 | `npm run rust:fmt:check`, `rust:clippy`, `rust:test`, `build:desktop` | not runnable here: `cargo` is not installed; CI is the authority, as before                                            |
 
@@ -2849,7 +2849,7 @@ Sabotage, each applied, observed failing, and reverted:
 
 #### Live run on a real node
 
-Host `mushafzarrar` (the work PC), set up as for S1: a throwaway core from this checkout's
+Host `work-pc` (the work PC), set up as for S1: a throwaway core from this checkout's
 `apps/core/dist` on 127.0.0.1:7790 with a temporary database, and a node agent paired to it with its
 own `NOCTIS_NODE_HOME`, both started with every `NOCTIS_*` and `CLAUDE*` variable removed. The
 production core on 7717 was not touched. The node probed Claude (`claude_ai`) and Codex (`chatgpt`).
@@ -3055,7 +3055,7 @@ workers, Vault, production bundle, services or paid agents were activated.
 
 ### 2026-10-08 S4: files and outputs from any machine
 
-Built on the home PC (`zarrarpc`) after the owner approved S6 live. Commits `5cdee68` (core and
+Built on the home PC (`home-pc`) after the owner approved S6 live. Commits `5cdee68` (core and
 node), `0efe0b0` (the Files page), `735b830` (opening a file from the thread that wrote it).
 
 - **Which folders.** `file.list` and `file.read` are node capabilities covered by a `runtime.turn`
@@ -3173,7 +3173,7 @@ stages into a base of its own.
 
 ### 2026-10-08 History for adopted sessions, tidier conversations, and S3
 
-The owner's list for the evening, in order, on the home PC (`zarrarpc`). Commits `99e5ed8`
+The owner's list for the evening, in order, on the home PC (`home-pc`). Commits `99e5ed8`
 (history), `3d62420` (rename and archive), `f14e39d` (local runtime), `57e84dd` (scrolling and the
 Approvals count), `03c92dc` (fixes from a Codex review), `64938c6` (Hermes runtime).
 
@@ -3243,7 +3243,7 @@ stashing `local` out of `RUNTIME_PROVIDERS`: the send answered 500.
 
 ### 2026-10-08 Jester on Hermes (ADR-0030)
 
-On the home PC (`zarrarpc`), the same night as S3. Commits `2e3f8e6`, `c1ea808`, `8363c96`,
+On the home PC (`home-pc`), the same night as S3. Commits `2e3f8e6`, `c1ea808`, `8363c96`,
 `6741461`, `59bcc7c`, `26efe08`, `66cb475`, `63d7e59`, `2f6cc24`, `73c7e49`. Nothing deployed.
 
 - **The owner's picks** (from Codex's stills in `docs/design/assets/jester/`): core variant C,
@@ -3541,7 +3541,7 @@ to capture image` on ffmpeg stderr); a real locked screen was not tested. Deploy
 ### 2026-10-09 Daily digest, the Vault passcode, and the PWA zoom fix
 
 Three items the owner decided on 9 October (`docs/architecture/2026-10-09-owner-decisions.md` §7, §8, §10), built
-on the home PC (`zarrarpc`, Node 22.23.2). Not committed and not deployed.
+on the home PC (`home-pc`, Node 22.23.2). Not committed and not deployed.
 
 - **Daily digest.** `apps/core/src/notify/digest.ts` reads a window of the ledger: turns by agent and thread, files
   written, outputs, and the approvals the owner was asked (approved, declined, unanswered). No model call.

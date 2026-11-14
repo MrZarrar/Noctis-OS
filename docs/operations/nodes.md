@@ -68,12 +68,12 @@ $body = @{
   constraints = @{
     providers = @("codex", "claude")
     roots = @(
-      @{ grantId = "jarvis-noctis"; path = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"; mode = "write" },
-      @{ grantId = "jarvis-donor";  path = "C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard"; mode = "read" },
-      @{ grantId = "downloads";     path = "C:\Users\mmush\Downloads"; mode = "write" },
-      @{ grantId = "documents";     path = "C:\Users\mmush\Documents"; mode = "write" },
-      @{ grantId = "vault";         path = "C:\Users\mmush\OneDrive\MindVault"; mode = "read" },
-      @{ grantId = "inbox";         path = "C:\Users\mmush\OneDrive\MindVault\inbox"; mode = "write" }
+      @{ grantId = "jarvis-noctis"; path = "C:\Users\<home-user>\Documents\Jarvis\Noctis-OS"; mode = "write" },
+      @{ grantId = "jarvis-donor";  path = "C:\Users\<home-user>\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard"; mode = "read" },
+      @{ grantId = "downloads";     path = "C:\Users\<home-user>\Downloads"; mode = "write" },
+      @{ grantId = "documents";     path = "C:\Users\<home-user>\Documents"; mode = "write" },
+      @{ grantId = "vault";         path = "C:\Users\<home-user>\OneDrive\MindVault"; mode = "read" },
+      @{ grantId = "inbox";         path = "C:\Users\<home-user>\OneDrive\MindVault\inbox"; mode = "write" }
     )
   }
 } | ConvertTo-Json -Depth 6
@@ -115,7 +115,7 @@ bounded (20,000 entries, 12 levels deep) and never descends a symlink or junctio
 
 Default off. A worker that comes back from a reboot or a wake and never dials the core is a machine
 that is up and cannot run a turn — `docs/operations/WOL.md` §5. Register this only on a host whose
-autostart the owner has approved by name; it was approved for `zarrarpc` on 2026-09-22.
+autostart the owner has approved by name; it was approved for `home-pc` on 2026-09-22.
 
 **Run as the owner, never as `LocalSystem`.** Two independent reasons, and both bite silently:
 
@@ -133,7 +133,7 @@ it to start a process is a worse trade than the one thing S4U gives up (see belo
 **elevated PowerShell** — an at-startup trigger needs it — while logged in as the owner:
 
 ```powershell
-$repo = "C:\Users\mmush\Documents\Jarvis\Noctis-OS"
+$repo = "C:\Users\<home-user>\Documents\Jarvis\Noctis-OS"
 $node = "C:\Program Files\nodejs\node.exe"   # must be the version in .nvmrc
 
 $action    = New-ScheduledTaskAction -Execute $node `
@@ -159,7 +159,7 @@ re-register with `-User`/`-Password` instead of `-Principal` and accept the stor
 
 Check it the only way that means anything — **Restart**, touch nothing Noctis-related, then read the
 core's node list from another machine and confirm the host is online **and that its providers are
-available**. "Do not log in" is not a test you can rely on: on `zarrarpc` Windows signed the owner
+available**. "Do not log in" is not a test you can rely on: on `home-pc` Windows signed the owner
 in 14 s after every cold boot without a key press (Automatic Restart Sign-On or Hello face sign-in).
 What proves the task is that its `LastRunTime` matches the boot and nobody started anything. A task that shows `Ready` in Task Scheduler has proved nothing, and a node that is
 online but refuses every turn is the failure this section is most likely to produce.

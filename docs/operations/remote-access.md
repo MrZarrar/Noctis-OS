@@ -11,7 +11,7 @@ Everything below marked **measured** was read off this machine on 2026-09-22. Ev
 
 ## 1. The hosts and the path
 
-**Measured**, on `zarrarpc` (this home PC):
+**Measured**, on `home-pc` (this home PC):
 
 | Fact      | Value                                                                 |
 | --------- | --------------------------------------------------------------------- |
@@ -19,7 +19,7 @@ Everything below marked **measured** was read off this machine on 2026-09-22. Ev
 | Machine   | ASUS, 31.1 GB RAM                                                     |
 | GPU       | NVIDIA GeForce RTX 5070 (+ AMD Radeon iGPU)                           |
 | Displays  | two — 2560×1440 @ 180 Hz and 1920×1080 @ 165 Hz                       |
-| Wired NIC | Realtek PCIe 2.5GbE, link up at 2.5 Gbps, `192.168.1.163/24`, gw `.1` |
+| Wired NIC | Realtek PCIe 2.5GbE, link up at 2.5 Gbps, `192.168.x.10/24`, gw `.1` |
 | Wi-Fi     | MediaTek MT7922, disconnected                                         |
 
 Windows 11 **Pro** matters more than anything else in that table: the RDP _host_ is licensed and
@@ -31,10 +31,10 @@ The tailnet, **measured** from `tailscale status` (Tailscale 1.102.2):
 
 | Node              | Tailnet IP       | OS      | Role                       |
 | ----------------- | ---------------- | ------- | -------------------------- |
-| `mushafzarrar`    | `100.89.64.5`    | Windows | work PC — the Noctis core  |
-| `zarrarpc`        | `100.70.27.11`   | Windows | home PC — node agent, this |
-| `iphone183`       | `100.117.126.94` | iOS     | the phone front door       |
-| `mushafs-macbook` | `100.94.61.54`   | macOS   | laptop                     |
+| `work-pc`    | `100.x.x.1`    | Windows | work PC — the Noctis core  |
+| `home-pc`        | `100.x.x.2`   | Windows | home PC — node agent, this |
+| `phone`       | `100.x.x.3` | iOS     | the phone front door       |
+| `laptop` | `100.x.x.4`   | macOS   | laptop                     |
 
 No subnet routers and no exit nodes are advertised. Work → home is a **direct** connection
 (`86.188.221.114:41641`), not a DERP relay, which is the difference between a usable remote desktop
@@ -163,9 +163,9 @@ recover the machine if the RDP path locks someone out of it.
 
 Answering "embedded" also authorises, by name, before 3.9 starts:
 
-- enabling the Windows RDP host on `zarrarpc` (`fDenyTSConnections = 0`, `TermService` automatic,
+- enabling the Windows RDP host on `home-pc` (`fDenyTSConnections = 0`, `TermService` automatic,
   firewall rules enabled **on the Tailscale interface only**, never on the LAN or public profile);
-- installing Devolutions Gateway on `zarrarpc` as a second listener, bound to the tailnet;
+- installing Devolutions Gateway on `home-pc` as a second listener, bound to the tailnet;
 - widening the desktop shell's CSP with `'wasm-unsafe-eval'` and the gateway origin.
 
 ## 8. What this document does not claim
@@ -181,7 +181,7 @@ Answering "embedded" also authorises, by name, before 3.9 starts:
 ## 9. Task 3.9: the real interfaces, read before building
 
 Read on 2026-09-22 from the published npm tarballs (unpacked, not installed) and from the Gateway
-install on `zarrarpc`. **Read** means the text of the code or the file; **expected** means inferred
+install on `home-pc`. **Read** means the text of the code or the file; **expected** means inferred
 and still to be seen working.
 
 ### 9.1 The component: `@devolutions/iron-remote-desktop` 0.11.0 + `-rdp` 0.7.0
@@ -229,11 +229,11 @@ CSP and recording every violation:
 | CSP                                                                                                       | Result                                                                                                |
 | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | the shell's today                                                                                         | **fails**: `fetch` of the `data:` WASM refused by `connect-src`, and both inline styles refused       |
-| + `script-src 'wasm-unsafe-eval'`, `connect-src data: wss://zarrarpc.tail9594ed.ts.net`, no inline styles | WASM loads and `ready` fires, but two inline-style violations                                         |
+| + `script-src 'wasm-unsafe-eval'`, `connect-src data: wss://home-pc.<tailnet>.ts.net`, no inline styles | WASM loads and `ready` fires, but two inline-style violations                                         |
 | + `style-src 'unsafe-inline'` as well                                                                     | **zero violations**, `ready` fires, one `<style>` in the shadow root, `connect` reaches the WebSocket |
 
 With no Gateway listening, `connect` rejected with `kind() === 5` (`ProxyConnect`) and
-`backtrace()` = `failed to connect to wss://zarrarpc.tail9594ed.ts.net/jet/rdp (WebSocket is Closed)`.
+`backtrace()` = `failed to connect to wss://home-pc.<tailnet>.ts.net/jet/rdp (WebSocket is Closed)`.
 That is the real shape of the "Gateway unreachable" error, not a guessed one.
 
 ### 9.2 The token: Devolutions Gateway's association JWT
@@ -281,19 +281,19 @@ and has never been started (exit 1077). It must not be started as configured.
 
 **Measured** the same evening: `TermService` Running and **3389 listening** on `0.0.0.0`/`::`. The
 cold-boot restart for ADR-0036 brought the listener up, and its firewall scope is `100.64.0.0/10`.
-`tailscale serve status` on `zarrarpc` is empty.
+`tailscale serve status` on `home-pc` is empty.
 
 ### 9.4 What 3.9 does with it
 
 - **Tailnet-only binding without a certificate.** The Gateway binds **`http://127.0.0.1:7171` only**,
-  the TCP listener is removed, and `tailscale serve` on `zarrarpc` terminates TLS with the node's
+  the TCP listener is removed, and `tailscale serve` on `home-pc` terminates TLS with the node's
   own `ts.net` certificate and proxies to it. The page's URL becomes
-  `wss://zarrarpc.tail9594ed.ts.net/jet/rdp`. There is no firewall rule for 7171 because nothing
+  `wss://home-pc.<tailnet>.ts.net/jet/rdp`. There is no firewall rule for 7171 because nothing
   listens beyond loopback, and there is no certificate to issue or renew. A `wss:` URL is required
   anyway: the PWA is an `https:` page, and a browser refuses `ws:` from it as mixed content.
   **Expected:** that Serve proxies the WebSocket upgrade (it is an HTTP reverse proxy), and that
   the Gateway accepts a loopback-only listener list with no TCP entry.
-- **Destination is core configuration, never page input.** The page names a host (`zarrarpc`). The
+- **Destination is core configuration, never page input.** The page names a host (`home-pc`). The
   core looks that name up in its own allowlist, signs `dst_hst` from the allowlist, and returns the
   token, the Gateway URL and the destination. An unknown name is refused before anything is signed.
 - **The Windows password never reaches the core** (ADR-0035 addendum). It goes page → component →
@@ -305,18 +305,18 @@ cold-boot restart for ADR-0036 brought the listener up, and its firewall scope i
 
 ### 9.5 Proven against the real Gateway, before any owner step
 
-**Measured** on `zarrarpc`, 2026-09-22. The installed `DevolutionsGateway.exe` ran as a **plain user
+**Measured** on `home-pc`, 2026-09-22. The installed `DevolutionsGateway.exe` ran as a **plain user
 process**: no service, no elevation, no firewall change. It had a scratch `--config-path`, a fresh
 key pair, and a single listener `http://127.0.0.1:7171` with no TCP entry, and it logged `Listening
 on http://127.0.0.1:7171` and nothing else. That proves §9.4's loopback-only config is accepted. The
 real IronRDP element in Chromium, under the proposed CSP (the `wss:` origin swapped for this loopback
 `ws:`), connected with tokens from the core's own `mintGatewayToken` (built `apps/core/dist`). The
-RDP target was `zarrarpc.tail9594ed.ts.net:3389`, this PC's real listener, and the Windows user was
+RDP target was `home-pc.<tailnet>.ts.net:3389`, this PC's real listener, and the Windows user was
 a **nonexistent** `noctis-probe-nonexistent`, so no real account could be locked or signed in.
 
 | Token                       | What happened                                                                                                                                |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| core-minted, valid          | Gateway forwarded (`fwd … target="tcp://zarrarpc…:3389"`), TLS to RDP, **CredSSP reached Windows**: `STATUS_LOGON_FAILURE`, `kind 2`, 163 ms |
+| core-minted, valid          | Gateway forwarded (`fwd … target="tcp://home-pc…:3389"`), TLS to RDP, **CredSSP reached Windows**: `STATUS_LOGON_FAILURE`, `kind 2`, 163 ms |
 | signed with a different key | refused: `kind 4` RDCleanPath, **HTTP 401**, "authorization error" in the Gateway log                                                        |
 | expired 10 min ago          | refused: HTTP 401                                                                                                                            |
 | the same valid token twice  | **accepted both times**: the Gateway does not refuse a replayed `jti` in this mode                                                           |
@@ -339,7 +339,7 @@ What that means:
 
 | Client                                            | CSP                                                                                                                                                                                                                  | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Desktop shell** (Tauri 2.11.5, WebView2)        | `tauri.conf.json`, widened by exactly: `script-src 'wasm-unsafe-eval'`, `style-src 'unsafe-inline'`, `connect-src data: wss://zarrarpc.tail9594ed.ts.net`, and `dangerousDisableAssetCspModification: ["style-src"]` | **Supported.** Full keyboard and mouse. Verified under the identical CSP in Chromium (§9.1, §9.5), **not yet in the running shell**. The Gateway origin is pinned in a compile-time policy, so adding a second host means editing the CSP and rebuilding the shell. Tauri would otherwise add a nonce to `style-src` (`tauri-2.11.5/src/manager/mod.rs`), and a nonce silently cancels `'unsafe-inline'`. That is why the list form of the flag is set. |
+| **Desktop shell** (Tauri 2.11.5, WebView2)        | `tauri.conf.json`, widened by exactly: `script-src 'wasm-unsafe-eval'`, `style-src 'unsafe-inline'`, `connect-src data: wss://home-pc.<tailnet>.ts.net`, and `dangerousDisableAssetCspModification: ["style-src"]` | **Supported.** Full keyboard and mouse. Verified under the identical CSP in Chromium (§9.1, §9.5), **not yet in the running shell**. The Gateway origin is pinned in a compile-time policy, so adding a second host means editing the CSP and rebuilding the shell. Tauri would otherwise add a nonce to `style-src` (`tauri-2.11.5/src/manager/mod.rs`), and a nonce silently cancels `'unsafe-inline'`. That is why the list form of the flag is set. |
 | **PWA, desktop Chrome/Edge** over Tailscale Serve | the core's `pageSecurityPolicy`, which adds the shell's four widenings only when `NOCTIS_REMOTE_DESKTOPS` is set, for those Gateway origins only                                                                     | **Supported, expected.** The same Chromium engine as the probe. The page is `https:`, so the Gateway must be `wss:`, which §9.4 provides.                                                                                                                                                                                                                                                                                                               |
 | **PWA, iPhone** (Safari, Home Screen app)         | the same                                                                                                                                                                                                             | **View and tap only, unverified.** Safari runs the WASM, and a tap arrives as a mouse click. But the component takes keys from `window` `keydown` while a pointer hovers the canvas, and a phone has neither a hover nor a hardware keyboard. So there is no typing, and dragging is unreliable. Honest wording: a look-and-click view of the desktop, not the full-control client. AnyDesk stays the phone's full-control route.                       |
 
@@ -352,14 +352,14 @@ and `TlsVerifyStrict`, and replaces both listeners with one loopback listener:
 ```json
 {
   "Id": "b6bbb872-d4b8-4286-9df1-fc1e5d4955c7",
-  "Hostname": "zarrarpc.tail9594ed.ts.net",
+  "Hostname": "home-pc.<tailnet>.ts.net",
   "ProvisionerPublicKeyFile": "provisioner.pem",
   "ProvisionerPrivateKeyFile": null,
   "TlsVerifyStrict": true,
   "Listeners": [
     {
       "InternalUrl": "http://127.0.0.1:7171",
-      "ExternalUrl": "https://zarrarpc.tail9594ed.ts.net:443"
+      "ExternalUrl": "https://home-pc.<tailnet>.ts.net:443"
     }
   ]
 }
@@ -367,22 +367,22 @@ and `TlsVerifyStrict`, and replaces both listeners with one loopback listener:
 
 `provisioner.pem` is the **public** key printed by `node scripts\deploy\gateway-key.mjs` on the
 work PC. The private half never leaves the work PC. `tailscale serve --bg --https=443
-http://127.0.0.1:7171` then publishes it as `wss://zarrarpc.tail9594ed.ts.net/jet/rdp`, on the
+http://127.0.0.1:7171` then publishes it as `wss://home-pc.<tailnet>.ts.net/jet/rdp`, on the
 tailnet only. The file must be written **without a BOM**, because Windows PowerShell 5.1's
 `Set-Content -Encoding UTF8` adds one. The block in the 3.9 handoff uses `[IO.File]::WriteAllText`
 for that reason.
 
 After it is applied, one check needs no password and no work PC. A token signed by any other key,
-sent to `wss://zarrarpc.tail9594ed.ts.net/jet/rdp`, must come back `RDCleanPath` **HTTP 401**. That
+sent to `wss://home-pc.<tailnet>.ts.net/jet/rdp`, must come back `RDCleanPath` **HTTP 401**. That
 proves Serve proxies the WebSocket upgrade and the Gateway holds the right key, and it is the
 "expected" left in §9.4.
 
 The service stays `DEMAND_START` (it does not survive a reboot) until autostart is approved by name.
 
 **Applied by the owner, 2026-09-22 night, and measured:** listening on `127.0.0.1:7171` only,
-nothing on 8181, and `tailscale serve status` shows `https://zarrarpc.tail9594ed.ts.net (tailnet
+nothing on 8181, and `tailscale serve status` shows `https://home-pc.<tailnet>.ts.net (tailnet
 only) |-- / proxy http://127.0.0.1:7171`. A foreign-key token over
-`wss://zarrarpc.tail9594ed.ts.net/jet/rdp` came back `RDCleanPath` **HTTP 401**. That proves Serve
+`wss://home-pc.<tailnet>.ts.net/jet/rdp` came back `RDCleanPath` **HTTP 401**. That proves Serve
 proxies the WebSocket upgrade and the service holds the provisioned key. The first attempt took 8.5 s,
 with Serve getting its certificate on the first request; the next two took 99 and 95 ms. One trap
 cost a round trip: the copied public key had lost its `BEGIN`/`END` lines, and the block's check
@@ -390,14 +390,14 @@ refused it before writing anything, as intended.
 
 ### 9.8 First connects over the real route, 2026-09-24
 
-From the work PC's browser, through the core, the Gateway and Serve, to `zarrarpc`:
+From the work PC's browser, through the core, the Gateway and Serve, to `home-pc`:
 
 - **Blocked first by the account, not the code.** The Microsoft account would not accept a password
   sign-in anywhere, including the web, until the owner reset its password. The home PC also had
   "Only allow Windows Hello sign-in for Microsoft accounts on this device" on
   (`DevicePasswordLessBuildVersion = 2`). With it off, and one console sign-in with the new password
   (`PasswordLastSet` updated), RDP authentication succeeded: event `1149`, "User authentication
-  succeeded: m.mushafzarrar@gmail".
+  succeeded: m.work-pc@gmail".
 - **Connected at 1280×720, then showed only black.** The component mounts its canvas hidden and
   never unhides it; the page must call `setVisibility(true)` after `connect`. That call is now made.
 - **Each session was logged off about 32 s after it started** (`LocalSessionManager` event 40,

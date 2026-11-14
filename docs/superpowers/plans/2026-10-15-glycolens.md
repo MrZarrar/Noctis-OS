@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Repo: `C:\Users\mmush\Documents\glycolens` (sibling of `Jarvis`), package at `src/glycolens/`, tests in `tests/`.
+- Repo: `C:\Users\<home-user>\Documents\glycolens` (sibling of `Jarvis`), package at `src/glycolens/`, tests in `tests/`.
 - Dependencies: only `tconnectsync>=2`, `keyring>=25`; dev: `pytest>=8`. No pandas, no numpy, no openai SDK.
 - Units: glucose in **mmol/L** everywhere inside glycolens (`MG_PER_MMOL = 18.0182`); insulin in U; basal in U/h; carb ratio in g/U; ISF in mmol/L per U.
 - Time: **naive local pump time** everywhere (no tz-aware datetimes).
@@ -55,9 +55,9 @@ Proves the riskiest assumption before any analysis code exists. **Gate:** if log
 - [ ] **Step 1: Create the repo skeleton**
 
 ```powershell
-New-Item -ItemType Directory -Force C:\Users\mmush\Documents\glycolens\src\glycolens, C:\Users\mmush\Documents\glycolens\tests, C:\Users\mmush\Documents\glycolens\scripts, C:\Users\mmush\Documents\glycolens\docs
-git -C C:\Users\mmush\Documents\glycolens init -b main
-Copy-Item C:\Users\mmush\Documents\Jarvis\Noctis-OS\docs\superpowers\specs\2026-10-15-glycolens-design.md C:\Users\mmush\Documents\glycolens\docs\design.md
+New-Item -ItemType Directory -Force C:\Users\<home-user>\Documents\glycolens\src\glycolens, C:\Users\<home-user>\Documents\glycolens\tests, C:\Users\<home-user>\Documents\glycolens\scripts, C:\Users\<home-user>\Documents\glycolens\docs
+git -C C:\Users\<home-user>\Documents\glycolens init -b main
+Copy-Item C:\Users\<home-user>\Documents\Jarvis\Noctis-OS\docs\superpowers\specs\2026-10-15-glycolens-design.md C:\Users\<home-user>\Documents\glycolens\docs\design.md
 ```
 
 `pyproject.toml`:
@@ -126,7 +126,7 @@ advice. Design: `docs/design.md`.
 - [ ] **Step 2: Install and check the environment works under Smart App Control**
 
 ```powershell
-cd C:\Users\mmush\Documents\glycolens
+cd C:\Users\<home-user>\Documents\glycolens
 py -3.14 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
 .\.venv\Scripts\python -m pytest -q
@@ -2602,7 +2602,7 @@ region = "EU"
 analysis_days = 14
 model = "qwen3.5-9b"
 lmstudio_url = "http://localhost:1234"
-# vault = "C:/Users/mmush/OneDrive/MindVault"   # off until the owner turns it on
+# vault = "C:/Users/<you>/OneDrive/MindVault"   # off until the owner turns it on
 
 [[windows]]
 name = "overnight"

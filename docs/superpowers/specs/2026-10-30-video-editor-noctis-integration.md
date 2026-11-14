@@ -55,7 +55,7 @@ blanket `frame-src *`.
 ## Shape of the work
 
 1. **Config:** a setting naming the editor server's origin (e.g.
-   `http://100.70.27.11:7700`, the home PC's Tailscale address), the same way Gateway
+   `http://100.x.x.2:7700`, the home PC's Tailscale address), the same way Gateway
    origins are configured for remote desktop. Empty by default; the page and the CSP
    widening both key off whether it is set.
 2. **CSP:** extend `pageSecurityPolicy` (or add a sibling function next to it) to add

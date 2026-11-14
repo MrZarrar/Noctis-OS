@@ -22,7 +22,7 @@ I would be disappointed in a year if this were a beautiful dashboard containing 
 
 ## Evidence and source order
 
-Read these in `C:\Users\mmush\Documents\Jarvis\Noctis-OS`:
+Read these in `C:\Users\<home-user>\Documents\Jarvis\Noctis-OS`:
 
 - `AGENTS.md` and applicable nested instructions.
 - `docs/architecture/DECISIONS.md`.

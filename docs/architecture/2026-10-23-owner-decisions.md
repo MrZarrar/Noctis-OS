@@ -210,8 +210,8 @@ corner that copies that block's text and says "Copied" for a moment. Inline code
 **Asked (owner):** after the deploy, Vesper creating `inbox/2026-10-26-the-dreamer-draft-i.md` still asked.
 
 **Found:** the work node's folder grants from 19 October were saved with their backslashes stripped
-(`C:Usersmushaf.zarrarOneDriveMindVault`). The node skips a folder that does not exist, so `work-vault` and the five
-Neckermann and Anex Tour folders never reached a turn. To Noctis the MindVault was outside every folder, so the inbox
+(`C:Users<work-user>OneDriveMindVault`). The node skips a folder that does not exist, so `work-vault` and the five
+Work app A and Work app B folders never reached a turn. To Noctis the MindVault was outside every folder, so the inbox
 exception could not apply.
 
 **Built:** a new folder grant must name an absolute path, or the core answers 400 and stores nothing.

@@ -1,8 +1,8 @@
 # The core on the work PC
 
 Owner decision 0.15 (2026-09-12): the authoritative core runs on the **work PC**, whose Windows and
-tailnet hostname is `mushafzarrar` (user `mushaf.zarrar`). The **personal PC** is a worker, and its
-hostname is `zarrarpc` (user `mmush`).
+tailnet hostname is `work-pc` (user `<work-user>`). The **personal PC** is a worker, and its
+hostname is `home-pc` (user `<home-user>`).
 
 The two names read backwards from what you would guess, and an earlier revision of this document had
 them swapped. Getting it wrong puts the authoritative core on the personal machine and grants the
@@ -18,8 +18,8 @@ no install, no build), hidden, 20 s after logon, logging to `%LOCALAPPDATA%\Noct
 ## Install (once, on the work PC)
 
 ```powershell
-git clone <origin> C:\Users\mushaf.zarrar\Documents\Noctis-OS
-cd C:\Users\mushaf.zarrar\Documents\Noctis-OS
+git clone <origin> C:\Users\<work-user>\Documents\Noctis-OS
+cd C:\Users\<work-user>\Documents\Noctis-OS
 node --version        # 22.23.2 (CI pin); 24.x works but CI is authoritative
 npm ci
 npm run build         # tsc -b. Compiles every workspace. Builds NO web bundle.
@@ -58,13 +58,13 @@ their defaults; it is a reference, not a file this deployment uses.
 
 ```powershell
 node apps\core\dist\main.js                      # terminal 1
-tailscale serve --bg 7717                        # once; prints https://mushafzarrar.tail9594ed.ts.net
+tailscale serve --bg 7717                        # once; prints https://work-pc.<tailnet>.ts.net
 ```
 
 Serve is private to the tailnet. **Never `tailscale funnel`.** From the personal PC:
 
 ```powershell
-Invoke-RestMethod https://mushafzarrar.tail9594ed.ts.net/health
+Invoke-RestMethod https://work-pc.<tailnet>.ts.net/health
 ```
 
 `/health` needs no token and is the one call that proves the tunnel before credentials enter the
@@ -80,7 +80,7 @@ cd $HOME\Documents\Noctis-OS
 powershell -ExecutionPolicy Bypass -File scripts\deploy\work-pc.ps1
 ```
 
-`scripts\deploy\work-pc.ps1` refuses unless the host is `mushafzarrar`, the branch is `main` and
+`scripts\deploy\work-pc.ps1` refuses unless the host is `work-pc`, the branch is `main` and
 the tree is clean. It then runs `git pull --ff-only`, stops the running core and this PC's node agent
 (any `node` running `apps\core\dist\main.js` or `apps\node-agent\dist`), and runs `npm ci`,
 `npm run build` and `npm run build:web` with `VITE_CORE_TOKEN` removed. It starts the core **hidden**,
@@ -120,7 +120,7 @@ Off until both variables are set. Once, on the work PC:
 ```powershell
 node scripts\deploy\gateway-key.mjs          # writes %LOCALAPPDATA%\Noctis\gateway-provisioner.{key,pem}, prints the public key
 [Environment]::SetEnvironmentVariable('NOCTIS_GATEWAY_PROVISIONER_KEY_FILE', "$env:LOCALAPPDATA\Noctis\gateway-provisioner.key", 'User')
-[Environment]::SetEnvironmentVariable('NOCTIS_REMOTE_DESKTOPS', '[{"host":"zarrarpc","gatewayUrl":"wss://zarrarpc.tail9594ed.ts.net/jet/rdp","destination":"zarrarpc.tail9594ed.ts.net:3389"}]', 'User')
+[Environment]::SetEnvironmentVariable('NOCTIS_REMOTE_DESKTOPS', '[{"host":"home-pc","gatewayUrl":"wss://home-pc.<tailnet>.ts.net/jet/rdp","destination":"home-pc.<tailnet>.ts.net:3389"}]', 'User')
 ```
 
 The `.key` file is the credential: it signs the Gateway's session tokens, and it never leaves this
@@ -142,7 +142,7 @@ produces a front door that looks like it is working and is not.
 **1. Learn the Serve URL before setting anything.** The origin allowlist has to name it exactly.
 
 ```powershell
-tailscale serve --bg 7717       # prints https://mushafzarrar.tail9594ed.ts.net
+tailscale serve --bg 7717       # prints https://work-pc.<tailnet>.ts.net
 tailscale serve status          # or read it back later
 ```
 
@@ -153,7 +153,7 @@ above. It writes `apps\web\dist`, which must end up containing `index.html` **an
 
 ```powershell
 [Environment]::SetEnvironmentVariable('NOCTIS_WEB_ROOT', "$HOME\Documents\Noctis-OS\apps\web\dist", 'User')
-[Environment]::SetEnvironmentVariable('NOCTIS_ALLOWED_ORIGINS', 'https://mushafzarrar.tail9594ed.ts.net', 'User')
+[Environment]::SetEnvironmentVariable('NOCTIS_ALLOWED_ORIGINS', 'https://work-pc.<tailnet>.ts.net', 'User')
 ```
 
 Both, together. The core refuses to start with `NOCTIS_WEB_ROOT` set and an empty allowlist,
@@ -165,7 +165,7 @@ and does send one on the login POST and on the `EventSource`, which is exactly w
 like a working page.
 
 If the personal PC still runs Vite against this core (see Clients), list both, comma-separated:
-`https://mushafzarrar.tail9594ed.ts.net,http://localhost:5173`.
+`https://work-pc.<tailnet>.ts.net,http://localhost:5173`.
 
 `NOCTIS_WEB_ROOT` must be the **build**, not the source tree. `apps\web` has an `index.html` of its
 own — Vite's entry — so `...\apps\web` is a plausible typo that would serve `/src`,
@@ -196,7 +196,7 @@ npx web-push generate-vapid-keys
 
 [Environment]::SetEnvironmentVariable('NOCTIS_VAPID_PUBLIC_KEY',  '<public>',  'User')
 [Environment]::SetEnvironmentVariable('NOCTIS_VAPID_PRIVATE_KEY', '<private>', 'User')
-[Environment]::SetEnvironmentVariable('NOCTIS_VAPID_SUBJECT',     'mailto:mushaf.zarrar@travelvogue.co.uk', 'User')
+[Environment]::SetEnvironmentVariable('NOCTIS_VAPID_SUBJECT',     'mailto:me@example.com', 'User')
 ```
 
 All three or none. One or two set is a `ConfigurationError` at startup, because a core that

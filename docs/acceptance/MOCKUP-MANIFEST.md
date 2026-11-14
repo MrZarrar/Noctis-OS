@@ -7,12 +7,12 @@ allows later agents to detect changed references. v7 and direct user corrections
 
 | File                                                                                                     |  Bytes | SHA-256                                                            |
 | -------------------------------------------------------------------------------------------------------- | -----: | ------------------------------------------------------------------ |
-| `C:\Users\mmush\Downloads\NocitsOS21Aug\NocitsOS\2026-08-15-distributed-local-first-jarvis-os-master.md` | 14,311 | `09c8143d9f59a8a8b8157908ee4cc62e0b605521f64c85661b4a4337f605ec0d` |
-| `C:\Users\mmush\Downloads\NocitsOS21Aug\NocitsOS\2026-08-23-noctis-os-redesign-rebrand-spec-v7.md`       | 84,573 | `b04ca9c4159d3f86ffea0e147db1e5d33cbba9697caa672cb30cd619278a202a` |
+| `C:\Users\<home-user>\Downloads\NocitsOS21Aug\NocitsOS\2026-08-15-distributed-local-first-jarvis-os-master.md` | 14,311 | `09c8143d9f59a8a8b8157908ee4cc62e0b605521f64c85661b4a4337f605ec0d` |
+| `C:\Users\<home-user>\Downloads\NocitsOS21Aug\NocitsOS\2026-08-23-noctis-os-redesign-rebrand-spec-v7.md`       | 84,573 | `b04ca9c4159d3f86ffea0e147db1e5d33cbba9697caa672cb30cd619278a202a` |
 
 ## Selected canonical mockups
 
-All paths are beneath `C:\Users\mmush\Downloads\NocitsOS21Aug\NocitsOS\NoctisMockups`.
+All paths are beneath `C:\Users\<home-user>\Downloads\NocitsOS21Aug\NocitsOS\NoctisMockups`.
 
 | File                                                      | Dimensions |     Bytes | SHA-256                                                            |
 | --------------------------------------------------------- | ---------: | --------: | ------------------------------------------------------------------ |

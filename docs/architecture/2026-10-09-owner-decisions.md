@@ -52,7 +52,7 @@ the live services have not been checked again during this discussion.
   No implementation, deployment, plugin installation or quota-consuming tests have been requested.
 
 The graphify code graph (8,812 files) was moved out of MindVault to
-`C:\Users\mushaf.zarrar\Documents\MindVault-archive\jarvis-dashboard\codegraph`, with the owner's approval.
+`C:\Users\<work-user>\Documents\MindVault-archive\jarvis-dashboard\codegraph`, with the owner's approval.
 
 ## 2. How work is split between Claude and Codex
 
@@ -344,7 +344,7 @@ Vault questions are fast.
 
 **Waking and signing in, with two Windows users on the home PC:**
 
-- **No sign-in needed for node work.** The node starts at boot as a scheduled task for one account (`mmush`) without a
+- **No sign-in needed for node work.** The node starts at boot as a scheduled task for one account (`<home-user>`) without a
   sign-in. That covers Claude, Codex, Hermes, the local model and Files, whichever user is on screen.
 - **A desktop session is needed** for the screen mirror, computer use and anything with a window.
   - Waking from sleep returns to the existing session, but **locked**.

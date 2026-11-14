@@ -44,17 +44,17 @@ describe("folderGrant", () => {
   it("names the folder after its last segment, kept apart from ids already used", () => {
     expect(
       folderGrant({
-        path: '  "C:\\Users\\me\\Documents\\neckermann-mobile\\"  ',
+        path: '  "C:\\Users\\me\\Documents\\work-app-a-mobile\\"  ',
         mode: "write",
         providers: ["claude", "codex"],
-        taken: ["neckermann-mobile"],
+        taken: ["work-app-a-mobile"],
       }),
     ).toEqual({
       providers: ["claude", "codex"],
       roots: [
         {
-          grantId: "neckermann-mobile-2",
-          path: "C:\\Users\\me\\Documents\\neckermann-mobile",
+          grantId: "work-app-a-mobile-2",
+          path: "C:\\Users\\me\\Documents\\work-app-a-mobile",
           mode: "write",
           localOnly: false,
         },

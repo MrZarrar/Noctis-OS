@@ -25,7 +25,7 @@ Part 2 is written against Part 1's evidence rather than guessed at now, for the 
 
 Every task's requirements implicitly include this section. These are copied from the master plan's Global Constraints; where a value is restated here it is authoritative.
 
-- **Donor:** `C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard` is read-only. Every port gets a `docs/architecture/DONOR-PORT-LEDGER.md` row _before_ the copy. `npm run test:boundary` before and after any port.
+- **Donor:** `C:\Users\<home-user>\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard` is read-only. Every port gets a `docs/architecture/DONOR-PORT-LEDGER.md` row _before_ the copy. `npm run test:boundary` before and after any port.
 - **Node:** `engines` is `22.x`; CI pins `22.23.2`. Local development runs 24.19.0; CI is authoritative.
 - **Module system:** ESM, `"module": "NodeNext"`. Relative imports end in `.js`. Types via `import type`.
 - **Strictness:** `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. Spread-omit optional fields — never assign `undefined` to an optional property.
@@ -42,7 +42,7 @@ Every task's requirements implicitly include this section. These are copied from
 
 ## Carried-over facts from Slice 1 (do not re-derive)
 
-- **Hostnames read backwards.** `zarrarpc` = the **personal** PC (user `mmush`, this repo, MindVault, the donor). `mushafzarrar` = the **work** PC (user `mushaf.zarrar`, repo at `C:\Users\mushaf.zarrar\Documents\Noctis-OS`) and holds the **authoritative core**. Tailnet suffix `tail9594ed.ts.net`. Check `hostname` before acting.
+- **Hostnames read backwards.** `home-pc` = the **personal** PC (user `<home-user>`, this repo, MindVault, the donor). `work-pc` = the **work** PC (user `<work-user>`, repo at `C:\Users\<work-user>\Documents\Noctis-OS`) and holds the **authoritative core**. Tailnet suffix `<tailnet>.ts.net`. Check `hostname` before acting.
 - The authoritative core already runs on the work PC behind `tailscale serve` on port 7717, tailnet-only, with the personal PC paired as a worker over `wss://` (master-plan task 1.12, done).
 - Development happens in this repo on the personal PC; the work PC pulls and restarts. `docs/operations/work-pc-core.md` is the deployment runbook; `docs/operations/runtime-live-evidence.md` is the evidence log.
 
@@ -1936,7 +1936,7 @@ The donor's `MobileTabBar` supplies the **shape** — four primary destinations,
 Add two rows to `docs/architecture/DONOR-PORT-LEDGER.md`, following the existing column order exactly. Get the donor commit with:
 
 ```bash
-git -C "C:/Users/mmush/Documents/Jarvis/Jarvis-Sub-Agent-Dashboard" log -1 --format=%h -- client/src/hooks/useIsMobile.ts client/src/components/MobileTabBar.tsx
+git -C "C:/Users/<you>/Documents/Jarvis/Jarvis-Sub-Agent-Dashboard" log -1 --format=%h -- client/src/hooks/useIsMobile.ts client/src/components/MobileTabBar.tsx
 ```
 
 - `client/src/hooks/useIsMobile.ts` → `apps/web/src/layout/useIsMobile.ts`. **Retained:** the `matchMedia` subscription, the initial synchronous read so the first paint is already correct, and the SSR guard. **Changed:** the breakpoint moves from 767 px to 719 px, because Noctis switches on whether the 72 px rail still fits rather than on a Tailwind tier; the listener is added with the modern `addEventListener` only, since no supported browser needs `addListener`. **Verification:** `apps/web/src/layout/useIsMobile.test.ts`.
@@ -2480,7 +2480,7 @@ Append to `docs/operations/work-pc-core.md`:
 npx web-push generate-vapid-keys
 [Environment]::SetEnvironmentVariable('NOCTIS_VAPID_PUBLIC_KEY',  '<public>',  'User')
 [Environment]::SetEnvironmentVariable('NOCTIS_VAPID_PRIVATE_KEY', '<private>', 'User')
-[Environment]::SetEnvironmentVariable('NOCTIS_VAPID_SUBJECT',     'mailto:mushaf.zarrar@travelvogue.co.uk', 'User')
+[Environment]::SetEnvironmentVariable('NOCTIS_VAPID_SUBJECT',     'mailto:me@example.com', 'User')
 ```
 
 Note in the same section that a new terminal does not inherit a just-set user variable on Windows — restart the editor, as the existing runbook already records.

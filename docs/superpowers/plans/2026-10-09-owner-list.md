@@ -80,7 +80,7 @@
 ### The owner's answers (2026-10-09)
 
 - **B, moving the folder:** yes. The 8,812 files were moved, not deleted, to
-  `C:\Users\mushaf.zarrar\Documents\MindVault-archive\jarvis-dashboard\codegraph` (outside OneDrive). The hub note
+  `C:\Users\<work-user>\Documents\MindVault-archive\jarvis-dashboard\codegraph` (outside OneDrive). The hub note
   `projects/jarvis-dashboard-codegraph.md` stays.
 - **D, personas:** the identity card is **on by default** for Claude and Codex as well as Hermes and local.
 - **E, the mirror:** yes, on both PCs. The home PC is offline, so every home-PC step goes into
@@ -1301,7 +1301,7 @@ This has a measurable gain on top of the look: one WebGL context for the app's l
 
 **Findings** (`docs/operations/WOL.md`):
 
-- **Ready:** S3 sleep, the Realtek NIC armed for wake (MAC `30-C5-99-59-9A-DA`, `192.168.1.163`), and Fast Startup on.
+- **Ready:** S3 sleep, the Realtek NIC armed for wake (MAC `XX-XX-XX-XX-XX-XX`, `192.168.x.10`), and Fast Startup on.
 - **Missing:** a sender. A magic packet is a broadcast on the home LAN. Tailscale only carries routed IP traffic, and the only other devices on the LAN are the router and a phone.
 - **Not yet checked:**
   - the UEFI "Power On By PCI-E" setting, needed to wake from shutdown (S5);
@@ -1775,7 +1775,7 @@ the test fixtures, and don't invent them.
 - [ ] **I1.6 `docs/operations/ebay.md`,** covering:
   - the developer account and the production keyset;
   - the account-deletion **opt-out**;
-  - a RuName whose accept URL is `https://mushafzarrar.tail9594ed.ts.net/oauth/ebay/callback`;
+  - a RuName whose accept URL is `https://work-pc.<tailnet>.ts.net/oauth/ebay/callback`;
   - business policies in Seller Hub, and an inventory location;
   - the env vars, and turning it on.
 - [ ] **I1.7 Live,** with the owner present and approving at that moment: list one real item, check it, then end the

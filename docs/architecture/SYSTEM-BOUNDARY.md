@@ -2,8 +2,8 @@
 
 ## Repository boundary
 
-- Noctis target: `C:\Users\mmush\Documents\Jarvis\Noctis-OS`
-- Read-only donor: `C:\Users\mmush\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard`
+- Noctis target: `C:\Users\<home-user>\Documents\Jarvis\Noctis-OS`
+- Read-only donor: `C:\Users\<home-user>\Documents\Jarvis\Jarvis-Sub-Agent-Dashboard`
 - The repositories are siblings with independent Git histories.
 - Ported behaviour must be recorded in the donor port ledger before copying code.
 - No Noctis script may clean, reset, checkout, stage, commit, install, migrate, or write inside the donor.

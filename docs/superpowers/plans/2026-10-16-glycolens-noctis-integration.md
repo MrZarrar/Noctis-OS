@@ -2231,7 +2231,7 @@ In the final message (not only in the doc):
 1. **Work PC:** run `scripts/deploy/work-pc.ps1`, then restart its node. The core must be deployed before the home node.
 2. **Home PC:** restart the node with `.noctis/home-node.ps1` from the desktop, not the boot task.
 3. **In Noctis:**
-   - Nodes → home PC → glycolens folder `C:\Users\mmush\Documents\glycolens` → Allow health on this PC.
+   - Nodes → home PC → glycolens folder `C:\Users\<home-user>\Documents\glycolens` → Allow health on this PC.
    - Settings → "Weekly health run (Sundays)" `20:00`.
    - Health → Run now, and expect a report within a few minutes.
    - Try Applied on a suggestion, then Undo.
